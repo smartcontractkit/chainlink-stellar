@@ -3,43 +3,56 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 #[soroban_sdk::contractargs(name = "FeeQuoterArgs")]
 #[soroban_sdk::contractclient(name = "FeeQuoterClient")]
 pub trait FeeQuoterInterface {
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
+    fn transfer_ownership(
+        env: soroban_sdk::Env,
+        new_owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+    fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn set_new_owner(
+        env: soroban_sdk::Env,
+        new_owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         static_config: StaticConfig,
         authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
-    fn update_prices(env: soroban_sdk::Env, price_updates: PriceUpdates) -> Result<(), CCIPError>;
-    fn get_fee_tokens(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Vec<soroban_sdk::Address>, CCIPError>;
-    fn get_message_fee(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        message: StellarToAnyMessage,
-    ) -> Result<i128, CCIPError>;
     fn get_token_price(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,
     ) -> Result<TimestampedPrice, CCIPError>;
-    fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_token_prices(
         env: soroban_sdk::Env,
         tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<soroban_sdk::Vec<TimestampedPrice>, CCIPError>;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
+    fn get_validated_token_price(
+        env: soroban_sdk::Env,
+        token: soroban_sdk::Address,
+    ) -> Result<u128, CCIPError>;
+    fn get_dest_chain_gas_price(
+        env: soroban_sdk::Env,
+        dest_chain_selector: u64,
+    ) -> Result<TimestampedPrice, CCIPError>;
+    fn get_fee_tokens(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::Vec<soroban_sdk::Address>, CCIPError>;
     fn remove_fee_tokens(
         env: soroban_sdk::Env,
         tokens: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
+    fn update_prices(
+        env: soroban_sdk::Env,
+        price_updates: PriceUpdates,
     ) -> Result<(), CCIPError>;
     fn quote_gas_for_exec(
         env: soroban_sdk::Env,
@@ -48,84 +61,57 @@ pub trait FeeQuoterInterface {
         calldata_size: u32,
         fee_token: soroban_sdk::Address,
     ) -> Result<GasQuoteResult, CCIPError>;
-    fn transfer_ownership(
+    fn get_token_transfer_fee(
         env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
+        dest_chain_selector: u64,
+        token: soroban_sdk::Address,
+    ) -> Result<TokenTransferFeeResult, CCIPError>;
+    fn get_message_fee(
+        env: soroban_sdk::Env,
+        dest_chain_selector: u64,
+        message: StellarToAnyMessage,
+    ) -> Result<i128, CCIPError>;
     fn convert_token_amount(
         env: soroban_sdk::Env,
         from_token: soroban_sdk::Address,
         from_token_amount: i128,
         to_token: soroban_sdk::Address,
     ) -> Result<i128, CCIPError>;
+    fn get_dest_chain_config(
+        env: soroban_sdk::Env,
+        dest_chain_selector: u64,
+    ) -> Result<DestChainConfig, CCIPError>;
     fn get_all_dest_configs(
         env: soroban_sdk::Env,
     ) -> Result<(soroban_sdk::Vec<u64>, soroban_sdk::Vec<DestChainConfig>), CCIPError>;
+    fn apply_dest_chain_configs(
+        env: soroban_sdk::Env,
+        config_args: soroban_sdk::Vec<DestChainConfigArgs>,
+    ) -> Result<(), CCIPError>;
     fn get_token_fee_config(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
         token: soroban_sdk::Address,
     ) -> Result<TokenTransferFeeConfig, CCIPError>;
-    fn get_dest_chain_config(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-    ) -> Result<DestChainConfig, CCIPError>;
-    fn get_token_transfer_fee(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        token: soroban_sdk::Address,
-    ) -> Result<TokenTransferFeeResult, CCIPError>;
     fn apply_token_fee_configs(
         env: soroban_sdk::Env,
         config_args: soroban_sdk::Vec<TokenFeeConfigArgs>,
         remove_args: soroban_sdk::Vec<TokenFeeConfigRemoveArgs>,
     ) -> Result<(), CCIPError>;
-    fn apply_dest_chain_configs(
-        env: soroban_sdk::Env,
-        config_args: soroban_sdk::Vec<DestChainConfigArgs>,
-    ) -> Result<(), CCIPError>;
-    fn get_dest_chain_gas_price(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-    ) -> Result<TimestampedPrice, CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn get_validated_token_price(
-        env: soroban_sdk::Env,
-        token: soroban_sdk::Address,
-    ) -> Result<u128, CCIPError>;
+    fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
 }
+
 
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
     pub placeholder: u64,
 }
-
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct PriceUpdates {
-    pub gas_price_updates: soroban_sdk::Vec<GasPriceUpdate>,
-    pub token_price_updates: soroban_sdk::Vec<TokenPriceUpdate>,
-}
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaticConfig {
     pub link_token: soroban_sdk::Address,
     pub max_fee_juels_per_msg: i128,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct GasPriceUpdate {
-    pub dest_chain_selector: u64,
-    pub usd_per_unit_gas: u128,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct GasQuoteResult {
-    pub fee_token_price: u128,
-    pub gas_cost_usd_cents: u128,
-    pub premium_multiplier: u32,
-    pub total_gas: u32,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -143,25 +129,6 @@ pub struct DestChainConfig {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TimestampedPrice {
-    pub timestamp: u64,
-    pub value: u128,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenPriceUpdate {
-    pub token: soroban_sdk::Address,
-    pub usd_per_token: u128,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenFeeConfigArgs {
-    pub config: TokenTransferFeeConfig,
-    pub dest_chain_selector: u64,
-    pub token: soroban_sdk::Address,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfigArgs {
     pub config: DestChainConfig,
     pub dest_chain_selector: u64,
@@ -176,16 +143,55 @@ pub struct TokenTransferFeeConfig {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenTransferFeeResult {
-    pub dest_bytes_overhead: u32,
-    pub dest_gas_overhead: u32,
-    pub fee_usd_cents: u32,
+pub struct TokenFeeConfigArgs {
+    pub config: TokenTransferFeeConfig,
+    pub dest_chain_selector: u64,
+    pub token: soroban_sdk::Address,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenFeeConfigRemoveArgs {
     pub dest_chain_selector: u64,
     pub token: soroban_sdk::Address,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TimestampedPrice {
+    pub timestamp: u64,
+    pub value: u128,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenPriceUpdate {
+    pub token: soroban_sdk::Address,
+    pub usd_per_token: u128,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct GasPriceUpdate {
+    pub dest_chain_selector: u64,
+    pub usd_per_unit_gas: u128,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PriceUpdates {
+    pub gas_price_updates: soroban_sdk::Vec<GasPriceUpdate>,
+    pub token_price_updates: soroban_sdk::Vec<TokenPriceUpdate>,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct GasQuoteResult {
+    pub fee_token_price: u128,
+    pub gas_cost_usd_cents: u128,
+    pub premium_multiplier: u32,
+    pub total_gas: u32,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenTransferFeeResult {
+    pub dest_bytes_overhead: u32,
+    pub dest_gas_overhead: u32,
+    pub fee_usd_cents: u32,
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -254,6 +260,22 @@ pub enum CCIPError {
     BadRMNSignal = 62,
     UnsupportedDestinationChain = 63,
 }
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OwnershipTransferStartedEvent {
+    pub previous_owner: soroban_sdk::Address,
+    pub new_owner: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: soroban_sdk::Address,
+}
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
@@ -268,45 +290,15 @@ pub struct RoleRevokedEvent {
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct OwnershipTransferStartedEvent {
-    pub previous_owner: soroban_sdk::Address,
-    pub new_owner: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["fq_FeeTokenAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeTokenAddedEvent {
     pub fee_token: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["fq_DestChainAdded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DestChainAddedEvent {
-    pub dest_chain_selector: u64,
-    pub is_enabled: bool,
-    pub max_data_bytes: u32,
-}
 #[soroban_sdk::contractevent(topics = ["fq_FeeTokenRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeTokenRemovedEvent {
     pub fee_token: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["fq_UsdPerTokenUpdated"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct UsdPerTokenUpdatedEvent {
-    pub token: soroban_sdk::Address,
-    pub value: u128,
-    pub timestamp: u64,
 }
 #[soroban_sdk::contractevent(topics = ["fq_UsdPerUnitGasUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -315,11 +307,12 @@ pub struct UsdPerUnitGasUpdatedEvent {
     pub value: u128,
     pub timestamp: u64,
 }
-#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeDeleted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_UsdPerTokenUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenFeeConfigDeletedEvent {
-    pub dest_chain_selector: u64,
+pub struct UsdPerTokenUpdatedEvent {
     pub token: soroban_sdk::Address,
+    pub value: u128,
+    pub timestamp: u64,
 }
 #[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -330,6 +323,19 @@ pub struct TokenFeeConfigUpdatedEvent {
     pub dest_gas_overhead: u32,
     pub dest_bytes_overhead: u32,
 }
+#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeDeleted"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenFeeConfigDeletedEvent {
+    pub dest_chain_selector: u64,
+    pub token: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["fq_DestChainAdded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct DestChainAddedEvent {
+    pub dest_chain_selector: u64,
+    pub is_enabled: bool,
+    pub max_data_bytes: u32,
+}
 #[soroban_sdk::contractevent(topics = ["fq_DestChainConfigUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfigUpdatedEvent {
@@ -337,3 +343,4 @@ pub struct DestChainConfigUpdatedEvent {
     pub is_enabled: bool,
     pub max_data_bytes: u32,
 }
+

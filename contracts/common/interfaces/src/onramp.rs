@@ -3,37 +3,35 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 #[soroban_sdk::contractargs(name = "OnRampArgs")]
 #[soroban_sdk::contractclient(name = "OnRampClient")]
 pub trait OnRampInterface {
-    fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_fee(
+    fn init_owner(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        message: StellarToAnyMessage,
-    ) -> Result<i128, CCIPError>;
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+    fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
+    fn transfer_ownership(
+        env: soroban_sdk::Env,
+        new_owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+    fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn set_new_owner(
+        env: soroban_sdk::Env,
+        new_owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         static_config: StaticConfig,
         dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
+    fn get_fee(
         env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
-    fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
-    fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
-    fn set_dynamic_config(
-        env: soroban_sdk::Env,
-        dynamic_config: DynamicConfig,
-    ) -> Result<(), CCIPError>;
-    fn transfer_ownership(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
+        dest_chain_selector: u64,
+        message: StellarToAnyMessage,
+    ) -> Result<i128, CCIPError>;
     fn forward_from_router(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
@@ -41,19 +39,24 @@ pub trait OnRampInterface {
         fee_token_amount: i128,
         original_sender: soroban_sdk::Address,
     ) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
-    fn withdraw_fee_tokens(
+    fn get_expected_next_message_number(
         env: soroban_sdk::Env,
-        fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
+        dest_chain_selector: u64,
+    ) -> Result<u64, CCIPError>;
+    fn get_pool_by_source_token(
+        env: soroban_sdk::Env,
+        source_token: soroban_sdk::Address,
+    ) -> Result<soroban_sdk::Address, CCIPError>;
+    fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
+    fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
+    fn set_dynamic_config(
+        env: soroban_sdk::Env,
+        dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError>;
     fn get_dest_chain_config(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<DestChainConfig, CCIPError>;
-    fn get_pool_by_source_token(
-        env: soroban_sdk::Env,
-        source_token: soroban_sdk::Address,
-    ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_all_dest_chain_configs(
         env: soroban_sdk::Env,
     ) -> Result<(soroban_sdk::Vec<u64>, soroban_sdk::Vec<DestChainConfig>), CCIPError>;
@@ -61,26 +64,17 @@ pub trait OnRampInterface {
         env: soroban_sdk::Env,
         dest_chain_config_args: soroban_sdk::Vec<DestChainConfigArgs>,
     ) -> Result<(), CCIPError>;
-    fn get_expected_next_message_number(
+    fn withdraw_fee_tokens(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-    ) -> Result<u64, CCIPError>;
+        fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
 }
+
 
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
     pub placeholder: u64,
-}
-
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Receipt {
-    pub dest_bytes_overhead: u32,
-    pub dest_gas_limit: u32,
-    pub extra_args: soroban_sdk::Bytes,
-    pub fee_token_amount: i128,
-    pub issuer: soroban_sdk::Address,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -125,6 +119,15 @@ pub struct DestChainConfigArgs {
     pub router: soroban_sdk::Address,
     pub token_network_fee_usd_cents: u32,
     pub token_receiver_allowed: bool,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Receipt {
+    pub dest_bytes_overhead: u32,
+    pub dest_gas_limit: u32,
+    pub extra_args: soroban_sdk::Bytes,
+    pub fee_token_amount: i128,
+    pub issuer: soroban_sdk::Address,
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -193,6 +196,22 @@ pub enum CCIPError {
     BadRMNSignal = 62,
     UnsupportedDestinationChain = 63,
 }
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OwnershipTransferStartedEvent {
+    pub previous_owner: soroban_sdk::Address,
+    pub new_owner: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: soroban_sdk::Address,
+}
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
@@ -207,28 +226,6 @@ pub struct RoleRevokedEvent {
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct OwnershipTransferStartedEvent {
-    pub previous_owner: soroban_sdk::Address,
-    pub new_owner: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_ConfigSet"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ConfigSetEvent {
-    pub static_config: StaticConfig,
-    pub dynamic_config: DynamicConfig,
-}
 #[soroban_sdk::contractevent(topics = ["onramp_1_7_CCIPMessageSent"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCIPMessageSentEvent {
@@ -241,6 +238,12 @@ pub struct CCIPMessageSentEvent {
     pub encoded_message: soroban_sdk::Bytes,
     pub receipts: soroban_sdk::Vec<Receipt>,
     pub verifier_blobs: soroban_sdk::Vec<soroban_sdk::Bytes>,
+}
+#[soroban_sdk::contractevent(topics = ["onramp_1_7_ConfigSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ConfigSetEvent {
+    pub static_config: StaticConfig,
+    pub dynamic_config: DynamicConfig,
 }
 #[soroban_sdk::contractevent(topics = ["onramp_1_7_DestChainConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -258,3 +261,4 @@ pub struct DestChainConfigSetEvent {
 pub struct OwnershipTransferredEvent {
     pub new_owner: soroban_sdk::Address,
 }
+
