@@ -34,13 +34,9 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
-<<<<<<< e2e-test-verifier
-	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/committee_verifier"
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
-	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/versioned_verifier_resolver"
-=======
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
->>>>>>> main
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/simple_node_set"
@@ -306,12 +302,13 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	}
 	c.logger.Info().Str("contractID", cvContractID).Msg("Committee Verifier contract deployed")
 
-	cvClient := cvbindings.NewCommiteeVerifierClient(c.deployer, cvContractID)
+	cvClient := cvbindings.NewCommitteeVerifierClient(c.deployer, cvContractID)
 
+	allowlistAdmin := c.deployerKeypair.Address()
 	mockStorageLocation := generateContractAddress("storage-location", c.networkPassphrase)
 	err = cvClient.Initialize(ctx, c.deployerKeypair.Address(), cvbindings.DynamicConfig{
-		AllowlistAdmin: c.deployerKeypair.Address(),
-		FeeAggregator:  mockFeeAggregator,
+		AllowlistAdmin: &allowlistAdmin,
+		FeeAggregator:  &mockFeeAggregator,
 	}, [][]byte{mockStorageLocation}, mockRMNRemote)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Committee Verifier: %w", err)
