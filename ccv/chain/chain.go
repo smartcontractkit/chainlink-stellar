@@ -34,7 +34,9 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/committee_verifier"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/versioned_verifier_resolver"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/simple_node_set"
@@ -148,6 +150,7 @@ func (c *Chain) ConfigureNodes(ctx context.Context, bc *blockchain.Input) (strin
 	), nil
 }
 
+// TODO: lane specific configs go here
 // ConnectContractsWithSelectors implements cciptestinterfaces.CCIP17Configuration.
 // Connects this chain's OnRamp to OffRamps on remote chains and configures CommitteeVerifiers.
 func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment.Environment, selector uint64, remoteSelectors []uint64, committees *deployments.EnvironmentTopology) error {
@@ -187,6 +190,7 @@ func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment
 	return nil
 }
 
+// TODO: global configs go here
 // DeployContractsForSelector implements cciptestinterfaces.CCIP17Configuration.
 // Deploys CCIP contracts for the given chain selector.
 func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.Environment, selector uint64, committees *deployments.EnvironmentTopology) (datastore.DataStore, error) {
@@ -257,6 +261,79 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 		Str("onRampContractID", onrampContractID).
 		Msg("OnRamp client initialized")
 
+	// Deploy the Versioned Verifier Resolver (VVR) contract
+	vvrWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccvs_versioned_verifier_resolver.wasm")
+	if _, statErr := os.Stat(vvrWasmPath); os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("VVR WASM not found at %s. Run 'make build' from the chainlink-stellar root to compile contracts.", vvrWasmPath)
+	}
+
+	c.logger.Info().Str("wasmPath", vvrWasmPath).Msg("Deploying Versioned Verifier Resolver contract...")
+
+	vvrSalt := stellardeployment.GenerateDeterministicSalt(c.deployerKeypair.Address(), "versioned-verifier-resolver")
+	vvrContractID, err := c.deployer.DeployContract(ctx, vvrWasmPath, vvrSalt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy VVR contract: %w", err)
+	}
+	c.logger.Info().Str("contractID", vvrContractID).Msg("VVR contract deployed")
+
+	vvrClient := vvrbindings.NewVersionedVerifierResolverClient(c.deployer, vvrContractID)
+
+	err = vvrClient.Initialize(ctx, c.deployerKeypair.Address(), mockFeeAggregator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize VVR: %w", err)
+	}
+
+	c.logger.Info().
+		Str("vvrContractID", vvrContractID).
+		Msg("VVR client initialized")
+
+	// Deploy the Committee Verifier contract
+	cvWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccvs_committee_verifier.wasm")
+	if _, statErr := os.Stat(cvWasmPath); os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("Committee Verifier WASM not found at %s. Run 'make build' from the chainlink-stellar root to compile contracts.", cvWasmPath)
+	}
+
+	c.logger.Info().Str("wasmPath", cvWasmPath).Msg("Deploying Committee Verifier contract...")
+
+	cvSalt := stellardeployment.GenerateDeterministicSalt(c.deployerKeypair.Address(), "committee-verifier")
+	cvContractID, err := c.deployer.DeployContract(ctx, cvWasmPath, cvSalt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy Committee Verifier contract: %w", err)
+	}
+	c.logger.Info().Str("contractID", cvContractID).Msg("Committee Verifier contract deployed")
+
+	cvClient := cvbindings.NewCommiteeVerifierClient(c.deployer, cvContractID)
+
+	mockStorageLocation := generateContractAddress("storage-location", c.networkPassphrase)
+	err = cvClient.Initialize(ctx, c.deployerKeypair.Address(), cvbindings.DynamicConfig{
+		AllowlistAdmin: c.deployerKeypair.Address(),
+		FeeAggregator:  mockFeeAggregator,
+	}, [][]byte{mockStorageLocation}, mockRMNRemote)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Committee Verifier: %w", err)
+	}
+
+	c.logger.Info().
+		Str("cvContractID", cvContractID).
+		Msg("Committee Verifier client initialized")
+
+	remoteSelectors := []uint64{}
+	for selector := range env.BlockChains.All() {
+		remoteSelectors = append(remoteSelectors, selector)
+	}
+	outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
+	for _, remoteSelector := range remoteSelectors {
+		outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
+			DestChainSelector: remoteSelector,
+			Verifier:          &cvContractID,
+		})
+	}
+
+	err = vvrClient.ApplyOutboundImplUpdates(ctx, outboundImplUpdates)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply outbound implementation updates: %w", err)
+	}
+
 	// Add OnRamp to datastore
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       onrampContractID,
@@ -301,22 +378,25 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	// 	})
 	// }
 
-	// Add CCV refs
-	for i, qualifier := range []string{
+	// Add CCV refs — use the deployed VVR contract address
+	vvrDecoded, err := strkey.Decode(strkey.VersionByteContract, vvrContractID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode VVR address: %w", err)
+	}
+	vvrHexAddr := hexutil.Encode(vvrDecoded)
+	c.logger.Info().
+		Str("vvrStrkey", vvrContractID).
+		Str("vvrHex", vvrHexAddr).
+		Msg("Using deployed VVR address for CCV refs")
+
+	for _, qualifier := range []string{
 		devenvcommon.DefaultCommitteeVerifierQualifier,
-		devenvcommon.SecondaryCommitteeVerifierQualifier,
-		devenvcommon.TertiaryCommitteeVerifierQualifier,
-		devenvcommon.QuaternaryReceiverQualifier,
+		// devenvcommon.SecondaryCommitteeVerifierQualifier,
+		// devenvcommon.TertiaryCommitteeVerifierQualifier,
+		// devenvcommon.QuaternaryReceiverQualifier,
 	} {
-		verifierAddress := contractAddr(fmt.Sprintf("stellar-ccv-%d", i))
-		c.logger.Info().Str("verifier address in strkey", verifierAddress).Msg("Adding CCV ref")
-		decoded, err := strkey.Decode(strkey.VersionByteContract, verifierAddress)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode verifier address: %w", err)
-		}
-		c.logger.Info().Str("verifier address in hex", hexutil.Encode(decoded)).Msg("Adding CCV ref")
 		ds.AddressRefStore.Add(datastore.AddressRef{
-			Address:       hexutil.Encode(decoded), // we must use a hex string bc chainlink-ccv will parse this
+			Address:       vvrHexAddr, // hex string bc chainlink-ccv will parse this
 			Type:          datastore.ContractType(committee_verifier.ResolverType),
 			Version:       semver.MustParse(committee_verifier.Deploy.Version()),
 			Qualifier:     qualifier,

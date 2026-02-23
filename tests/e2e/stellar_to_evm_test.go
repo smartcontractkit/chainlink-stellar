@@ -13,7 +13,10 @@ import (
 
 	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/onramp"
 	ccv "github.com/smartcontractkit/chainlink-ccv/devenv"
+	ccvcommon "github.com/smartcontractkit/chainlink-ccv/devenv/common"
+	"github.com/smartcontractkit/chainlink-ccv/devenv/tests/e2e"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
+	"github.com/smartcontractkit/chainlink-common/pkg/utils/tests"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
 	ccvsourcereader "github.com/smartcontractkit/chainlink-stellar/ccv/source_reader"
@@ -188,17 +191,17 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 		// Once that is done, these assertions should pass end-to-end.
 
 		// Wait for verification through the aggregator
-		// testCtx := e2e.NewTestingContext(t, t.Context(), chains, defaultAggregatorClient, indexerMonitor)
-		// result, err := testCtx.AssertMessage(protocol.Bytes32(messageID), e2e.AssertMessageOptions{
-		// 	TickInterval:            1 * time.Second,
-		// 	ExpectedVerifierResults: 1, // just committee verifier
-		// 	Timeout:                 tests.WaitTimeout(t),
-		// 	AssertVerifierLogs:      false,
-		// 	AssertExecutorLogs:      false,
-		// })
-		// require.NoError(t, err)
-		// require.NotNil(t, result.AggregatedResult)
-		// require.Len(t, result.IndexedVerifications.Results, 1)
+		testCtx := e2e.NewTestingContext(t, t.Context(), env.Chains, env.AggregatorClients[ccvcommon.DefaultCommitteeVerifierQualifier], env.IndexerMonitor)
+		result, err := testCtx.AssertMessage(protocol.Bytes32(messageID), e2e.AssertMessageOptions{
+			TickInterval:            1 * time.Second,
+			ExpectedVerifierResults: 1, // just committee verifier
+			Timeout:                 tests.WaitTimeout(t),
+			AssertVerifierLogs:      false,
+			AssertExecutorLogs:      false,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result.AggregatedResult)
+		require.Len(t, result.IndexedVerifications.Results, 1)
 
 		// // Wait for execution on EVM
 		// ev, err := destChain.WaitOneExecEventBySeqNo(t.Context(), stellarDetails.ChainSelector, 1, tests.WaitTimeout(t))

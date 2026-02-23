@@ -16,10 +16,10 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/devenv/cciptestinterfaces"
 	"github.com/smartcontractkit/chainlink-ccv/devenv/registry"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	chain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
-	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -130,6 +130,8 @@ type E2ETestEnv struct {
 	SourceChainDetails *chain_selectors.ChainDetails
 	DestChainDetails   *chain_selectors.ChainDetails
 	Chains             map[uint64]cciptestinterfaces.CCIP17
+	AggregatorClients  map[string]*ccv.AggregatorClient
+	IndexerMonitor     *ccv.IndexerMonitor
 }
 
 func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configOutputPath string, stellarChainID string) *E2ETestEnv {
@@ -275,5 +277,7 @@ func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configO
 		DestChain:          destChain,
 		SourceChainDetails: &stellarDetails,
 		DestChainDetails:   &evmDetails,
+		AggregatorClients:  aggregatorClients,
+		IndexerMonitor:     indexerMonitor,
 	}
 }
