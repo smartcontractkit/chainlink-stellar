@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/versioned_verifier_resolver"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
@@ -51,10 +51,10 @@ func TestVersionedVerifierResolver(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to get owner: %v", err)
 		}
-		if owner != deployerKP.Address() {
-			t.Errorf("Owner mismatch: expected %s, got %s", deployerKP.Address(), owner)
+		if *owner != deployerKP.Address() {
+			t.Errorf("Owner mismatch: expected %s, got %s", deployerKP.Address(), *owner)
 		}
-		t.Logf("Owner verified: %s", owner)
+		t.Logf("Owner verified: %v", owner)
 	})
 
 	t.Run("verify fee aggregator", func(t *testing.T) {
@@ -63,9 +63,9 @@ func TestVersionedVerifierResolver(t *testing.T) {
 			t.Fatalf("Failed to get fee aggregator: %v", err)
 		}
 		if feeAgg != mockFeeAggregator {
-			t.Errorf("FeeAggregator mismatch: expected %s, got %s", mockFeeAggregator, feeAgg)
+			t.Errorf("FeeAggregator mismatch: expected %v, got %v", mockFeeAggregator, feeAgg)
 		}
-		t.Logf("FeeAggregator verified: %s", feeAgg)
+		t.Logf("FeeAggregator verified: %v", feeAgg)
 	})
 
 	t.Run("apply inbound implementation updates", func(t *testing.T) {
@@ -92,9 +92,9 @@ func TestVersionedVerifierResolver(t *testing.T) {
 			t.Fatalf("Failed to get inbound implementation: %v", err)
 		}
 		if addr != mockInboundVerifier {
-			t.Errorf("Inbound implementation mismatch: expected %s, got %s", mockInboundVerifier, addr)
+			t.Errorf("Inbound implementation mismatch: expected %v, got %v", mockInboundVerifier, addr)
 		}
-		t.Logf("Inbound implementation verified: %s", addr)
+		t.Logf("Inbound implementation verified: %v", addr)
 	})
 
 	t.Run("apply outbound implementation updates", func(t *testing.T) {
@@ -119,9 +119,9 @@ func TestVersionedVerifierResolver(t *testing.T) {
 			t.Fatalf("Failed to get outbound implementation: %v", err)
 		}
 		if addr != mockOutboundVerifier {
-			t.Errorf("Outbound implementation mismatch: expected %s, got %s", mockOutboundVerifier, addr)
+			t.Errorf("Outbound implementation mismatch: expected %v, got %v", mockOutboundVerifier, addr)
 		}
-		t.Logf("Outbound implementation verified: %s", addr)
+		t.Logf("Outbound implementation verified: %v", addr)
 	})
 
 	t.Run("update fee aggregator", func(t *testing.T) {
@@ -137,9 +137,9 @@ func TestVersionedVerifierResolver(t *testing.T) {
 			t.Fatalf("Failed to get fee aggregator: %v", err)
 		}
 		if feeAgg != newFeeAggregator {
-			t.Errorf("FeeAggregator mismatch after update: expected %s, got %s", newFeeAggregator, feeAgg)
+			t.Errorf("FeeAggregator mismatch after update: expected %v, got %v", newFeeAggregator, feeAgg)
 		}
-		t.Logf("Fee aggregator updated and verified: %s", feeAgg)
+		t.Logf("Fee aggregator updated and verified: %v", feeAgg)
 	})
 
 	t.Run("remove inbound implementation", func(t *testing.T) {

@@ -18,7 +18,6 @@ pub trait RemoteChainConfigInterface: Validatable {
 
 pub trait BaseVerifier: Initializable + AllowListable {
     const STORAGE_LOCATIONS: Symbol;
-    const RMN_PROXY: Symbol;
     const REMOTE_CHAINS: Symbol;
 
     type RemoteChainConfig: RemoteChainConfigInterface
@@ -26,15 +25,10 @@ pub trait BaseVerifier: Initializable + AllowListable {
         + IntoVal<Env, Val>
         + Clone;
 
-    fn init(
-        env: &Env,
-        storage_locations: &Vec<Bytes>,
-        rmn_proxy: &Address,
-    ) -> Result<(), CCIPError> {
+    fn init(env: &Env, storage_locations: &Vec<Bytes>) -> Result<(), CCIPError> {
         env.storage()
             .instance()
             .set(&Self::STORAGE_LOCATIONS, storage_locations);
-        env.storage().instance().set(&Self::RMN_PROXY, rmn_proxy);
 
         let remote_chains: Map<u64, Self::RemoteChainConfig> = Map::new(env);
         env.storage()

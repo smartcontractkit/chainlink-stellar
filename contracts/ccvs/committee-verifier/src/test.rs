@@ -5,6 +5,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, BytesN, Env};
 
 use crate::types::{DynamicConfig, RemoteChainConfig};
 use crate::{CommitteeVerifierContract, CommitteeVerifierContractClient};
+use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 
 fn default_dynamic_config(env: &Env) -> DynamicConfig {
     DynamicConfig {
@@ -38,8 +39,13 @@ fn setup() -> (
     let client = CommitteeVerifierContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
-    let rmn_proxy = Address::generate(&env);
     let storage_locations = vec![&env];
+
+    // Initialize RMN Proxy (dep)
+    let rmn_proxy = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
+    let rmn_remote = Address::generate(&env);
+    rmn_proxy_client.initialize(&owner, &rmn_remote);
 
     let dynamic_config = default_dynamic_config(&env);
     client.initialize(&owner, &dynamic_config, &storage_locations, &rmn_proxy);

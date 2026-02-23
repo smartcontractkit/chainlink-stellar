@@ -237,6 +237,7 @@ dependencies = [
  "common-guard",
  "common-helpers",
  "common-verifier",
+ "rmn_proxy",
  "soroban-sdk",
 ]
 
@@ -310,6 +311,8 @@ name = "common-helpers"
 version = "0.0.0"
 dependencies = [
  "common-error",
+ "common-guard",
+ "common-interfaces",
  "soroban-sdk",
 ]
 

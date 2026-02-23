@@ -18,7 +18,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-common/pkg/utils/tests"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	ccvsourcereader "github.com/smartcontractkit/chainlink-stellar/ccv/source_reader"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework"

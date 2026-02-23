@@ -31,6 +31,56 @@ func (c *FeeQuoterClient) ContractID() string {
 	return c.contractID
 }
 
+// Owner calls the owner function on the contract.
+func (c *FeeQuoterClient) Owner(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "owner", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call owner: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from owner")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// IsOwner calls the is_owner function on the contract.
+func (c *FeeQuoterClient) IsOwner(ctx context.Context, addr string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(addr),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
+	if err != nil {
+		return fmt.Errorf("failed to call is_owner: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// InitOwner calls the init_owner function on the contract.
+func (c *FeeQuoterClient) InitOwner(ctx context.Context, owner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(owner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init_owner", args)
+	if err != nil {
+		return fmt.Errorf("failed to call init_owner: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // Initialize calls the initialize function on the contract.
 func (c *FeeQuoterClient) Initialize(ctx context.Context, owner string, staticConfig StaticConfig, authorizedCallers []string) error {
 	args := []xdr.ScVal{
@@ -42,6 +92,41 @@ func (c *FeeQuoterClient) Initialize(ctx context.Context, owner string, staticCo
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
 	if err != nil {
 		return fmt.Errorf("failed to call initialize: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// RequireOwner calls the require_owner function on the contract.
+func (c *FeeQuoterClient) RequireOwner(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call require_owner: %w", err)
+	}
+
+	if result == nil {
+		return "", fmt.Errorf("no return value from require_owner")
+	}
+
+	v, err := scval.AddressFromScVal(*result)
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// SetNewOwner calls the set_new_owner function on the contract.
+func (c *FeeQuoterClient) SetNewOwner(ctx context.Context, newOwner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_new_owner: %w", err)
 	}
 
 	_ = result // void return
@@ -76,7 +161,19 @@ func (c *FeeQuoterClient) GetFeeTokens(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("no return value from get_fee_tokens")
 	}
 
-	return Address>FromScVal(*result)
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]string, len(*vec))
+	for i, item := range *vec {
+		v, err := scval.AddressFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
 }
 
 // GetMessageFee calls the get_message_fee function on the contract.
@@ -120,6 +217,19 @@ func (c *FeeQuoterClient) GetTokenPrice(ctx context.Context, token string) (*Tim
 	return TimestampedPriceFromScVal(*result)
 }
 
+// AcceptOwnership calls the accept_ownership function on the contract.
+func (c *FeeQuoterClient) AcceptOwnership(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call accept_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // GetTokenPrices calls the get_token_prices function on the contract.
 func (c *FeeQuoterClient) GetTokenPrices(ctx context.Context, tokens []string) ([]TimestampedPrice, error) {
 	args := []xdr.ScVal{
@@ -135,7 +245,39 @@ func (c *FeeQuoterClient) GetTokenPrices(ctx context.Context, tokens []string) (
 		return nil, fmt.Errorf("no return value from get_token_prices")
 	}
 
-	return Vec<TimestampedPrice>FromScVal(*result)
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]TimestampedPrice, len(*vec))
+	for i, item := range *vec {
+		v, err := TimestampedPriceFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = *v
+	}
+	return out, nil
+}
+
+// GetPendingOwner calls the get_pending_owner function on the contract.
+func (c *FeeQuoterClient) GetPendingOwner(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_pending_owner: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_pending_owner")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // GetStaticConfig calls the get_static_config function on the contract.
@@ -188,6 +330,21 @@ func (c *FeeQuoterClient) QuoteGasForExec(ctx context.Context, destChainSelector
 	}
 
 	return GasQuoteResultFromScVal(*result)
+}
+
+// TransferOwnership calls the transfer_ownership function on the contract.
+func (c *FeeQuoterClient) TransferOwnership(ctx context.Context, newOwner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call transfer_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // ConvertTokenAmount calls the convert_token_amount function on the contract.
@@ -332,22 +489,399 @@ func (c *FeeQuoterClient) GetDestChainGasPrice(ctx context.Context, destChainSel
 	return TimestampedPriceFromScVal(*result)
 }
 
+// CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
+func (c *FeeQuoterClient) CancelOwnershipTransfer(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
+	if err != nil {
+		return fmt.Errorf("failed to call cancel_ownership_transfer: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // GetValidatedTokenPrice calls the get_validated_token_price function on the contract.
-func (c *FeeQuoterClient) GetValidatedTokenPrice(ctx context.Context, token string) (*u128, error) {
+func (c *FeeQuoterClient) GetValidatedTokenPrice(ctx context.Context, token string) (scval.U128, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(token),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_validated_token_price", args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call get_validated_token_price: %w", err)
+		return scval.U128{}, fmt.Errorf("failed to call get_validated_token_price: %w", err)
 	}
 
 	if result == nil {
-		return nil, fmt.Errorf("no return value from get_validated_token_price")
+		return scval.U128{}, fmt.Errorf("no return value from get_validated_token_price")
 	}
 
-	return u128FromScVal(*result)
+	v, err := scval.U128FromScVal(*result)
+	if err != nil {
+		return scval.U128{}, err
+	}
+	return v, nil
+}
+
+// WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
+func (c *FeeQuoterClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleGrantedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := parseRoleGrantedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func parseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RoleGrantedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "role":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
+		case "account":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Account = v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
+func (c *FeeQuoterClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleRevokedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := parseRoleRevokedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func parseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RoleRevokedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "role":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
+		case "account":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Account = v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
+func (c *FeeQuoterClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := parseAuthorizedCallerAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func parseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AuthorizedCallerAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
+func (c *FeeQuoterClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := parseAuthorizedCallerRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func parseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AuthorizedCallerRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
+func (c *FeeQuoterClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferStartedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := parseOwnershipTransferStartedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func parseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTransferStartedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipTransferStartedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "previous_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.PreviousOwner = v
+			}
+		case "new_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewOwner = v
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // WaitForFeeTokenAddedEvent waits for a FeeTokenAddedEvent event.
@@ -617,7 +1151,10 @@ func parseUsdPerTokenUpdatedEvent(e protocolrpc.EventInfo) (*UsdPerTokenUpdatedE
 				result.Token = v
 			}
 		case "value":
-			// TODO: parse complex type
+			v, err := scval.U128FromScVal(entry.Val)
+			if err == nil {
+				result.Value = v
+			}
 		case "timestamp":
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err == nil {
@@ -691,7 +1228,10 @@ func parseUsdPerUnitGasUpdatedEvent(e protocolrpc.EventInfo) (*UsdPerUnitGasUpda
 				result.DestChainSelector = v
 			}
 		case "value":
-			// TODO: parse complex type
+			v, err := scval.U128FromScVal(entry.Val)
+			if err == nil {
+				result.Value = v
+			}
 		case "timestamp":
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err == nil {
@@ -923,430 +1463,3 @@ func parseDestChainConfigUpdatedEvent(e protocolrpc.EventInfo) (*DestChainConfig
 
 	return result, nil
 }
-
-// WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
-func (c *FeeQuoterClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleGrantedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseRoleGrantedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleGrantedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			// TODO: parse complex type
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
-func (c *FeeQuoterClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleRevokedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseRoleRevokedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleRevokedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			// TODO: parse complex type
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForOwnershipTransferredEvent waits for a OwnershipTransferredEvent event.
-func (c *FeeQuoterClient) WaitForOwnershipTransferredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferredEvent) bool) (*OwnershipTransferredEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferredEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseOwnershipTransferredEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseOwnershipTransferredEvent(e protocolrpc.EventInfo) (*OwnershipTransferredEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &OwnershipTransferredEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "previous_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.PreviousOwner = v
-			}
-		case "new_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.NewOwner = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
-func (c *FeeQuoterClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseAuthorizedCallerAddedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerAddedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
-func (c *FeeQuoterClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseAuthorizedCallerRemovedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerRemovedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
-func (c *FeeQuoterClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferStartedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseOwnershipTransferStartedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTransferStartedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &OwnershipTransferStartedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "previous_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.PreviousOwner = v
-			}
-		case "new_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.NewOwner = v
-			}
-		}
-	}
-
-	return result, nil
-}
-

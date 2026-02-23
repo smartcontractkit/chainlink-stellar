@@ -103,8 +103,8 @@ func parseStructs(input string) []Struct {
 }
 
 func parseFunctions(input string) []Function {
-	// Match trait block
-	traitRe := regexp.MustCompile(`(?s)pub trait Contract \{(.+?)\n\}`)
+	// Match trait block (Contract or {Name}Interface from gen_interfaces.sh)
+	traitRe := regexp.MustCompile(`(?s)pub trait \w+ \{(.+?)\n\}`)
 	traitMatch := traitRe.FindStringSubmatch(input)
 	if traitMatch == nil {
 		return nil

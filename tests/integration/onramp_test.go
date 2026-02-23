@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )

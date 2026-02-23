@@ -138,6 +138,15 @@ func SymbolToScVal(sym string) xdr.ScVal {
 	}
 }
 
+// SymbolFromScVal extracts a string from an xdr.ScVal containing a symbol.
+func SymbolFromScVal(val xdr.ScVal) (string, error) {
+	sym, ok := val.GetSym()
+	if !ok {
+		return "", fmt.Errorf("not a symbol type: %v", val.Type)
+	}
+	return string(sym), nil
+}
+
 // BuildStructScVal builds a struct xdr.ScVal from a map of field names to values.
 // Soroban requires ScMap keys to be sorted lexicographically.
 func BuildStructScVal(fields map[string]xdr.ScVal) (xdr.ScVal, error) {
@@ -287,6 +296,33 @@ func I128FromScVal(val xdr.ScVal) (int64, error) {
 	return int64(i128.Lo), nil
 }
 
+// U128 represents a Soroban u128 value. It wraps xdr.UInt128Parts and implements ToScVal
+// for use in generated struct serialization.
+type U128 xdr.UInt128Parts
+
+// ToScVal converts U128 to an xdr.ScVal for contract calls.
+func (u U128) ToScVal() (xdr.ScVal, error) {
+	parts := xdr.UInt128Parts(u)
+	return U128ToScVal(parts), nil
+}
+
+// U128ToScVal converts xdr.UInt128Parts to an xdr.ScVal representing u128.
+func U128ToScVal(parts xdr.UInt128Parts) xdr.ScVal {
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvU128,
+		U128: &parts,
+	}
+}
+
+// U128FromScVal extracts U128 from an xdr.ScVal containing u128.
+func U128FromScVal(val xdr.ScVal) (U128, error) {
+	u128, ok := val.GetU128()
+	if !ok {
+		return U128{}, fmt.Errorf("not a u128 type: %v", val.Type)
+	}
+	return U128(u128), nil
+}
+
 // MustToScVal panics if ToScVal returns an error.
 func MustToScVal(val xdr.ScVal, err error) xdr.ScVal {
 	if err != nil {
@@ -330,6 +366,15 @@ func AddressBytes32SliceToScVal(items [][32]byte) xdr.ScVal {
 	scVals := make([]xdr.ScVal, len(items))
 	for i, item := range items {
 		scVals[i] = Bytes32ToScVal(item)
+	}
+	return VecToScVal(scVals)
+}
+
+// Bytes4SliceToScVal converts a slice of [4]byte to an xdr.ScVal vector (for Vec<BytesN<4>>).
+func Bytes4SliceToScVal(items [][4]byte) xdr.ScVal {
+	scVals := make([]xdr.ScVal, len(items))
+	for i, item := range items {
+		scVals[i] = Bytes4ToScVal(item)
 	}
 	return VecToScVal(scVals)
 }

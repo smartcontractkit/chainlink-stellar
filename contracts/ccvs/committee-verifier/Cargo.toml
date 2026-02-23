@@ -18,3 +18,4 @@ common-helpers = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+rmn_proxy = { workspace = true }

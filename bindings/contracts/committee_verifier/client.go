@@ -12,40 +12,47 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// CommiteeVerifierClient provides methods to interact with the CommiteeVerifier contract.
-type CommiteeVerifierClient struct {
+// CommitteeVerifierClient provides methods to interact with the CommitteeVerifier contract.
+type CommitteeVerifierClient struct {
 	invoker    bindings.Invoker
 	contractID string
 }
 
-// NewCommiteeVerifierClient creates a new CommiteeVerifierClient.
-func NewCommiteeVerifierClient(invoker bindings.Invoker, contractID string) *CommiteeVerifierClient {
-	return &CommiteeVerifierClient{
+// NewCommitteeVerifierClient creates a new CommitteeVerifierClient.
+func NewCommitteeVerifierClient(invoker bindings.Invoker, contractID string) *CommitteeVerifierClient {
+	return &CommitteeVerifierClient{
 		invoker:    invoker,
 		contractID: contractID,
 	}
 }
 
 // ContractID returns the contract ID.
-func (c *CommiteeVerifierClient) ContractID() string {
+func (c *CommitteeVerifierClient) ContractID() string {
 	return c.contractID
 }
 
 // Owner calls the owner function on the contract.
-func (c *CommiteeVerifierClient) Owner(ctx context.Context) error {
+func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call owner: %w", err)
+		return nil, fmt.Errorf("failed to call owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return nil, fmt.Errorf("no return value from owner")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *CommiteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) error {
+func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) error {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(message),
@@ -63,7 +70,7 @@ func (c *CommiteeVerifierClient) GetFee(ctx context.Context, destChainSelector u
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *CommiteeVerifierClient) IsOwner(ctx context.Context, addr string) error {
+func (c *CommitteeVerifierClient) IsOwner(ctx context.Context, addr string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
@@ -78,7 +85,7 @@ func (c *CommiteeVerifierClient) IsOwner(ctx context.Context, addr string) error
 }
 
 // InitOwner calls the init_owner function on the contract.
-func (c *CommiteeVerifierClient) InitOwner(ctx context.Context, owner string) error {
+func (c *CommitteeVerifierClient) InitOwner(ctx context.Context, owner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 	}
@@ -93,7 +100,7 @@ func (c *CommiteeVerifierClient) InitOwner(ctx context.Context, owner string) er
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *CommiteeVerifierClient) Initialize(ctx context.Context, owner string, dynamicConfig DynamicConfig, storageLocations [][]byte, rmnProxy string) error {
+func (c *CommitteeVerifierClient) Initialize(ctx context.Context, owner string, dynamicConfig DynamicConfig, storageLocations [][]byte, rmnProxy string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.MustToScVal(dynamicConfig.ToScVal()),
@@ -111,7 +118,7 @@ func (c *CommiteeVerifierClient) Initialize(ctx context.Context, owner string, d
 }
 
 // VersionTag calls the version_tag function on the contract.
-func (c *CommiteeVerifierClient) VersionTag(ctx context.Context) error {
+func (c *CommitteeVerifierClient) VersionTag(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "version_tag", args)
@@ -124,7 +131,7 @@ func (c *CommiteeVerifierClient) VersionTag(ctx context.Context) error {
 }
 
 // RequireOwner calls the require_owner function on the contract.
-func (c *CommiteeVerifierClient) RequireOwner(ctx context.Context) (string, error) {
+func (c *CommitteeVerifierClient) RequireOwner(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
@@ -144,7 +151,7 @@ func (c *CommiteeVerifierClient) RequireOwner(ctx context.Context) (string, erro
 }
 
 // SetNewOwner calls the set_new_owner function on the contract.
-func (c *CommiteeVerifierClient) SetNewOwner(ctx context.Context, newOwner string) error {
+func (c *CommitteeVerifierClient) SetNewOwner(ctx context.Context, newOwner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 	}
@@ -159,7 +166,7 @@ func (c *CommiteeVerifierClient) SetNewOwner(ctx context.Context, newOwner strin
 }
 
 // VerifyMessage calls the verify_message function on the contract.
-func (c *CommiteeVerifierClient) VerifyMessage(ctx context.Context, sourceChainSelector uint64, messageHash [32]byte, verifierResults []byte) error {
+func (c *CommitteeVerifierClient) VerifyMessage(ctx context.Context, sourceChainSelector uint64, messageHash [32]byte, verifierResults []byte) error {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(sourceChainSelector),
 		scval.Bytes32ToScVal(messageHash),
@@ -176,7 +183,7 @@ func (c *CommiteeVerifierClient) VerifyMessage(ctx context.Context, sourceChainS
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.
-func (c *CommiteeVerifierClient) AcceptOwnership(ctx context.Context) error {
+func (c *CommitteeVerifierClient) AcceptOwnership(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
@@ -189,20 +196,27 @@ func (c *CommiteeVerifierClient) AcceptOwnership(ctx context.Context) error {
 }
 
 // GetPendingOwner calls the get_pending_owner function on the contract.
-func (c *CommiteeVerifierClient) GetPendingOwner(ctx context.Context) error {
+func (c *CommitteeVerifierClient) GetPendingOwner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call get_pending_owner: %w", err)
+		return nil, fmt.Errorf("failed to call get_pending_owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_pending_owner")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // GetDynamicConfig calls the get_dynamic_config function on the contract.
-func (c *CommiteeVerifierClient) GetDynamicConfig(ctx context.Context) (*DynamicConfig, error) {
+func (c *CommitteeVerifierClient) GetDynamicConfig(ctx context.Context) (*DynamicConfig, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_dynamic_config", args)
@@ -218,7 +232,7 @@ func (c *CommiteeVerifierClient) GetDynamicConfig(ctx context.Context) (*Dynamic
 }
 
 // SetDynamicConfig calls the set_dynamic_config function on the contract.
-func (c *CommiteeVerifierClient) SetDynamicConfig(ctx context.Context, dynamicConfig DynamicConfig) error {
+func (c *CommitteeVerifierClient) SetDynamicConfig(ctx context.Context, dynamicConfig DynamicConfig) error {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dynamicConfig.ToScVal()),
 	}
@@ -233,7 +247,7 @@ func (c *CommiteeVerifierClient) SetDynamicConfig(ctx context.Context, dynamicCo
 }
 
 // TransferOwnership calls the transfer_ownership function on the contract.
-func (c *CommiteeVerifierClient) TransferOwnership(ctx context.Context, newOwner string) error {
+func (c *CommitteeVerifierClient) TransferOwnership(ctx context.Context, newOwner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 	}
@@ -248,7 +262,7 @@ func (c *CommiteeVerifierClient) TransferOwnership(ctx context.Context, newOwner
 }
 
 // ForwardToResolver calls the forward_to_resolver function on the contract.
-func (c *CommiteeVerifierClient) ForwardToResolver(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
+func (c *CommitteeVerifierClient) ForwardToResolver(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.AddressToScVal(sender),
@@ -267,11 +281,15 @@ func (c *CommiteeVerifierClient) ForwardToResolver(ctx context.Context, destChai
 		return nil, fmt.Errorf("no return value from forward_to_resolver")
 	}
 
-	return *result.Bytes, nil
+	v, ok := result.GetBytes()
+	if !ok {
+		return nil, fmt.Errorf("expected bytes return type")
+	}
+	return []byte(v), nil
 }
 
 // WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
-func (c *CommiteeVerifierClient) WithdrawFeeTokens(ctx context.Context, feeTokens []string) error {
+func (c *CommitteeVerifierClient) WithdrawFeeTokens(ctx context.Context, feeTokens []string) error {
 	args := []xdr.ScVal{
 		scval.AddressSliceToScVal(feeTokens),
 	}
@@ -286,7 +304,7 @@ func (c *CommiteeVerifierClient) WithdrawFeeTokens(ctx context.Context, feeToken
 }
 
 // GetStorageLocations calls the get_storage_locations function on the contract.
-func (c *CommiteeVerifierClient) GetStorageLocations(ctx context.Context) ([][]byte, error) {
+func (c *CommitteeVerifierClient) GetStorageLocations(ctx context.Context) ([][]byte, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_storage_locations", args)
@@ -298,11 +316,23 @@ func (c *CommiteeVerifierClient) GetStorageLocations(ctx context.Context) ([][]b
 		return nil, fmt.Errorf("no return value from get_storage_locations")
 	}
 
-	panic("not implemented")
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([][]byte, len(*vec))
+	for i, item := range *vec {
+		v, ok := item.GetBytes()
+		if !ok {
+			return nil, fmt.Errorf("vec item is not bytes")
+		}
+		out[i] = []byte(v)
+	}
+	return out, nil
 }
 
 // GetRemoteChainConfig calls the get_remote_chain_config function on the contract.
-func (c *CommiteeVerifierClient) GetRemoteChainConfig(ctx context.Context, remoteChainSelector uint64) (*RemoteChainConfig, error) {
+func (c *CommitteeVerifierClient) GetRemoteChainConfig(ctx context.Context, remoteChainSelector uint64) (*RemoteChainConfig, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(remoteChainSelector),
 	}
@@ -320,7 +350,7 @@ func (c *CommiteeVerifierClient) GetRemoteChainConfig(ctx context.Context, remot
 }
 
 // UpdateStorageLocations calls the update_storage_locations function on the contract.
-func (c *CommiteeVerifierClient) UpdateStorageLocations(ctx context.Context, newLocations [][]byte) error {
+func (c *CommitteeVerifierClient) UpdateStorageLocations(ctx context.Context, newLocations [][]byte) error {
 	args := []xdr.ScVal{
 		scval.BytesSliceToScVal(newLocations),
 	}
@@ -335,7 +365,7 @@ func (c *CommiteeVerifierClient) UpdateStorageLocations(ctx context.Context, new
 }
 
 // CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
-func (c *CommiteeVerifierClient) CancelOwnershipTransfer(ctx context.Context) error {
+func (c *CommitteeVerifierClient) CancelOwnershipTransfer(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
@@ -348,7 +378,7 @@ func (c *CommiteeVerifierClient) CancelOwnershipTransfer(ctx context.Context) er
 }
 
 // GetStorageLocationsAdmin calls the get_storage_locations_admin function on the contract.
-func (c *CommiteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) (string, error) {
+func (c *CommitteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_storage_locations_admin", args)
@@ -368,23 +398,27 @@ func (c *CommiteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) (
 }
 
 // GetPendingStorageLocAdmin calls the get_pending_storage_loc_admin function on the contract.
-func (c *CommiteeVerifierClient) GetPendingStorageLocAdmin(ctx context.Context) (string, error) {
+func (c *CommitteeVerifierClient) GetPendingStorageLocAdmin(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_storage_loc_admin", args)
 	if err != nil {
-		return "", fmt.Errorf("failed to call get_pending_storage_loc_admin: %w", err)
+		return nil, fmt.Errorf("failed to call get_pending_storage_loc_admin: %w", err)
 	}
 
 	if result == nil {
-		return "", fmt.Errorf("no return value from get_pending_storage_loc_admin")
+		return nil, fmt.Errorf("no return value from get_pending_storage_loc_admin")
 	}
 
-	return scval.AddressFromScVal(*result)
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // AcceptStorageLocationsAdmin calls the accept_storage_locations_admin function on the contract.
-func (c *CommiteeVerifierClient) AcceptStorageLocationsAdmin(ctx context.Context) error {
+func (c *CommitteeVerifierClient) AcceptStorageLocationsAdmin(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_storage_locations_admin", args)
@@ -397,7 +431,7 @@ func (c *CommiteeVerifierClient) AcceptStorageLocationsAdmin(ctx context.Context
 }
 
 // ApplyRemoteChainCfgUpdates calls the apply_remote_chain_cfg_updates function on the contract.
-func (c *CommiteeVerifierClient) ApplyRemoteChainCfgUpdates(ctx context.Context, remoteChainConfigArgs []RemoteChainConfig) error {
+func (c *CommitteeVerifierClient) ApplyRemoteChainCfgUpdates(ctx context.Context, remoteChainConfigArgs []RemoteChainConfig) error {
 	args := []xdr.ScVal{
 		scval.StructSliceToScVal(remoteChainConfigArgs),
 	}
@@ -412,7 +446,7 @@ func (c *CommiteeVerifierClient) ApplyRemoteChainCfgUpdates(ctx context.Context,
 }
 
 // TransferStorageLocationsAdmin calls the transfer_storage_locations_admin function on the contract.
-func (c *CommiteeVerifierClient) TransferStorageLocationsAdmin(ctx context.Context, to string) error {
+func (c *CommitteeVerifierClient) TransferStorageLocationsAdmin(ctx context.Context, to string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(to),
 	}
@@ -427,7 +461,7 @@ func (c *CommiteeVerifierClient) TransferStorageLocationsAdmin(ctx context.Conte
 }
 
 // WaitForConfigSetEvent waits for a ConfigSetEvent event.
-func (c *CommiteeVerifierClient) WaitForConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ConfigSetEvent) bool) (*ConfigSetEvent, error) {
+func (c *CommitteeVerifierClient) WaitForConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ConfigSetEvent) bool) (*ConfigSetEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -491,7 +525,7 @@ func parseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 }
 
 // WaitForRemoteChainConfigSetEvent waits for a RemoteChainConfigSetEvent event.
-func (c *CommiteeVerifierClient) WaitForRemoteChainConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemoteChainConfigSetEvent) bool) (*RemoteChainConfigSetEvent, error) {
+func (c *CommitteeVerifierClient) WaitForRemoteChainConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemoteChainConfigSetEvent) bool) (*RemoteChainConfigSetEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -562,7 +596,7 @@ func parseRemoteChainConfigSetEvent(e protocolrpc.EventInfo) (*RemoteChainConfig
 }
 
 // WaitForAllowListSendersAddedEvent waits for a AllowListSendersAddedEvent event.
-func (c *CommiteeVerifierClient) WaitForAllowListSendersAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListSendersAddedEvent) bool) (*AllowListSendersAddedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForAllowListSendersAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListSendersAddedEvent) bool) (*AllowListSendersAddedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -634,7 +668,7 @@ func parseAllowListSendersAddedEvent(e protocolrpc.EventInfo) (*AllowListSenders
 }
 
 // WaitForAllowListStateChangedEvent waits for a AllowListStateChangedEvent event.
-func (c *CommiteeVerifierClient) WaitForAllowListStateChangedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListStateChangedEvent) bool) (*AllowListStateChangedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForAllowListStateChangedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListStateChangedEvent) bool) (*AllowListStateChangedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -703,7 +737,7 @@ func parseAllowListStateChangedEvent(e protocolrpc.EventInfo) (*AllowListStateCh
 }
 
 // WaitForAllowListSendersRemovedEvent waits for a AllowListSendersRemovedEvent event.
-func (c *CommiteeVerifierClient) WaitForAllowListSendersRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListSendersRemovedEvent) bool) (*AllowListSendersRemovedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForAllowListSendersRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AllowListSendersRemovedEvent) bool) (*AllowListSendersRemovedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -775,7 +809,7 @@ func parseAllowListSendersRemovedEvent(e protocolrpc.EventInfo) (*AllowListSende
 }
 
 // WaitForStorageAdminTransferredEvent waits for a StorageAdminTransferredEvent event.
-func (c *CommiteeVerifierClient) WaitForStorageAdminTransferredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageAdminTransferredEvent) bool) (*StorageAdminTransferredEvent, error) {
+func (c *CommitteeVerifierClient) WaitForStorageAdminTransferredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageAdminTransferredEvent) bool) (*StorageAdminTransferredEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -847,7 +881,7 @@ func parseStorageAdminTransferredEvent(e protocolrpc.EventInfo) (*StorageAdminTr
 }
 
 // WaitForStorageAdminTransferReqEvent waits for a StorageAdminTransferReqEvent event.
-func (c *CommiteeVerifierClient) WaitForStorageAdminTransferReqEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageAdminTransferReqEvent) bool) (*StorageAdminTransferReqEvent, error) {
+func (c *CommitteeVerifierClient) WaitForStorageAdminTransferReqEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageAdminTransferReqEvent) bool) (*StorageAdminTransferReqEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -919,7 +953,7 @@ func parseStorageAdminTransferReqEvent(e protocolrpc.EventInfo) (*StorageAdminTr
 }
 
 // WaitForStorageLocationsUpdatedEvent waits for a StorageLocationsUpdatedEvent event.
-func (c *CommiteeVerifierClient) WaitForStorageLocationsUpdatedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageLocationsUpdatedEvent) bool) (*StorageLocationsUpdatedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForStorageLocationsUpdatedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StorageLocationsUpdatedEvent) bool) (*StorageLocationsUpdatedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -985,7 +1019,7 @@ func parseStorageLocationsUpdatedEvent(e protocolrpc.EventInfo) (*StorageLocatio
 }
 
 // WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
-func (c *CommiteeVerifierClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1041,7 +1075,10 @@ func parseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
 
 		switch string(key) {
 		case "role":
-			// TODO: parse complex type
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
 		case "account":
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
@@ -1059,7 +1096,7 @@ func parseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
 }
 
 // WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
-func (c *CommiteeVerifierClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1115,7 +1152,10 @@ func parseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
 
 		switch string(key) {
 		case "role":
-			// TODO: parse complex type
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
 		case "account":
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
@@ -1132,80 +1172,8 @@ func parseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
 	return result, nil
 }
 
-// WaitForOwnershipTransferredEvent waits for a OwnershipTransferredEvent event.
-func (c *CommiteeVerifierClient) WaitForOwnershipTransferredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferredEvent) bool) (*OwnershipTransferredEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferredEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := parseOwnershipTransferredEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func parseOwnershipTransferredEvent(e protocolrpc.EventInfo) (*OwnershipTransferredEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &OwnershipTransferredEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "previous_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.PreviousOwner = v
-			}
-		case "new_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.NewOwner = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
 // WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
-func (c *CommiteeVerifierClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1272,7 +1240,7 @@ func parseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCaller
 }
 
 // WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
-func (c *CommiteeVerifierClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1339,7 +1307,7 @@ func parseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCall
 }
 
 // WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
-func (c *CommiteeVerifierClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
+func (c *CommitteeVerifierClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

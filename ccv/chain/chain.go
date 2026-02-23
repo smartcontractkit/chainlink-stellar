@@ -34,9 +34,13 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
+<<<<<<< e2e-test-verifier
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/committee_verifier"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/onramp"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/versioned_verifier_resolver"
+=======
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+>>>>>>> main
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/simple_node_set"
