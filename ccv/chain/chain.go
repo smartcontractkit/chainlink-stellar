@@ -36,6 +36,8 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
+	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
@@ -238,16 +240,57 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	c.onRampContractID = onrampContractID
 	c.onRampClient = onrampbindings.NewOnRampClient(c.deployer, onrampContractID)
 
-	// Initialize the OnRamp with mock dependency contracts
+	// Deploy the RMN Remote contract
+	rmnRemoteWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
+	if _, statErr := os.Stat(rmnRemoteWasmPath); os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("RMN Remote WASM not found at %s. Run 'make build' from the chainlink-stellar root to compile contracts.", rmnRemoteWasmPath)
+	}
+
+	c.logger.Info().Str("wasmPath", rmnRemoteWasmPath).Msg("Deploying RMN Remote contract...")
+	rmnRemoteSalt := stellardeployment.GenerateDeterministicSalt(c.deployerKeypair.Address(), "rmn-remote")
+	rmnRemoteContractID, err := c.deployer.DeployContract(ctx, rmnRemoteWasmPath, rmnRemoteSalt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy RMN Remote contract: %w", err)
+	}
+	c.logger.Info().Str("contractID", rmnRemoteContractID).Msg("RMN Remote contract deployed")
+
+	rmnRemoteClient := rmnremotebindings.NewRmnRemoteClient(c.deployer, rmnRemoteContractID)
+	err = rmnRemoteClient.Initialize(ctx, c.deployerKeypair.Address(), selector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize RMN Remote: %w", err)
+	}
+	c.logger.Info().Str("rmnRemoteContractID", rmnRemoteContractID).Msg("RMN Remote initialized")
+
+	// Deploy the RMN Proxy contract
+	rmnProxyWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "rmn_proxy.wasm")
+	if _, statErr := os.Stat(rmnProxyWasmPath); os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("RMN Proxy WASM not found at %s. Run 'make build' from the chainlink-stellar root to compile contracts.", rmnProxyWasmPath)
+	}
+
+	c.logger.Info().Str("wasmPath", rmnProxyWasmPath).Msg("Deploying RMN Proxy contract...")
+	rmnProxySalt := stellardeployment.GenerateDeterministicSalt(c.deployerKeypair.Address(), "rmn-proxy")
+	rmnProxyContractID, err := c.deployer.DeployContract(ctx, rmnProxyWasmPath, rmnProxySalt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy RMN Proxy contract: %w", err)
+	}
+	c.logger.Info().Str("contractID", rmnProxyContractID).Msg("RMN Proxy contract deployed")
+
+	rmnProxyClient := rmnproxybindings.NewRmnProxyClient(c.deployer, rmnProxyContractID)
+	err = rmnProxyClient.Initialize(ctx, c.deployerKeypair.Address(), rmnRemoteContractID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize RMN Proxy: %w", err)
+	}
+	c.logger.Info().Str("rmnProxyContractID", rmnProxyContractID).Msg("RMN Proxy initialized")
+
+	// Initialize the OnRamp with dependency contracts
 	mockFeeQuoter := mustGenerateMockContractID(c.deployerKeypair.Address(), "fee-quoter")
 	mockFeeAggregator := mustGenerateMockContractID(c.deployerKeypair.Address(), "fee-aggregator")
-	mockRMNRemote := mustGenerateMockContractID(c.deployerKeypair.Address(), "rmn-remote")
 	mockTokenAdminRegistry := mustGenerateMockContractID(c.deployerKeypair.Address(), "token-admin-registry")
 
 	err = c.onRampClient.Initialize(ctx, c.deployerKeypair.Address(), onrampbindings.StaticConfig{
 		ChainSelector:         selector,
 		TokenAdminRegistry:    mockTokenAdminRegistry,
-		RmnProxy:              mockRMNRemote,
+		RmnProxy:              rmnProxyContractID,
 		MaxUsdCentsPerMessage: 10000, // $100
 	}, onrampbindings.DynamicConfig{
 		FeeQuoter:     mockFeeQuoter,
@@ -309,7 +352,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	err = cvClient.Initialize(ctx, c.deployerKeypair.Address(), cvbindings.DynamicConfig{
 		AllowlistAdmin: &allowlistAdmin,
 		FeeAggregator:  &mockFeeAggregator,
-	}, [][]byte{mockStorageLocation}, mockRMNRemote)
+	}, [][]byte{mockStorageLocation}, rmnProxyContractID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Committee Verifier: %w", err)
 	}
@@ -334,6 +377,24 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply outbound implementation updates: %w", err)
 	}
+
+	remoteChainConfigs := make([]cvbindings.RemoteChainConfig, 0, len(remoteSelectors))
+	for _, rs := range remoteSelectors {
+		router := c.deployerKeypair.Address()
+		remoteChainConfigs = append(remoteChainConfigs, cvbindings.RemoteChainConfig{
+			RemoteChainSelector: rs,
+			FeeUsdCents:         0,
+			GasForVerification:  10000, // CANNOT be zero
+			PayloadSizeBytes:    0,
+			AllowlistEnabled:    false,
+			Router:              &router,
+		})
+	}
+	err = cvClient.ApplyRemoteChainCfgUpdates(ctx, remoteChainConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply remote chain config updates on committee verifier: %w", err)
+	}
+	c.logger.Info().Int("count", len(remoteChainConfigs)).Msg("Committee Verifier remote chain configs applied")
 
 	// Add OnRamp to datastore
 	ds.AddressRefStore.Add(datastore.AddressRef{
@@ -422,9 +483,13 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 		ChainSelector: selector,
 	})
 
-	// Add RMN remote refs
+	// Add RMN remote refs — use the deployed RMN Remote contract address
+	rmnRemoteDecoded, err := strkey.Decode(strkey.VersionByteContract, rmnRemoteContractID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode RMN Remote address: %w", err)
+	}
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       contractAddr("stellar-rmn-remote"),
+		Address:       hexutil.Encode(rmnRemoteDecoded),
 		Type:          datastore.ContractType(rmn_remote.ContractType),
 		Version:       semver.MustParse(rmn_remote.Deploy.Version()),
 		ChainSelector: selector,

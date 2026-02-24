@@ -5,8 +5,9 @@ pub mod types;
 
 use common_interfaces::versioned_verifier_resolver::VersionedVerifierResolverClient;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol,
-    TryFromVal, Vec,
+    contract, contractimpl, symbol_short,
+    xdr::FromXdr,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
 use common_authorization::Ownable;
@@ -223,8 +224,7 @@ impl OnRampContract {
                 token_args: Bytes::new(&env),
             }
         } else {
-            let extra_args_val = message.extra_args.to_val();
-            GenericExtraArgsV3::try_from_val(&env, &extra_args_val)
+            GenericExtraArgsV3::from_xdr(&env, &message.extra_args)
                 .map_err(|_| CCIPError::InvalidExtraArgsData)?
         };
 

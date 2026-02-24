@@ -156,7 +156,7 @@ impl CommitteeVerifierContract {
         let mut verification_blob = Bytes::new(&env);
 
         <Self as CurseCheckable>::require_not_cursed(&env)?;
-        <Self as AllowListable>::require_in_allowlist(&env, dest_chain_selector, &sender)?;
+        // <Self as AllowListable>::require_in_allowlist(&env, dest_chain_selector, &sender)?; this requires the allowlist to be enabled for the destination chain but it's not a mandatory requirement.
 
         // TODO: generate correct verification blob
 

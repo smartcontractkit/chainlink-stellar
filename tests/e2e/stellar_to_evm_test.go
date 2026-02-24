@@ -5,12 +5,17 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/rs/zerolog"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stretchr/testify/require"
 
+	chainsel "github.com/smartcontractkit/chain-selectors"
+	cvoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/committee_verifier"
 	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/onramp"
 	ccv "github.com/smartcontractkit/chainlink-ccv/devenv"
 	ccvcommon "github.com/smartcontractkit/chainlink-ccv/devenv/common"
@@ -65,7 +70,7 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 	os.Setenv("CTF_CONFIG_OUTPUT", configOutputPath)
 	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "false")
 
-	stellarChainID := "baefd734b8d3e48472cff83912375fedbc7573701912fe308af730180f97d74a"
+	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
 
 	ctx := ccv.Plog.WithContext(t.Context())
 	l := zerolog.Ctx(ctx)
@@ -117,14 +122,45 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 		startLedger := latestLedger.Sequence
 		l.Info().Uint32("startLedger", startLedger).Msg("Recording start ledger before sending")
 
+		// Look up VVR (Versioned Verifier Resolver) address from the CCV datastore
+		vvrKey := datastore.NewAddressRefKey(
+			stellarDetails.ChainSelector,
+			datastore.ContractType(cvoperations.ResolverType),
+			semver.MustParse(cvoperations.Deploy.Version()),
+			ccvcommon.DefaultCommitteeVerifierQualifier,
+		)
+		vvrRef, err := env.DataStore.Addresses().Get(vvrKey)
+		require.NoError(t, err)
+		vvrBytes, err := hex.DecodeString(strings.TrimPrefix(vvrRef.Address, "0x"))
+		require.NoError(t, err)
+		vvrAddress, err := strkey.Encode(strkey.VersionByteContract, vvrBytes)
+		require.NoError(t, err)
+		l.Info().Str("vvrAddress", vvrAddress).Msg("Found VVR in CCV datastore")
+
 		// Build the CCIP message
 		mockFeeToken := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-token")
+		mockExecutor := helpers.GenerateMockContractID(t, deployerKP.Address(), "executor")
+		extraArgs := onrampbindings.GenericExtraArgsV3{
+			GasLimit:           0,
+			BlockConfirmations: 0,
+			Ccvs:               []string{vvrAddress},
+			CcvArgs:            [][]byte{{}},
+			Executor:           mockExecutor,
+			ExecutorArgs:       []byte{},
+			TokenReceiver:      []byte{},
+			TokenArgs:          []byte{},
+		}
+		extraArgsScVal, err := extraArgs.ToScVal()
+		require.NoError(t, err)
+		extraArgsBytes, err := extraArgsScVal.MarshalBinary()
+		require.NoError(t, err)
+
 		msg := onrampbindings.StellarToAnyMessage{
 			Receiver:     evmReceiver,                    // 20-byte EVM address
 			Data:         []byte("hello from stellar"),   // arbitrary payload
 			TokenAmounts: []onrampbindings.TokenAmount{}, // no token transfer
 			FeeToken:     mockFeeToken,                   // placeholder fee token
-			ExtraArgs:    []byte{},                       // no extra args
+			ExtraArgs:    extraArgsBytes,                 // encoded GenericExtraArgsV3
 		}
 
 		// Send the message via the OnRamp's forward_from_router.
@@ -166,7 +202,20 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 			Str("capturedMessageID", hex.EncodeToString(capturedEvent.MessageID[:])).
 			Uint64("sequenceNumber", uint64(capturedEvent.Message.SequenceNumber)).
 			Uint64("blockNumber", capturedEvent.BlockNumber).
+			Int("receiptsCount", len(capturedEvent.Receipts)).
 			Msg("Message captured via SourceReader")
+
+		for i, r := range capturedEvent.Receipts {
+			l.Info().
+				Int("index", i).
+				Str("issuer", r.Issuer.String()).
+				Uint64("destGasLimit", r.DestGasLimit).
+				Uint32("destBytesOverhead", r.DestBytesOverhead).
+				Str("feeTokenAmount", r.FeeTokenAmount.String()).
+				Str("extraArgs", hex.EncodeToString(r.ExtraArgs)).
+				Str("blob", hex.EncodeToString(r.Blob)).
+				Msg("Receipt")
+		}
 
 		// Verify the captured event matches what we sent
 		require.Equal(t, protocol.Bytes32(messageID), capturedEvent.MessageID,

@@ -323,21 +323,3 @@ func TestGetBlocksHeaders(t *testing.T) {
 		assert.Contains(t, err.Error(), "exceeds uint32")
 	})
 }
-
-func TestTransferEventStruct(t *testing.T) {
-	t.Run("struct initialization", func(t *testing.T) {
-		event := TransferEvent{
-			From:            "GABC123...",
-			To:              "GDEF456...",
-			Amount:          nil,
-			Ledger:          61068906,
-			TransactionHash: "abc123def456",
-		}
-
-		assert.Equal(t, "GABC123...", event.From)
-		assert.Equal(t, "GDEF456...", event.To)
-		assert.Nil(t, event.Amount)
-		assert.Equal(t, uint32(61068906), event.Ledger)
-		assert.Equal(t, "abc123def456", event.TransactionHash)
-	})
-}
