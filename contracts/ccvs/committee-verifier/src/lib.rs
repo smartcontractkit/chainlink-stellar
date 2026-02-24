@@ -3,7 +3,7 @@
 mod events;
 pub mod types;
 
-use common_authorization::allowlist::AllowListable;
+use common_authorization::allowlist::{AllowListEntry, AllowListUpdate, AllowListable};
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
@@ -13,7 +13,7 @@ use common_verifier::signatures::{SignatureQuorum, SignatureQuorumConfig};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
-use types::{AllowListUpdate, DynamicConfig, RemoteChainConfig};
+use types::{DynamicConfig, RemoteChainConfig};
 
 // ============================================================
 // Storage Keys
@@ -62,11 +62,9 @@ impl CurseCheckable for CommitteeVerifierContract {
     const RMN_PROXY: Symbol = RMN_PROXY;
 }
 
-#[contractimpl]
+#[contractimpl(contracttrait)]
 impl AllowListable for CommitteeVerifierContract {
     const ALLOW_LIST: Symbol = ALLOWLIST;
-
-    type AllowListUpdate = AllowListUpdate;
 
     fn emit_allowlist_updated_event(
         env: &Env,
@@ -144,7 +142,7 @@ impl CommitteeVerifierContract {
     // ========================================
 
     /// Source-side hook that checks sender permissions and returns version tag.
-    pub fn forward_to_resolver(
+    pub fn forward_to_verifier(
         env: Env,
         dest_chain_selector: u64,
         sender: Address,
@@ -177,8 +175,7 @@ impl CommitteeVerifierContract {
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
 
-        // TODO: check if cursed by RMNProxy
-        // Self::assert_not_cursed_by_rmn(&env, source_chain_selector)?;
+        <Self as CurseCheckable>::require_not_cursed(&env)?;
 
         if verifier_results.len() < VERIFIER_VERSION_BYTES + SIGNATURE_LENGTH_BYTES {
             return Err(CCIPError::InvalidVerifierResults);

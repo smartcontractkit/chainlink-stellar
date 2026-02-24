@@ -63,7 +63,7 @@ func generateConstructor(b *strings.Builder, contract *Contract) {
 	b.WriteString("}\n\n")
 
 	// ContractID getter
-	b.WriteString(fmt.Sprintf("// ContractID returns the contract ID.\n"))
+	b.WriteString("// ContractID returns the contract ID.\n")
 	b.WriteString(fmt.Sprintf("func (c *%sClient) ContractID() string {\n", contract.Name))
 	b.WriteString("\treturn c.contractID\n")
 	b.WriteString("}\n\n")
@@ -91,11 +91,26 @@ func generateMethod(b *strings.Builder, contract *Contract, fn Function) {
 	// Build return type
 	var returns string
 	if returnsValue {
-		goReturnType := rustTypeToGo(returnType)
-		if isStructType(returnType) {
-			returns = fmt.Sprintf("(*%s, error)", goReturnType)
+		if isTupleType(returnType) {
+			var goTypes []string
+			for _, t := range parseTupleTypes(returnType) {
+				gt := rustTypeToGo(t)
+				if !strings.HasPrefix(t, "Option<") && isStructType(t) {
+					gt = "*" + gt
+				}
+				goTypes = append(goTypes, gt)
+			}
+			returns = fmt.Sprintf("(%s, error)", strings.Join(goTypes, ", "))
 		} else {
-			returns = fmt.Sprintf("(%s, error)", goReturnType)
+			goReturnType := rustTypeToGo(returnType)
+			if strings.HasPrefix(returnType, "Option<") {
+				// rustTypeToGo already returns *T for Option<T>, no extra * needed
+				returns = fmt.Sprintf("(%s, error)", goReturnType)
+			} else if isStructType(returnType) {
+				returns = fmt.Sprintf("(*%s, error)", goReturnType)
+			} else {
+				returns = fmt.Sprintf("(%s, error)", goReturnType)
+			}
 		}
 	} else {
 		returns = "error"
@@ -189,6 +204,18 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\t\treturn nil, err\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
+	case strings.HasPrefix(returnType, "Option<"):
+		innerType := strings.TrimSuffix(strings.TrimPrefix(returnType, "Option<"), ">")
+		innerType = strings.TrimSpace(innerType)
+		structName := extractStructName(innerType)
+		b.WriteString("\tif result.Type == xdr.ScValTypeScvVoid {\n")
+		b.WriteString("\t\treturn nil, nil\n")
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\tv, err := %sFromScVal(*result)\n", structName))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn nil, err\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn v, nil\n")
 	case returnType == "u128":
 		b.WriteString("\tv, err := scval.U128FromScVal(*result)\n")
 		b.WriteString("\tif err != nil {\n")
@@ -196,19 +223,12 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
 	case strings.HasPrefix(returnType, "soroban_sdk::BytesN<"):
-		if extractBytesNSize(returnType) == 4 {
-			b.WriteString("\tv, err := scval.Bytes4FromScVal(*result)\n")
-			b.WriteString("\tif err != nil {\n")
-			b.WriteString("\t\treturn [4]byte{}, err\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\treturn v, nil\n")
-		} else {
-			b.WriteString("\tv, err := scval.Bytes32FromScVal(*result)\n")
-			b.WriteString("\tif err != nil {\n")
-			b.WriteString("\t\treturn [32]byte{}, err\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\treturn v, nil\n")
-		}
+		n := extractBytesNSize(returnType)
+		b.WriteString(fmt.Sprintf("\tv, err := scval.Bytes%dFromScVal(*result)\n", n))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn [%d]byte{}, err\n", n))
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn v, nil\n")
 	case strings.HasPrefix(returnType, "soroban_sdk::Vec<"):
 		innerType := extractVecInnerType(returnType)
 		if innerType == "soroban_sdk::Address" {
@@ -239,6 +259,21 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 			b.WriteString("\t\tout[i] = []byte(v)\n")
 			b.WriteString("\t}\n")
 			b.WriteString("\treturn out, nil\n")
+		} else if n := extractBytesNSize(innerType); n > 0 {
+			goType := rustTypeToGo(innerType)
+			b.WriteString("\tvec, ok := result.GetVec()\n")
+			b.WriteString("\tif !ok || vec == nil {\n")
+			b.WriteString("\t\treturn nil, fmt.Errorf(\"expected vec return type\")\n")
+			b.WriteString("\t}\n")
+			b.WriteString(fmt.Sprintf("\tout := make([]%s, len(*vec))\n", goType))
+			b.WriteString("\tfor i, item := range *vec {\n")
+			b.WriteString(fmt.Sprintf("\t\tv, err := scval.Bytes%dFromScVal(item)\n", n))
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString("\t\t\treturn nil, err\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tout[i] = v\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn out, nil\n")
 		} else {
 			structName := extractStructName(innerType)
 			b.WriteString("\tvec, ok := result.GetVec()\n")
@@ -255,6 +290,24 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 			b.WriteString("\t}\n")
 			b.WriteString("\treturn out, nil\n")
 		}
+	case isTupleType(returnType):
+		types := parseTupleTypes(returnType)
+		zeros := zeroValue(returnType)
+		b.WriteString("\tvec, ok := result.GetVec()\n")
+		b.WriteString("\tif !ok || vec == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"expected vec for tuple return\")\n", zeros))
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\tif len(*vec) != %d {\n", len(types)))
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"expected %d elements, got %%d\", len(*vec))\n", zeros, len(types)))
+		b.WriteString("\t}\n\n")
+		for i, t := range types {
+			generateTupleElementParsing(b, t, i, zeros)
+		}
+		var retVars []string
+		for i := range types {
+			retVars = append(retVars, fmt.Sprintf("v%d", i))
+		}
+		b.WriteString(fmt.Sprintf("\treturn %s, nil\n", strings.Join(retVars, ", ")))
 	default:
 		// Struct type
 		structName := extractStructName(returnType)
@@ -370,13 +423,52 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = []byte(v)\n", target))
 		b.WriteString("\t\t\t}\n")
 	case strings.HasPrefix(f.Type, "soroban_sdk::BytesN<"):
-		if extractBytesNSize(f.Type) == 4 {
-			b.WriteString("\t\t\tv, err := scval.Bytes4FromScVal(entry.Val)\n")
-		} else {
-			b.WriteString("\t\t\tv, err := scval.Bytes32FromScVal(entry.Val)\n")
-		}
+		n := extractBytesNSize(f.Type)
+		b.WriteString(fmt.Sprintf("\t\t\tv, err := scval.Bytes%dFromScVal(entry.Val)\n", n))
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
+	case strings.HasPrefix(f.Type, "soroban_sdk::Vec<"):
+		innerType := extractVecInnerType(f.Type)
+		b.WriteString("\t\t\tvec, ok := entry.Val.GetVec()\n")
+		b.WriteString("\t\t\tif ok && vec != nil {\n")
+		if innerType == "soroban_sdk::Address" {
+			b.WriteString(fmt.Sprintf("\t\t\t\tparsed := make([]string, len(*vec))\n"))
+			b.WriteString("\t\t\t\tfor i, item := range *vec {\n")
+			b.WriteString("\t\t\t\t\tv, err := scval.AddressFromScVal(item)\n")
+			b.WriteString("\t\t\t\t\tif err == nil {\n")
+			b.WriteString("\t\t\t\t\t\tparsed[i] = v\n")
+			b.WriteString("\t\t\t\t\t}\n")
+			b.WriteString("\t\t\t\t}\n")
+		} else if innerType == "soroban_sdk::Bytes" {
+			b.WriteString("\t\t\t\tparsed := make([][]byte, len(*vec))\n")
+			b.WriteString("\t\t\t\tfor i, item := range *vec {\n")
+			b.WriteString("\t\t\t\t\tv, ok := item.GetBytes()\n")
+			b.WriteString("\t\t\t\t\tif ok {\n")
+			b.WriteString("\t\t\t\t\t\tparsed[i] = []byte(v)\n")
+			b.WriteString("\t\t\t\t\t}\n")
+			b.WriteString("\t\t\t\t}\n")
+		} else if n := extractBytesNSize(innerType); n > 0 {
+			goType := rustTypeToGo(innerType)
+			b.WriteString(fmt.Sprintf("\t\t\t\tparsed := make([]%s, len(*vec))\n", goType))
+			b.WriteString("\t\t\t\tfor i, item := range *vec {\n")
+			b.WriteString(fmt.Sprintf("\t\t\t\t\tv, err := scval.Bytes%dFromScVal(item)\n", n))
+			b.WriteString("\t\t\t\t\tif err == nil {\n")
+			b.WriteString("\t\t\t\t\t\tparsed[i] = v\n")
+			b.WriteString("\t\t\t\t\t}\n")
+			b.WriteString("\t\t\t\t}\n")
+		} else {
+			goType := rustTypeToGo(innerType)
+			b.WriteString(fmt.Sprintf("\t\t\t\tparsed := make([]%s, 0, len(*vec))\n", goType))
+			b.WriteString("\t\t\t\tfor _, item := range *vec {\n")
+			structName := extractStructName(innerType)
+			b.WriteString(fmt.Sprintf("\t\t\t\t\tv, err := %sFromScVal(item)\n", structName))
+			b.WriteString("\t\t\t\t\tif err == nil {\n")
+			b.WriteString("\t\t\t\t\t\tparsed = append(parsed, *v)\n")
+			b.WriteString("\t\t\t\t\t}\n")
+			b.WriteString("\t\t\t\t}\n")
+		}
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = parsed\n", target))
 		b.WriteString("\t\t\t}\n")
 	default:
 		b.WriteString("\t\t\t// TODO: parse complex type\n")
@@ -395,12 +487,16 @@ func isReadOnlyFunction(fn Function) bool {
 
 func parseReturnType(returnStr string) (string, bool) {
 	returnStr = strings.TrimSpace(returnStr)
+
+	if returnStr == "" {
+		return "", false
+	}
+
 	// Option<InnerType> - return full type so rustTypeToGo can produce *string
 	if strings.HasPrefix(returnStr, "Option<") {
 		return returnStr, true
-	}
-	// Result<RetType, Error> or Result<(), Error>
-	if strings.HasPrefix(returnStr, "Result<") {
+	} else if strings.HasPrefix(returnStr, "Result<") {
+		// Result<RetType, Error> or Result<(), Error>
 		inner := strings.TrimSuffix(strings.TrimPrefix(returnStr, "Result<"), ">")
 		parts := splitReturnType(inner)
 		if len(parts) >= 1 {
@@ -409,12 +505,13 @@ func parseReturnType(returnStr string) (string, bool) {
 				return "", false
 			}
 			if strings.HasPrefix(okType, "(") {
-				return "", false // Skip tuple returns for now
+				return okType, true
 			}
 			return okType, true
 		}
 	}
-	return "", false
+
+	return returnStr, true
 }
 
 func splitReturnType(s string) []string {
@@ -462,7 +559,9 @@ func isStructType(rustType string) bool {
 		return false
 	}
 	if strings.HasPrefix(rustType, "Option<") {
-		return false
+		inner := strings.TrimSuffix(strings.TrimPrefix(rustType, "Option<"), ">")
+		inner = strings.TrimSpace(inner)
+		return isStructType(inner)
 	}
 	return true
 }
@@ -490,10 +589,8 @@ func getArgConverter(rustType, varName string) string {
 	}
 
 	if strings.HasPrefix(rustType, "soroban_sdk::BytesN<") {
-		if extractBytesNSize(rustType) == 4 {
-			return fmt.Sprintf("scval.Bytes4ToScVal(%s)", varName)
-		}
-		return fmt.Sprintf("scval.Bytes32ToScVal(%s)", varName)
+		n := extractBytesNSize(rustType)
+		return fmt.Sprintf("scval.Bytes%dToScVal(%s)", n, varName)
 	}
 
 	if strings.HasPrefix(rustType, "soroban_sdk::Vec<") {
@@ -504,11 +601,8 @@ func getArgConverter(rustType, varName string) string {
 		if innerType == "soroban_sdk::Bytes" {
 			return fmt.Sprintf("scval.BytesSliceToScVal(%s)", varName)
 		}
-		if extractBytesNSize(innerType) == 4 {
-			return fmt.Sprintf("scval.Bytes4SliceToScVal(%s)", varName)
-		}
-		if extractBytesNSize(innerType) == 32 {
-			return fmt.Sprintf("scval.AddressBytes32SliceToScVal(%s)", varName)
+		if n := extractBytesNSize(innerType); n > 0 {
+			return fmt.Sprintf("scval.Bytes%dSliceToScVal(%s)", n, varName)
 		}
 		return fmt.Sprintf("scval.StructSliceToScVal(%s)", varName)
 	}
@@ -518,6 +612,14 @@ func getArgConverter(rustType, varName string) string {
 }
 
 func zeroValue(rustType string) string {
+	if isTupleType(rustType) {
+		types := parseTupleTypes(rustType)
+		zeros := make([]string, len(types))
+		for i, t := range types {
+			zeros[i] = zeroValue(t)
+		}
+		return strings.Join(zeros, ", ")
+	}
 	switch rustType {
 	case "u64", "u32", "i128":
 		return "0"
@@ -532,12 +634,114 @@ func zeroValue(rustType string) string {
 		return "nil"
 	}
 	if strings.HasPrefix(rustType, "soroban_sdk::BytesN<") {
-		if extractBytesNSize(rustType) == 4 {
-			return "[4]byte{}"
-		}
-		return "[32]byte{}"
+		n := extractBytesNSize(rustType)
+		return fmt.Sprintf("[%d]byte{}", n)
 	}
 	return "nil"
+}
+
+func isTupleType(rustType string) bool {
+	return strings.HasPrefix(rustType, "(") && strings.HasSuffix(rustType, ")")
+}
+
+func parseTupleTypes(tupleType string) []string {
+	inner := strings.TrimSuffix(strings.TrimPrefix(tupleType, "("), ")")
+	return splitReturnType(inner)
+}
+
+func generateTupleElementParsing(b *strings.Builder, rustType string, idx int, zeros string) {
+	elem := fmt.Sprintf("(*vec)[%d]", idx)
+	v := fmt.Sprintf("v%d", idx)
+
+	switch {
+	case rustType == "u32":
+		b.WriteString(fmt.Sprintf("\t%sRaw, ok := %s.GetU32()\n", v, elem))
+		b.WriteString("\tif !ok {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: expected u32\")\n", zeros, idx))
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\t%s := uint32(%sRaw)\n\n", v, v))
+	case rustType == "u64":
+		b.WriteString(fmt.Sprintf("\t%s, err := scval.Uint64FromScVal(%s)\n", v, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case rustType == "i128":
+		b.WriteString(fmt.Sprintf("\t%s, err := scval.I128FromScVal(%s)\n", v, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case rustType == "bool":
+		b.WriteString(fmt.Sprintf("\t%s, ok := %s.GetB()\n", v, elem))
+		b.WriteString("\tif !ok {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: expected bool\")\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case rustType == "soroban_sdk::Address":
+		b.WriteString(fmt.Sprintf("\t%s, err := scval.AddressFromScVal(%s)\n", v, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case rustType == "soroban_sdk::Bytes":
+		b.WriteString(fmt.Sprintf("\t%sBytes, ok := %s.GetBytes()\n", v, elem))
+		b.WriteString("\tif !ok {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: expected bytes\")\n", zeros, idx))
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\t%s := []byte(%sBytes)\n\n", v, v))
+	case strings.HasPrefix(rustType, "soroban_sdk::BytesN<"):
+		n := extractBytesNSize(rustType)
+		b.WriteString(fmt.Sprintf("\t%s, err := scval.Bytes%dFromScVal(%s)\n", v, n, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case strings.HasPrefix(rustType, "soroban_sdk::Vec<"):
+		innerType := extractVecInnerType(rustType)
+		goElemType := rustTypeToGo(innerType)
+		b.WriteString(fmt.Sprintf("\t%sVec, ok := %s.GetVec()\n", v, elem))
+		b.WriteString(fmt.Sprintf("\tif !ok || %sVec == nil {\n", v))
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: expected vec\")\n", zeros, idx))
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\t%s := make([]%s, len(*%sVec))\n", v, goElemType, v))
+		b.WriteString(fmt.Sprintf("\tfor i, item := range *%sVec {\n", v))
+		switch {
+		case innerType == "u64":
+			b.WriteString("\t\tval, err := scval.Uint64FromScVal(item)\n")
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString(fmt.Sprintf("\t\t\treturn %s, fmt.Errorf(\"tuple[%d][%%d]: %%w\", i, err)\n", zeros, idx))
+			b.WriteString("\t\t}\n")
+			b.WriteString(fmt.Sprintf("\t\t%s[i] = val\n", v))
+		case innerType == "u32":
+			b.WriteString("\t\tval, ok := item.GetU32()\n")
+			b.WriteString("\t\tif !ok {\n")
+			b.WriteString(fmt.Sprintf("\t\t\treturn %s, fmt.Errorf(\"tuple[%d][%%d]: expected u32\", i)\n", zeros, idx))
+			b.WriteString("\t\t}\n")
+			b.WriteString(fmt.Sprintf("\t\t%s[i] = uint32(val)\n", v))
+		case innerType == "soroban_sdk::Address":
+			b.WriteString("\t\tval, err := scval.AddressFromScVal(item)\n")
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString(fmt.Sprintf("\t\t\treturn %s, fmt.Errorf(\"tuple[%d][%%d]: %%w\", i, err)\n", zeros, idx))
+			b.WriteString("\t\t}\n")
+			b.WriteString(fmt.Sprintf("\t\t%s[i] = val\n", v))
+		case innerType == "soroban_sdk::Bytes":
+			b.WriteString("\t\tval, ok := item.GetBytes()\n")
+			b.WriteString("\t\tif !ok {\n")
+			b.WriteString(fmt.Sprintf("\t\t\treturn %s, fmt.Errorf(\"tuple[%d][%%d]: expected bytes\", i)\n", zeros, idx))
+			b.WriteString("\t\t}\n")
+			b.WriteString(fmt.Sprintf("\t\t%s[i] = []byte(val)\n", v))
+		default:
+			structName := extractStructName(innerType)
+			b.WriteString(fmt.Sprintf("\t\tval, err := %sFromScVal(item)\n", structName))
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString(fmt.Sprintf("\t\t\treturn %s, fmt.Errorf(\"tuple[%d][%%d]: %%w\", i, err)\n", zeros, idx))
+			b.WriteString("\t\t}\n")
+			b.WriteString(fmt.Sprintf("\t\t%s[i] = *val\n", v))
+		}
+		b.WriteString("\t}\n\n")
+	default:
+		structName := extractStructName(rustType)
+		b.WriteString(fmt.Sprintf("\t%s, err := %sFromScVal(%s)\n", v, structName, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	}
 }
 
 func snakeToCamel(s string) string {

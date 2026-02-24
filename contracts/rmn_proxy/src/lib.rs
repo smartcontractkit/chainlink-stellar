@@ -2,6 +2,7 @@
 
 mod events;
 
+use common_interfaces::rmn_remote::RmnRemoteClient;
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 
 use common_authorization::Ownable;
@@ -112,32 +113,20 @@ impl RmnProxyContract {
 
     /// Check if the network is globally cursed.
     ///
-    /// In the EVM architecture, this delegates to the RMN Remote via the proxy's
-    /// fallback function. In Soroban, we expose it as an explicit method.
-    ///
-    /// Currently returns `false` because no RMN Remote contract exists yet.
-    /// When the RMN Remote is implemented, this will become a cross-contract call:
-    /// ```ignore
-    /// let rmn_addr = Self::get_rmn(env.clone())?;
-    /// let rmn_client = rmn_remote::RmnRemoteClient::new(&env, &rmn_addr);
-    /// Ok(rmn_client.is_cursed())
-    /// ```
-    ///
     /// # Returns
     /// `true` if the network is cursed and operations should be halted
     pub fn is_cursed(env: Env) -> Result<bool, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
 
-        // TODO: Delegate to RMN Remote when it exists.
-        // For now, return false (not cursed) to allow the system to operate.
-        // The RMN address is stored and ready for delegation.
-        let _rmn: Address = env
+        // Delegate to RMN Remote when it exists
+        let rmn: Address = env
             .storage()
             .instance()
             .get(&RMN)
             .ok_or(CCIPError::NotInitialized)?;
 
-        Ok(false)
+        let rmn_client = RmnRemoteClient::new(&env, &rmn);
+        Ok(rmn_client.is_cursed())
     }
 }
 

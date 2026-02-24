@@ -13,7 +13,7 @@ pub struct StaticConfig {
     /// Token admin registry contract address
     pub token_admin_registry: Address,
     /// RMN remote contract address (for curse checking)
-    pub rmn_remote: Address,
+    pub rmn_proxy: Address,
     /// Maximum USD cents value per message (safety limit)
     pub max_usd_cents_per_message: u32,
 }

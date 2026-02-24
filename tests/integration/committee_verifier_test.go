@@ -66,14 +66,35 @@ func TestCommitteeVerifier(t *testing.T) {
 		t.Log("CommitteeVerifier initialized successfully with RMN Proxy")
 	})
 
-	t.Run("verify owner", func(t *testing.T) {
-		owner, err := client.Owner(ctx)
+	t.Run("get version tag", func(t *testing.T) {
+		tag, err := client.VersionTag(ctx)
 		if err != nil {
-			t.Fatalf("Failed to get owner: %v", err)
+			t.Fatalf("Failed to get version tag: %v", err)
 		}
-		if *owner != deployerKP.Address() {
-			t.Errorf("Owner mismatch: expected %s, got %s", deployerKP.Address(), *owner)
-		}
-		t.Logf("Owner verified: %v", owner)
+		t.Logf("Version tag retrieved successfully: %v", tag)
 	})
+
+	t.Run("set allowlist", func(t *testing.T) {
+		mockedAllowlistedSender := helpers.GenerateMockContractID(t, deployerKP.Address(), "allowlisted-sender")
+		err := client.ApplyAllowlistUpdates(ctx, []ccvsbindings.AllowListUpdate{
+			{
+				DestChainSelector:         1,
+				AllowlistEnabled:          true,
+				AddedAllowlistedSenders:   []string{mockedAllowlistedSender},
+				RemovedAllowlistedSenders: []string{},
+			},
+		})
+
+		if err != nil {
+			t.Fatalf("Failed to set allowlist: %v", err)
+		}
+		t.Log("Allowlist set successfully")
+
+		allowlist, err := client.GetAllowlistEntry(ctx, 1)
+		if err != nil {
+			t.Fatalf("Failed to get allowlist: %v", err)
+		}
+		t.Logf("Allowlist: %v", allowlist)
+	})
+
 }

@@ -247,7 +247,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	err = c.onRampClient.Initialize(ctx, c.deployerKeypair.Address(), onrampbindings.StaticConfig{
 		ChainSelector:         selector,
 		TokenAdminRegistry:    mockTokenAdminRegistry,
-		RmnRemote:             mockRMNRemote,
+		RmnProxy:              mockRMNRemote,
 		MaxUsdCentsPerMessage: 10000, // $100
 	}, onrampbindings.DynamicConfig{
 		FeeQuoter:     mockFeeQuoter,

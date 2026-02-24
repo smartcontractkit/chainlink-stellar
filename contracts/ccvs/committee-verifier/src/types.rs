@@ -1,8 +1,7 @@
-use common_authorization::allowlist::AllowListUpdateInterface;
 use common_error::CCIPError;
 use common_helpers::validation::Validatable;
 use common_verifier::base_verifier::RemoteChainConfigInterface;
-use soroban_sdk::{contracttype, Address, Vec};
+use soroban_sdk::{contracttype, Address};
 
 /// Dynamic config mirrored from EVM CommitteeVerifier.DynamicConfig.
 #[contracttype]
@@ -52,35 +51,5 @@ impl Validatable for RemoteChainConfig {
         // TODO: add other validation rules here
 
         Ok(())
-    }
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AllowListUpdate {
-    pub dest_chain_selector: u64,
-    // pub allowlist_enabled: bool,
-    pub added_allowlisted_senders: Vec<Address>,
-    pub removed_allowlisted_senders: Vec<Address>,
-}
-
-impl Validatable for AllowListUpdate {
-    fn validate(&self) -> Result<(), CCIPError> {
-        // TODO: add validation rules here
-        Ok(())
-    }
-}
-
-impl AllowListUpdateInterface for AllowListUpdate {
-    fn key(&self) -> u64 {
-        self.dest_chain_selector
-    }
-
-    fn get_allowlist_addresses_to_add(&self) -> Vec<Address> {
-        self.added_allowlisted_senders.clone()
-    }
-
-    fn get_allowlist_addresses_to_remove(&self) -> Vec<Address> {
-        self.removed_allowlisted_senders.clone()
     }
 }

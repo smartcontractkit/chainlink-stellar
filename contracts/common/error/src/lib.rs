@@ -115,4 +115,18 @@ pub enum CCIPError {
     OffRampMismatch = 61,
     BadRMNSignal = 62,
     UnsupportedDestinationChain = 63,
+
+    // ============================================================
+    // RMN Remote errors (mirrors RMNRemote.sol error set)
+    // ============================================================
+    AlreadyCursed = 64,
+    ConfigNotSet = 65,
+    DuplicateOnchainPublicKey = 66,
+    InvalidSignerOrder = 67,
+    NotEnoughSigners = 68,
+    NotCursed = 69,
+    OutOfOrderSignatures = 70,
+    ThresholdNotMet = 71,
+    UnexpectedSigner = 72,
+    ZeroValueNotAllowed = 73,
 }

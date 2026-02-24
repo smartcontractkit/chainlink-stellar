@@ -8,6 +8,7 @@ members = [
   "contracts/pools/*",
   "contracts/registry",
   "contracts/rmn_proxy",
+  "contracts/rmn_remote",
   "contracts/router",
   "contracts/common/*",
 ]
@@ -24,6 +25,7 @@ common-helpers = { path = "contracts/common/helpers" }
 fee-quoter = { path = "contracts/fee-quoter" }
 onramp = { path = "contracts/onramp" }
 rmn_proxy = { path = "contracts/rmn_proxy" }
+rmn_remote = { path = "contracts/rmn_remote" }
 router = { path = "contracts/router" }
 ccvs-versioned-verifier-resolver = { path = "contracts/ccvs/versioned-verifier-resolver" }
 

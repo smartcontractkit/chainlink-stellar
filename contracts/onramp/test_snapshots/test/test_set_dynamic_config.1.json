@@ -133,6 +133,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "RMN_PROXY"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "STATIC"
                       },
                       "val": {
@@ -155,7 +163,7 @@
                           },
                           {
                             "key": {
-                              "symbol": "rmn_remote"
+                              "symbol": "rmn_proxy"
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"

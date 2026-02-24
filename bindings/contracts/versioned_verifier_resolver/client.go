@@ -52,18 +52,25 @@ func (c *VersionedVerifierResolverClient) Owner(ctx context.Context) (*string, e
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *VersionedVerifierResolverClient) IsOwner(ctx context.Context, addr string) error {
+func (c *VersionedVerifierResolverClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call is_owner: %w", err)
+		return false, fmt.Errorf("failed to call is_owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_owner")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
 }
 
 // InitOwner calls the init_owner function on the contract.
@@ -304,29 +311,59 @@ func (c *VersionedVerifierResolverClient) GetOutboundImplementation(ctx context.
 }
 
 // GetAllInboundImplementations calls the get_all_inbound_implementations function on the contract.
-func (c *VersionedVerifierResolverClient) GetAllInboundImplementations(ctx context.Context) error {
+func (c *VersionedVerifierResolverClient) GetAllInboundImplementations(ctx context.Context) ([]InboundImplementationArgs, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_inbound_implementations", args)
 	if err != nil {
-		return fmt.Errorf("failed to call get_all_inbound_implementations: %w", err)
+		return nil, fmt.Errorf("failed to call get_all_inbound_implementations: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_all_inbound_implementations")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]InboundImplementationArgs, len(*vec))
+	for i, item := range *vec {
+		v, err := InboundImplementationArgsFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = *v
+	}
+	return out, nil
 }
 
 // GetAllOutboundImplementations calls the get_all_outbound_implementations function on the contract.
-func (c *VersionedVerifierResolverClient) GetAllOutboundImplementations(ctx context.Context) error {
+func (c *VersionedVerifierResolverClient) GetAllOutboundImplementations(ctx context.Context) ([]OutboundImplementationArgs, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_outbound_implementations", args)
 	if err != nil {
-		return fmt.Errorf("failed to call get_all_outbound_implementations: %w", err)
+		return nil, fmt.Errorf("failed to call get_all_outbound_implementations: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_all_outbound_implementations")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]OutboundImplementationArgs, len(*vec))
+	for i, item := range *vec {
+		v, err := OutboundImplementationArgsFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = *v
+	}
+	return out, nil
 }
 
 // WaitForInboundImplSetEvent waits for a InboundImplSetEvent event.
@@ -1100,3 +1137,4 @@ func parseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 
 	return result, nil
 }
+

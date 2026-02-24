@@ -94,7 +94,33 @@ pub trait FeeQuoterInterface {
         token: soroban_sdk::Address,
     ) -> Result<u128, CCIPError>;
 }
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListEntry {
+    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListUpdate {
+    pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
+    pub dest_chain_selector: u64,
+    pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
+}
 
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct GenericExtraArgsV3 {
+    pub block_confirmations: u32,
+    pub ccv_args: soroban_sdk::Vec<soroban_sdk::Bytes>,
+    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub executor: soroban_sdk::Address,
+    pub executor_args: soroban_sdk::Bytes,
+    pub gas_limit: u32,
+    pub token_args: soroban_sdk::Bytes,
+    pub token_receiver: soroban_sdk::Bytes,
+}
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
@@ -253,6 +279,16 @@ pub enum CCIPError {
     OffRampMismatch = 61,
     BadRMNSignal = 62,
     UnsupportedDestinationChain = 63,
+    AlreadyCursed = 64,
+    ConfigNotSet = 65,
+    DuplicateOnchainPublicKey = 66,
+    InvalidSignerOrder = 67,
+    NotEnoughSigners = 68,
+    NotCursed = 69,
+    OutOfOrderSignatures = 70,
+    ThresholdNotMet = 71,
+    UnexpectedSigner = 72,
+    ZeroValueNotAllowed = 73,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

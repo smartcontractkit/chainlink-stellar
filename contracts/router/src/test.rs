@@ -14,16 +14,19 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let rmn_proxy_addr = env.register(rmn_proxy::RmnProxyContract, ());
-    let rmn_mock = Address::generate(&env); // Mock RMN Remote address
 
-    // Initialize the RMN Proxy so it can respond to is_cursed() calls
+    // Deploy and initialize RMN Remote so proxy can delegate is_cursed() to it
+    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
+    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &1u64);
+
+    let rmn_proxy_addr = env.register(rmn_proxy::RmnProxyContract, ());
     let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_addr);
-    rmn_proxy_client.initialize(&owner, &rmn_mock);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
     let router_id = env.register(RouterContract, ());
 
-    (env, router_id, owner, rmn_proxy_addr, rmn_mock)
+    (env, router_id, owner, rmn_proxy_addr, rmn_remote_id)
 }
 
 // ============================================================
@@ -250,16 +253,18 @@ fn test_ccip_send_full_flow() {
 
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
-    let rmn_mock = Address::generate(&env);
 
-    // ---- Deploy all three contracts ----
+    // ---- Deploy RMN Remote and Proxy ----
+    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
+    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &1u64);
+
     let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
+    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
     let router_id = env.register(RouterContract, ());
     let onramp_id = env.register(onramp::OnRampContract, ());
-
-    // ---- Initialize RMN Proxy ----
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_mock);
 
     // ---- Initialize Router ----
     let router_client = RouterContractClient::new(&env, &router_id);
@@ -272,7 +277,7 @@ fn test_ccip_send_full_flow() {
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
         token_admin_registry: Address::generate(&env),
-        rmn_remote: rmn_mock.clone(),
+        rmn_proxy: rmn_proxy_id.clone(),
         max_usd_cents_per_message: 100_000,
     };
 
@@ -332,13 +337,16 @@ fn test_ccip_send_unsupported_chain() {
 
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
-    let rmn_mock = Address::generate(&env);
+
+    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
+    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &1u64);
 
     let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
-    let router_id = env.register(RouterContract, ());
-
     let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_mock);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
 
     let router_client = RouterContractClient::new(&env, &router_id);
     router_client.initialize(&owner, &rmn_proxy_id);
@@ -365,14 +373,17 @@ fn test_get_fee_via_onramp() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let rmn_mock = Address::generate(&env);
+
+    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
+    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &1u64);
 
     let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
+    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
     let router_id = env.register(RouterContract, ());
     let onramp_id = env.register(onramp::OnRampContract, ());
-
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_mock);
 
     let router_client = RouterContractClient::new(&env, &router_id);
     router_client.initialize(&owner, &rmn_proxy_id);
@@ -383,7 +394,7 @@ fn test_get_fee_via_onramp() {
         &StaticConfig {
             chain_selector: 12345,
             token_admin_registry: Address::generate(&env),
-            rmn_remote: rmn_mock.clone(),
+            rmn_proxy: rmn_proxy_id.clone(),
             max_usd_cents_per_message: 100_000,
         },
         &DynamicConfig {

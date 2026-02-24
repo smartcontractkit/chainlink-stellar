@@ -6,6 +6,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, BytesN, Env};
 use crate::types::{DynamicConfig, RemoteChainConfig};
 use crate::{CommitteeVerifierContract, CommitteeVerifierContractClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
+use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 
 fn default_dynamic_config(env: &Env) -> DynamicConfig {
     DynamicConfig {
@@ -41,26 +42,19 @@ fn setup() -> (
     let owner = Address::generate(&env);
     let storage_locations = vec![&env];
 
-    // Initialize RMN Proxy (dep)
+    // Initialize RMN Remote and Proxy (required for require_not_cursed / is_cursed)
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &1u64);
+
     let rmn_proxy = env.register(RmnProxyContract, ());
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
-    let rmn_remote = Address::generate(&env);
-    rmn_proxy_client.initialize(&owner, &rmn_remote);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
     let dynamic_config = default_dynamic_config(&env);
     client.initialize(&owner, &dynamic_config, &storage_locations, &rmn_proxy);
 
     (env, client, owner, rmn_proxy, storage_locations)
-}
-
-fn setup_uninitialized() -> (Env, CommitteeVerifierContractClient<'static>) {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(CommitteeVerifierContract, ());
-    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
-
-    (env, client)
 }
 
 // ============================================================
@@ -204,12 +198,12 @@ fn test_transfer_ownership() {
 }
 
 // ============================================================
-// Forward to Resolver Tests
+// Forward to Verifier Tests
 // ============================================================
 
 #[test]
 #[should_panic(expected = "Error(Contract, #10)")] // FeatureNotEnabled
-fn test_forward_to_resolver_fails_when_allowlist_not_enabled_for_chain() {
+fn test_forward_to_verifier_fails_when_allowlist_not_enabled_for_chain() {
     let (env, client, _owner, ..) = setup();
 
     let dest_chain: u64 = 12345;
@@ -218,7 +212,7 @@ fn test_forward_to_resolver_fails_when_allowlist_not_enabled_for_chain() {
     let fee_token = Address::generate(&env);
     let verifier_args = Bytes::new(&env);
 
-    client.forward_to_resolver(
+    client.forward_to_verifier(
         &dest_chain,
         &sender,
         &message_id,

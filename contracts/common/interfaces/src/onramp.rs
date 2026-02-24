@@ -3,6 +3,7 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 #[soroban_sdk::contractargs(name = "OnRampArgs")]
 #[soroban_sdk::contractclient(name = "OnRampClient")]
 pub trait OnRampInterface {
+    fn init(env: soroban_sdk::Env, rmn_proxy: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_fee(
         env: soroban_sdk::Env,
@@ -10,6 +11,7 @@ pub trait OnRampInterface {
         message: StellarToAnyMessage,
     ) -> Result<i128, CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
+    fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
@@ -26,6 +28,7 @@ pub trait OnRampInterface {
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
     fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
+    fn require_not_cursed(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn set_dynamic_config(
         env: soroban_sdk::Env,
         dynamic_config: DynamicConfig,
@@ -66,7 +69,33 @@ pub trait OnRampInterface {
         dest_chain_selector: u64,
     ) -> Result<u64, CCIPError>;
 }
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListEntry {
+    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListUpdate {
+    pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
+    pub dest_chain_selector: u64,
+    pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
+}
 
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct GenericExtraArgsV3 {
+    pub block_confirmations: u32,
+    pub ccv_args: soroban_sdk::Vec<soroban_sdk::Bytes>,
+    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub executor: soroban_sdk::Address,
+    pub executor_args: soroban_sdk::Bytes,
+    pub gas_limit: u32,
+    pub token_args: soroban_sdk::Bytes,
+    pub token_receiver: soroban_sdk::Bytes,
+}
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
@@ -87,7 +116,7 @@ pub struct Receipt {
 pub struct StaticConfig {
     pub chain_selector: u64,
     pub max_usd_cents_per_message: u32,
-    pub rmn_remote: soroban_sdk::Address,
+    pub rmn_proxy: soroban_sdk::Address,
     pub token_admin_registry: soroban_sdk::Address,
 }
 #[soroban_sdk::contracttype(export = false)]
@@ -192,6 +221,16 @@ pub enum CCIPError {
     OffRampMismatch = 61,
     BadRMNSignal = 62,
     UnsupportedDestinationChain = 63,
+    AlreadyCursed = 64,
+    ConfigNotSet = 65,
+    DuplicateOnchainPublicKey = 66,
+    InvalidSignerOrder = 67,
+    NotEnoughSigners = 68,
+    NotCursed = 69,
+    OutOfOrderSignatures = 70,
+    ThresholdNotMet = 71,
+    UnexpectedSigner = 72,
+    ZeroValueNotAllowed = 73,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

@@ -3,14 +3,17 @@
 mod events;
 pub mod types;
 
+use common_interfaces::versioned_verifier_resolver::VersionedVerifierResolverClient;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
+    contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol,
+    TryFromVal, Vec,
 };
 
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
-use common_message::{MessageIdCompute, StellarToAnyMessage};
+use common_helpers::curse_checkable::CurseCheckable;
+use common_message::{GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage, ToBytes};
 use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
 
@@ -24,6 +27,7 @@ const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
 const STATIC_CONFIG: Symbol = symbol_short!("STATIC");
 const DYNAMIC_CONFIG: Symbol = symbol_short!("DYNAMIC");
 const DEST_CHAINS: Symbol = symbol_short!("DESTCHNS");
+const RMN_PROXY: Symbol = symbol_short!("RMN_PROXY");
 
 // ============================================================
 // Contract
@@ -41,6 +45,11 @@ impl Initializable for OnRampContract {
 impl Ownable for OnRampContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
+
+#[contractimpl(contracttrait)]
+impl CurseCheckable for OnRampContract {
+    const RMN_PROXY: Symbol = RMN_PROXY;
 }
 
 #[contractimpl]
@@ -70,6 +79,7 @@ impl OnRampContract {
         // Store owner
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
+        <Self as CurseCheckable>::init(&env, &static_config.rmn_proxy)?;
 
         // Validate static config
         if static_config.chain_selector == 0 || static_config.max_usd_cents_per_message == 0 {
@@ -187,6 +197,7 @@ impl OnRampContract {
         original_sender: Address,
     ) -> Result<BytesN<32>, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
+        <Self as CurseCheckable>::require_not_cursed(&env)?;
         message.validate()?;
 
         // Enter reentrancy guard (uses temporary storage)
@@ -198,21 +209,26 @@ impl OnRampContract {
         // Verify caller is the router
         dest_config.router.require_auth();
 
-        // Validate original sender
-        // Note: In Soroban, we can't check for "zero address" the same way as EVM
-        // The router must have explicitly set this
-
-        // Validate message
-        // TODO: move to message type impl
-        if message.token_amounts.len() > 1 {
-            // Exit reentrancy guard before returning
-            ReentrancyGuard::exit(&env);
-            return Err(CCIPError::CanOnlySendOneTokenPerMessage);
-        }
+        // Parse extra args; use default when empty (common for simple messages)
+        let extra_args = if message.extra_args.len() == 0 {
+            // TODO: move Default next to struct definition, also is an empty extra args a valid case?
+            GenericExtraArgsV3 {
+                gas_limit: 0,
+                block_confirmations: 0,
+                ccvs: Vec::new(&env),
+                ccv_args: Vec::new(&env),
+                executor: dest_config.default_executor.clone(),
+                executor_args: Bytes::new(&env),
+                token_receiver: Bytes::new(&env),
+                token_args: Bytes::new(&env),
+            }
+        } else {
+            let extra_args_val = message.extra_args.to_val();
+            GenericExtraArgsV3::try_from_val(&env, &extra_args_val)
+                .map_err(|_| CCIPError::InvalidExtraArgsData)?
+        };
 
         // TODO: Implement full message processing logic:
-        // 1. Check RMN curse status
-        // 2. Parse extra args with defaults
         // 3. Get pool CCVs if token transfer
         // 4. Merge CCV lists
         // 5. Build MessageV1
@@ -220,17 +236,26 @@ impl OnRampContract {
         // 7. Validate fee amount
         // 8. Distribute fees
         // 9. Lock or burn tokens
-        // 10. Encode message and compute message ID
-        // 11. Call each verifier
-        // 12. Emit event
+
+        // Generate message ID (keccak256(messageBytes))
+        let message_id = message.compute_message_id(&env);
+
+        // Invoke verifiers to get verification blobs and generate receipts
+        let (verifier_blobs, receipts) = Self::invoke_verifiers_internal(
+            &env,
+            &dest_config,
+            dest_chain_selector,
+            &message_id,
+            &original_sender,
+            &message,
+            &extra_args,
+            fee_token_amount,
+        )?;
 
         // Increment message number (sequence number for this destination)
         dest_config.message_number += 1;
         let sequence_number = dest_config.message_number;
         Self::set_dest_chain_config(&env, dest_chain_selector, &dest_config);
-
-        // Generate message ID (keccak256(messageBytes))
-        let message_id = message.compute_message_id(&env);
 
         // Emit CCIPMessageSent event
         CCIPMessageSentEvent {
@@ -244,9 +269,9 @@ impl OnRampContract {
                 .get(0)
                 .map(|token_amount| token_amount.amount)
                 .unwrap_or(0),
-            encoded_message: Bytes::new(&env),
-            receipts: Vec::new(&env),
-            verifier_blobs: Vec::new(&env),
+            encoded_message: message.to_bytes(&env),
+            receipts,
+            verifier_blobs,
         }
         .publish(&env);
 
@@ -532,6 +557,85 @@ impl OnRampContract {
 
         dest_chains.set(dest_chain_selector, config.clone());
         env.storage().persistent().set(&DEST_CHAINS, &dest_chains);
+    }
+
+    fn invoke_verifiers_internal(
+        env: &Env,
+        dest_config: &DestChainConfig,
+        dest_chain_selector: u64,
+        message_id: &BytesN<32>,
+        original_sender: &Address,
+        message: &StellarToAnyMessage,
+        extra_args: &GenericExtraArgsV3,
+        fee_token_amount: i128,
+    ) -> Result<(Vec<Bytes>, Vec<Receipt>), CCIPError> {
+        let mut receipts = Vec::new(env);
+        let mut verification_blobs = Vec::new(env);
+        let message_bytes = message.to_bytes(env);
+
+        for (ccv, ccv_args) in extra_args.ccvs.iter().zip(extra_args.ccv_args.iter()) {
+            let vvr = VersionedVerifierResolverClient::new(env, &ccv);
+            let verifier_address = vvr.get_outbound_implementation(&dest_chain_selector, &ccv_args);
+
+            let mut fee_args = Vec::new(env);
+            fee_args.push_back(dest_chain_selector.into_val(env));
+            fee_args.push_back(message_bytes.clone().into_val(env));
+            fee_args.push_back(ccv_args.clone().into_val(env));
+            fee_args.push_back(extra_args.block_confirmations.into_val(env));
+
+            let (fee, dest_gas_limit, dest_bytes_overhead) =
+                env.invoke_contract::<Result<(u32, u32, u32), CCIPError>>(
+                    &verifier_address,
+                    &Symbol::new(env, "get_fee"),
+                    fee_args,
+                )?;
+
+            receipts.push_back(Receipt {
+                issuer: ccv,
+                dest_gas_limit,
+                dest_bytes_overhead,
+                // TODO: convert verifier fee units to fee-token units with FeeQuoter integration.
+                fee_token_amount: i128::from(fee),
+                extra_args: ccv_args.clone(),
+            });
+
+            let mut verifier_args = Vec::new(&env);
+            verifier_args.push_back(dest_chain_selector.into_val(env));
+            verifier_args.push_back(original_sender.into_val(env));
+            verifier_args.push_back(message_id.into_val(env));
+            verifier_args.push_back(message.fee_token.into_val(env));
+            verifier_args.push_back(fee_token_amount.into_val(env));
+            verifier_args.push_back(ccv_args.into_val(env));
+
+            let verification_blob = env.invoke_contract::<Result<Bytes, CCIPError>>(
+                &verifier_address,
+                &Symbol::new(&env, "forward_to_verifier"),
+                verifier_args,
+            )?;
+
+            verification_blobs.push_back(verification_blob);
+        }
+
+        receipts.push_back(Receipt {
+            issuer: extra_args.executor.clone(),
+            dest_gas_limit: dest_config
+                .base_execution_gas_cost
+                .saturating_add(extra_args.gas_limit),
+            dest_bytes_overhead: 0,
+            fee_token_amount: 0,
+            extra_args: extra_args.executor_args.clone(),
+        });
+
+        receipts.push_back(Receipt {
+            // Align with EVM: attribute network fee receipt to the forwarding router.
+            issuer: dest_config.router.clone(),
+            dest_gas_limit: 0,
+            dest_bytes_overhead: 0,
+            fee_token_amount,
+            extra_args: Bytes::new(env),
+        });
+
+        Ok((verification_blobs, receipts))
     }
 }
 

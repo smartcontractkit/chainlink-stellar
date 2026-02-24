@@ -14,8 +14,6 @@ import (
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-const STELLAR_LOCALNET_CHAIN_ID = "baefd734b8d3e48472cff83912375fedbc7573701912fe308af730180f97d74a"
-
 func TestOnRamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -52,7 +50,7 @@ func TestOnRamp(t *testing.T) {
 		staticConfig := onrampbindings.StaticConfig{
 			ChainSelector:         12345, // Test chain selector
 			TokenAdminRegistry:    mockTokenAdminRegistry,
-			RmnRemote:             mockRMNRemote,
+			RmnProxy:              mockRMNRemote,
 			MaxUsdCentsPerMessage: 10000, // $100
 		}
 

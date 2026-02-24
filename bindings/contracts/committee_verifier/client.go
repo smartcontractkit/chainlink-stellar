@@ -52,7 +52,7 @@ func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) error {
+func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) (uint32, uint32, uint32, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(message),
@@ -62,26 +62,62 @@ func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector 
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
 	if err != nil {
-		return fmt.Errorf("failed to call get_fee: %w", err)
+		return 0, 0, 0, fmt.Errorf("failed to call get_fee: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return 0, 0, 0, fmt.Errorf("no return value from get_fee")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return 0, 0, 0, fmt.Errorf("expected vec for tuple return")
+	}
+	if len(*vec) != 3 {
+		return 0, 0, 0, fmt.Errorf("expected 3 elements, got %d", len(*vec))
+	}
+
+	v0Raw, ok := (*vec)[0].GetU32()
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("tuple[0]: expected u32")
+	}
+	v0 := uint32(v0Raw)
+
+	v1Raw, ok := (*vec)[1].GetU32()
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("tuple[1]: expected u32")
+	}
+	v1 := uint32(v1Raw)
+
+	v2Raw, ok := (*vec)[2].GetU32()
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("tuple[2]: expected u32")
+	}
+	v2 := uint32(v2Raw)
+
+	return v0, v1, v2, nil
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *CommitteeVerifierClient) IsOwner(ctx context.Context, addr string) error {
+func (c *CommitteeVerifierClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call is_owner: %w", err)
+		return false, fmt.Errorf("failed to call is_owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_owner")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
 }
 
 // InitOwner calls the init_owner function on the contract.
@@ -118,16 +154,23 @@ func (c *CommitteeVerifierClient) Initialize(ctx context.Context, owner string, 
 }
 
 // VersionTag calls the version_tag function on the contract.
-func (c *CommitteeVerifierClient) VersionTag(ctx context.Context) error {
+func (c *CommitteeVerifierClient) VersionTag(ctx context.Context) ([4]byte, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "version_tag", args)
 	if err != nil {
-		return fmt.Errorf("failed to call version_tag: %w", err)
+		return [4]byte{}, fmt.Errorf("failed to call version_tag: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return [4]byte{}, fmt.Errorf("no return value from version_tag")
+	}
+
+	v, err := scval.Bytes4FromScVal(*result)
+	if err != nil {
+		return [4]byte{}, err
+	}
+	return v, nil
 }
 
 // RequireOwner calls the require_owner function on the contract.
@@ -180,6 +223,29 @@ func (c *CommitteeVerifierClient) VerifyMessage(ctx context.Context, sourceChain
 
 	_ = result // void return
 	return nil
+}
+
+// IsInAllowlist calls the is_in_allowlist function on the contract.
+func (c *CommitteeVerifierClient) IsInAllowlist(ctx context.Context, key uint64, addr string) (bool, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(key),
+		scval.AddressToScVal(addr),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_in_allowlist", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_in_allowlist: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_in_allowlist")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.
@@ -261,8 +327,8 @@ func (c *CommitteeVerifierClient) TransferOwnership(ctx context.Context, newOwne
 	return nil
 }
 
-// ForwardToResolver calls the forward_to_resolver function on the contract.
-func (c *CommitteeVerifierClient) ForwardToResolver(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
+// ForwardToVerifier calls the forward_to_verifier function on the contract.
+func (c *CommitteeVerifierClient) ForwardToVerifier(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.AddressToScVal(sender),
@@ -272,13 +338,13 @@ func (c *CommitteeVerifierClient) ForwardToResolver(ctx context.Context, destCha
 		scval.BytesToScVal(verifierArgs),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "forward_to_resolver", args)
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "forward_to_verifier", args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call forward_to_resolver: %w", err)
+		return nil, fmt.Errorf("failed to call forward_to_verifier: %w", err)
 	}
 
 	if result == nil {
-		return nil, fmt.Errorf("no return value from forward_to_resolver")
+		return nil, fmt.Errorf("no return value from forward_to_verifier")
 	}
 
 	v, ok := result.GetBytes()
@@ -286,6 +352,31 @@ func (c *CommitteeVerifierClient) ForwardToResolver(ctx context.Context, destCha
 		return nil, fmt.Errorf("expected bytes return type")
 	}
 	return []byte(v), nil
+}
+
+// GetAllowlistEntry calls the get_allowlist_entry function on the contract.
+func (c *CommitteeVerifierClient) GetAllowlistEntry(ctx context.Context, key uint64) (*AllowListEntry, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(key),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_allowlist_entry", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_allowlist_entry: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_allowlist_entry")
+	}
+
+	if result.Type == xdr.ScValTypeScvVoid {
+		return nil, nil
+	}
+	v, err := AllowListEntryFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
@@ -297,6 +388,44 @@ func (c *CommitteeVerifierClient) WithdrawFeeTokens(ctx context.Context, feeToke
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "withdraw_fee_tokens", args)
 	if err != nil {
 		return fmt.Errorf("failed to call withdraw_fee_tokens: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// IsAllowlistEnabled calls the is_allowlist_enabled function on the contract.
+func (c *CommitteeVerifierClient) IsAllowlistEnabled(ctx context.Context, key uint64) (bool, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(key),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_allowlist_enabled", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_allowlist_enabled: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_allowlist_enabled")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
+}
+
+// RequireInAllowlist calls the require_in_allowlist function on the contract.
+func (c *CommitteeVerifierClient) RequireInAllowlist(ctx context.Context, key uint64, address string) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(key),
+		scval.AddressToScVal(address),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_in_allowlist", args)
+	if err != nil {
+		return fmt.Errorf("failed to call require_in_allowlist: %w", err)
 	}
 
 	_ = result // void return
@@ -329,6 +458,21 @@ func (c *CommitteeVerifierClient) GetStorageLocations(ctx context.Context) ([][]
 		out[i] = []byte(v)
 	}
 	return out, nil
+}
+
+// ApplyAllowlistUpdates calls the apply_allowlist_updates function on the contract.
+func (c *CommitteeVerifierClient) ApplyAllowlistUpdates(ctx context.Context, updates []AllowListUpdate) error {
+	args := []xdr.ScVal{
+		scval.StructSliceToScVal(updates),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_allowlist_updates", args)
+	if err != nil {
+		return fmt.Errorf("failed to call apply_allowlist_updates: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetRemoteChainConfig calls the get_remote_chain_config function on the contract.
@@ -1009,9 +1153,29 @@ func parseStorageLocationsUpdatedEvent(e protocolrpc.EventInfo) (*StorageLocatio
 
 		switch string(key) {
 		case "old_locations":
-			// TODO: parse complex type
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.OldLocations = parsed
+			}
 		case "new_locations":
-			// TODO: parse complex type
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.NewLocations = parsed
+			}
 		}
 	}
 
@@ -1377,3 +1541,4 @@ func parseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 
 	return result, nil
 }
+

@@ -20,3 +20,4 @@ common-guard = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 onramp = { workspace = true }
 rmn_proxy = { workspace = true }
+rmn_remote = { workspace = true }

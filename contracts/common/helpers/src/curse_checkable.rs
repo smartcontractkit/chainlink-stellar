@@ -3,18 +3,30 @@ use common_guard::initializable::Initializable;
 use common_interfaces::rmn_proxy::RmnProxyClient;
 use soroban_sdk::{contracttrait, symbol_short, Address, Env, Symbol};
 
-/// Cursable trait for contracts that can be cursed.
+/// CurseCheckable trait for contracts that can be cursed.
 ///
 /// This trait is used to check curse status via RMN Proxy.
+/// It requires the contract to be initialized with the RMN Proxy address.
 ///
 /// # Examples
 ///
 /// ```
 /// use soroban_sdk::{Env, Address};
-/// use chainlink_stellar::common::helpers::cursable::Cursable;
+/// use chainlink_stellar::common::helpers::curse_checkable::CurseCheckable;
 ///
-/// pub trait Cursable {
-///     fn is_cursed(env: &Env, address: &Address) -> bool;
+/// const RMN_PROXY: Symbol = symbol_short!("RMN_PROXY");
+///
+/// #[contractimpl]
+/// impl CurseCheckable for MyContract {
+///     const RMN_PROXY: Symbol = RMN_PROXY;
+/// }
+///
+/// #[contractimpl]
+/// impl MyContract {
+///     fn some_function(env: &Env) -> Result<(), CCIPError> {
+///         <Self as CurseCheckable>::require_not_cursed(env)?;
+///         Ok(())
+///     }
 /// }
 /// ```
 #[contracttrait]

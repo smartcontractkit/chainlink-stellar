@@ -87,18 +87,25 @@ func (c *RmnProxyClient) SetRmn(ctx context.Context, rmn string) error {
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *RmnProxyClient) IsOwner(ctx context.Context, addr string) error {
+func (c *RmnProxyClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call is_owner: %w", err)
+		return false, fmt.Errorf("failed to call is_owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_owner")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
 }
 
 // IsCursed calls the is_cursed function on the contract.
@@ -674,3 +681,4 @@ func parseRmnSetEvent(e protocolrpc.EventInfo) (*RmnSetEvent, error) {
 
 	return result, nil
 }
+

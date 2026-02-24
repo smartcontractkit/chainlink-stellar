@@ -29,6 +29,7 @@ CONTRACTS=(
   "versioned_verifier_resolver|VersionedVerifierResolver|versioned_verifier_resolver|0"
   "onramp|OnRamp|onramp|1"
   "rmn_proxy|RmnProxy|rmn_proxy|0"
+  "rmn_remote|RmnRemote|rmn_remote|0"
 )
 
 # Extract TokenAmount and StellarToAnyMessage structs from committee_verifier for contracts that use common_message

@@ -7,7 +7,7 @@ fn create_test_static_config(env: &Env) -> StaticConfig {
     StaticConfig {
         chain_selector: 12345,
         token_admin_registry: Address::generate(env),
-        rmn_remote: Address::generate(env),
+        rmn_proxy: Address::generate(env),
         max_usd_cents_per_message: 100_000, // $1000 max
     }
 }

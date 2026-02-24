@@ -13,6 +13,8 @@ soroban-sdk = { workspace = true }
 common-authorization = { workspace = true }
 common-error = { workspace = true }
 common-guard = { workspace = true }
+common-interfaces = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+rmn_remote = { workspace = true }

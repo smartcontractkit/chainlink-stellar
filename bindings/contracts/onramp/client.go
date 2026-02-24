@@ -31,6 +31,21 @@ func (c *OnRampClient) ContractID() string {
 	return c.contractID
 }
 
+// Init calls the init function on the contract.
+func (c *OnRampClient) Init(ctx context.Context, rmnProxy string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(rmnProxy),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init", args)
+	if err != nil {
+		return fmt.Errorf("failed to call init: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *OnRampClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -75,18 +90,45 @@ func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, mes
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *OnRampClient) IsOwner(ctx context.Context, addr string) error {
+func (c *OnRampClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
 	if err != nil {
-		return fmt.Errorf("failed to call is_owner: %w", err)
+		return false, fmt.Errorf("failed to call is_owner: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_owner")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
+}
+
+// IsCursed calls the is_cursed function on the contract.
+func (c *OnRampClient) IsCursed(ctx context.Context) (bool, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_cursed", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_cursed: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_cursed")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
 }
 
 // InitOwner calls the init_owner function on the contract.
@@ -221,6 +263,19 @@ func (c *OnRampClient) GetDynamicConfig(ctx context.Context) (*DynamicConfig, er
 	return DynamicConfigFromScVal(*result)
 }
 
+// RequireNotCursed calls the require_not_cursed function on the contract.
+func (c *OnRampClient) RequireNotCursed(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_not_cursed", args)
+	if err != nil {
+		return fmt.Errorf("failed to call require_not_cursed: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // SetDynamicConfig calls the set_dynamic_config function on the contract.
 func (c *OnRampClient) SetDynamicConfig(ctx context.Context, dynamicConfig DynamicConfig) error {
 	args := []xdr.ScVal{
@@ -345,16 +400,53 @@ func (c *OnRampClient) CancelOwnershipTransfer(ctx context.Context) error {
 }
 
 // GetAllDestChainConfigs calls the get_all_dest_chain_configs function on the contract.
-func (c *OnRampClient) GetAllDestChainConfigs(ctx context.Context) error {
+func (c *OnRampClient) GetAllDestChainConfigs(ctx context.Context) ([]uint64, []DestChainConfig, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_dest_chain_configs", args)
 	if err != nil {
-		return fmt.Errorf("failed to call get_all_dest_chain_configs: %w", err)
+		return nil, nil, fmt.Errorf("failed to call get_all_dest_chain_configs: %w", err)
 	}
 
-	_ = result // void return
-	return nil
+	if result == nil {
+		return nil, nil, fmt.Errorf("no return value from get_all_dest_chain_configs")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, nil, fmt.Errorf("expected vec for tuple return")
+	}
+	if len(*vec) != 2 {
+		return nil, nil, fmt.Errorf("expected 2 elements, got %d", len(*vec))
+	}
+
+	v0Vec, ok := (*vec)[0].GetVec()
+	if !ok || v0Vec == nil {
+		return nil, nil, fmt.Errorf("tuple[0]: expected vec")
+	}
+	v0 := make([]uint64, len(*v0Vec))
+	for i, item := range *v0Vec {
+		val, err := scval.Uint64FromScVal(item)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tuple[0][%d]: %w", i, err)
+		}
+		v0[i] = val
+	}
+
+	v1Vec, ok := (*vec)[1].GetVec()
+	if !ok || v1Vec == nil {
+		return nil, nil, fmt.Errorf("tuple[1]: expected vec")
+	}
+	v1 := make([]DestChainConfig, len(*v1Vec))
+	for i, item := range *v1Vec {
+		val, err := DestChainConfigFromScVal(item)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tuple[1][%d]: %w", i, err)
+		}
+		v1[i] = *val
+	}
+
+	return v0, v1, nil
 }
 
 // ApplyDestChainConfigUpdates calls the apply_dest_chain_config_updates function on the contract.
@@ -912,9 +1004,29 @@ func parseCCIPMessageSentEvent(e protocolrpc.EventInfo) (*CCIPMessageSentEvent, 
 				result.EncodedMessage = []byte(v)
 			}
 		case "receipts":
-			// TODO: parse complex type
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([]Receipt, 0, len(*vec))
+				for _, item := range *vec {
+					v, err := ReceiptFromScVal(item)
+					if err == nil {
+						parsed = append(parsed, *v)
+					}
+				}
+				result.Receipts = parsed
+			}
 		case "verifier_blobs":
-			// TODO: parse complex type
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.VerifierBlobs = parsed
+			}
 		}
 	}
 
@@ -1061,3 +1173,4 @@ func parseOwnershipTransferredEvent(e protocolrpc.EventInfo) (*OwnershipTransfer
 
 	return result, nil
 }
+
