@@ -13,8 +13,20 @@ concurrency:
 
 jobs:
   go-unit-tests:
+    permissions:
+      id-token: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
+      - name: Setup GitHub Token
+        id: setup-github-token
+        uses: smartcontractkit/.github/actions/setup-github-token@ef78fa97bf3c77de6563db1175422703e9e6674f # setup-github-token@0.2.1
+        with:
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-lambda-url: ${{ secrets.AWS_LAMBDA_URL }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          set-git-config: true
+
       - name: Checkout chainlink-stellar
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -27,9 +39,12 @@ jobs:
         with:
           repository: smartcontractkit/chainlink-ccv
           path: chainlink-ccv
+          token: ${{ steps.setup-github-token.outputs.access-token }}
 
       - name: Set up Go
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        env:
+          GOPRIVATE: github.com/smartcontractkit/*
         with:
           go-version-file: chainlink-stellar/go.mod
           cache-dependency-path: chainlink-stellar/go.sum
