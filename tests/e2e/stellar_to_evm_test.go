@@ -2,6 +2,7 @@ package e2e_tests
 
 import (
 	"encoding/hex"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -94,8 +95,10 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 	)
 	onrampRef, err := env.DataStore.Addresses().Get(onrampKey)
 	require.NoError(t, err)
-	onrampContractID := onrampRef.Address
-	require.NotEmpty(t, onrampContractID)
+	require.NotEmpty(t, onrampRef.Address)
+
+	onrampContractID, err := hexToContractStrkey(onrampRef.Address)
+	require.NoError(t, err)
 	l.Info().Str("onrampContractID", onrampContractID).Msg("Found OnRamp in CCV datastore")
 
 	onRampClient := onrampbindings.NewOnRampClient(deployer, onrampContractID)
@@ -267,4 +270,13 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 		// 	Str("messageID", hex.EncodeToString(messageID[:])).
 		// 	Msg("Message executed successfully on EVM")
 	})
+}
+
+// hexToContractStrkey converts a 0x-prefixed hex address to a Stellar contract strkey (C…).
+func hexToContractStrkey(hexAddr string) (string, error) {
+	raw, err := hex.DecodeString(strings.TrimPrefix(hexAddr, "0x"))
+	if err != nil {
+		return "", fmt.Errorf("decode hex address: %w", err)
+	}
+	return strkey.Encode(strkey.VersionByteContract, raw)
 }

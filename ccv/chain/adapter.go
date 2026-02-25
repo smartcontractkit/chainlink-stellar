@@ -1,7 +1,9 @@
 package ccvchain
 
 import (
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
@@ -39,7 +41,12 @@ func (s *StellarAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byte, er
 	if decoded, err := strkey.Decode(strkey.VersionByteAccountID, ref.Address); err == nil {
 		return decoded, nil
 	}
-	return nil, fmt.Errorf("failed to decode Stellar address %q: not a valid contract (C...) or account (G...) address", ref.Address)
+	if decoded, err := hex.DecodeString(strings.TrimPrefix(ref.Address, "0x")); err == nil {
+		if len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to decode Stellar address %q: not a valid contract (C...), account (G...), or hex address", ref.Address)
 }
 
 // ConfigureChainForLanes implements adapters.ChainFamily.

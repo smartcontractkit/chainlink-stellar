@@ -200,9 +200,27 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 
 	ds := datastore.NewMemoryDataStore()
 
-	// Helper to generate contract address (used for mock/placeholder contracts)
-	contractAddr := func(name string) string {
-		return strkey.MustEncode(strkey.VersionByteContract, generateContractAddress(name, c.networkPassphrase))
+	// Helper to generate a hex-encoded contract address (used for mock/placeholder contracts)
+	contractHexAddr := func(name string) string {
+		return hexutil.Encode(generateContractAddress(name, c.networkPassphrase))
+	}
+
+	// strkeyToHex decodes a strkey address (C… contract or G… account) to a 0x-prefixed hex string.
+	strkeyToHex := func(addr string) (string, error) {
+		var vb strkey.VersionByte
+		switch {
+		case len(addr) > 0 && addr[0] == 'C':
+			vb = strkey.VersionByteContract
+		case len(addr) > 0 && addr[0] == 'G':
+			vb = strkey.VersionByteAccountID
+		default:
+			return "", fmt.Errorf("unsupported strkey prefix: %s", addr)
+		}
+		raw, err := strkey.Decode(vb, addr)
+		if err != nil {
+			return "", fmt.Errorf("decode strkey %s: %w", addr, err)
+		}
+		return hexutil.Encode(raw), nil
 	}
 
 	// Locate the compiled OnRamp WASM
@@ -397,8 +415,12 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	c.logger.Info().Int("count", len(remoteChainConfigs)).Msg("Committee Verifier remote chain configs applied")
 
 	// Add OnRamp to datastore
+	onrampHex, err := strkeyToHex(onrampContractID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert OnRamp address: %w", err)
+	}
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       onrampContractID,
+		Address:       onrampHex,
 		ChainSelector: selector,
 		Type:          datastore.ContractType(onrampoperations.ContractType),
 		Version:       semver.MustParse(onrampoperations.Deploy.Version()),
@@ -406,15 +428,19 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 
 	// Add OffRamp
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       onrampContractID, // TODO: use the actual OffRamp contract address
+		Address:       onrampHex, // TODO: use the actual OffRamp contract address
 		ChainSelector: selector,
 		Type:          datastore.ContractType(offrampoperations.ContractType),
 		Version:       semver.MustParse(offrampoperations.Deploy.Version()),
 	})
 
 	// Add Router
+	routerHex, err := strkeyToHex(c.deployerKeypair.Address()) // TODO: use the actual Router contract address
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert Router address: %w", err)
+	}
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       c.deployerKeypair.Address(), // TODO: use the actual Router contract address
+		Address:       routerHex,
 		ChainSelector: selector,
 		Type:          datastore.ContractType(routeroperations.ContractType),
 		Version:       semver.MustParse(routeroperations.Deploy.Version()),
@@ -424,7 +450,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	// for i, combo := range devenvcommon.AllTokenCombinations() {
 	// 	addressRef := combo.DestPoolAddressRef()
 	// 	ds.AddressRefStore.Add(datastore.AddressRef{
-	// 		Address:       contractAddr(fmt.Sprintf("stellar-dst-token-%d", i)),
+	// 		Address:       contractHexAddr(fmt.Sprintf("stellar-dst-token-%d", i)),
 	// 		Type:          addressRef.Type,
 	// 		Version:       addressRef.Version,
 	// 		Qualifier:     addressRef.Qualifier,
@@ -432,7 +458,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	// 	})
 	// 	addressRef = combo.SourcePoolAddressRef()
 	// 	ds.AddressRefStore.Add(datastore.AddressRef{
-	// 		Address:       contractAddr(fmt.Sprintf("stellar-src-token-%d", i)),
+	// 		Address:       contractHexAddr(fmt.Sprintf("stellar-src-token-%d", i)),
 	// 		Type:          addressRef.Type,
 	// 		Version:       addressRef.Version,
 	// 		Qualifier:     addressRef.Qualifier,
@@ -441,16 +467,10 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	// }
 
 	// Add CCV refs — use the deployed VVR contract address
-	vvrDecoded, err := strkey.Decode(strkey.VersionByteContract, vvrContractID)
+	vvrHex, err := strkeyToHex(vvrContractID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode VVR address: %w", err)
+		return nil, fmt.Errorf("failed to convert VVR address: %w", err)
 	}
-	vvrHexAddr := hexutil.Encode(vvrDecoded)
-	c.logger.Info().
-		Str("vvrStrkey", vvrContractID).
-		Str("vvrHex", vvrHexAddr).
-		Msg("Using deployed VVR address for CCV refs")
-
 	for _, qualifier := range []string{
 		devenvcommon.DefaultCommitteeVerifierQualifier,
 		// devenvcommon.SecondaryCommitteeVerifierQualifier,
@@ -458,7 +478,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 		// devenvcommon.QuaternaryReceiverQualifier,
 	} {
 		ds.AddressRefStore.Add(datastore.AddressRef{
-			Address:       vvrHexAddr, // hex string bc chainlink-ccv will parse this
+			Address:       vvrHex,
 			Type:          datastore.ContractType(committee_verifier.ResolverType),
 			Version:       semver.MustParse(committee_verifier.Deploy.Version()),
 			Qualifier:     qualifier,
@@ -468,7 +488,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 
 	// Add executor refs
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       contractAddr("stellar-executor"),
+		Address:       contractHexAddr("stellar-executor"),
 		Type:          datastore.ContractType(executor.ContractType),
 		Version:       semver.MustParse(executor.Deploy.Version()),
 		Qualifier:     devenvcommon.DefaultExecutorQualifier,
@@ -476,7 +496,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	})
 
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       contractAddr("stellar-executor-proxy"),
+		Address:       contractHexAddr("stellar-executor-proxy"),
 		Type:          datastore.ContractType(executor.ProxyType),
 		Version:       semver.MustParse(executor.DeployProxy.Version()),
 		Qualifier:     devenvcommon.DefaultExecutorQualifier,
@@ -484,12 +504,12 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	})
 
 	// Add RMN remote refs — use the deployed RMN Remote contract address
-	rmnRemoteDecoded, err := strkey.Decode(strkey.VersionByteContract, rmnRemoteContractID)
+	rmnRemoteHex, err := strkeyToHex(rmnRemoteContractID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode RMN Remote address: %w", err)
+		return nil, fmt.Errorf("failed to convert RMN Remote address: %w", err)
 	}
 	ds.AddressRefStore.Add(datastore.AddressRef{
-		Address:       hexutil.Encode(rmnRemoteDecoded),
+		Address:       rmnRemoteHex,
 		Type:          datastore.ContractType(rmn_remote.ContractType),
 		Version:       semver.MustParse(rmn_remote.Deploy.Version()),
 		ChainSelector: selector,
