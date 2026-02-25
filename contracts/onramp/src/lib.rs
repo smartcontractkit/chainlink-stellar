@@ -5,9 +5,8 @@ pub mod types;
 
 use common_interfaces::versioned_verifier_resolver::VersionedVerifierResolverClient;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short,
-    xdr::FromXdr,
-    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
+    contract, contractimpl, symbol_short, xdr::FromXdr, Address, Bytes, BytesN, Env, IntoVal, Map,
+    Symbol, Vec,
 };
 
 use common_authorization::Ownable;
