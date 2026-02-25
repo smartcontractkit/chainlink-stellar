@@ -18,6 +18,7 @@ import (
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	cvoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/committee_verifier"
 	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/onramp"
+	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote"
 	ccv "github.com/smartcontractkit/chainlink-ccv/devenv"
 	ccvcommon "github.com/smartcontractkit/chainlink-ccv/devenv/common"
 	"github.com/smartcontractkit/chainlink-ccv/devenv/tests/e2e"
@@ -101,13 +102,29 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 	require.NoError(t, err)
 	l.Info().Str("onrampContractID", onrampContractID).Msg("Found OnRamp in CCV datastore")
 
+	rmnRemoteKey := datastore.NewAddressRefKey(
+		stellarDetails.ChainSelector,
+		datastore.ContractType(rmn_remote.ContractType),
+		rmn_remote.Version,
+		"",
+	)
+	rmnRemoteRef, err := env.DataStore.Addresses().Get(rmnRemoteKey)
+	require.NoError(t, err)
+	require.NotEmpty(t, rmnRemoteRef.Address)
+
+	rmnRemoteAddress, err := hexToContractStrkey(rmnRemoteRef.Address)
+	require.NoError(t, err)
+	l.Info().Str("rmnRemoteAddress", rmnRemoteAddress).Msg("Found RMN Remote in CCV datastore")
+
 	onRampClient := onrampbindings.NewOnRampClient(deployer, onrampContractID)
 
 	// Create the Stellar source reader with the DEPLOYED OnRamp contract ID
 	stellarSourceReader, err := ccvsourcereader.NewSourceReaderWithClient(
 		rpc,
+		deployer,
 		onrampContractID,
 		"onramp_1_7_CCIPMessageSent", // Event topic from OnRamp contract
+		rmnRemoteAddress,
 		l,
 	)
 	require.NoError(t, err)

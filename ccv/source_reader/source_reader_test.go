@@ -23,7 +23,7 @@ func TestNewSourceReaderWithClient(t *testing.T) {
 	lggr := zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.DebugLevel)
 
 	t.Run("returns error when client is nil", func(t *testing.T) {
-		reader, err := NewSourceReaderWithClient(nil, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(nil, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.Error(t, err)
 		require.Nil(t, reader)
 		assert.Contains(t, err.Error(), "rpc client is required")
@@ -31,7 +31,7 @@ func TestNewSourceReaderWithClient(t *testing.T) {
 
 	t.Run("returns error when logger is nil", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", nil)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", nil)
 		require.Error(t, err)
 		require.Nil(t, reader)
 		assert.Contains(t, err.Error(), "logger is required")
@@ -39,7 +39,7 @@ func TestNewSourceReaderWithClient(t *testing.T) {
 
 	t.Run("returns error when ccip onramp address is empty", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
-		reader, err := NewSourceReaderWithClient(mockClient, "", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "", "transfer", "RMNREMOTE", &lggr)
 		require.Error(t, err)
 		require.Nil(t, reader)
 		assert.Contains(t, err.Error(), "ccip onramp address is required")
@@ -47,7 +47,7 @@ func TestNewSourceReaderWithClient(t *testing.T) {
 
 	t.Run("returns error when ccip message sent topic is empty", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "", "RMNREMOTE", &lggr)
 		require.Error(t, err)
 		require.Nil(t, reader)
 		assert.Contains(t, err.Error(), "ccip message sent topic is required")
@@ -56,11 +56,12 @@ func TestNewSourceReaderWithClient(t *testing.T) {
 	t.Run("creates reader with mock client", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 		require.NotNil(t, reader)
 		assert.Equal(t, "CADDR", reader.ccipOnrampAddress)
 		assert.Equal(t, "transfer", reader.ccipMessageSentTopic)
+		assert.Equal(t, "RMNREMOTE", reader.rmnRemoteAddress)
 	})
 }
 
@@ -104,7 +105,7 @@ func TestLatestAndFinalizedBlock(t *testing.T) {
 			nil,
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 
 		latest, finalized, err := reader.LatestAndFinalizedBlock(context.Background())
 		require.NoError(t, err)
@@ -126,7 +127,7 @@ func TestLatestAndFinalizedBlock(t *testing.T) {
 			errors.New("rpc connection failed"),
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		latest, finalized, err := reader.LatestAndFinalizedBlock(context.Background())
@@ -183,7 +184,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 			nil,
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		blockNumbers := []*big.Int{big.NewInt(100)}
@@ -195,6 +196,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 		header, exists := headers[blockNumbers[0]]
 		require.True(t, exists)
 		assert.Equal(t, uint64(100), header.Number)
+		assert.Equal(t, "RMNREMOTE", reader.rmnRemoteAddress)
 	})
 
 	t.Run("returns headers for multiple ledgers", func(t *testing.T) {
@@ -233,13 +235,14 @@ func TestGetBlocksHeaders(t *testing.T) {
 			nil,
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		blockNumbers := []*big.Int{big.NewInt(100), big.NewInt(200)}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
 		require.NoError(t, err)
 		require.Len(t, headers, 2)
+		assert.Equal(t, "RMNREMOTE", reader.rmnRemoteAddress)
 	})
 
 	t.Run("returns error when ledger not found", func(t *testing.T) {
@@ -252,7 +255,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 			nil,
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		blockNumbers := []*big.Int{big.NewInt(999999999)}
@@ -270,7 +273,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 			errors.New("rpc timeout"),
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		blockNumbers := []*big.Int{big.NewInt(100)}
@@ -298,7 +301,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 			nil,
 		).Once()
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		blockNumbers := []*big.Int{big.NewInt(100)}
@@ -311,7 +314,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 	t.Run("returns error when block number exceeds uint32 range", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
-		reader, err := NewSourceReaderWithClient(mockClient, "CADDR", "transfer", &lggr)
+		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
 		// Create a number larger than uint32 max

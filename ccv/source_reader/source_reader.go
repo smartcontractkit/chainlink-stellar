@@ -18,6 +18,8 @@ import (
 
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
+	"github.com/smartcontractkit/chainlink-stellar/bindings"
+	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 )
 
 // Compile-time check to ensure we satisfy the chainaccess.SourceReader interface.
@@ -47,33 +49,23 @@ type ReaderConfig struct {
 	SorobanRPCURL string `toml:"soroban_rpc_url"`
 }
 
-// TransferEvent represents a decoded Stellar transfer event with signature (address, address, i128).
-type TransferEvent struct {
-	// From is the source address (strkey-encoded, e.g., G... for accounts, C... for contracts)
-	From string
-	// To is the destination address (strkey-encoded)
-	To string
-	// Amount is the transfer amount as i128
-	Amount *big.Int
-	// Ledger is the ledger sequence number where this event occurred
-	Ledger uint32
-	// TransactionHash is the transaction hash
-	TransactionHash string
-}
-
 // SourceReader is the Stellar implementation of chainaccess.SourceReader.
 type SourceReader struct {
 	client               RPCClient
+	invoker              bindings.Invoker
 	ccipOnrampAddress    string
 	ccipMessageSentTopic string
+	rmnRemoteAddress     string
 	lggr                 *zerolog.Logger
 }
 
 // NewSourceReaderWithClient constructs a Stellar source reader with a RPC client.
 func NewSourceReaderWithClient(
 	client RPCClient,
+	invoker bindings.Invoker,
 	ccipOnrampAddress string,
 	ccipMessageSentTopic string,
+	rmnRemoteAddress string,
 	lggr *zerolog.Logger,
 ) (*SourceReader, error) {
 	if client == nil {
@@ -88,11 +80,16 @@ func NewSourceReaderWithClient(
 	if ccipMessageSentTopic == "" {
 		return nil, fmt.Errorf("ccip message sent topic is required")
 	}
+	if rmnRemoteAddress == "" {
+		return nil, fmt.Errorf("rmn remote address is required")
+	}
 
 	return &SourceReader{
 		client:               client,
+		invoker:              invoker,
 		ccipOnrampAddress:    ccipOnrampAddress,
 		ccipMessageSentTopic: ccipMessageSentTopic,
+		rmnRemoteAddress:     rmnRemoteAddress,
 		lggr:                 lggr,
 	}, nil
 }
@@ -627,10 +624,19 @@ func (s *SourceReader) LatestAndFinalizedBlock(ctx context.Context) (latest, fin
 	return &header, &header, nil
 }
 
-// GetRMNCursedSubjects is currently a stub; fill in once the Stellar RMN
-// contract/location is defined.
+// GetRMNCursedSubjects gets the cursed subjects from the RMN Remote contract.
 func (s *SourceReader) GetRMNCursedSubjects(ctx context.Context) ([]protocol.Bytes16, error) {
-	return nil, fmt.Errorf("GetRMNCursedSubjects not implemented for stellar")
+	rmnRemoteClient := rmnremotebindings.NewRmnRemoteClient(s.invoker, s.rmnRemoteAddress)
+	cursedSubjects, err := rmnRemoteClient.GetCursedSubjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cursed subjects: %w", err)
+	}
+
+	result := make([]protocol.Bytes16, len(cursedSubjects))
+	for i, s := range cursedSubjects {
+		result[i] = protocol.Bytes16(s)
+	}
+	return result, nil
 }
 
 // toBytes32 normalizes a hex string (with or without 0x prefix) into protocol.Bytes32.
