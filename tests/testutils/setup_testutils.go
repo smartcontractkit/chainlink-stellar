@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	ccv "github.com/smartcontractkit/chainlink-ccv/devenv"
-	"github.com/smartcontractkit/chainlink-ccv/devenv/cciptestinterfaces"
-	"github.com/smartcontractkit/chainlink-ccv/devenv/registry"
-	"github.com/smartcontractkit/chainlink-ccv/devenv/services/committeeverifier"
+	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/registry"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services/committeeverifier"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
-	devenvcommon "github.com/smartcontractkit/chainlink-ccv/devenv/common"
+	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
 	stellar "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 )
