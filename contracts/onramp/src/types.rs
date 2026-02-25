@@ -1,3 +1,5 @@
+use common_error::CCIPError;
+use common_helpers::validation::Validatable;
 use soroban_sdk::{contracttype, Address, Bytes, Vec};
 
 // ============================================================
@@ -82,6 +84,28 @@ pub struct DestChainConfigArgs {
     pub default_ccvs: Vec<Address>,
     /// OffRamp address on destination
     pub off_ramp: Bytes,
+}
+
+impl Validatable for DestChainConfigArgs {
+    fn validate(&self) -> Result<(), CCIPError> {
+        if self.dest_chain_selector == 0
+            || self.address_bytes_length == 0
+            || self.base_execution_gas_cost == 0
+        {
+            return Err(CCIPError::InvalidConfig);
+        }
+
+        if self.off_ramp.len() as u32 != self.address_bytes_length {
+            return Err(CCIPError::InvalidDestChainAddress);
+        }
+
+        // Ensure at least one default or mandated CCV exists
+        if self.default_ccvs.is_empty() && self.lane_mandated_ccvs.is_empty() {
+            return Err(CCIPError::InvalidConfig);
+        }
+
+        Ok(())
+    }
 }
 
 /// Receipt structure for tracking fees and gas limits per component.

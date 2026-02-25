@@ -13,7 +13,7 @@ use soroban_sdk::{
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
-use common_helpers::curse_checkable::CurseCheckable;
+use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
 use common_message::{GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage, ToBytes};
 use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
@@ -446,22 +446,11 @@ impl OnRampContract {
             .unwrap_or(Map::new(&env));
 
         for args in dest_chain_config_args.iter() {
-            // Validate config
-            if args.dest_chain_selector == 0
-                || args.dest_chain_selector == static_config.chain_selector
-                || args.address_bytes_length == 0
-                || args.base_execution_gas_cost == 0
-            {
-                return Err(CCIPError::InvalidConfig);
-            }
+            // Basic validation for non-zero configs and offramp address
+            args.validate()?;
 
-            // Validate offRamp length matches address_bytes_length
-            if args.off_ramp.len() as u32 != args.address_bytes_length {
-                return Err(CCIPError::InvalidDestChainAddress);
-            }
-
-            // Ensure at least one default or mandated CCV exists
-            if args.default_ccvs.is_empty() && args.lane_mandated_ccvs.is_empty() {
+            // Validate that the message is not to self
+            if args.dest_chain_selector == static_config.chain_selector {
                 return Err(CCIPError::InvalidConfig);
             }
 

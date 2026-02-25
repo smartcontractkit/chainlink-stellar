@@ -948,4 +948,3 @@ func parseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 
 	return result, nil
 }
-

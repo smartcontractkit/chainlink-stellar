@@ -11,14 +11,14 @@ import (
 // TokenAmount represents the TokenAmount struct from the contract.
 type TokenAmount struct {
 	Amount int64
-	Token string
+	Token  string
 }
 
 // ToScVal converts TokenAmount to an xdr.ScVal for contract calls.
 func (s TokenAmount) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"amount": scval.I128ToScVal(s.Amount),
-		"token": scval.AddressToScVal(s.Token),
+		"token":  scval.AddressToScVal(s.Token),
 	})
 }
 
@@ -57,20 +57,20 @@ func TokenAmountFromScVal(val xdr.ScVal) (*TokenAmount, error) {
 
 // StellarToAnyMessage represents the StellarToAnyMessage struct from the contract.
 type StellarToAnyMessage struct {
-	Data []byte
-	ExtraArgs []byte
-	FeeToken string
-	Receiver []byte
+	Data         []byte
+	ExtraArgs    []byte
+	FeeToken     string
+	Receiver     []byte
 	TokenAmounts []TokenAmount
 }
 
 // ToScVal converts StellarToAnyMessage to an xdr.ScVal for contract calls.
 func (s StellarToAnyMessage) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data": scval.BytesToScVal(s.Data),
-		"extra_args": scval.BytesToScVal(s.ExtraArgs),
-		"fee_token": scval.AddressToScVal(s.FeeToken),
-		"receiver": scval.BytesToScVal(s.Receiver),
+		"data":          scval.BytesToScVal(s.Data),
+		"extra_args":    scval.BytesToScVal(s.ExtraArgs),
+		"fee_token":     scval.AddressToScVal(s.FeeToken),
+		"receiver":      scval.BytesToScVal(s.Receiver),
 		"token_amounts": scval.StructSliceToScVal(s.TokenAmounts),
 	})
 }
@@ -135,14 +135,14 @@ func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
 
 // AllowListEntry represents the AllowListEntry struct from the contract.
 type AllowListEntry struct {
-	Allowlist []string
+	Allowlist        []string
 	AllowlistEnabled bool
 }
 
 // ToScVal converts AllowListEntry to an xdr.ScVal for contract calls.
 func (s AllowListEntry) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"allowlist": scval.AddressSliceToScVal(s.Allowlist),
+		"allowlist":         scval.AddressSliceToScVal(s.Allowlist),
 		"allowlist_enabled": scval.BoolToScVal(s.AllowlistEnabled),
 	})
 }
@@ -189,18 +189,18 @@ func AllowListEntryFromScVal(val xdr.ScVal) (*AllowListEntry, error) {
 
 // AllowListUpdate represents the AllowListUpdate struct from the contract.
 type AllowListUpdate struct {
-	AddedAllowlistedSenders []string
-	AllowlistEnabled bool
-	DestChainSelector uint64
+	AddedAllowlistedSenders   []string
+	AllowlistEnabled          bool
+	DestChainSelector         uint64
 	RemovedAllowlistedSenders []string
 }
 
 // ToScVal converts AllowListUpdate to an xdr.ScVal for contract calls.
 func (s AllowListUpdate) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"added_allowlisted_senders": scval.AddressSliceToScVal(s.AddedAllowlistedSenders),
-		"allowlist_enabled": scval.BoolToScVal(s.AllowlistEnabled),
-		"dest_chain_selector": scval.Uint64ToScVal(s.DestChainSelector),
+		"added_allowlisted_senders":   scval.AddressSliceToScVal(s.AddedAllowlistedSenders),
+		"allowlist_enabled":           scval.BoolToScVal(s.AllowlistEnabled),
+		"dest_chain_selector":         scval.Uint64ToScVal(s.DestChainSelector),
 		"removed_allowlisted_senders": scval.AddressSliceToScVal(s.RemovedAllowlistedSenders),
 	})
 }
@@ -267,26 +267,26 @@ func AllowListUpdateFromScVal(val xdr.ScVal) (*AllowListUpdate, error) {
 // GenericExtraArgsV3 represents the GenericExtraArgsV3 struct from the contract.
 type GenericExtraArgsV3 struct {
 	BlockConfirmations uint32
-	CcvArgs [][]byte
-	Ccvs []string
-	Executor string
-	ExecutorArgs []byte
-	GasLimit uint32
-	TokenArgs []byte
-	TokenReceiver []byte
+	CcvArgs            [][]byte
+	Ccvs               []string
+	Executor           string
+	ExecutorArgs       []byte
+	GasLimit           uint32
+	TokenArgs          []byte
+	TokenReceiver      []byte
 }
 
 // ToScVal converts GenericExtraArgsV3 to an xdr.ScVal for contract calls.
 func (s GenericExtraArgsV3) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"block_confirmations": scval.Uint32ToScVal(s.BlockConfirmations),
-		"ccv_args": scval.BytesSliceToScVal(s.CcvArgs),
-		"ccvs": scval.AddressSliceToScVal(s.Ccvs),
-		"executor": scval.AddressToScVal(s.Executor),
-		"executor_args": scval.BytesToScVal(s.ExecutorArgs),
-		"gas_limit": scval.Uint32ToScVal(s.GasLimit),
-		"token_args": scval.BytesToScVal(s.TokenArgs),
-		"token_receiver": scval.BytesToScVal(s.TokenReceiver),
+		"ccv_args":            scval.BytesSliceToScVal(s.CcvArgs),
+		"ccvs":                scval.AddressSliceToScVal(s.Ccvs),
+		"executor":            scval.AddressToScVal(s.Executor),
+		"executor_args":       scval.BytesToScVal(s.ExecutorArgs),
+		"gas_limit":           scval.Uint32ToScVal(s.GasLimit),
+		"token_args":          scval.BytesToScVal(s.TokenArgs),
+		"token_receiver":      scval.BytesToScVal(s.TokenReceiver),
 	})
 }
 
@@ -415,20 +415,20 @@ func AnyToStellarMessageFromScVal(val xdr.ScVal) (*AnyToStellarMessage, error) {
 // Receipt represents the Receipt struct from the contract.
 type Receipt struct {
 	DestBytesOverhead uint32
-	DestGasLimit uint32
-	ExtraArgs []byte
-	FeeTokenAmount int64
-	Issuer string
+	DestGasLimit      uint32
+	ExtraArgs         []byte
+	FeeTokenAmount    int64
+	Issuer            string
 }
 
 // ToScVal converts Receipt to an xdr.ScVal for contract calls.
 func (s Receipt) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"dest_bytes_overhead": scval.Uint32ToScVal(s.DestBytesOverhead),
-		"dest_gas_limit": scval.Uint32ToScVal(s.DestGasLimit),
-		"extra_args": scval.BytesToScVal(s.ExtraArgs),
-		"fee_token_amount": scval.I128ToScVal(s.FeeTokenAmount),
-		"issuer": scval.AddressToScVal(s.Issuer),
+		"dest_gas_limit":      scval.Uint32ToScVal(s.DestGasLimit),
+		"extra_args":          scval.BytesToScVal(s.ExtraArgs),
+		"fee_token_amount":    scval.I128ToScVal(s.FeeTokenAmount),
+		"issuer":              scval.AddressToScVal(s.Issuer),
 	})
 }
 
@@ -485,19 +485,19 @@ func ReceiptFromScVal(val xdr.ScVal) (*Receipt, error) {
 
 // StaticConfig represents the StaticConfig struct from the contract.
 type StaticConfig struct {
-	ChainSelector uint64
+	ChainSelector         uint64
 	MaxUsdCentsPerMessage uint32
-	RmnProxy string
-	TokenAdminRegistry string
+	RmnProxy              string
+	TokenAdminRegistry    string
 }
 
 // ToScVal converts StaticConfig to an xdr.ScVal for contract calls.
 func (s StaticConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"chain_selector": scval.Uint64ToScVal(s.ChainSelector),
+		"chain_selector":            scval.Uint64ToScVal(s.ChainSelector),
 		"max_usd_cents_per_message": scval.Uint32ToScVal(s.MaxUsdCentsPerMessage),
-		"rmn_proxy": scval.AddressToScVal(s.RmnProxy),
-		"token_admin_registry": scval.AddressToScVal(s.TokenAdminRegistry),
+		"rmn_proxy":                 scval.AddressToScVal(s.RmnProxy),
+		"token_admin_registry":      scval.AddressToScVal(s.TokenAdminRegistry),
 	})
 }
 
@@ -549,14 +549,14 @@ func StaticConfigFromScVal(val xdr.ScVal) (*StaticConfig, error) {
 // DynamicConfig represents the DynamicConfig struct from the contract.
 type DynamicConfig struct {
 	FeeAggregator string
-	FeeQuoter string
+	FeeQuoter     string
 }
 
 // ToScVal converts DynamicConfig to an xdr.ScVal for contract calls.
 func (s DynamicConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"fee_aggregator": scval.AddressToScVal(s.FeeAggregator),
-		"fee_quoter": scval.AddressToScVal(s.FeeQuoter),
+		"fee_quoter":     scval.AddressToScVal(s.FeeQuoter),
 	})
 }
 
@@ -595,33 +595,33 @@ func DynamicConfigFromScVal(val xdr.ScVal) (*DynamicConfig, error) {
 
 // DestChainConfig represents the DestChainConfig struct from the contract.
 type DestChainConfig struct {
-	AddressBytesLength uint32
-	BaseExecutionGasCost uint32
-	DefaultCcvs []string
-	DefaultExecutor string
-	LaneMandatedCcvs []string
+	AddressBytesLength        uint32
+	BaseExecutionGasCost      uint32
+	DefaultCcvs               []string
+	DefaultExecutor           string
+	LaneMandatedCcvs          []string
 	MessageNetworkFeeUsdCents uint32
-	MessageNumber uint64
-	OffRamp []byte
-	Router string
-	TokenNetworkFeeUsdCents uint32
-	TokenReceiverAllowed bool
+	MessageNumber             uint64
+	OffRamp                   []byte
+	Router                    string
+	TokenNetworkFeeUsdCents   uint32
+	TokenReceiverAllowed      bool
 }
 
 // ToScVal converts DestChainConfig to an xdr.ScVal for contract calls.
 func (s DestChainConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"address_bytes_length": scval.Uint32ToScVal(s.AddressBytesLength),
-		"base_execution_gas_cost": scval.Uint32ToScVal(s.BaseExecutionGasCost),
-		"default_ccvs": scval.AddressSliceToScVal(s.DefaultCcvs),
-		"default_executor": scval.AddressToScVal(s.DefaultExecutor),
-		"lane_mandated_ccvs": scval.AddressSliceToScVal(s.LaneMandatedCcvs),
+		"address_bytes_length":          scval.Uint32ToScVal(s.AddressBytesLength),
+		"base_execution_gas_cost":       scval.Uint32ToScVal(s.BaseExecutionGasCost),
+		"default_ccvs":                  scval.AddressSliceToScVal(s.DefaultCcvs),
+		"default_executor":              scval.AddressToScVal(s.DefaultExecutor),
+		"lane_mandated_ccvs":            scval.AddressSliceToScVal(s.LaneMandatedCcvs),
 		"message_network_fee_usd_cents": scval.Uint32ToScVal(s.MessageNetworkFeeUsdCents),
-		"message_number": scval.Uint64ToScVal(s.MessageNumber),
-		"off_ramp": scval.BytesToScVal(s.OffRamp),
-		"router": scval.AddressToScVal(s.Router),
-		"token_network_fee_usd_cents": scval.Uint32ToScVal(s.TokenNetworkFeeUsdCents),
-		"token_receiver_allowed": scval.BoolToScVal(s.TokenReceiverAllowed),
+		"message_number":                scval.Uint64ToScVal(s.MessageNumber),
+		"off_ramp":                      scval.BytesToScVal(s.OffRamp),
+		"router":                        scval.AddressToScVal(s.Router),
+		"token_network_fee_usd_cents":   scval.Uint32ToScVal(s.TokenNetworkFeeUsdCents),
+		"token_receiver_allowed":        scval.BoolToScVal(s.TokenReceiverAllowed),
 	})
 }
 
@@ -728,33 +728,33 @@ func DestChainConfigFromScVal(val xdr.ScVal) (*DestChainConfig, error) {
 
 // DestChainConfigArgs represents the DestChainConfigArgs struct from the contract.
 type DestChainConfigArgs struct {
-	AddressBytesLength uint32
-	BaseExecutionGasCost uint32
-	DefaultCcvs []string
-	DefaultExecutor string
-	DestChainSelector uint64
-	LaneMandatedCcvs []string
+	AddressBytesLength        uint32
+	BaseExecutionGasCost      uint32
+	DefaultCcvs               []string
+	DefaultExecutor           string
+	DestChainSelector         uint64
+	LaneMandatedCcvs          []string
 	MessageNetworkFeeUsdCents uint32
-	OffRamp []byte
-	Router string
-	TokenNetworkFeeUsdCents uint32
-	TokenReceiverAllowed bool
+	OffRamp                   []byte
+	Router                    string
+	TokenNetworkFeeUsdCents   uint32
+	TokenReceiverAllowed      bool
 }
 
 // ToScVal converts DestChainConfigArgs to an xdr.ScVal for contract calls.
 func (s DestChainConfigArgs) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"address_bytes_length": scval.Uint32ToScVal(s.AddressBytesLength),
-		"base_execution_gas_cost": scval.Uint32ToScVal(s.BaseExecutionGasCost),
-		"default_ccvs": scval.AddressSliceToScVal(s.DefaultCcvs),
-		"default_executor": scval.AddressToScVal(s.DefaultExecutor),
-		"dest_chain_selector": scval.Uint64ToScVal(s.DestChainSelector),
-		"lane_mandated_ccvs": scval.AddressSliceToScVal(s.LaneMandatedCcvs),
+		"address_bytes_length":          scval.Uint32ToScVal(s.AddressBytesLength),
+		"base_execution_gas_cost":       scval.Uint32ToScVal(s.BaseExecutionGasCost),
+		"default_ccvs":                  scval.AddressSliceToScVal(s.DefaultCcvs),
+		"default_executor":              scval.AddressToScVal(s.DefaultExecutor),
+		"dest_chain_selector":           scval.Uint64ToScVal(s.DestChainSelector),
+		"lane_mandated_ccvs":            scval.AddressSliceToScVal(s.LaneMandatedCcvs),
 		"message_network_fee_usd_cents": scval.Uint32ToScVal(s.MessageNetworkFeeUsdCents),
-		"off_ramp": scval.BytesToScVal(s.OffRamp),
-		"router": scval.AddressToScVal(s.Router),
-		"token_network_fee_usd_cents": scval.Uint32ToScVal(s.TokenNetworkFeeUsdCents),
-		"token_receiver_allowed": scval.BoolToScVal(s.TokenReceiverAllowed),
+		"off_ramp":                      scval.BytesToScVal(s.OffRamp),
+		"router":                        scval.AddressToScVal(s.Router),
+		"token_network_fee_usd_cents":   scval.Uint32ToScVal(s.TokenNetworkFeeUsdCents),
+		"token_receiver_allowed":        scval.BoolToScVal(s.TokenReceiverAllowed),
 	})
 }
 
@@ -861,92 +861,92 @@ func DestChainConfigArgsFromScVal(val xdr.ScVal) (*DestChainConfigArgs, error) {
 
 // CCIPError represents the contract error codes.
 const (
-	CCIPErrorNotInitialized = 1
-	CCIPErrorAlreadyInitialized = 2
-	CCIPErrorUnauthorized = 3
-	CCIPErrorNotOwner = 4
-	CCIPErrorNoPendingOwner = 5
-	CCIPErrorCallerNotAuthorized = 6
-	CCIPErrorCallerAlreadyAuthorized = 7
-	CCIPErrorCallerNotFound = 8
-	CCIPErrorRoleNotGranted = 9
-	CCIPErrorFeatureNotEnabled = 10
-	CCIPErrorRoleAlreadyGranted = 11
-	CCIPErrorCannotRenounceRole = 12
-	CCIPErrorInvalidVersionTag = 13
-	CCIPErrorInvalidSignatureLength = 14
-	CCIPErrorInvalidSignature = 15
-	CCIPErrorInvalidSignatureCount = 16
-	CCIPErrorInvalidSignatureThreshold = 17
-	CCIPErrorInvalidSignaturePubkey = 18
-	CCIPErrorSourceNotConfigured = 19
-	CCIPErrorInvalidVerifierResults = 20
-	CCIPErrorReentrantCall = 21
-	CCIPErrorTokenNotSupported = 22
-	CCIPErrorFeeTokenNotSupported = 23
-	CCIPErrorNoGasPriceAvailable = 24
-	CCIPErrorDestinationChainNotEnabled = 25
-	CCIPErrorInvalidExtraArgsTag = 26
-	CCIPErrorInvalidExtraArgsData = 27
-	CCIPErrorMessageGasLimitTooHigh = 28
-	CCIPErrorMessageTooLarge = 29
-	CCIPErrorUnsupportedNumberOfTokens = 30
-	CCIPErrorInvalidDestChainConfig = 31
-	CCIPErrorMessageFeeTooHigh = 32
-	CCIPErrorInvalidStaticConfig = 33
-	CCIPErrorInvalidTokenReceiver = 34
-	CCIPErrorSourceTokenDataTooLarge = 35
-	CCIPErrorInvalidDestBytesOverhead = 36
-	CCIPErrorDestinationChainNotSupported = 37
-	CCIPErrorMustBeCalledByRouter = 38
-	CCIPErrorRouterMustSetOriginalSender = 39
-	CCIPErrorCannotSendZeroTokens = 40
-	CCIPErrorCanOnlySendOneTokenPerMessage = 41
-	CCIPErrorUnsupportedToken = 42
-	CCIPErrorInvalidDestChainAddress = 43
-	CCIPErrorFeeExceedsMaxAllowed = 44
-	CCIPErrorInsufficientFeeTokenAmount = 45
-	CCIPErrorTokenReceiverNotAllowed = 46
-	CCIPErrorCursedByRMN = 47
-	CCIPErrorRemoteChainNotSupported = 48
-	CCIPErrorSenderNotAllowed = 49
-	CCIPErrorInvalidTokenAmount = 50
-	CCIPErrorInvalidReceiverAddress = 51
-	CCIPErrorInvalidConfig = 52
-	CCIPErrorInvalidVerifierResultsLength = 53
-	CCIPErrorInboundImplementationNotFound = 54
+	CCIPErrorNotInitialized                 = 1
+	CCIPErrorAlreadyInitialized             = 2
+	CCIPErrorUnauthorized                   = 3
+	CCIPErrorNotOwner                       = 4
+	CCIPErrorNoPendingOwner                 = 5
+	CCIPErrorCallerNotAuthorized            = 6
+	CCIPErrorCallerAlreadyAuthorized        = 7
+	CCIPErrorCallerNotFound                 = 8
+	CCIPErrorRoleNotGranted                 = 9
+	CCIPErrorFeatureNotEnabled              = 10
+	CCIPErrorRoleAlreadyGranted             = 11
+	CCIPErrorCannotRenounceRole             = 12
+	CCIPErrorInvalidVersionTag              = 13
+	CCIPErrorInvalidSignatureLength         = 14
+	CCIPErrorInvalidSignature               = 15
+	CCIPErrorInvalidSignatureCount          = 16
+	CCIPErrorInvalidSignatureThreshold      = 17
+	CCIPErrorInvalidSignaturePubkey         = 18
+	CCIPErrorSourceNotConfigured            = 19
+	CCIPErrorInvalidVerifierResults         = 20
+	CCIPErrorReentrantCall                  = 21
+	CCIPErrorTokenNotSupported              = 22
+	CCIPErrorFeeTokenNotSupported           = 23
+	CCIPErrorNoGasPriceAvailable            = 24
+	CCIPErrorDestinationChainNotEnabled     = 25
+	CCIPErrorInvalidExtraArgsTag            = 26
+	CCIPErrorInvalidExtraArgsData           = 27
+	CCIPErrorMessageGasLimitTooHigh         = 28
+	CCIPErrorMessageTooLarge                = 29
+	CCIPErrorUnsupportedNumberOfTokens      = 30
+	CCIPErrorInvalidDestChainConfig         = 31
+	CCIPErrorMessageFeeTooHigh              = 32
+	CCIPErrorInvalidStaticConfig            = 33
+	CCIPErrorInvalidTokenReceiver           = 34
+	CCIPErrorSourceTokenDataTooLarge        = 35
+	CCIPErrorInvalidDestBytesOverhead       = 36
+	CCIPErrorDestinationChainNotSupported   = 37
+	CCIPErrorMustBeCalledByRouter           = 38
+	CCIPErrorRouterMustSetOriginalSender    = 39
+	CCIPErrorCannotSendZeroTokens           = 40
+	CCIPErrorCanOnlySendOneTokenPerMessage  = 41
+	CCIPErrorUnsupportedToken               = 42
+	CCIPErrorInvalidDestChainAddress        = 43
+	CCIPErrorFeeExceedsMaxAllowed           = 44
+	CCIPErrorInsufficientFeeTokenAmount     = 45
+	CCIPErrorTokenReceiverNotAllowed        = 46
+	CCIPErrorCursedByRMN                    = 47
+	CCIPErrorRemoteChainNotSupported        = 48
+	CCIPErrorSenderNotAllowed               = 49
+	CCIPErrorInvalidTokenAmount             = 50
+	CCIPErrorInvalidReceiverAddress         = 51
+	CCIPErrorInvalidConfig                  = 52
+	CCIPErrorInvalidVerifierResultsLength   = 53
+	CCIPErrorInboundImplementationNotFound  = 54
 	CCIPErrorOutboundImplementationNotFound = 55
-	CCIPErrorInvalidAddress = 56
-	CCIPErrorInvalidChainSelector = 57
-	CCIPErrorInvalidVersion = 58
-	CCIPErrorInvalidCCVVersion = 59
-	CCIPErrorOffRampAlreadyExists = 60
-	CCIPErrorOffRampMismatch = 61
-	CCIPErrorBadRMNSignal = 62
-	CCIPErrorUnsupportedDestinationChain = 63
-	CCIPErrorAlreadyCursed = 64
-	CCIPErrorConfigNotSet = 65
-	CCIPErrorDuplicateOnchainPublicKey = 66
-	CCIPErrorInvalidSignerOrder = 67
-	CCIPErrorNotEnoughSigners = 68
-	CCIPErrorNotCursed = 69
-	CCIPErrorOutOfOrderSignatures = 70
-	CCIPErrorThresholdNotMet = 71
-	CCIPErrorUnexpectedSigner = 72
-	CCIPErrorZeroValueNotAllowed = 73
+	CCIPErrorInvalidAddress                 = 56
+	CCIPErrorInvalidChainSelector           = 57
+	CCIPErrorInvalidVersion                 = 58
+	CCIPErrorInvalidCCVVersion              = 59
+	CCIPErrorOffRampAlreadyExists           = 60
+	CCIPErrorOffRampMismatch                = 61
+	CCIPErrorBadRMNSignal                   = 62
+	CCIPErrorUnsupportedDestinationChain    = 63
+	CCIPErrorAlreadyCursed                  = 64
+	CCIPErrorConfigNotSet                   = 65
+	CCIPErrorDuplicateOnchainPublicKey      = 66
+	CCIPErrorInvalidSignerOrder             = 67
+	CCIPErrorNotEnoughSigners               = 68
+	CCIPErrorNotCursed                      = 69
+	CCIPErrorOutOfOrderSignatures           = 70
+	CCIPErrorThresholdNotMet                = 71
+	CCIPErrorUnexpectedSigner               = 72
+	CCIPErrorZeroValueNotAllowed            = 73
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
 var CCIPErrorMessage = map[int]string{
-	1: "not initialized",
-	2: "already initialized",
-	3: "unauthorized",
-	4: "not owner",
-	5: "no pending owner",
-	6: "caller not authorized",
-	7: "caller already authorized",
-	8: "caller not found",
-	9: "role not granted",
+	1:  "not initialized",
+	2:  "already initialized",
+	3:  "unauthorized",
+	4:  "not owner",
+	5:  "no pending owner",
+	6:  "caller not authorized",
+	7:  "caller already authorized",
+	8:  "caller not found",
+	9:  "role not granted",
 	10: "feature not enabled",
 	11: "role already granted",
 	12: "cannot renounce role",
@@ -1016,9 +1016,9 @@ var CCIPErrorMessage = map[int]string{
 // RoleGrantedEvent represents the RoleGrantedEvent event.
 // Topics: [auth_RoleGranted]
 type RoleGrantedEvent struct {
-	Role string
+	Role    string
 	Account string
-	Sender string
+	Sender  string
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1030,9 +1030,9 @@ const RoleGrantedEventTopic = "auth_RoleGranted"
 // RoleRevokedEvent represents the RoleRevokedEvent event.
 // Topics: [auth_RoleRevoked]
 type RoleRevokedEvent struct {
-	Role string
+	Role    string
 	Account string
-	Sender string
+	Sender  string
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1069,7 +1069,7 @@ const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 // Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
-	NewOwner string
+	NewOwner      string
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1081,7 +1081,7 @@ const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 // ConfigSetEvent represents the ConfigSetEvent event.
 // Topics: [onramp_1_7_ConfigSet]
 type ConfigSetEvent struct {
-	StaticConfig StaticConfig
+	StaticConfig  StaticConfig
 	DynamicConfig DynamicConfig
 	// Event metadata
 	Ledger uint32
@@ -1094,15 +1094,15 @@ const ConfigSetEventTopic = "onramp_1_7_ConfigSet"
 // CCIPMessageSentEvent represents the CCIPMessageSentEvent event.
 // Topics: [onramp_1_7_CCIPMessageSent]
 type CCIPMessageSentEvent struct {
-	DestChainSelector uint64
-	SequenceNumber uint64
-	Sender string
-	MessageId [32]byte
-	FeeToken string
+	DestChainSelector     uint64
+	SequenceNumber        uint64
+	Sender                string
+	MessageId             [32]byte
+	FeeToken              string
 	TokenAmountBeforeFees int64
-	EncodedMessage []byte
-	Receipts []Receipt
-	VerifierBlobs [][]byte
+	EncodedMessage        []byte
+	Receipts              []Receipt
+	VerifierBlobs         [][]byte
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1115,8 +1115,8 @@ const CCIPMessageSentEventTopic = "onramp_1_7_CCIPMessageSent"
 // Topics: [onramp_1_7_DestChainConfigSet]
 type DestChainConfigSetEvent struct {
 	DestChainSelector uint64
-	MessageNumber uint64
-	Config DestChainConfig
+	MessageNumber     uint64
+	Config            DestChainConfig
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1136,4 +1136,3 @@ type OwnershipTransferredEvent struct {
 
 // OwnershipTransferredEventTopic is the event topic identifier.
 const OwnershipTransferredEventTopic = "onramp_1_7_OwnershipTransferred"
-

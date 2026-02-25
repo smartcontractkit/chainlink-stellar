@@ -1541,4 +1541,3 @@ func parseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 
 	return result, nil
 }
-
