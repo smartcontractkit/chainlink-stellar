@@ -1,13 +1,84 @@
 #![cfg(test)]
 
 use super::*;
+use fee_quoter::{
+    types::{DestChainConfig, GasPriceUpdate, PriceUpdates, StaticConfig, TokenPriceUpdate},
+    FeeQuoterContract, FeeQuoterContractClient,
+};
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events as _, vec, Address, Bytes, Env, TryIntoVal, Vec,
+    testutils::{Address as _, Ledger},
+    vec, Address, Bytes, Env, Vec,
 };
 
 // ============================================================
 // Unit Test Helpers
 // ============================================================
+
+/// Deploy and configure FeeQuoter for use in OnRamp integration tests.
+/// Returns (fee_quoter_address, fee_token_address) - the fee_token has its price set.
+fn setup_fee_quoter(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    fee_token: &Address,
+) -> Address {
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let fee_quoter_id = env.register(FeeQuoterContract, ());
+    let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
+
+    let link_token = Address::generate(env);
+    let static_config = StaticConfig {
+        max_fee_juels_per_msg: 1_000_000_000_000_000_000,
+        link_token: link_token.clone(),
+    };
+
+    let mut authorized_callers: Vec<Address> = Vec::new(env);
+    authorized_callers.push_back(owner.clone());
+
+    fee_quoter_client.initialize(owner, &static_config, &authorized_callers);
+
+    let dest_config = DestChainConfig {
+        is_enabled: true,
+        max_data_bytes: 50000,
+        max_per_msg_gas_limit: 4_000_000,
+        dest_gas_overhead: 350_000,
+        dest_gas_per_payload_byte: 16,
+        default_token_fee_usd: 50,
+        default_token_dest_gas: 50_000,
+        default_tx_gas_limit: 200_000,
+        network_fee_usd_cents: 100,
+        link_premium_percent: 90,
+    };
+
+    let mut config_args: Vec<fee_quoter::types::DestChainConfigArgs> = Vec::new(env);
+    config_args.push_back(fee_quoter::types::DestChainConfigArgs {
+        dest_chain_selector,
+        config: dest_config,
+    });
+    fee_quoter_client.apply_dest_chain_configs(&config_args);
+
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: fee_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+
+    let mut gas_updates: Vec<GasPriceUpdate> = Vec::new(env);
+    gas_updates.push_back(GasPriceUpdate {
+        dest_chain_selector,
+        usd_per_unit_gas: 100_000_000_000_000, // 1e14
+    });
+
+    fee_quoter_client.update_prices(&PriceUpdates {
+        token_price_updates: token_updates,
+        gas_price_updates: gas_updates,
+    });
+
+    fee_quoter_id
+}
 
 fn setup_env() -> (Env, Address, Address, Address, Address) {
     let env = Env::default();
@@ -274,6 +345,10 @@ fn test_ccip_send_full_flow() {
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
+    // ---- Deploy and configure FeeQuoter ----
+    let fee_token = Address::generate(&env);
+    let fee_quoter_id = setup_fee_quoter(&env, &owner, evm_chain_selector, &fee_token);
+
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
         token_admin_registry: Address::generate(&env),
@@ -282,7 +357,7 @@ fn test_ccip_send_full_flow() {
     };
 
     let dynamic_config = DynamicConfig {
-        fee_quoter: Address::generate(&env),
+        fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
 
@@ -314,12 +389,13 @@ fn test_ccip_send_full_flow() {
         receiver: Bytes::from_array(&env, &[1u8; 20]),
         data: Bytes::from_slice(&env, b"hello from stellar"),
         token_amounts: Vec::new(&env),
-        fee_token: Address::generate(&env),
+        fee_token: fee_token.clone(),
         extra_args: Bytes::new(&env),
     };
 
-    // ---- Send the message via Router ----
-    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message, &0i128);
+    // ---- Get fee and send the message via Router ----
+    let required_fee = router_client.get_fee(&evm_chain_selector, &message);
+    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message, &required_fee);
 
     // ---- Verify message ID is non-zero (32 bytes) ----
     let zero_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
@@ -373,6 +449,7 @@ fn test_get_fee_via_onramp() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
+    let dest_chain: u64 = 67890;
 
     let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
     let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
@@ -388,6 +465,10 @@ fn test_get_fee_via_onramp() {
     let router_client = RouterContractClient::new(&env, &router_id);
     router_client.initialize(&owner, &rmn_proxy_id);
 
+    // Deploy and configure FeeQuoter
+    let fee_token = Address::generate(&env);
+    let fee_quoter_id = setup_fee_quoter(&env, &owner, dest_chain, &fee_token);
+
     let onramp_client = onramp::OnRampContractClient::new(&env, &onramp_id);
     onramp_client.initialize(
         &owner,
@@ -398,12 +479,11 @@ fn test_get_fee_via_onramp() {
             max_usd_cents_per_message: 100_000,
         },
         &DynamicConfig {
-            fee_quoter: Address::generate(&env),
+            fee_quoter: fee_quoter_id,
             fee_aggregator: Address::generate(&env),
         },
     );
 
-    let dest_chain: u64 = 67890;
     onramp_client.apply_dest_chain_config_updates(&vec![
         &env,
         DestChainConfigArgs {
@@ -427,11 +507,11 @@ fn test_get_fee_via_onramp() {
         receiver: Bytes::from_array(&env, &[1u8; 20]),
         data: Bytes::new(&env),
         token_amounts: Vec::new(&env),
-        fee_token: Address::generate(&env),
+        fee_token: fee_token.clone(),
         extra_args: Bytes::new(&env),
     };
 
-    // get_fee should return 0 (OnRamp's placeholder)
+    // get_fee returns fee from FeeQuoter (message fee + CCV fees; CCVs are mock addresses so may add 0)
     let fee = router_client.get_fee(&dest_chain, &message);
-    assert_eq!(fee, 0);
+    assert!(fee >= 0, "Fee should be non-negative");
 }

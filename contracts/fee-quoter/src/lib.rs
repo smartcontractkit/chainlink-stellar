@@ -20,6 +20,8 @@ use types::{
     TokenTransferFeeResult,
 };
 
+use crate::types::MessageFeeResult;
+
 // ============================================================
 // Storage Keys
 // ============================================================
@@ -540,7 +542,7 @@ impl FeeQuoterContract {
         env: Env,
         dest_chain_selector: u64,
         message: StellarToAnyMessage,
-    ) -> Result<i128, CCIPError> {
+    ) -> Result<MessageFeeResult, CCIPError> {
         Self::require_initialized(&env)?;
 
         // Validate the message using common-message validation
@@ -606,7 +608,11 @@ impl FeeQuoterContract {
             return Err(CCIPError::MessageFeeTooHigh);
         }
 
-        Ok(fee_amount)
+        Ok(MessageFeeResult {
+            fee_usd_cents: total_usd_cents,
+            fee_token_amount: fee_amount,
+            fee_token_price: gas_quote.fee_token_price,
+        })
     }
 
     /// Convert a token amount to another token.

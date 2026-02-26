@@ -234,7 +234,7 @@ func TestStellarToEVMSourceReader(t *testing.T) {
 				Str("feeTokenAmount", r.FeeTokenAmount.String()).
 				Str("extraArgs", hex.EncodeToString(r.ExtraArgs)).
 				Str("blob", hex.EncodeToString(r.Blob)).
-				Msg("Receipt")
+				Msg("Receipt details")
 		}
 
 		// Verify the captured event matches what we sent

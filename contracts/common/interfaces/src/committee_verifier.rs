@@ -8,7 +8,7 @@ pub trait CommitteeVerifierInterface {
         message: soroban_sdk::Bytes,
         extra_args: soroban_sdk::Bytes,
         block_confirmations: u32,
-    ) -> Result<(u32, u32, u32), CCIPError>;
+    ) -> Result<FeeResponse, CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
@@ -103,6 +103,13 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         to: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FeeResponse {
+    pub dest_bytes_overhead: u32,
+    pub dest_gas_limit: u32,
+    pub fee: u32,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -249,6 +256,8 @@ pub enum CCIPError {
     ThresholdNotMet = 71,
     UnexpectedSigner = 72,
     ZeroValueNotAllowed = 73,
+    InvalidFeeCalculation = 801,
+    InvalidFeeTokenConversion = 802,
 }
 #[soroban_sdk::contractevent(topics = ["ccv_ConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

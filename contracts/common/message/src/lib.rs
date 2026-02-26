@@ -1,7 +1,11 @@
 #![no_std]
 
 use common_error::CCIPError;
-use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{
+    contracttype,
+    xdr::{FromXdr, ToXdr},
+    Address, Bytes, BytesN, Env, TryFromVal, Vec,
+};
 
 // ============================================================
 // MessageIdCompute Trait
@@ -74,6 +78,21 @@ pub struct GenericExtraArgsV3 {
     pub executor_args: Bytes,
     pub token_receiver: Bytes,
     pub token_args: Bytes,
+}
+
+impl GenericExtraArgsV3 {
+    pub fn new(env: &Env, executor: Address) -> Self {
+        Self {
+            gas_limit: 0,
+            block_confirmations: 0,
+            ccvs: Vec::new(env),
+            ccv_args: Vec::new(env),
+            executor,
+            executor_args: Bytes::new(env),
+            token_receiver: Bytes::new(env),
+            token_args: Bytes::new(env),
+        }
+    }
 }
 
 // ============================================================

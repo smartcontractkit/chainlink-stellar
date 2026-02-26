@@ -32,6 +32,7 @@ import (
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
 	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
 	stellar "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	modifier "github.com/smartcontractkit/chainlink-stellar/ccv/modifier"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 )
 

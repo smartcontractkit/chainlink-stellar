@@ -15,6 +15,8 @@ use soroban_sdk::{
 };
 use types::{DynamicConfig, RemoteChainConfig};
 
+use crate::types::FeeResponse;
+
 // ============================================================
 // Storage Keys
 // ============================================================
@@ -158,8 +160,7 @@ impl CommitteeVerifierContract {
         <Self as CurseCheckable>::require_not_cursed(&env)?;
         // <Self as AllowListable>::require_in_allowlist(&env, dest_chain_selector, &sender)?; this requires the allowlist to be enabled for the destination chain but it's not a mandatory requirement.
 
-        // TODO: generate correct verification blob
-
+        // TODO: this currently just returns the version tag, do we need to add more data?
         verification_blob.append(&Bytes::from_array(&env, &VERSION_TAG_V1_7_0));
         Ok(verification_blob)
     }
@@ -273,9 +274,15 @@ impl CommitteeVerifierContract {
         _message: Bytes,
         _extra_args: Bytes,
         _block_confirmations: u32,
-    ) -> Result<(u32, u32, u32), CCIPError> {
+    ) -> Result<FeeResponse, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseVerifier>::get_fee(&env, dest_chain_selector).map_err(Into::into)
+        <Self as BaseVerifier>::get_fee(&env, dest_chain_selector)
+            .map_err(Into::into)
+            .map(|fee| FeeResponse {
+                fee: fee.0,
+                dest_gas_limit: fee.1,
+                dest_bytes_overhead: fee.2,
+            })
     }
 
     // ========================================

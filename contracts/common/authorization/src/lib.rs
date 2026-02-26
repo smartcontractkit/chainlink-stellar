@@ -513,16 +513,17 @@ impl AccessControl {
 
     /// Internal: Require owner or ADMIN role.
     fn require_admin_or_owner(env: &Env) -> Result<Address, CCIPError> {
-        // First try ADMIN role
-        let admin_members = Self::get_role_members(env, ROLE_ADMIN);
-        for admin in admin_members.iter() {
-            // Try require_auth - in tests with mock_all_auths this will succeed
-            admin.require_auth();
-            return Ok(admin);
+        match DefaultOwnable::owner(env) {
+            Some(owner) => {
+                DefaultOwnable::require_owner(env)?;
+                Ok(owner)
+            }
+            None => {
+                let _admin_members = Self::get_role_members(env, ROLE_ADMIN);
+                // TODO: need to invoke require_auth on only the address that matches the caller
+                unimplemented!();
+            }
         }
-
-        // Fall back to owner
-        DefaultOwnable::require_owner(env)
     }
 }
 

@@ -1233,6 +1233,7 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-message",
+ "fee-quoter",
  "onramp",
  "rmn_proxy",
  "rmn_remote",

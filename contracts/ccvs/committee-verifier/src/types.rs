@@ -53,3 +53,11 @@ impl Validatable for RemoteChainConfig {
         Ok(())
     }
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeResponse {
+    pub fee: u32, // in USD cents
+    pub dest_gas_limit: u32,
+    pub dest_bytes_overhead: u32,
+}

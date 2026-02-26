@@ -169,3 +169,15 @@ pub struct TokenTransferFeeResult {
     /// Bytes overhead for destination.
     pub dest_bytes_overhead: u32,
 }
+
+/// Result from getting message fee.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageFeeResult {
+    /// Fee in USD cents.
+    pub fee_usd_cents: u128,
+    /// Fee in fee token.
+    pub fee_token_amount: i128,
+    /// Fee token price in USD with 18 decimals.
+    pub fee_token_price: u128,
+}

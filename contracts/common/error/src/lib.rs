@@ -129,4 +129,10 @@ pub enum CCIPError {
     ThresholdNotMet = 71,
     UnexpectedSigner = 72,
     ZeroValueNotAllowed = 73,
+
+    // ============================================================
+    // Calculation errors
+    // ============================================================
+    InvalidFeeCalculation = 801,
+    InvalidFeeTokenConversion = 802,
 }

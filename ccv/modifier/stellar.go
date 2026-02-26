@@ -9,10 +9,15 @@ import (
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 )
 
+<<<<<<< HEAD
 // StellarModifier is a function that modifies a testcontainers.ContainerRequest for Stellar.
 func StellarModifier(req testcontainers.ContainerRequest, verifierInput *committeeverifier.Input, outputs []*blockchain.Output) (testcontainers.ContainerRequest, error) {
 	// Update name to reflect chain family.
 	req.Name = fmt.Sprintf("stellar-%s", verifierInput.ContainerName)
 
+=======
+func StellarModifier(req testcontainers.ContainerRequest, verifierInput *committeeverifier.Input, outputs []*blockchain.Output) (testcontainers.ContainerRequest, error) {
+	req.Name = fmt.Sprintf("stellar-%s", verifierInput.ContainerName)
+>>>>>>> main
 	return req, nil
 }

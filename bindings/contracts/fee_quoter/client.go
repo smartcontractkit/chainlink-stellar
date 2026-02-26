@@ -184,7 +184,7 @@ func (c *FeeQuoterClient) GetFeeTokens(ctx context.Context) ([]string, error) {
 }
 
 // GetMessageFee calls the get_message_fee function on the contract.
-func (c *FeeQuoterClient) GetMessageFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (int64, error) {
+func (c *FeeQuoterClient) GetMessageFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (*MessageFeeResult, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),
@@ -192,18 +192,14 @@ func (c *FeeQuoterClient) GetMessageFee(ctx context.Context, destChainSelector u
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_message_fee", args)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call get_message_fee: %w", err)
+		return nil, fmt.Errorf("failed to call get_message_fee: %w", err)
 	}
 
 	if result == nil {
-		return 0, fmt.Errorf("no return value from get_message_fee")
+		return nil, fmt.Errorf("no return value from get_message_fee")
 	}
 
-	v, err := scval.I128FromScVal(*result)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
+	return MessageFeeResultFromScVal(*result)
 }
 
 // GetTokenPrice calls the get_token_price function on the contract.

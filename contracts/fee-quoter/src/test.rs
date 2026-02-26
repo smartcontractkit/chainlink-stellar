@@ -487,7 +487,7 @@ fn test_get_message_fee() {
     // gas_cost_usd_cents ~= 3516, + network_fee 100 = 3616
     // With 90% LINK discount: 3254 cents
     // In LINK: 3254 * 1e16 / 15e18 = ~2 LINK units
-    assert!(fee > 0);
+    assert!(fee.fee_token_amount > 0);
 }
 
 #[test]
@@ -578,5 +578,5 @@ fn test_get_message_fee_with_token_transfer() {
 
     // Fee with token transfer should be higher than without
     // (the $50 token fee pushes total over the $15/token resolution threshold)
-    assert!(fee_with_token > fee_no_token);
+    assert!(fee_with_token.fee_token_amount > fee_no_token.fee_token_amount);
 }

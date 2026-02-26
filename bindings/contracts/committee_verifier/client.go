@@ -52,7 +52,7 @@ func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) (uint32, uint32, uint32, error) {
+func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) (*FeeResponse, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(message),
@@ -62,40 +62,14 @@ func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector 
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to call get_fee: %w", err)
+		return nil, fmt.Errorf("failed to call get_fee: %w", err)
 	}
 
 	if result == nil {
-		return 0, 0, 0, fmt.Errorf("no return value from get_fee")
+		return nil, fmt.Errorf("no return value from get_fee")
 	}
 
-	vec, ok := result.GetVec()
-	if !ok || vec == nil {
-		return 0, 0, 0, fmt.Errorf("expected vec for tuple return")
-	}
-	if len(*vec) != 3 {
-		return 0, 0, 0, fmt.Errorf("expected 3 elements, got %d", len(*vec))
-	}
-
-	v0Raw, ok := (*vec)[0].GetU32()
-	if !ok {
-		return 0, 0, 0, fmt.Errorf("tuple[0]: expected u32")
-	}
-	v0 := uint32(v0Raw)
-
-	v1Raw, ok := (*vec)[1].GetU32()
-	if !ok {
-		return 0, 0, 0, fmt.Errorf("tuple[1]: expected u32")
-	}
-	v1 := uint32(v1Raw)
-
-	v2Raw, ok := (*vec)[2].GetU32()
-	if !ok {
-		return 0, 0, 0, fmt.Errorf("tuple[2]: expected u32")
-	}
-	v2 := uint32(v2Raw)
-
-	return v0, v1, v2, nil
+	return FeeResponseFromScVal(*result)
 }
 
 // IsOwner calls the is_owner function on the contract.

@@ -18,6 +18,7 @@ common-guard = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+fee-quoter = { workspace = true }
 onramp = { workspace = true }
 rmn_proxy = { workspace = true }
 rmn_remote = { workspace = true }

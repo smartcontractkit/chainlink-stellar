@@ -25,7 +25,7 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
         message: StellarToAnyMessage,
-    ) -> Result<i128, CCIPError>;
+    ) -> Result<MessageFeeResult, CCIPError>;
     fn get_token_price(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,
@@ -169,6 +169,13 @@ pub struct DestChainConfig {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct MessageFeeResult {
+    pub fee_token_amount: i128,
+    pub fee_token_price: u128,
+    pub fee_usd_cents: u128,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TimestampedPrice {
     pub timestamp: u64,
     pub value: u128,
@@ -289,6 +296,8 @@ pub enum CCIPError {
     ThresholdNotMet = 71,
     UnexpectedSigner = 72,
     ZeroValueNotAllowed = 73,
+    InvalidFeeCalculation = 801,
+    InvalidFeeTokenConversion = 802,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

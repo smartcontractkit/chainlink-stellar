@@ -178,6 +178,7 @@ execution_interval = 15_000_000_000
 
 ## Verifier Setup
 [[verifier]]
+  chain_family = "stellar"
   image = "verifier:dev"
   container_name = "default-verifier-1"
   nop_alias = "default-verifier-1"
@@ -186,7 +187,6 @@ execution_interval = 15_000_000_000
   root_path = "../../"
   committee_name = "default"
   node_index = 0
-  chain_family = "stellar"
   disable_finality_checkers = ["17301180955411967724"] # May not be needed for Stellar
   [verifier.db]
     image = "postgres:16-alpine"
@@ -200,6 +200,7 @@ execution_interval = 15_000_000_000
       soroban_rpc_url = "http://blockchain-stellar:8010/rpc"
 
 [[verifier]]
+  chain_family = "stellar"
   image = "verifier:dev"
   container_name = "default-verifier-2"
   nop_alias = "default-verifier-2"
@@ -209,7 +210,6 @@ execution_interval = 15_000_000_000
   committee_name = "default"
   node_index = 1
   disable_finality_checkers = ["17301180955411967724"]
-  chain_family = "stellar"
   [verifier.db]
     image = "postgres:16-alpine"
     name = "default-verifier-2-db"

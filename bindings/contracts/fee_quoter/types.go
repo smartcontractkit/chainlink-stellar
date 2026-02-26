@@ -741,6 +741,61 @@ func DestChainConfigFromScVal(val xdr.ScVal) (*DestChainConfig, error) {
 	return result, nil
 }
 
+// MessageFeeResult represents the MessageFeeResult struct from the contract.
+type MessageFeeResult struct {
+	FeeTokenAmount int64
+	FeeTokenPrice  scval.U128
+	FeeUsdCents    scval.U128
+}
+
+// ToScVal converts MessageFeeResult to an xdr.ScVal for contract calls.
+func (s MessageFeeResult) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"fee_token_amount": scval.I128ToScVal(s.FeeTokenAmount),
+		"fee_token_price":  scval.MustToScVal((s.FeeTokenPrice).ToScVal()),
+		"fee_usd_cents":    scval.MustToScVal((s.FeeUsdCents).ToScVal()),
+	})
+}
+
+// MessageFeeResultFromScVal parses an xdr.ScVal into MessageFeeResult.
+func MessageFeeResultFromScVal(val xdr.ScVal) (*MessageFeeResult, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &MessageFeeResult{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "fee_token_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("fee_token_amount: %w", err)
+			}
+			result.FeeTokenAmount = v
+		case "fee_token_price":
+			v, err := scval.U128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("fee_token_price: %w", err)
+			}
+			result.FeeTokenPrice = v
+		case "fee_usd_cents":
+			v, err := scval.U128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("fee_usd_cents: %w", err)
+			}
+			result.FeeUsdCents = v
+		}
+	}
+
+	return result, nil
+}
+
 // TimestampedPrice represents the TimestampedPrice struct from the contract.
 type TimestampedPrice struct {
 	Timestamp uint64
@@ -1177,83 +1232,87 @@ const (
 	CCIPErrorThresholdNotMet                = 71
 	CCIPErrorUnexpectedSigner               = 72
 	CCIPErrorZeroValueNotAllowed            = 73
+	CCIPErrorInvalidFeeCalculation          = 801
+	CCIPErrorInvalidFeeTokenConversion      = 802
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
 var CCIPErrorMessage = map[int]string{
-	1:  "not initialized",
-	2:  "already initialized",
-	3:  "unauthorized",
-	4:  "not owner",
-	5:  "no pending owner",
-	6:  "caller not authorized",
-	7:  "caller already authorized",
-	8:  "caller not found",
-	9:  "role not granted",
-	10: "feature not enabled",
-	11: "role already granted",
-	12: "cannot renounce role",
-	13: "invalid version tag",
-	14: "invalid signature length",
-	15: "invalid signature",
-	16: "invalid signature count",
-	17: "invalid signature threshold",
-	18: "invalid signature pubkey",
-	19: "source not configured",
-	20: "invalid verifier results",
-	21: "reentrant call",
-	22: "token not supported",
-	23: "fee token not supported",
-	24: "no gas price available",
-	25: "destination chain not enabled",
-	26: "invalid extra args tag",
-	27: "invalid extra args data",
-	28: "message gas limit too high",
-	29: "message too large",
-	30: "unsupported number of tokens",
-	31: "invalid dest chain config",
-	32: "message fee too high",
-	33: "invalid static config",
-	34: "invalid token receiver",
-	35: "source token data too large",
-	36: "invalid dest bytes overhead",
-	37: "destination chain not supported",
-	38: "must be called by router",
-	39: "router must set original sender",
-	40: "cannot send zero tokens",
-	41: "can only send one token per message",
-	42: "unsupported token",
-	43: "invalid dest chain address",
-	44: "fee exceeds max allowed",
-	45: "insufficient fee token amount",
-	46: "token receiver not allowed",
-	47: "cursed by r m n",
-	48: "remote chain not supported",
-	49: "sender not allowed",
-	50: "invalid token amount",
-	51: "invalid receiver address",
-	52: "invalid config",
-	53: "invalid verifier results length",
-	54: "inbound implementation not found",
-	55: "outbound implementation not found",
-	56: "invalid address",
-	57: "invalid chain selector",
-	58: "invalid version",
-	59: "invalid c c v version",
-	60: "off ramp already exists",
-	61: "off ramp mismatch",
-	62: "bad r m n signal",
-	63: "unsupported destination chain",
-	64: "already cursed",
-	65: "config not set",
-	66: "duplicate onchain public key",
-	67: "invalid signer order",
-	68: "not enough signers",
-	69: "not cursed",
-	70: "out of order signatures",
-	71: "threshold not met",
-	72: "unexpected signer",
-	73: "zero value not allowed",
+	1:   "not initialized",
+	2:   "already initialized",
+	3:   "unauthorized",
+	4:   "not owner",
+	5:   "no pending owner",
+	6:   "caller not authorized",
+	7:   "caller already authorized",
+	8:   "caller not found",
+	9:   "role not granted",
+	10:  "feature not enabled",
+	11:  "role already granted",
+	12:  "cannot renounce role",
+	13:  "invalid version tag",
+	14:  "invalid signature length",
+	15:  "invalid signature",
+	16:  "invalid signature count",
+	17:  "invalid signature threshold",
+	18:  "invalid signature pubkey",
+	19:  "source not configured",
+	20:  "invalid verifier results",
+	21:  "reentrant call",
+	22:  "token not supported",
+	23:  "fee token not supported",
+	24:  "no gas price available",
+	25:  "destination chain not enabled",
+	26:  "invalid extra args tag",
+	27:  "invalid extra args data",
+	28:  "message gas limit too high",
+	29:  "message too large",
+	30:  "unsupported number of tokens",
+	31:  "invalid dest chain config",
+	32:  "message fee too high",
+	33:  "invalid static config",
+	34:  "invalid token receiver",
+	35:  "source token data too large",
+	36:  "invalid dest bytes overhead",
+	37:  "destination chain not supported",
+	38:  "must be called by router",
+	39:  "router must set original sender",
+	40:  "cannot send zero tokens",
+	41:  "can only send one token per message",
+	42:  "unsupported token",
+	43:  "invalid dest chain address",
+	44:  "fee exceeds max allowed",
+	45:  "insufficient fee token amount",
+	46:  "token receiver not allowed",
+	47:  "cursed by r m n",
+	48:  "remote chain not supported",
+	49:  "sender not allowed",
+	50:  "invalid token amount",
+	51:  "invalid receiver address",
+	52:  "invalid config",
+	53:  "invalid verifier results length",
+	54:  "inbound implementation not found",
+	55:  "outbound implementation not found",
+	56:  "invalid address",
+	57:  "invalid chain selector",
+	58:  "invalid version",
+	59:  "invalid c c v version",
+	60:  "off ramp already exists",
+	61:  "off ramp mismatch",
+	62:  "bad r m n signal",
+	63:  "unsupported destination chain",
+	64:  "already cursed",
+	65:  "config not set",
+	66:  "duplicate onchain public key",
+	67:  "invalid signer order",
+	68:  "not enough signers",
+	69:  "not cursed",
+	70:  "out of order signatures",
+	71:  "threshold not met",
+	72:  "unexpected signer",
+	73:  "zero value not allowed",
+	801: "invalid fee calculation",
+	802: "invalid fee token conversion",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
