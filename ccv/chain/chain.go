@@ -152,7 +152,6 @@ func (c *Chain) ConfigureNodes(ctx context.Context, bc *blockchain.Input) (strin
 	), nil
 }
 
-// TODO: lane specific configs go here
 // ConnectContractsWithSelectors implements cciptestinterfaces.CCIP17Configuration.
 // Connects this chain's OnRamp to OffRamps on remote chains and configures CommitteeVerifiers.
 func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment.Environment, selector uint64, remoteSelectors []uint64, committees *deployments.EnvironmentTopology) error {
@@ -192,7 +191,6 @@ func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment
 	return nil
 }
 
-// TODO: global configs go here
 // DeployContractsForSelector implements cciptestinterfaces.CCIP17Configuration.
 // Deploys CCIP contracts for the given chain selector.
 func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.Environment, selector uint64, committees *deployments.EnvironmentTopology) (datastore.DataStore, error) {

@@ -228,7 +228,6 @@ InsecureConnection = false
 PollInterval = 500
 Timeout = 5000
 NtpServer = 'time.google.com'
-MaxResponseBytes = 0
 
 [indexer.indexer_config.Scheduler]
 TickerInterval = 50
@@ -246,7 +245,6 @@ IssuerAddresses = []
 Name = 'CommiteeVerifier (Primary)'
 BatchSize = 100
 MaxBatchWaitTime = 50
-MaxResponseBytes = 0
 Address = 'default-aggregator:50051'
 Since = 0
 APIKey = ''
