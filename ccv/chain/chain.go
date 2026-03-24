@@ -1096,6 +1096,7 @@ func (c *Chain) SendMessage(ctx context.Context, dest uint64, fields cciptestint
 		return cciptestinterfaces.MessageSentEvent{}, fmt.Errorf("failed to encode extra args: %w", err)
 	}
 
+	// TODO: use the actual fee token address and not just a mock
 	mockFeeToken := mustGenerateMockContractID(c.deployerKeypair.Address(), "fee-token")
 	sender := c.deployerKeypair.Address()
 
