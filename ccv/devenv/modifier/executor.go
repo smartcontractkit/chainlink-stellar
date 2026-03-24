@@ -12,7 +12,7 @@ import (
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services"
-	executorsvc "github.com/smartcontractkit/chainlink-ccv/build/devenv/services/executor"
+	"github.com/smartcontractkit/chainlink-ccv/executor"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -24,14 +24,14 @@ import (
 
 const defaultStellarExecutorImage = "stellarexecutor:dev"
 
-// StellarExecutorModifier is an executor.ReqModifier that configures the container
+// StellarExecutorModifier is a services.ExecutorReqModifier that configures the container
 // request for the Stellar executor:
 //  1. Switches the image to stellarexecutor:dev.
 //  2. Builds a stellar.toml from the executor's GeneratedConfig and Stellar network
 //     info (passphrase + internal RPC URL from blockchain outputs), including
 //     TransmitterConfigs, DestinationReaderConfigs, and ReaderConfigs, then
 //     bind-mounts it at DefaultStellarConfigPath so the binary reads it on startup.
-func StellarExecutorModifier(req testcontainers.ContainerRequest, executorInput *executorsvc.Input, outputs []*blockchain.Output) (testcontainers.ContainerRequest, error) {
+func StellarExecutorModifier(req testcontainers.ContainerRequest, executorInput *services.ExecutorInput, outputs []*blockchain.Output) (testcontainers.ContainerRequest, error) {
 	req.Image = defaultStellarExecutorImage
 	req.Name = fmt.Sprintf("stellar-%s", executorInput.ContainerName)
 
@@ -56,8 +56,8 @@ func StellarExecutorModifier(req testcontainers.ContainerRequest, executorInput 
 
 // buildExecutorStellarConfig constructs a common.Config with TransmitterConfigs,
 // DestinationReaderConfigs, and ReaderConfigs, then serialises it as TOML.
-func buildExecutorStellarConfig(executorInput *executorsvc.ExecutorInput, outputs []*blockchain.Output) ([]byte, error) {
-	var executorCfg services.ExecutorInput
+func buildExecutorStellarConfig(executorInput *services.ExecutorInput, outputs []*blockchain.Output) ([]byte, error) {
+	var executorCfg executor.Configuration
 	if executorInput.GeneratedConfig != "" {
 		if _, err := toml.Decode(executorInput.GeneratedConfig, &executorCfg); err != nil {
 			return nil, fmt.Errorf("parse GeneratedConfig: %w", err)

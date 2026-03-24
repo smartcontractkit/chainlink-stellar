@@ -1,12 +1,18 @@
 package devenv
 
 import (
+	"fmt"
+
+	"github.com/Masterminds/semver/v3"
+
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	ccvevmadapters "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/adapters"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/lanes"
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/registry"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services/chainconfig"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services/committeeverifier"
-	executorsvc "github.com/smartcontractkit/chainlink-ccv/build/devenv/services/executor"
 
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	"github.com/smartcontractkit/chainlink-stellar/ccv/devenv/modifier"
@@ -20,24 +26,24 @@ import (
 //   - CommitteeVerifierModifier: customises the verifier Docker container for Stellar.
 //   - ExecutorModifier:          customises the executor Docker container for Stellar.
 //   - ChainConfigLoader:         provides placeholder blockchain info for Stellar chains.
-//   - ChainFamilyAdapter:        adapter wrapping the EVM adapter for Stellar chains.
+//   - LaneAdapter (Stellar):     wraps the EVM v2.0.0 lane adapter for Stellar address decoding.
 //   - ImplFactory:               factory for creating Stellar CCIP17 chain implementations.
 //   - CLDFProviderFactory:       factory for creating Stellar CLDF BlockChain providers.
 func RegisterStellarComponents() {
-	// The EVM adapter is registered by the ccv init() function. Retrieve it as the
-	// base for the Stellar adapter (Stellar reuses EVM-compatible chain infrastructure
-	// for offchain components while having its own onchain logic).
-	evmAdapter, ok := registry.GetGlobalChainFamilyAdapterRegistry().GetChainFamily(chainsel.FamilyEVM)
+	laneV2 := semver.MustParse("2.0.0")
+	evmLane, ok := lanes.GetLaneAdapterRegistry().GetLaneAdapter(chainsel.FamilyEVM, laneV2)
 	if !ok {
-		// EVM adapter is always registered by the ccv init(); if it's missing we panic
-		// early rather than produce confusing downstream errors.
-		panic("EVM chain family adapter not registered; ensure chainlink-ccv/build/devenv/registry is initialised before calling RegisterStellarComponents")
+		panic("EVM lane adapter (2.0.0) not registered; import github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/adapters before calling RegisterStellarComponents")
+	}
+	evmBase, ok := evmLane.(*ccvevmadapters.ChainFamilyAdapter)
+	if !ok {
+		panic(fmt.Sprintf("EVM lane adapter has unexpected type %T; expected *adapters.ChainFamilyAdapter", evmLane))
 	}
 
 	chainconfig.RegisterChainConfigLoader(chainsel.FamilyStellar, StellarChainConfigLoader)
 	committeeverifier.RegisterModifier(chainsel.FamilyStellar, modifier.StellarVerifierModifier)
-	executorsvc.RegisterModifier(chainsel.FamilyStellar, modifier.StellarExecutorModifier)
+	services.RegisterExecutorModifier(chainsel.FamilyStellar, modifier.StellarExecutorModifier)
 	ccv.RegisterImplFactory(chainsel.FamilyStellar, ccvchain.NewImplFactory())
-	registry.RegisterChainFamilyAdapter(chainsel.FamilyStellar, ccvchain.NewChainFamilyAdapter(evmAdapter))
+	lanes.GetLaneAdapterRegistry().RegisterLaneAdapter(chainsel.FamilyStellar, laneV2, ccvchain.NewChainFamilyAdapter(evmBase))
 	registry.RegisterCLDFProviderFactory(chainsel.FamilyStellar, ccvchain.NewCLDFProviderFactory())
 }

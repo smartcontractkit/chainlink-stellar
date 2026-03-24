@@ -16,8 +16,9 @@ import (
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccv/bootstrap"
-	cmd "github.com/smartcontractkit/chainlink-ccv/cmd/executor"
 	"github.com/smartcontractkit/chainlink-ccv/executor"
+	executorcmd "github.com/smartcontractkit/chainlink-ccv/executor/cmd"
+	"github.com/smartcontractkit/chainlink-ccv/executor/pkg/jobspec"
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
@@ -47,14 +48,14 @@ func loadConfig(path string) (*common.Config, error) {
 func main() {
 	if err := bootstrap.Run(
 		"StellarExecutor",
-		cmd.NewServiceFactory(
+		executorcmd.NewServiceFactory(
 			chainsel.FamilyStellar,
 			func(
 				ctx context.Context,
 				lggr logger.Logger,
 				infos map[string]*sourcereader.ReaderConfig,
 				cfg executor.Configuration,
-			) (*cmd.ExecutorChainComponents, error) {
+			) (*executorcmd.ExecutorChainComponents, error) {
 				configPath, ok := os.LookupEnv(StellarConfigPathEnv)
 				if !ok {
 					configPath = common.DefaultStellarConfigPath
@@ -164,13 +165,13 @@ func main() {
 					rmnReaders[protocol.ChainSelector(selector)] = dr
 				}
 
-				return &cmd.ExecutorChainComponents{
+				return &executorcmd.ExecutorChainComponents{
 					ContractTransmitters: contractTransmitters,
 					DestinationReaders:   destReaders,
 					RMNCurseReaders:      rmnReaders,
 				}, nil
 			}),
-		bootstrap.WithLogLevel[executor.JobSpec](zapcore.InfoLevel),
+		bootstrap.WithLogLevel[jobspec.JobSpec](zapcore.InfoLevel),
 	); err != nil {
 		panic(fmt.Sprintf("failed to run Stellar executor: %s", err.Error()))
 	}

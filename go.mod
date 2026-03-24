@@ -13,7 +13,6 @@ require (
 	github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment v0.0.0-20260319184350-ddd8f2a1fa78
 	github.com/smartcontractkit/chainlink-ccv v0.0.0-20260323190521-4d17c66bedae
 	github.com/smartcontractkit/chainlink-ccv/build/devenv v0.0.0-20260323190521-4d17c66bedae
-	github.com/smartcontractkit/chainlink-ccv/deployments v0.0.0-20260225091500-bd15cccf316a
 	github.com/smartcontractkit/chainlink-common v0.10.1-0.20260310151336-c98a9c147ac0
 	github.com/smartcontractkit/chainlink-deployments-framework v0.85.0
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.15.0
@@ -113,6 +112,7 @@ require (
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.0 // indirect
+	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/exp/metrics v0.124.1 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil v0.124.1 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/processor/deltatocumulativeprocessor v0.124.1 // indirect
@@ -135,9 +135,6 @@ require (
 	github.com/smartcontractkit/ccip-contract-examples/chains/evm v0.0.0-20250826190403-aed7f5f33cde // indirect
 	github.com/smartcontractkit/chainlink-common/keystore v1.0.0 // indirect
 	github.com/smartcontractkit/chainlink-evm v0.3.4-0.20260126170652-c5f27bb1804e // indirect
-	github.com/smartcontractkit/chainlink-framework/chains v0.0.0-20251210101658-1c5c8e4c4f15 // indirect
-	github.com/smartcontractkit/chainlink-framework/metrics v0.0.0-20251210101658-1c5c8e4c4f15 // indirect
-	github.com/smartcontractkit/chainlink-framework/multinode v0.0.0-20251021173435-e86785845942 // indirect
 	github.com/smartcontractkit/chainlink-protos/node-platform v0.0.0-20260205130626-db2a2aab956b // indirect
 	github.com/smartcontractkit/chainlink-protos/orchestrator v0.10.0 // indirect
 	github.com/smartcontractkit/chainlink-testing-framework/lib/grafana v1.50.0 // indirect
@@ -148,6 +145,7 @@ require (
 	github.com/tjhop/slog-gokit v0.1.4 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
+	github.com/urfave/cli v1.22.16 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.14 // indirect
@@ -511,6 +509,13 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
+// The chainlink-ccv repo also publishes nested modules under /verifier and /executor.
+// Exclude them so imports resolve only from the root chainlink-ccv module (avoids
+// ambiguous import errors and broken transitive pins on chainlink-ccv/common).
+exclude github.com/smartcontractkit/chainlink-ccv/verifier v0.0.4-rc
+
+exclude github.com/smartcontractkit/chainlink-ccv/executor v0.0.4-rc
+
 // Replace directives needed for CCV devenv dependencies
 replace (
 	// Repeat replaces from chainlink-ccv devenv
@@ -519,6 +524,13 @@ replace (
 	github.com/fbsobreira/gotron-sdk => github.com/smartcontractkit/chainlink-tron/relayer/gotron-sdk v0.0.5-0.20251014124537-af6b1684fe15
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/noders-team/go-daml => github.com/stackman27/go-daml v0.0.0-20260204001938-550ee9d8ab10
+
+	// executor/cmd and executor/pkg/jobspec exist in chainlink-ccv but are not yet on the proxy.
+	// Expects a sibling checkout: ../chainlink-ccv (same parent dir as this repo). After those
+	// paths are merged and tagged/pseudo-versioned, drop these replaces and:
+	//   go get github.com/smartcontractkit/chainlink-ccv@<commit>
+	github.com/smartcontractkit/chainlink-ccv => ../chainlink-ccv
+	github.com/smartcontractkit/chainlink-ccv/build/devenv => ../chainlink-ccv/build/devenv
 
 	github.com/smartcontractkit/chainlink-stellar/bindings => ./bindings
 

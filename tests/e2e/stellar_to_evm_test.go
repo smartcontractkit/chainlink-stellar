@@ -2,20 +2,30 @@ package e2e_tests
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	vvrops "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/versioned_verifier_resolver"
+	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/onramp"
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-common/pkg/utils/tests"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
+	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
 const (
@@ -117,4 +127,124 @@ func TestStellarToEVMExecution(t *testing.T) {
 		// 	Uint64("seqNo", seqNo).
 		// 	Msg("Message executed successfully on EVM")
 	})
+}
+
+// mockStellarContractID returns a deterministic Soroban contract strkey (same scheme as ccv/chain.SendMessage).
+func mockStellarContractID(deployerGAddress, name string) string {
+	salt := stellardeployment.GenerateDeterministicSalt(deployerGAddress, name)
+	encoded, err := strkey.Encode(strkey.VersionByteContract, salt[:])
+	if err != nil {
+		panic(fmt.Errorf("encode mock contract id: %w", err))
+	}
+	return encoded
+}
+
+func mustStellarOnRampClient(t *testing.T, env *helpers.E2ETestEnv) *onrampbindings.OnRampClient {
+	t.Helper()
+	key := datastore.NewAddressRefKey(
+		env.SourceChainDetails.ChainSelector,
+		datastore.ContractType(onrampoperations.ContractType),
+		semver.MustParse(onrampoperations.Deploy.Version()),
+		"",
+	)
+	ref, err := env.DataStore.Addresses().Get(key)
+	require.NoError(t, err)
+	contractID, err := scval.HexToContractStrkey(ref.Address)
+	require.NoError(t, err)
+	return onrampbindings.NewOnRampClient(env.Deployer, contractID)
+}
+
+func mustStellarVVRContractID(t *testing.T, env *helpers.E2ETestEnv) string {
+	t.Helper()
+	ccvKey := datastore.NewAddressRefKey(
+		env.SourceChainDetails.ChainSelector,
+		datastore.ContractType(vvrops.CommitteeVerifierResolverType),
+		semver.MustParse(vvrops.Deploy.Version()),
+		devenvcommon.DefaultCommitteeVerifierQualifier,
+	)
+	ref, err := env.DataStore.Addresses().Get(ccvKey)
+	require.NoError(t, err)
+	vvrID, err := scval.HexToContractStrkey(ref.Address)
+	require.NoError(t, err)
+	return vvrID
+}
+
+func mustBuildStellarToEVMOutboundMessage(t *testing.T, env *helpers.E2ETestEnv, evmReceiver []byte) onrampbindings.StellarToAnyMessage {
+	t.Helper()
+	vvrID := mustStellarVVRContractID(t, env)
+	executorID := mockStellarContractID(env.DeployerKP.Address(), "executor")
+	extraArgs := onrampbindings.GenericExtraArgsV3{
+		Ccvs:               []string{vvrID},
+		CcvArgs:            [][]byte{{}},
+		Executor:           executorID,
+		ExecutorArgs:       []byte{},
+		GasLimit:           0,
+		BlockConfirmations: 0,
+		TokenReceiver:      []byte{},
+		TokenArgs:          []byte{},
+	}
+	encodedExtraArgs, err := ccvchain.EncodeExtraArgsV3(extraArgs)
+	require.NoError(t, err)
+	feeToken := mockStellarContractID(env.DeployerKP.Address(), "fee-token")
+	return onrampbindings.StellarToAnyMessage{
+		Receiver:     evmReceiver,
+		Data:         []byte("unhappy-path probe"),
+		TokenAmounts: nil,
+		FeeToken:     feeToken,
+		ExtraArgs:    encodedExtraArgs,
+	}
+}
+
+// TestStellarOnRampUnsupportedDestinationChain exercises OnRamp.get_fee when DEST_CHAINS has no entry
+// for the requested selector (CCIPError::DestinationChainNotSupported in onramp get_dest_chain_config_internal).
+//
+// Devenv and env file requirements match TestStellarToEVMExecution.
+//
+//	go test -v -timeout 10m ./tests/e2e/... -run TestStellarOnRampUnsupportedDestinationChain
+func TestStellarOnRampUnsupportedDestinationChain(t *testing.T) {
+	configOutputPath := "../env/env-stellar-evm-out.toml"
+	ctx := ccv.Plog.WithContext(t.Context())
+	l := zerolog.Ctx(ctx)
+
+	env := helpers.NewE2ETestEnv(t, ctx, l, configOutputPath, chainsel.STELLAR_LOCALNET.ChainID, chainsel.STELLAR_LOCALNET.Selector)
+	evmDetails := env.DestChainDetails
+
+	evmReceiver, err := env.Chains[evmDetails.ChainSelector].GetEOAReceiverAddress()
+	require.NoError(t, err)
+
+	msg := mustBuildStellarToEVMOutboundMessage(t, env, evmReceiver)
+	onramp := mustStellarOnRampClient(t, env)
+
+	// No lane / dest config is registered for this selector in the Stellar OnRamp.
+	const bogusDestSelector uint64 = 0xDEADBEEFCAFEBABE
+	_, err = onramp.GetFee(ctx, bogusDestSelector, msg)
+	require.Error(t, err, "expected OnRamp get_fee to fail with DestinationChainNotSupported")
+}
+
+// TestStellarOnRampRejectsMultipleTokensPerMessage exercises StellarToAnyMessage::validate via OnRamp.get_fee
+// when token_amounts has more than one entry (CCIPError::CanOnlySendOneTokenPerMessage).
+//
+//	go test -v -timeout 10m ./tests/e2e/... -run TestStellarOnRampRejectsMultipleTokensPerMessage
+func TestStellarOnRampRejectsMultipleTokensPerMessage(t *testing.T) {
+	configOutputPath := "../env/env-stellar-evm-out.toml"
+	ctx := ccv.Plog.WithContext(t.Context())
+	l := zerolog.Ctx(ctx)
+
+	env := helpers.NewE2ETestEnv(t, ctx, l, configOutputPath, chainsel.STELLAR_LOCALNET.ChainID, chainsel.STELLAR_LOCALNET.Selector)
+	evmDetails := env.DestChainDetails
+
+	evmReceiver, err := env.Chains[evmDetails.ChainSelector].GetEOAReceiverAddress()
+	require.NoError(t, err)
+
+	msg := mustBuildStellarToEVMOutboundMessage(t, env, evmReceiver)
+	tokenA := mockStellarContractID(env.DeployerKP.Address(), "token-a")
+	tokenB := mockStellarContractID(env.DeployerKP.Address(), "token-b")
+	msg.TokenAmounts = []onrampbindings.TokenAmount{
+		{Amount: 1, Token: tokenA},
+		{Amount: 1, Token: tokenB},
+	}
+
+	onramp := mustStellarOnRampClient(t, env)
+	_, err = onramp.GetFee(ctx, evmDetails.ChainSelector, msg)
+	require.Error(t, err, "expected OnRamp get_fee to fail with CanOnlySendOneTokenPerMessage")
 }
