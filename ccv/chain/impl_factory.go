@@ -14,9 +14,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/committee_verifier"
-	offrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/offramp"
-	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/onramp"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/versioned_verifier_resolver"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/committee_verifier"
+	offrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/offramp"
+	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/onramp"
 	routeroperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
@@ -146,8 +147,8 @@ func (f *ImplFactory) New(ctx context.Context, cfg *ccv.Cfg, lggr zerolog.Logger
 
 		vvrKey := datastore.NewAddressRefKey(
 			details.ChainSelector,
-			datastore.ContractType(committee_verifier.ResolverType),
-			semver.MustParse(committee_verifier.Deploy.Version()),
+			datastore.ContractType(versioned_verifier_resolver.ContractType),
+			semver.MustParse(versioned_verifier_resolver.Version.String()),
 			devenvcommon.DefaultCommitteeVerifierQualifier,
 		)
 		vvrRef, err := env.DataStore.Addresses().Get(vvrKey)
@@ -161,7 +162,7 @@ func (f *ImplFactory) New(ctx context.Context, cfg *ccv.Cfg, lggr zerolog.Logger
 		cvKey := datastore.NewAddressRefKey(
 			details.ChainSelector,
 			datastore.ContractType(committee_verifier.ContractType),
-			semver.MustParse(committee_verifier.Deploy.Version()),
+			semver.MustParse(committee_verifier.Version.String()),
 			devenvcommon.DefaultCommitteeVerifierQualifier,
 		)
 		cvRef, err := env.DataStore.Addresses().Get(cvKey)

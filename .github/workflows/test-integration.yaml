@@ -24,11 +24,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
+      # Needed before cloning chainlink-ccv so we resolve the pinned module version with `go list`.
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
       - name: Clone chainlink-ccv
         run: |
-          CCV_COMMIT=$(grep 'chainlink-ccv/build/devenv' go.mod | head -1 | sed 's/.*-\([0-9a-f]*\)$/\1/')
+          set -euo pipefail
+          MOD='github.com/smartcontractkit/chainlink-ccv/build/devenv'
+          VERSION="$(go list -m -f '{{.Version}}' "$MOD")"
+          # Pseudo-version: v0.0.0-<timestamp>-<abbrev-commit>
+          CCV_COMMIT="${VERSION##*-}"
+          echo "chainlink-ccv module ${MOD} @ ${VERSION} -> checkout ${CCV_COMMIT}"
           git clone https://github.com/smartcontractkit/chainlink-ccv.git ../chainlink-ccv
-          cd ../chainlink-ccv && git checkout "$CCV_COMMIT"
+          cd ../chainlink-ccv
+          if ! git checkout "$CCV_COMMIT"; then
+            echo "::error::No git object ${CCV_COMMIT} on smartcontractkit/chainlink-ccv. The commit in go.mod must exist on GitHub (push your branch or run \`go get ${MOD}@<known-good-commit>\` and commit go.mod/go.sum)."
+            exit 1
+          fi
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
@@ -43,11 +58,6 @@ jobs:
 
       - name: Build contracts
         run: make build
-
-      - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
 
       - name: Run integration tests
         run: go test -v -race -tags integration -fullpath -shuffle on -coverpkg=./bindings/contracts/... -coverprofile=coverage-integration.out ./tests/integration/...

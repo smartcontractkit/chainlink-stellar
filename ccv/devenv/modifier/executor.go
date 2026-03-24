@@ -11,8 +11,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services"
 	executorsvc "github.com/smartcontractkit/chainlink-ccv/build/devenv/services/executor"
-	"github.com/smartcontractkit/chainlink-ccv/executor"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -56,8 +56,8 @@ func StellarExecutorModifier(req testcontainers.ContainerRequest, executorInput 
 
 // buildExecutorStellarConfig constructs a common.Config with TransmitterConfigs,
 // DestinationReaderConfigs, and ReaderConfigs, then serialises it as TOML.
-func buildExecutorStellarConfig(executorInput *executorsvc.Input, outputs []*blockchain.Output) ([]byte, error) {
-	var executorCfg executor.Configuration
+func buildExecutorStellarConfig(executorInput *executorsvc.ExecutorInput, outputs []*blockchain.Output) ([]byte, error) {
+	var executorCfg services.ExecutorInput
 	if executorInput.GeneratedConfig != "" {
 		if _, err := toml.Decode(executorInput.GeneratedConfig, &executorCfg); err != nil {
 			return nil, fmt.Errorf("parse GeneratedConfig: %w", err)

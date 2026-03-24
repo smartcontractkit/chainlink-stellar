@@ -193,7 +193,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 		require.Len(t, headers, 1)
 
 		// Find the header by the original key
-		header, exists := headers[blockNumbers[0]]
+		header, exists := headers[blockNumbers[0].Uint64()]
 		require.True(t, exists)
 		assert.Equal(t, uint64(100), header.Number)
 		assert.Equal(t, "RMNREMOTE", reader.rmnRemoteAddress)

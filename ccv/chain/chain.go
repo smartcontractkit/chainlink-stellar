@@ -24,16 +24,18 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/committee_verifier"
-	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/executor"
-	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/fee_quoter"
-	offrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/offramp"
-	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/operations/onramp"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v1_7_0/versioned_verifier_resolver"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/committee_verifier"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/executor"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/fee_quoter"
+	offrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/offramp"
+	onrampoperations "github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/onramp"
+	"github.com/smartcontractkit/chainlink-ccip/ccv/chains/evm/deployment/v2_0_0/operations/proxy"
 	routeroperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote"
+	offchain "github.com/smartcontractkit/chainlink-ccip/deployment/v1_7_0/offchain"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
-	"github.com/smartcontractkit/chainlink-ccv/deployments"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
@@ -175,7 +177,7 @@ func (c *Chain) ConfigureNodes(ctx context.Context, bc *blockchain.Input) (strin
 
 // ConnectContractsWithSelectors implements cciptestinterfaces.CCIP17Configuration.
 // Connects this chain's OnRamp to OffRamps on remote chains and configures CommitteeVerifiers.
-func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment.Environment, selector uint64, remoteSelectors []uint64, committees *deployments.EnvironmentTopology) error {
+func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment.Environment, selector uint64, remoteSelectors []uint64, committees *offchain.EnvironmentTopology) error {
 	c.logger.Info().Uint64("selector", selector).Interface("remoteSelectors", remoteSelectors).Msg("Connecting contracts with selectors")
 
 	// Get the router's address from the datastore
@@ -284,7 +286,7 @@ func (c *Chain) ConnectContractsWithSelectors(ctx context.Context, e *deployment
 
 // DeployContractsForSelector implements cciptestinterfaces.CCIP17Configuration.
 // Deploys CCIP contracts for the given chain selector.
-func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.Environment, selector uint64, committees *deployments.EnvironmentTopology) (datastore.DataStore, error) {
+func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.Environment, selector uint64, committees *offchain.EnvironmentTopology) (datastore.DataStore, error) {
 	c.logger.Info().Uint64("selector", selector).Msg("Deploying Stellar CCIP contracts")
 
 	// TODO: can we just use env.DataStore instead of creating a new one?
@@ -508,7 +510,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 
 	inboundImplUpdates := []vvrbindings.InboundImplementationUpdate{
 		{
-			Version:  [4]byte{0x49, 0xff, 0x34, 0xed}, // VERSION_TAG_V1_7_0
+			Version:  [4]byte{0x49, 0xff, 0x34, 0xed}, // VERSION_TAG_v2_0_0
 			Verifier: &cvContractID,
 		},
 	}
@@ -730,8 +732,8 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	} {
 		ds.AddressRefStore.Add(datastore.AddressRef{
 			Address:       vvrHex,
-			Type:          datastore.ContractType(committee_verifier.ResolverType),
-			Version:       semver.MustParse(committee_verifier.Deploy.Version()),
+			Type:          datastore.ContractType(versioned_verifier_resolver.ContractType),
+			Version:       semver.MustParse(versioned_verifier_resolver.Version.String()),
 			Qualifier:     qualifier,
 			ChainSelector: selector,
 		})
@@ -745,7 +747,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       cvHex,
 		Type:          datastore.ContractType(committee_verifier.ContractType),
-		Version:       semver.MustParse(committee_verifier.Deploy.Version()),
+		Version:       semver.MustParse(committee_verifier.Version.String()),
 		Qualifier:     devenvcommon.DefaultCommitteeVerifierQualifier,
 		ChainSelector: selector,
 	})
@@ -754,15 +756,15 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       contractHexAddr("stellar-executor"),
 		Type:          datastore.ContractType(executor.ContractType),
-		Version:       semver.MustParse(executor.Deploy.Version()),
+		Version:       semver.MustParse(executor.Version.String()),
 		Qualifier:     devenvcommon.DefaultExecutorQualifier,
 		ChainSelector: selector,
 	})
 
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       contractHexAddr("stellar-executor-proxy"),
-		Type:          datastore.ContractType(executor.ProxyType),
-		Version:       semver.MustParse(executor.DeployProxy.Version()),
+		Type:          datastore.ContractType(proxy.ContractType),
+		Version:       semver.MustParse(proxy.Version.String()),
 		Qualifier:     devenvcommon.DefaultExecutorQualifier,
 		ChainSelector: selector,
 	})
@@ -775,7 +777,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       rmnRemoteHex,
 		Type:          datastore.ContractType(rmn_remote.ContractType),
-		Version:       semver.MustParse(rmn_remote.Deploy.Version()),
+		Version:       semver.MustParse(rmn_remote.Version.String()),
 		ChainSelector: selector,
 	})
 
@@ -787,7 +789,7 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 	ds.AddressRefStore.Add(datastore.AddressRef{
 		Address:       feeQuoterHex,
 		Type:          datastore.ContractType(fee_quoter.ContractType),
-		Version:       semver.MustParse(fee_quoter.Deploy.Version()),
+		Version:       semver.MustParse(fee_quoter.Version.String()),
 		ChainSelector: selector,
 	})
 
@@ -1274,7 +1276,7 @@ func (c *Chain) TransferNative(ctx context.Context, from, to protocol.UnknownAdd
 // given source chain selector from the environment topology. It searches all
 // committees for a chain config matching sourceChainSelector, then looks up
 // each NOP's signer address for the specified chain family.
-func resolveSignersFromTopology(topology *deployments.EnvironmentTopology, sourceChainSelector uint64, family string) ([][32]byte, uint32) {
+func resolveSignersFromTopology(topology *offchain.EnvironmentTopology, sourceChainSelector uint64, family string) ([][32]byte, uint32) {
 	if topology == nil || topology.NOPTopology == nil {
 		return nil, 0
 	}

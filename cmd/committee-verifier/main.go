@@ -11,8 +11,8 @@ import (
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccv/bootstrap"
-	cmd "github.com/smartcontractkit/chainlink-ccv/cmd/verifier"
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
+	verifiercmd "github.com/smartcontractkit/chainlink-ccv/verifier/cmd"
 	"github.com/smartcontractkit/chainlink-ccv/verifier/commit"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -37,7 +37,7 @@ func loadConfig(path string) (*common.Config, error) {
 func main() {
 	if err := bootstrap.Run(
 		"StellarCommitteeVerifier",
-		cmd.NewServiceFactory(
+		verifiercmd.NewCommitteeVerifierServiceFactory(
 			chainsel.FamilyStellar,
 			func(
 				ctx context.Context,
