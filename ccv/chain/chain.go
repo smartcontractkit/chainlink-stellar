@@ -64,7 +64,7 @@ import (
 const stellarAddressLen = 32
 
 // CcipReceiverContractType is the datastore contract type for the example CCIP
-// receiver deployed on Stellar so that GetEOAReceiverAddress can return a valid
+// receiver deployed on Stellar so that GetReceiverAddress can return a valid
 // Wasm contract address in tests.
 const CcipReceiverContractType = "CcipReceiverExample"
 
@@ -769,9 +769,9 @@ func (c *Chain) DeployContractsForSelector(ctx context.Context, env *deployment.
 		Int("offRampEntries", len(offRampEntries)).
 		Msg("Router ramp updates applied")
 
-	// Deploy an example CCIP receiver so that GetEOAReceiverAddress can return
-	// a valid Wasm contract address. Stellar OffRamp requires receivers to be
-	// deployed Wasm contracts (unlike EVM which accepts EOA receivers).
+	// Deploy an example CCIP receiver contract. Stellar OffRamp requires
+	// receivers to be deployed Wasm contracts (unlike EVM which accepts
+	// plain EOA receivers).
 	receiverWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccip_receiver_example.wasm")
 	if _, statErr := os.Stat(receiverWasmPath); os.IsNotExist(statErr) {
 		return nil, fmt.Errorf("ccip_receiver_example WASM not found at %s. Run 'make build' from the chainlink-stellar root to compile contracts.", receiverWasmPath)
@@ -1117,10 +1117,11 @@ func (c *Chain) ExposeMetrics(ctx context.Context, source, dest uint64) ([]strin
 }
 
 // GetEOAReceiverAddress implements cciptestinterfaces.CCIP17.
-// On Stellar, CCIP receivers must be deployed Wasm contracts (the OffRamp
-// checks executable() on the receiver address). This returns the address of
-// the ccip_receiver_example contract deployed during DeployContractsForSelector.
-// TODO: check if this assumption is always correct or if it only applies to arbitrary messages?
+//
+// NOTE: Despite the name, on Stellar this returns a *contract* address, not an
+// EOA. The Stellar OffRamp requires receivers to be deployed Wasm contracts
+// (it checks executable() on the receiver). The interface should be renamed
+// upstream in chainlink-ccv to something chain-agnostic like GetReceiverAddress.
 func (c *Chain) GetEOAReceiverAddress() (protocol.UnknownAddress, error) {
 	if c.receiverContractID == "" {
 		return protocol.UnknownAddress{}, fmt.Errorf("ccip_receiver contract not deployed; run DeployContractsForSelector first")

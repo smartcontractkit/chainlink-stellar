@@ -169,7 +169,12 @@ func (ct *ContractTransmitter) ConvertAndWriteMessageToChain(ctx context.Context
 		ccvScVals[i] = ccvStrkey
 	}
 
-	// TODO: is this actually necessary for other chains or is this something specifically for EVM?
+	// The committee aggregator encodes signatures as plain R||S pairs with v=27
+	// normalization (matching EVM's ecrecover(hash, 27, r, s) convention). The
+	// Stellar committee verifier instead parses EIP-2098 compact format where
+	// bit 255 of the S word carries the recovery ID. This conversion bridges
+	// the two representations so secp256k1_recover on-chain recovers the
+	// correct signer addresses.
 	convertedCCVData := make([][]byte, len(report.CCVData))
 	for i, blob := range report.CCVData {
 		converted, convErr := convertVerifierBlobToEIP2098(blob)
