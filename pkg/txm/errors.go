@@ -13,4 +13,5 @@ var (
 	ErrSimulation  = errors.New("txm: simulation failed")
 	ErrSequence    = errors.New("txm: sequence number conflict")
 	ErrOverloaded  = errors.New("txm: server overloaded (TRY_AGAIN_LATER)")
+	ErrTxPending   = errors.New("txm: transaction still pending")
 )

@@ -1,0 +1,22 @@
+---
+name: parallel-thread-coordination
+description: Coordinate safely when Cursor is the main implementation agent and other agents may work on the same repository in parallel.
+---
+
+# Overview
+
+Cursor is the primary implementation agent for this repository, but parallel agents may also contribute changes or repository metadata.
+
+## Coordination rules
+
+- Assume nearby files may have been edited by another agent since the last read.
+- Before making a non-trivial patch, re-open the target files and reconcile with the latest contents.
+- Prefer narrow, purpose-built diffs over large rewrites, formatting sweeps, or broad file moves.
+- When work overlaps, preserve user-visible behavior and document the intended coordination point in durable repo metadata if needed.
+- Prefer updating shared guidance in `AGENTS.md` or `.cursor/` docs/rules instead of leaving ephemeral TODOs for other agents.
+
+## When updating `.cursor/`
+
+- Keep Cursor-specific workflow instructions inside `.cursor/`.
+- Keep repository-wide expectations in the root `AGENTS.md`.
+- Use new rules sparingly; add them only when the behavior should be reused across future sessions.

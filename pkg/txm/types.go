@@ -42,8 +42,11 @@ func (s TxStatus) Terminal() bool {
 
 // TxRequest is submitted to TxManager.Enqueue or EnqueueAndWait.
 type TxRequest struct {
-	// ID is an idempotency key. Must be unique per transaction.
+	// ID is an idempotency key. If empty, a UUID is auto-generated.
 	ID string
+	// FromAddress optionally specifies the source account (G… strkey).
+	// If empty, the TXM's default signer address is used.
+	FromAddress string
 	// ContractID is the Stellar contract address (C… strkey).
 	ContractID string
 	// FunctionName is the Soroban function to invoke.
@@ -62,22 +65,26 @@ type TxResult struct {
 	Status     TxStatus
 	Hash       string
 	ResultMeta *xdr.TransactionMeta
+	ResultXDR  string
+	FeeCharged int64
 	Error      error
 	LedgerNum  uint32
 }
 
 // txEntry is the internal bookkeeping record for a transaction in the TxStore.
 type txEntry struct {
-	Request  TxRequest
-	Status   TxStatus
-	Hash     string
-	Error    error
-	Meta     *xdr.TransactionMeta
-	Ledger   uint32
-	MaxLedger uint32 // LedgerBounds.MaxLedger
-	Retries  int
-	Created  time.Time
-	Updated  time.Time
-	Seq      int64 // Stellar sequence number used
-	Done     chan struct{}
+	Request    TxRequest
+	Status     TxStatus
+	Hash       string
+	Error      error
+	Meta       *xdr.TransactionMeta
+	ResultXDR  string
+	FeeCharged int64
+	Ledger     uint32
+	MaxLedger  uint32 // LedgerBounds.MaxLedger
+	Attempt    int    // Lifecycle retry counter (Layer 3)
+	Created    time.Time
+	Updated    time.Time
+	Seq        int64 // Stellar on-chain sequence number used
+	Done       chan struct{}
 }

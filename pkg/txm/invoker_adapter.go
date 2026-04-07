@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )

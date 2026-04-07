@@ -116,7 +116,7 @@ ledger-bounds expiry means the network itself garbage-collects stale transaction
 
 ### 4. Sequence management extracted from Deployer
 
-Stellar sequence numbers are analogous to EVM nonces. `SequenceManager` lazily fetches the
+Stellar sequence numbers are analogous to EVM nonces. `SequenceStore` lazily fetches the
 on-chain sequence via `GetLedgerEntries`, tracks it locally, and provides `NextSequence` /
 `Confirm` / `Sync` methods. This replaces the inline sequence handling that was previously
 embedded in `Deployer.invokeContract`.
@@ -211,57 +211,104 @@ background goroutines on `Start()`:
 
 - **Broadcaster loop** — reads from the enqueue channel, calls `broadcaster.broadcast`,
   and handles retry logic (re-enqueue on retryable errors, sync sequence on conflicts).
-- **Confirmer loop** — ticks at `ConfirmPollInterval`, delegating to `confirmer.checkAll`.
+- **Confirmer loop** — ticks at `ConfirmPollInterval` with ±20% jitter, delegating to
+  `confirmer.checkAll`. Handles Layer 3 lifecycle retries via `maybeRetry`.
+
+Additional responsibilities:
+- **Pruning** — on each `Enqueue`, if `PruneInterval` has elapsed, calls `TxStore.Reap`
+  to remove terminal entries older than `PruneThreshold`.
+- **Query APIs** — `GetTransactionResult`, `GetTransactionFee`, `InflightCount` read
+  from the in-memory store.
 
 ### Broadcaster (`broadcaster.go`)
 
-Processes one transaction at a time:
+Processes one transaction at a time through a three-phase pipeline with embedded retry
+loops:
 
-1. **Acquire sequence** — `SequenceManager.NextSequence`
+1. **Acquire sequence** — `SequenceStore.NextSequence` (prefers reusing failed sequences)
 2. **Get latest ledger** — for computing `MaxLedger`
 3. **Build operation** — `InvokeHostFunction` with the contract address, function, and args
-4. **Simulate** — `FeeEstimator.Simulate` to get resource limits and auth
-5. **RestoreFootprint** — if simulation indicates expired entries and `AutoRestore` is on
-6. **Assemble** — `FeeEstimator.AssembleTransaction` applies simulation data and fee
+4. **Layer 2: Simulate with retries** — `simulateWithRetries` handles `tx_bad_seq` during
+   simulation by syncing the sequence from chain and retrying (up to `MaxSimulateAttempts`)
+5. **RestoreFootprint** — if simulation indicates expired entries and `AutoRestore` is on.
+   Consumes its own sequence, waits for confirmation, then re-simulates the original tx.
+6. **Assemble with fee bumping** — `FeeEstimator.AssembleTransaction` applies simulation
+   data and geometric fee: `MinResourceFee + FeeBuffer * FeeBumpMultiplier^attempt`
 7. **Sign** — `Keystore.Sign` with the network passphrase
-8. **Submit** — `RPCClient.SendTransaction`
-9. **Handle response** — `PENDING`/`DUPLICATE` → success; `TRY_AGAIN_LATER` → retry;
-   `ERROR` with `tx_bad_seq` → sequence sync + retry
+8. **Layer 1: Submit with retries** — `submitWithRetries` handles `TRY_AGAIN_LATER` and
+   transient network errors (up to `MaxSubmitAttempts`)
+9. **Track sequence** — on success: `SequenceStore.AddUnconfirmed`; on any failure:
+   `SequenceStore.Release`
 
 ### Confirmer (`confirmer.go`)
 
-Polls all broadcast transactions on each tick:
+Polls all broadcast transactions on each tick with jitter:
 
 1. **Get latest ledger** — single call per tick for all entries
 2. **GetTransaction(hash)** — check each broadcast entry
-3. **State transitions** — `SUCCESS` → confirmed; `FAILED` → failed;
-   `NOT_FOUND` + past ledger bounds → expired; `NOT_FOUND` + past wall-clock timeout → expired
+3. **State transitions**:
+   - `SUCCESS` → confirmed, `SequenceStore.Confirm(seq, consumed=true)`
+   - `FAILED` → `maybeRetry`, `SequenceStore.Confirm(seq, consumed=true)` (on-chain failure)
+   - `NOT_FOUND` + past ledger bounds → `maybeRetry`, `SequenceStore.Confirm(seq, consumed=false)`
+   - `NOT_FOUND` + past wall-clock timeout → `maybeRetry`, same as above
+4. **Layer 3: maybeRetry** — increments `entry.Attempt`, checks against `MaxRetries`, and
+   re-enqueues on the broadcast channel for a full re-attempt with fresh simulation and
+   bumped fee
 
-### SequenceManager (`sequence_manager.go`)
+### SequenceStore (`sequence_store.go`)
 
-Thread-safe sequence tracker. Lazily fetches the on-chain account sequence via
-`GetLedgerEntries` (reads the `Account` ledger entry and extracts `SeqNum`).
-Provides `NextSequence` → `Confirm` → `Sync` flow.
+Thread-safe per-account sequence tracker with failed-sequence reuse, modeled after the
+Aptos TxStore nonce tracking pattern:
+
+- **`NextSequence`** — returns the next available sequence. Prefers reusing failed
+  sequences (sorted ascending) over advancing the counter.
+- **`AddUnconfirmed`** — marks a sequence as in-flight after successful broadcast.
+- **`Confirm(seq, consumed)`** — `consumed=true` updates `lastOnChainSeq` (sequence was
+  included in a ledger). `consumed=false` adds to `failedSeqs` for reuse (expired/dropped
+  transactions whose sequences were never consumed).
+- **`Release`** — returns a locally-allocated sequence that was never broadcast.
+- **`Sync`** — re-reads the on-chain sequence and prunes stale `failedSeqs`.
 
 ### FeeEstimator (`fee_estimator.go`)
 
 Wraps `SimulateTransaction` and parses the response into a `SimulationResult` struct
 containing `SorobanTransactionData`, authorization entries, min fee, return value, and
-optional `RestorePreamble`. `AssembleTransaction` then applies these results to a
-pre-built transaction.
+optional `RestorePreamble`. `AssembleTransaction` applies these results to a pre-built
+transaction with geometric fee bumping:
+
+```
+totalFee = MinResourceFee + CalculateInclusionFee(attempt, cfg)
+inclusionFee = min(FeeBuffer * FeeBumpMultiplier^attempt, MaxInclusionFee)
+```
 
 ### TxStore (`tx_store.go`)
 
 In-memory map (`map[string]*txEntry`) with a secondary index by hash
 (`map[string]string`). State transitions are guarded by `sync.RWMutex`. The `Done`
 channel on each entry enables `EnqueueAndWait` to block until a terminal state is reached.
-`Reap` removes terminal entries older than a threshold to bound memory.
+`Reap` removes terminal entries older than a threshold to bound memory. `Reap` is called
+on each `Enqueue` if `PruneInterval` has elapsed.
 
 ### Keystore (`keystore.go`)
 
-Abstraction over transaction signing. `KeypairKeystore` wraps a single `*keypair.Full`
-for testing. In production, this would be backed by Chainlink's multi-key management
-infrastructure.
+Abstraction over transaction signing with two implementations:
+
+- **`KeypairKeystore`** — wraps `*keypair.Full` for direct ed25519 signing (CCIP path).
+- **`LoopKeystoreSigner`** — wraps a `LoopKeystore` interface for the CRE keystore
+  service path. Computes the signing hash via `tx.Hash`, calls `keystore.Sign`, and
+  attaches the decorated signature to the transaction envelope.
+
+### Metrics (`metrics.go`)
+
+Prometheus counters and a gauge registered via `promauto`, with `chainID` and
+`fromAddress` labels:
+
+- Counters: `stellar_txm_broadcasted`, `_finalized`, `_error`, `_revert`, `_reject`,
+  `_drop`, `_retry`, `_restore`
+- Gauge: `stellar_txm_pending` (current enqueue channel depth)
+
+Emit points: enqueue, broadcast, confirm, retry, error, prune. OTEL/Beholder meters can
+be wired in when the TXM integrates into the CRE service lifecycle.
 
 ### InvokerAdapter (`invoker_adapter.go`)
 
@@ -284,7 +331,7 @@ abstraction. It contains every method used across the repository:
 | `SimulateTransaction` | TXM (FeeEstimator), Deployer |
 | `SendTransaction` | TXM (Broadcaster), Deployer |
 | `GetTransaction` | TXM (Confirmer), DestinationReader |
-| `GetLedgerEntries` | TXM (SequenceManager), SourceReader, Deployer |
+| `GetLedgerEntries` | TXM (SequenceStore), SourceReader, Deployer |
 | `GetEvents` | InvokerAdapter, SourceReader |
 | `GetLatestLedger` | TXM (Broadcaster, Confirmer), ExecutionAttemptPoller |
 | `GetLedgers` | Future use (block-range queries) |
@@ -298,12 +345,19 @@ this.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `MaxQueueSize` | 256 | Max pending tx requests in the enqueue channel |
-| `ConfirmPollInterval` | 2s | How often the confirmer checks broadcast tx status |
+| `ConfirmPollInterval` | 2s | How often the confirmer checks broadcast tx status (with ±20% jitter) |
 | `TxTimeout` | 60s | Wall-clock timeout for tx confirmation |
 | `LedgerBoundsOffset` | 50 | Ledgers into the future a tx is valid (~5 min at 6s/ledger) |
-| `MaxRetries` | 3 | Max retries for transient failures |
-| `FeeBuffer` | 10,000 | Stroops added to simulation's MinResourceFee |
+| `MaxRetries` | 3 | Layer 3 lifecycle retries (confirm loop re-enqueue) |
+| `MaxSubmitAttempts` | 5 | Layer 1 HTTP submit retries per broadcast attempt |
+| `SubmitRetryDelay` | 2s | Delay between submit retries |
+| `MaxSimulateAttempts` | 5 | Layer 2 simulation retries for sequence races |
+| `FeeBuffer` | 10,000 | Base inclusion fee (stroops) added to simulation's MinResourceFee |
+| `FeeBumpMultiplier` | 1.5 | Geometric multiplier applied to inclusion fee per lifecycle retry |
+| `MaxInclusionFee` | 1,000,000 | Safety cap on inclusion fee (stroops) |
 | `AutoRestore` | true | Automatically restore expired persistent ledger entries |
+| `PruneThreshold` | 5m | Age after which terminal transactions are removed from TxStore |
+| `PruneInterval` | 30s | Minimum time between prune runs |
 
 ## Migration Path
 
@@ -316,7 +370,7 @@ The TXM is designed for incremental adoption:
    flag or config toggle. `ContractTransmitter` is unchanged; only the injected
    `bindings.Invoker` implementation switches.
 
-3. **Phase 3** — Migrate `Deployer` to use `ccv/client.RPCClient` and `SequenceManager`
+3. **Phase 3** — Migrate `Deployer` to use `ccv/client.RPCClient` and `SequenceStore`
    instead of its own inline sequence/fee logic.
 
 4. **Phase 4** — Remove duplicated RPC client instances from `SourceReader`,
@@ -329,7 +383,7 @@ The design is informed by existing Chainlink TXMs:
 
 | Aspect | Solana TXM | Stellar TXM | EVM TXM |
 |--------|-----------|-------------|---------|
-| **Nonce/Sequence** | Blockhash-based | SequenceManager (account seq) | NonceTracker |
+| **Nonce/Sequence** | Blockhash-based | SequenceStore (account seq) | NonceTracker |
 | **Expiry** | Blockhash expiry (~60s) | LedgerBounds (~5 min) | Gas price staleness |
 | **Fee model** | Compute units + priority fee | SimulateTransaction + fee buffer | EIP-1559 dynamic |
 | **Confirmation** | Signature status polling | GetTransaction polling | Receipt polling |
