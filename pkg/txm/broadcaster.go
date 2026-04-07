@@ -52,7 +52,7 @@ func newBroadcaster(
 }
 
 // broadcast processes a single pending txEntry: simulate → assemble → sign → send.
-// Returns true if the tx was successfully submitted (PENDING/DUPLICATE status).
+// It returns an error if any step fails.
 func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 	req := entry.Request
 
@@ -79,17 +79,19 @@ func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 		return fmt.Errorf("build invoke op: %w", err)
 	}
 
+	preconditions := txnbuild.Preconditions{
+		TimeBounds: txnbuild.NewTimeout(300),
+		LedgerBounds: &txnbuild.LedgerBounds{
+			MaxLedger: maxLedger,
+		},
+	}
+
 	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        sourceAccount,
 		IncrementSequenceNum: true,
 		Operations:           []txnbuild.Operation{op},
 		BaseFee:              txnbuild.MinBaseFee,
-		Preconditions: txnbuild.Preconditions{
-			TimeBounds: txnbuild.NewTimeout(300),
-			LedgerBounds: &txnbuild.LedgerBounds{
-				MaxLedger: maxLedger,
-			},
-		},
+		Preconditions:        preconditions,
 	})
 	if err != nil {
 		return fmt.Errorf("build transaction: %w", err)
@@ -118,12 +120,7 @@ func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 			IncrementSequenceNum: true,
 			Operations:           []txnbuild.Operation{op},
 			BaseFee:              txnbuild.MinBaseFee,
-			Preconditions: txnbuild.Preconditions{
-				TimeBounds: txnbuild.NewTimeout(300),
-				LedgerBounds: &txnbuild.LedgerBounds{
-					MaxLedger: maxLedger,
-				},
-			},
+			Preconditions:        preconditions,
 		})
 		if err != nil {
 			return fmt.Errorf("rebuild transaction after restore: %w", err)
@@ -135,14 +132,25 @@ func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 		}
 	}
 
-	// SimulateOnly: return the result without broadcasting
+	// SimulateOnly: return the simulation result without broadcasting.
 	if req.SimulateOnly {
-		b.store.SetConfirmed(req.ID, nil, 0)
+		var meta *xdr.TransactionMeta
+		if simResult.ReturnValue != nil {
+			meta = &xdr.TransactionMeta{
+				V: 3,
+				V3: &xdr.TransactionMetaV3{
+					SorobanMeta: &xdr.SorobanTransactionMeta{
+						ReturnValue: *simResult.ReturnValue,
+					},
+				},
+			}
+		}
+		b.store.SetConfirmed(req.ID, meta, 0)
 		return nil
 	}
 
-	// Assemble with simulation results
-	assembledTx, err := b.feeEst.AssembleTransaction(tx, simResult, sourceAccount)
+	// Assemble with simulation results (preserving preconditions incl. LedgerBounds)
+	assembledTx, err := b.feeEst.AssembleTransaction(tx, simResult, sourceAccount, preconditions)
 	if err != nil {
 		return fmt.Errorf("assemble transaction: %w", err)
 	}

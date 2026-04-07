@@ -89,11 +89,13 @@ func (fe *FeeEstimator) Simulate(ctx context.Context, tx *txnbuild.Transaction) 
 
 // AssembleTransaction applies simulation results to the original transaction,
 // updating the InvokeHostFunction operation with SorobanData and auth entries,
-// then rebuilds the transaction with the calculated fee.
+// then rebuilds the transaction with the calculated fee. The caller must pass
+// the original preconditions so LedgerBounds are preserved across the rebuild.
 func (fe *FeeEstimator) AssembleTransaction(
 	tx *txnbuild.Transaction,
 	sim *SimulationResult,
 	sourceAccount *txnbuild.SimpleAccount,
+	preconditions txnbuild.Preconditions,
 ) (*txnbuild.Transaction, error) {
 	ops := tx.Operations()
 	if len(ops) == 0 {
@@ -119,7 +121,7 @@ func (fe *FeeEstimator) AssembleTransaction(
 				IncrementSequenceNum: true,
 				Operations:           ops,
 				BaseFee:              sim.MinFee + fe.feeBuffer,
-				Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(300)},
+				Preconditions:        preconditions,
 			},
 		)
 	}
