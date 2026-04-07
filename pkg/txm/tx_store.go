@@ -10,9 +10,9 @@ import (
 // TxStore is an in-memory store tracking transactions through their lifecycle.
 // Thread-safe via mutex. Modeled after Solana's PendingTxContext.
 type TxStore struct {
-	mu       sync.RWMutex
-	byID     map[string]*txEntry
-	byHash   map[string]string // hash → ID
+	mu     sync.RWMutex
+	byID   map[string]*txEntry
+	byHash map[string]string // hash → ID
 }
 
 // NewTxStore creates an empty TxStore.
@@ -91,7 +91,7 @@ func (s *TxStore) SetBroadcast(id, hash string, seq int64, maxLedger uint32) {
 }
 
 // SetConfirmed moves a broadcast tx to confirmed.
-func (s *TxStore) SetConfirmed(id string, meta *xdr.TransactionMeta, ledger uint32) {
+func (s *TxStore) SetConfirmed(id string, meta *xdr.TransactionMeta, ledger uint32, resultXDR string, feeCharged int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -102,6 +102,8 @@ func (s *TxStore) SetConfirmed(id string, meta *xdr.TransactionMeta, ledger uint
 	entry.Status = TxStatusConfirmed
 	entry.Meta = meta
 	entry.Ledger = ledger
+	entry.ResultXDR = resultXDR
+	entry.FeeCharged = feeCharged
 	entry.Updated = time.Now()
 	s.closeDone(entry)
 }
@@ -145,11 +147,11 @@ func (s *TxStore) IncrementRetry(id string) int {
 	if !ok {
 		return 0
 	}
-	entry.Retries++
+	entry.Attempt++
 	entry.Updated = time.Now()
-	// Reset to pending so it can be re-broadcast.
 	entry.Status = TxStatusPending
-	return entry.Retries
+	entry.Hash = ""
+	return entry.Attempt
 }
 
 // BroadcastEntries returns all entries in the broadcast state.
@@ -164,6 +166,20 @@ func (s *TxStore) BroadcastEntries() []*txEntry {
 		}
 	}
 	return entries
+}
+
+// UnconfirmedCount returns the number of broadcast (unconfirmed) entries.
+func (s *TxStore) UnconfirmedCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, e := range s.byID {
+		if e.Status == TxStatusBroadcast {
+			count++
+		}
+	}
+	return count
 }
 
 // Reap removes terminal entries older than the given threshold.

@@ -3,6 +3,7 @@ package txm
 import (
 	"context"
 	"fmt"
+	"math"
 
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -24,13 +25,13 @@ type SimulationResult struct {
 // FeeEstimator wraps Soroban simulation to produce fee estimates and
 // assembled transaction data. Extracted from Deployer.assembleTransaction.
 type FeeEstimator struct {
-	rpc       ccvclient.RPCClient
-	feeBuffer int64
+	rpc ccvclient.RPCClient
+	cfg Config
 }
 
 // NewFeeEstimator creates a FeeEstimator.
-func NewFeeEstimator(rpc ccvclient.RPCClient, feeBuffer int64) *FeeEstimator {
-	return &FeeEstimator{rpc: rpc, feeBuffer: feeBuffer}
+func NewFeeEstimator(rpc ccvclient.RPCClient, cfg Config) *FeeEstimator {
+	return &FeeEstimator{rpc: rpc, cfg: cfg}
 }
 
 // Simulate runs a preflight simulation and returns the assembled data
@@ -89,13 +90,14 @@ func (fe *FeeEstimator) Simulate(ctx context.Context, tx *txnbuild.Transaction) 
 
 // AssembleTransaction applies simulation results to the original transaction,
 // updating the InvokeHostFunction operation with SorobanData and auth entries,
-// then rebuilds the transaction with the calculated fee. The caller must pass
-// the original preconditions so LedgerBounds are preserved across the rebuild.
+// then rebuilds the transaction with the calculated fee. The attempt parameter
+// controls geometric fee bumping on retries.
 func (fe *FeeEstimator) AssembleTransaction(
 	tx *txnbuild.Transaction,
 	sim *SimulationResult,
 	sourceAccount *txnbuild.SimpleAccount,
 	preconditions txnbuild.Preconditions,
+	attempt int,
 ) (*txnbuild.Transaction, error) {
 	ops := tx.Operations()
 	if len(ops) == 0 {
@@ -115,16 +117,32 @@ func (fe *FeeEstimator) AssembleTransaction(
 	}
 
 	if sim.MinFee > 0 {
+		inclusionFee := CalculateInclusionFee(attempt, fe.cfg)
 		return txnbuild.NewTransaction(
 			txnbuild.TransactionParams{
 				SourceAccount:        sourceAccount,
 				IncrementSequenceNum: true,
 				Operations:           ops,
-				BaseFee:              sim.MinFee + fe.feeBuffer,
+				BaseFee:              sim.MinFee + inclusionFee,
 				Preconditions:        preconditions,
 			},
 		)
 	}
 
 	return tx, nil
+}
+
+// CalculateInclusionFee computes the inclusion fee for a given lifecycle retry
+// attempt using geometric growth: FeeBuffer * FeeBumpMultiplier^attempt,
+// capped at MaxInclusionFee.
+func CalculateInclusionFee(attempt int, cfg Config) int64 {
+	buffer := float64(cfg.FeeBuffer)
+	for i := 0; i < attempt; i++ {
+		buffer *= cfg.FeeBumpMultiplier
+	}
+	fee := int64(math.Round(buffer))
+	if fee > cfg.MaxInclusionFee {
+		return cfg.MaxInclusionFee
+	}
+	return fee
 }
