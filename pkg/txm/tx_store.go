@@ -51,6 +51,17 @@ func (s *TxStore) Get(id string) *txEntry {
 	return s.byID[id]
 }
 
+// Status returns the current status of a transaction under the read lock.
+func (s *TxStore) Status(id string) (TxStatus, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.byID[id]
+	if !ok {
+		return 0, false
+	}
+	return entry.Status, true
+}
+
 // GetByHash returns the entry for a given tx hash, or nil.
 func (s *TxStore) GetByHash(hash string) *txEntry {
 	s.mu.RLock()

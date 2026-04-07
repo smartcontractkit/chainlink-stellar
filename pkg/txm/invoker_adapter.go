@@ -53,7 +53,8 @@ func (a *InvokerAdapter) InvokeContract(ctx context.Context, contractID string, 
 }
 
 // SimulateContract performs a read-only simulation without submitting.
-// This bypasses the TXM entirely — simulations are stateless reads.
+// Delegates to TXM with SimulateOnly flag; the simulation runs during the
+// broadcast phase but the transaction is not submitted to the network.
 func (a *InvokerAdapter) SimulateContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {
 	txID := generateTxID(contractID, functionName)
 

@@ -15,12 +15,12 @@ func TestNewClient(t *testing.T) {
 		rpc := rpcclient.NewClient("http://127.0.0.1:9", &http.Client{Timeout: time.Millisecond})
 		c := NewClient(rpc)
 		require.NotNil(t, c)
-		assert.Same(t, rpc, c.rpcClient)
+		assert.Same(t, rpc, c.RPC)
 	})
 
 	t.Run("allows nil client", func(t *testing.T) {
 		c := NewClient(nil)
 		require.NotNil(t, c)
-		assert.Nil(t, c.rpcClient)
+		assert.Nil(t, c.RPC)
 	})
 }

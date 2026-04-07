@@ -2,6 +2,7 @@ package txm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -185,11 +186,11 @@ func (t *Txm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResult, err
 
 // GetTransactionStatus returns the current status of a transaction by its ID.
 func (t *Txm) GetTransactionStatus(_ context.Context, txID string) (TxStatus, error) {
-	entry := t.store.Get(txID)
-	if entry == nil {
+	status, ok := t.store.Status(txID)
+	if !ok {
 		return 0, ErrTxNotFound
 	}
-	return entry.Status, nil
+	return status, nil
 }
 
 func (t *Txm) runBroadcaster() {
@@ -248,12 +249,12 @@ func (t *Txm) buildResult(entry *txEntry) *TxResult {
 }
 
 func isRetryable(err error) bool {
-	return isSequenceErr(err) || err == ErrOverloaded
+	return isSequenceErr(err) || errors.Is(err, ErrOverloaded)
 }
 
 func isSequenceErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	return err == ErrSequence || isSequenceError(err.Error())
+	return errors.Is(err, ErrSequence) || isSequenceError(err.Error())
 }
