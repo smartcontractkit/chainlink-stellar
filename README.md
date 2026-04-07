@@ -54,6 +54,14 @@ sequenceDiagram
 
 ---
 
+## Architecture Documentation
+
+- [Transaction Manager (TXM)](./docs/txm-architecture.md) — Design, lifecycle, and integration of `pkg/txm/`
+- [Integration Test Architecture](./docs/integration-test-architecture.md) — Contract execution flow and test strategy
+- [Running E2E Tests](./docs/running-e2e-tests.md) — Local E2E test setup guide
+
+---
+
 ## Running Tests
 
 ### Integration Tests
