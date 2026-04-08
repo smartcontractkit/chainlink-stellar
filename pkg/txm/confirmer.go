@@ -16,6 +16,7 @@ import (
 // confirmer polls broadcast transactions for their on-chain status.
 // It runs as a goroutine ticking at Config.ConfirmPollInterval with jitter.
 type confirmer struct {
+	client   *ccvclient.Client
 	rpc      ccvclient.RPCClient
 	store    *TxStore
 	seqStore *SequenceStore
@@ -26,7 +27,7 @@ type confirmer struct {
 }
 
 func newConfirmer(
-	rpc ccvclient.RPCClient,
+	client *ccvclient.Client,
 	store *TxStore,
 	seqStore *SequenceStore,
 	metrics *Metrics,
@@ -35,7 +36,8 @@ func newConfirmer(
 	retryCh chan<- *txEntry,
 ) *confirmer {
 	return &confirmer{
-		rpc:      rpc,
+		client:   client,
+		rpc:      client.RPC,
 		store:    store,
 		seqStore: seqStore,
 		metrics:  metrics,
@@ -67,7 +69,7 @@ func (c *confirmer) checkAll(ctx context.Context) {
 		return
 	}
 
-	latestLedger, err := c.rpc.GetLatestLedger(ctx)
+	latestLedger, err := c.client.LatestLedger(ctx)
 	if err != nil {
 		c.lggr.Warn().Err(err).Msg("Failed to get latest ledger for confirmation check")
 		return
@@ -168,38 +170,6 @@ func (c *confirmer) maybeRetry(entry *txEntry, reason error) {
 	default:
 		c.store.SetFailed(entry.Request.ID, fmt.Errorf("retry queue full: %w", reason))
 		c.metrics.IncrReject()
-	}
-}
-
-// waitForTxConfirmation is a synchronous helper that polls GetTransaction
-// until the tx confirms, fails, or times out. Used by the broadcaster for
-// RestoreFootprint and by the synchronous EnqueueAndWait path.
-func waitForTxConfirmation(ctx context.Context, rpc ccvclient.RPCClient, hash string, timeout time.Duration) error {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	deadline := time.After(timeout)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("confirmation timed out for %s", hash)
-		case <-ticker.C:
-			resp, err := rpc.GetTransaction(ctx, protocolrpc.GetTransactionRequest{Hash: hash})
-			if err != nil {
-				continue
-			}
-			switch resp.Status {
-			case protocolrpc.TransactionStatusSuccess:
-				return nil
-			case protocolrpc.TransactionStatusFailed:
-				return ErrTxFailed
-			case protocolrpc.TransactionStatusNotFound:
-				continue
-			}
-		}
 	}
 }
 

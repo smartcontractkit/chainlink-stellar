@@ -22,7 +22,7 @@ var _ TxManager = (*Txm)(nil)
 // transaction submission with simulation, signing, broadcast, confirmation
 // polling, retry on transient failures, and ledger-bounds-based expiry.
 type Txm struct {
-	rpc        ccvclient.RPCClient
+	client     *ccvclient.Client
 	ks         Keystore
 	seqStore   *SequenceStore
 	feeEst     *FeeEstimator
@@ -45,13 +45,16 @@ type Txm struct {
 }
 
 // NewTxm creates a new Stellar TXM. Call Start() to begin background processing.
+// The Client should be shared across all Stellar components to benefit from
+// its cached ledger queries and unified rate limiting.
 func NewTxm(
-	rpc ccvclient.RPCClient,
+	client *ccvclient.Client,
 	networkPassphrase string,
 	ks Keystore,
 	cfg Config,
 	lggr zerolog.Logger,
 ) *Txm {
+	rpc := client.RPC
 	store := NewTxStore()
 	seqStore := NewSequenceStore(rpc, ks.SignerAddress())
 	feeEst := NewFeeEstimator(rpc, cfg)
@@ -59,7 +62,7 @@ func NewTxm(
 	enqueueCh := make(chan *txEntry, cfg.MaxQueueSize)
 
 	return &Txm{
-		rpc:        rpc,
+		client:     client,
 		ks:         ks,
 		seqStore:   seqStore,
 		feeEst:     feeEst,
@@ -70,9 +73,9 @@ func NewTxm(
 		lggr:       lggr.With().Str("service", serviceName).Logger(),
 		enqueueCh:  enqueueCh,
 		bcast: newBroadcaster(
-			rpc, ks, seqStore, feeEst, store, metrics, cfg, networkPassphrase, lggr,
+			client, ks, seqStore, feeEst, store, metrics, cfg, networkPassphrase, lggr,
 		),
-		cfm: newConfirmer(rpc, store, seqStore, metrics, cfg, lggr, enqueueCh),
+		cfm: newConfirmer(client, store, seqStore, metrics, cfg, lggr, enqueueCh),
 	}
 }
 
