@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -20,24 +19,11 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 )
 
 // Compile-time check to ensure we satisfy the chainaccess.SourceReader interface.
 var _ chainaccess.SourceReader = (*SourceReader)(nil)
-
-// RPCClient defines the interface for Stellar RPC client methods used by SourceReader.
-// This interface allows for mocking in unit tests.
-type RPCClient interface {
-	// GetLatestLedger returns the latest ledger information.
-	GetLatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error)
-	// GetLedgers returns ledger data for a range of ledgers.
-	GetLedgers(ctx context.Context, req protocolrpc.GetLedgersRequest) (protocolrpc.GetLedgersResponse, error)
-	// GetEvents returns contract events matching the specified filters.
-	GetEvents(ctx context.Context, req protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
-}
-
-// Compile-time check to ensure rpcclient.Client satisfies our interface.
-var _ RPCClient = (*rpcclient.Client)(nil)
 
 // ReaderConfig is the configuration required to create a Stellar source reader.
 type ReaderConfig struct {
@@ -53,7 +39,7 @@ type ReaderConfig struct {
 
 // SourceReader is the Stellar implementation of chainaccess.SourceReader.
 type SourceReader struct {
-	client               RPCClient
+	client               ccvclient.RPCClient
 	invoker              bindings.Invoker
 	ccipOnrampAddress    string
 	ccipMessageSentTopic string
@@ -63,7 +49,7 @@ type SourceReader struct {
 
 // NewSourceReaderWithClient constructs a Stellar source reader with a RPC client.
 func NewSourceReaderWithClient(
-	client RPCClient,
+	client ccvclient.RPCClient,
 	invoker bindings.Invoker,
 	ccipOnrampAddress string,
 	ccipMessageSentTopic string,

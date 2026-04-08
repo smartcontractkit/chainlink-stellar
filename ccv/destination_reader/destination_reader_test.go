@@ -13,6 +13,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -91,7 +92,7 @@ func TestNew_validation(t *testing.T) {
 	tests := []struct {
 		name    string
 		invoker bindings.Invoker
-		rpc     *rpcclient.Client
+		rpc     ccvclient.RPCClient
 		off     string
 		rmn     string
 		log     *zerolog.Logger
@@ -127,7 +128,7 @@ func TestNewStellarExecutionAttemptPoller_validation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		rpc     *rpcclient.Client
+		rpc     ccvclient.RPCClient
 		ctr     string
 		log     *zerolog.Logger
 		wantSub string

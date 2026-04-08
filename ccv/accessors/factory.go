@@ -13,6 +13,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	"github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	sourcereader "github.com/smartcontractkit/chainlink-stellar/ccv/source_reader"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -63,15 +64,16 @@ func (f *factory) GetAccessor(ctx context.Context, chainSelector protocol.ChainS
 
 	zerologLogger := zerolog.New(os.Stdout).With().Str("chain_selector", strSelector).Logger().Level(zerolog.DebugLevel)
 
-	rpcClient := rpcclient.NewClient(stellarConfig.SorobanRPCURL, &http.Client{Timeout: 60 * time.Second})
+	rpcRaw := rpcclient.NewClient(stellarConfig.SorobanRPCURL, &http.Client{Timeout: 60 * time.Second})
+	client := ccvclient.NewClient(rpcRaw)
 	deployer := deployment.NewDeployer(
-		rpcClient,
+		rpcRaw,
 		stellarConfig.NetworkPassphrase,
 		deployerKeypair,
 	)
 
 	sourceReader, err := sourcereader.NewSourceReaderWithClient(
-		rpcClient,
+		client.RPC,
 		deployer,
 		stellarConfig.OnRampContractID,
 		common.StellarCCIPMessageSentTopic,

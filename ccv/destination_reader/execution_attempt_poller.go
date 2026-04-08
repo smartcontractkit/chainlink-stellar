@@ -10,13 +10,13 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/rs/zerolog"
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 // offramp contract and caches the decoded execution attempts by message ID.
 type StellarExecutionAttemptPoller struct {
 	lggr              *zerolog.Logger
-	rpcClient         *rpcclient.Client
+	rpcClient         ccvclient.RPCClient
 	offrampContractID string
 	attemptCache      *expirable.LRU[protocol.Bytes32, []protocol.ExecutionAttempt]
 	cancelFunc        context.CancelFunc
@@ -47,7 +47,7 @@ type StellarExecutionAttemptPoller struct {
 // On startup the poller performs a backfill over the lookback window, then continues
 // polling for new events at the configured interval.
 func NewStellarExecutionAttemptPoller(
-	rpcClient *rpcclient.Client,
+	rpcClient ccvclient.RPCClient,
 	offrampContractID string,
 	lggr *zerolog.Logger,
 	attemptCacheExpiration time.Duration,

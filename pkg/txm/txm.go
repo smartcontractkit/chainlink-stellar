@@ -207,7 +207,11 @@ func (t *Txm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResult, err
 	case <-entry.Done:
 	}
 
-	return t.buildResult(entry), nil
+	result := t.store.GetResult(req.ID)
+	if result == nil {
+		return nil, fmt.Errorf("tx %s completed but result not found", req.ID)
+	}
+	return result, nil
 }
 
 // GetTransactionStatus returns the current status of a transaction by its ID.
@@ -221,27 +225,28 @@ func (t *Txm) GetTransactionStatus(_ context.Context, txID string) (TxStatus, er
 
 // GetTransactionResult returns the full result of a terminal transaction.
 func (t *Txm) GetTransactionResult(_ context.Context, txID string) (*TxResult, error) {
-	entry := t.store.Get(txID)
-	if entry == nil {
+	result := t.store.GetResult(txID)
+	if result == nil {
+		if _, ok := t.store.Status(txID); ok {
+			return nil, ErrTxPending
+		}
 		return nil, ErrTxNotFound
 	}
-	if !entry.Status.Terminal() {
-		return nil, ErrTxPending
-	}
-	return t.buildResult(entry), nil
+	return result, nil
 }
 
 // GetTransactionFee returns the fee charged for a confirmed transaction
 // in stroops. Returns an error for non-confirmed transactions.
 func (t *Txm) GetTransactionFee(_ context.Context, txID string) (*big.Int, error) {
-	entry := t.store.Get(txID)
-	if entry == nil {
-		return nil, ErrTxNotFound
+	fee, ok := t.store.GetFee(txID)
+	if !ok {
+		status, found := t.store.Status(txID)
+		if !found {
+			return nil, ErrTxNotFound
+		}
+		return nil, fmt.Errorf("tx %s is %s, not confirmed", txID, status)
 	}
-	if entry.Status != TxStatusConfirmed {
-		return nil, fmt.Errorf("tx %s is %s, not confirmed", txID, entry.Status)
-	}
-	return big.NewInt(entry.FeeCharged), nil
+	return fee, nil
 }
 
 // InflightCount returns the enqueue channel depth and total unconfirmed
@@ -295,18 +300,6 @@ func (t *Txm) processTx(entry *txEntry) {
 
 	t.store.SetFailed(entry.Request.ID, err)
 	t.metrics.IncrReject()
-}
-
-func (t *Txm) buildResult(entry *txEntry) *TxResult {
-	return &TxResult{
-		Status:     entry.Status,
-		Hash:       entry.Hash,
-		ResultMeta: entry.Meta,
-		ResultXDR:  entry.ResultXDR,
-		FeeCharged: entry.FeeCharged,
-		Error:      entry.Error,
-		LedgerNum:  entry.Ledger,
-	}
 }
 
 // maybePrune removes terminal transactions if enough time has passed since

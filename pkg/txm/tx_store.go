@@ -1,14 +1,30 @@
 package txm
 
 import (
+	"math/big"
 	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// BroadcastSnapshot is an immutable point-in-time copy of a broadcast
+// txEntry's fields. The confirmer works with snapshots to avoid data races
+// from reading live *txEntry pointers after the store lock is released.
+type BroadcastSnapshot struct {
+	ID        string
+	Hash      string
+	Seq       int64
+	MaxLedger uint32
+	Created   time.Time
+}
+
 // TxStore is an in-memory store tracking transactions through their lifecycle.
 // Thread-safe via mutex. Modeled after Solana's PendingTxContext.
+//
+// Callers must not read mutable fields from *txEntry pointers returned by Add
+// without proper synchronization. Use the typed accessor methods (Status,
+// GetResult, GetFee, BroadcastSnapshots) which read under lock.
 type TxStore struct {
 	mu     sync.RWMutex
 	byID   map[string]*txEntry
@@ -154,18 +170,68 @@ func (s *TxStore) IncrementRetry(id string) int {
 	return entry.Attempt
 }
 
-// BroadcastEntries returns all entries in the broadcast state.
-func (s *TxStore) BroadcastEntries() []*txEntry {
+// BroadcastSnapshots returns point-in-time copies of all broadcast entries.
+// Callers may safely read the returned snapshots without holding any lock.
+func (s *TxStore) BroadcastSnapshots() []BroadcastSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var entries []*txEntry
+	var snaps []BroadcastSnapshot
 	for _, e := range s.byID {
 		if e.Status == TxStatusBroadcast {
-			entries = append(entries, e)
+			snaps = append(snaps, BroadcastSnapshot{
+				ID:        e.Request.ID,
+				Hash:      e.Hash,
+				Seq:       e.Seq,
+				MaxLedger: e.MaxLedger,
+				Created:   e.Created,
+			})
 		}
 	}
-	return entries
+	return snaps
+}
+
+// GetEntryForRetry returns the live *txEntry for re-enqueuing on the
+// broadcast channel. The returned pointer is only safe to send on a channel
+// (the channel send/receive provides happens-before synchronization).
+func (s *TxStore) GetEntryForRetry(id string) *txEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.byID[id]
+}
+
+// GetResult builds a TxResult snapshot for a terminal transaction under
+// the read lock. Returns nil if the entry is not found or not yet terminal.
+func (s *TxStore) GetResult(id string) *TxResult {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, ok := s.byID[id]
+	if !ok || !entry.Status.Terminal() {
+		return nil
+	}
+	return &TxResult{
+		Status:     entry.Status,
+		Hash:       entry.Hash,
+		ResultMeta: entry.Meta,
+		ResultXDR:  entry.ResultXDR,
+		FeeCharged: entry.FeeCharged,
+		Error:      entry.Error,
+		LedgerNum:  entry.Ledger,
+	}
+}
+
+// GetFee returns the fee charged for a confirmed transaction, reading under
+// the lock. Returns (nil, false) if the tx is not found or not confirmed.
+func (s *TxStore) GetFee(id string) (*big.Int, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, ok := s.byID[id]
+	if !ok || entry.Status != TxStatusConfirmed {
+		return nil, false
+	}
+	return big.NewInt(entry.FeeCharged), true
 }
 
 // UnconfirmedCount returns the number of broadcast (unconfirmed) entries.

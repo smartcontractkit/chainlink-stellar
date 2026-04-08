@@ -8,6 +8,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 )
 
@@ -59,15 +60,23 @@ func DefaultClientConfig() ClientConfig {
 // cache, a token-bucket rate limiter, and polling utilities. All components
 // (TXM, SourceReader, DestinationReader, Deployer) should share a single
 // Client instance to benefit from coalesced caching and unified rate limiting.
+//
+// RPC is exported intentionally so that components needing low-level access
+// (e.g. SendTransaction, SimulateTransaction) can call methods directly.
+// Only LatestLedger and PollTransaction apply caching and rate-limiting;
+// direct RPC calls bypass those layers. This is by design: high-frequency
+// read calls (latest ledger) benefit from caching, while write-path calls
+// (send/simulate) should not be blocked by the token bucket.
 type Client struct {
 	RPC RPCClient
 	cfg ClientConfig
 
 	limiter *rate.Limiter
 
-	ledgerMu     sync.Mutex
+	ledgerMu     sync.RWMutex
 	cachedLedger *protocolrpc.GetLatestLedgerResponse
 	cachedAt     time.Time
+	ledgerGroup  singleflight.Group
 }
 
 // NewClient creates a Client wrapping a concrete *rpcclient.Client with
@@ -115,25 +124,35 @@ func (c *Client) WaitRateLimit(ctx context.Context) error {
 // LatestLedger returns the latest ledger response, using a short-TTL cache
 // to coalesce redundant calls from broadcaster, confirmer, pollers, etc.
 // Falls through to a direct RPC call if the cache is stale or disabled.
+//
+// Concurrent callers share a single in-flight RPC fetch via singleflight
+// so that a TTL expiry does not cause a thundering herd.
 func (c *Client) LatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
 	if c.cfg.LedgerCacheTTL <= 0 {
 		return c.RPC.GetLatestLedger(ctx)
 	}
 
-	c.ledgerMu.Lock()
-	defer c.ledgerMu.Unlock()
-
+	c.ledgerMu.RLock()
 	if c.cachedLedger != nil && time.Since(c.cachedAt) < c.cfg.LedgerCacheTTL {
-		return *c.cachedLedger, nil
+		resp := *c.cachedLedger
+		c.ledgerMu.RUnlock()
+		return resp, nil
 	}
+	c.ledgerMu.RUnlock()
 
-	resp, err := c.RPC.GetLatestLedger(ctx)
+	v, err, _ := c.ledgerGroup.Do("latest", func() (any, error) {
+		return c.RPC.GetLatestLedger(ctx)
+	})
 	if err != nil {
-		return resp, err
+		return protocolrpc.GetLatestLedgerResponse{}, err
 	}
 
+	resp := v.(protocolrpc.GetLatestLedgerResponse)
+	c.ledgerMu.Lock()
 	c.cachedLedger = &resp
 	c.cachedAt = time.Now()
+	c.ledgerMu.Unlock()
+
 	return resp, nil
 }
 

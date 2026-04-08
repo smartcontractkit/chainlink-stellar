@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
@@ -14,6 +13,7 @@ import (
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 )
 
 var _ chainaccess.DestinationReader = (*DestinationReader)(nil)
@@ -38,7 +38,7 @@ type DestinationReader struct {
 // New creates a new Stellar DestinationReader.
 func New(
 	invoker bindings.Invoker,
-	rpcClient *rpcclient.Client,
+	rpcClient ccvclient.RPCClient,
 	offRampContractID string,
 	rmnRemoteContractID string,
 	lggr *zerolog.Logger,

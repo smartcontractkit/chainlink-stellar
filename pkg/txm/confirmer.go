@@ -64,8 +64,8 @@ func (c *confirmer) run(ctx context.Context) {
 }
 
 func (c *confirmer) checkAll(ctx context.Context) {
-	entries := c.store.BroadcastEntries()
-	if len(entries) == 0 {
+	snapshots := c.store.BroadcastSnapshots()
+	if len(snapshots) == 0 {
 		return
 	}
 
@@ -75,17 +75,17 @@ func (c *confirmer) checkAll(ctx context.Context) {
 		return
 	}
 
-	for _, entry := range entries {
-		c.checkOne(ctx, entry, latestLedger.Sequence)
+	for _, snap := range snapshots {
+		c.checkOne(ctx, snap, latestLedger.Sequence)
 	}
 }
 
-func (c *confirmer) checkOne(ctx context.Context, entry *txEntry, currentLedger uint32) {
+func (c *confirmer) checkOne(ctx context.Context, snap BroadcastSnapshot, currentLedger uint32) {
 	resp, err := c.rpc.GetTransaction(ctx, protocolrpc.GetTransactionRequest{
-		Hash: entry.Hash,
+		Hash: snap.Hash,
 	})
 	if err != nil {
-		c.lggr.Debug().Err(err).Str("txID", entry.Request.ID).Msg("GetTransaction error, will retry")
+		c.lggr.Debug().Err(err).Str("txID", snap.ID).Msg("GetTransaction error, will retry")
 		return
 	}
 
@@ -94,52 +94,52 @@ func (c *confirmer) checkOne(ctx context.Context, entry *txEntry, currentLedger 
 		var meta xdr.TransactionMeta
 		if resp.ResultMetaXDR != "" {
 			if err := xdr.SafeUnmarshalBase64(resp.ResultMetaXDR, &meta); err != nil {
-				c.lggr.Error().Err(err).Str("txID", entry.Request.ID).Msg("Failed to decode result meta")
-				c.store.SetFailed(entry.Request.ID, fmt.Errorf("decode result meta: %w", err))
-				c.seqStore.Confirm(entry.Seq, true)
+				c.lggr.Error().Err(err).Str("txID", snap.ID).Msg("Failed to decode result meta")
+				c.store.SetFailed(snap.ID, fmt.Errorf("decode result meta: %w", err))
+				c.seqStore.Confirm(snap.Seq, true)
 				return
 			}
 		}
-		c.store.SetConfirmed(entry.Request.ID, &meta, resp.Ledger, resp.ResultMetaXDR, 0)
-		c.seqStore.Confirm(entry.Seq, true)
+		c.store.SetConfirmed(snap.ID, &meta, resp.Ledger, resp.ResultMetaXDR, 0)
+		c.seqStore.Confirm(snap.Seq, true)
 		c.metrics.IncrFinalized()
 		c.lggr.Info().
-			Str("txID", entry.Request.ID).
-			Str("hash", entry.Hash).
+			Str("txID", snap.ID).
+			Str("hash", snap.Hash).
 			Uint32("ledger", resp.Ledger).
 			Msg("Transaction confirmed")
 
 	case protocolrpc.TransactionStatusFailed:
-		c.seqStore.Confirm(entry.Seq, true) // consumed on-chain
+		c.seqStore.Confirm(snap.Seq, true) // consumed on-chain
 		c.metrics.IncrRevert()
 		c.lggr.Warn().
-			Str("txID", entry.Request.ID).
-			Str("hash", entry.Hash).
+			Str("txID", snap.ID).
+			Str("hash", snap.Hash).
 			Msg("Transaction failed on-chain")
-		c.maybeRetry(entry, ErrTxFailed)
+		c.maybeRetry(snap.ID, ErrTxFailed)
 
 	case protocolrpc.TransactionStatusNotFound:
-		if entry.MaxLedger > 0 && currentLedger > entry.MaxLedger {
-			c.seqStore.Confirm(entry.Seq, false) // not consumed, can reuse
+		if snap.MaxLedger > 0 && currentLedger > snap.MaxLedger {
+			c.seqStore.Confirm(snap.Seq, false) // not consumed, can reuse
 			c.metrics.IncrDrop()
 			c.lggr.Warn().
-				Str("txID", entry.Request.ID).
-				Str("hash", entry.Hash).
-				Uint32("maxLedger", entry.MaxLedger).
+				Str("txID", snap.ID).
+				Str("hash", snap.Hash).
+				Uint32("maxLedger", snap.MaxLedger).
 				Uint32("currentLedger", currentLedger).
 				Msg("Transaction expired (ledger bounds exceeded)")
-			c.maybeRetry(entry, ErrTxExpired)
+			c.maybeRetry(snap.ID, ErrTxExpired)
 			return
 		}
-		if time.Since(entry.Created) > c.cfg.TxTimeout {
-			c.seqStore.Confirm(entry.Seq, false) // not consumed, can reuse
+		if time.Since(snap.Created) > c.cfg.TxTimeout {
+			c.seqStore.Confirm(snap.Seq, false) // not consumed, can reuse
 			c.metrics.IncrDrop()
 			c.lggr.Warn().
-				Str("txID", entry.Request.ID).
-				Str("hash", entry.Hash).
-				Dur("elapsed", time.Since(entry.Created)).
+				Str("txID", snap.ID).
+				Str("hash", snap.Hash).
+				Dur("elapsed", time.Since(snap.Created)).
 				Msg("Transaction expired (wall-clock timeout)")
-			c.maybeRetry(entry, ErrTxExpired)
+			c.maybeRetry(snap.ID, ErrTxExpired)
 		}
 	}
 }
@@ -147,16 +147,21 @@ func (c *confirmer) checkOne(ctx context.Context, entry *txEntry, currentLedger 
 // maybeRetry attempts to re-enqueue a failed/expired transaction for a full
 // retry cycle (Layer 3). Increments the attempt counter and applies fee
 // bumping on the next broadcast.
-func (c *confirmer) maybeRetry(entry *txEntry, reason error) {
-	newAttempt := c.store.IncrementRetry(entry.Request.ID)
+func (c *confirmer) maybeRetry(txID string, reason error) {
+	newAttempt := c.store.IncrementRetry(txID)
 
 	if newAttempt >= c.cfg.MaxRetries {
-		c.store.SetFailed(entry.Request.ID, reason)
+		c.store.SetFailed(txID, reason)
 		c.metrics.IncrReject()
 		c.lggr.Warn().
-			Str("txID", entry.Request.ID).
+			Str("txID", txID).
 			Int("attempts", newAttempt).
 			Msg("Exhausted lifecycle retries")
+		return
+	}
+
+	entry := c.store.GetEntryForRetry(txID)
+	if entry == nil {
 		return
 	}
 
@@ -164,11 +169,11 @@ func (c *confirmer) maybeRetry(entry *txEntry, reason error) {
 	case c.retryCh <- entry:
 		c.metrics.IncrRetry()
 		c.lggr.Info().
-			Str("txID", entry.Request.ID).
+			Str("txID", txID).
 			Int("attempt", newAttempt).
 			Msg("Re-enqueued for lifecycle retry")
 	default:
-		c.store.SetFailed(entry.Request.ID, fmt.Errorf("retry queue full: %w", reason))
+		c.store.SetFailed(txID, fmt.Errorf("retry queue full: %w", reason))
 		c.metrics.IncrReject()
 	}
 }
