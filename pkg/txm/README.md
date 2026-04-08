@@ -16,8 +16,17 @@ import (
     "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// 1. Create the RPC client (satisfies ccvclient.RPCClient)
+// 1. Create the shared Client (cache, rate limiter, polling utilities).
+//    All Stellar components should share a single Client instance.
 rpc := rpcclient.New("https://soroban-rpc.example.com")
+client := ccvclient.NewClient(rpc)               // default config
+// — or with custom config —
+// client := ccvclient.NewClientWithConfig(rpc, ccvclient.ClientConfig{
+//     LedgerCacheTTL:  5 * time.Second,
+//     RateLimitPerSec: 20,
+//     RateLimitBurst:  40,
+//     PollInterval:    500 * time.Millisecond,
+// })
 
 // 2. Create a keystore
 kp := keypair.MustParseFull("S...")
@@ -25,7 +34,7 @@ ks := txm.NewKeypairKeystore(kp)
 
 // 3. Create and start the TXM
 cfg := txm.DefaultConfig()
-t := txm.NewTxm(rpc, "Test SDF Network ; September 2015", ks, cfg, logger)
+t := txm.NewTxm(client, "Test SDF Network ; September 2015", ks, cfg, logger)
 t.Start(ctx)
 defer t.Close()
 
@@ -55,7 +64,7 @@ channelDepth, unconfirmed := t.InflightCount()
 `ContractTransmitter` expects a `bindings.Invoker`. Use `InvokerAdapter` to bridge:
 
 ```go
-adapter := txm.NewInvokerAdapter(t, rpc)
+adapter := txm.NewInvokerAdapter(t, client.RPC)
 // adapter satisfies bindings.Invoker — pass it to ContractTransmitter
 ```
 
@@ -182,7 +191,8 @@ if errors.Is(err, txm.ErrDuplicateTx) {
 
 ## Dependencies
 
-- `ccv/client.RPCClient` — unified Stellar RPC interface
+- `ccv/client.Client` — shared Stellar RPC client with caching, rate limiting, and polling
+- `ccv/client.RPCClient` — unified Stellar RPC interface (satisfied by `*rpcclient.Client`)
 - `github.com/stellar/go-stellar-sdk` — Stellar Go SDK for transaction building, XDR, keypairs
 - `github.com/rs/zerolog` — structured logging
 - `github.com/prometheus/client_golang` — Prometheus metrics

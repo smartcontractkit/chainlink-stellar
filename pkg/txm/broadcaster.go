@@ -20,6 +20,7 @@ import (
 // pending transactions. It processes one transaction at a time from the
 // enqueue channel.
 type broadcaster struct {
+	client     *ccvclient.Client
 	rpc        ccvclient.RPCClient
 	ks         Keystore
 	seqStore   *SequenceStore
@@ -32,7 +33,7 @@ type broadcaster struct {
 }
 
 func newBroadcaster(
-	rpc ccvclient.RPCClient,
+	client *ccvclient.Client,
 	ks Keystore,
 	seqStore *SequenceStore,
 	feeEst *FeeEstimator,
@@ -43,7 +44,8 @@ func newBroadcaster(
 	lggr zerolog.Logger,
 ) *broadcaster {
 	return &broadcaster{
-		rpc:        rpc,
+		client:     client,
+		rpc:        client.RPC,
 		ks:         ks,
 		seqStore:   seqStore,
 		feeEst:     feeEst,
@@ -66,7 +68,7 @@ func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 		return fmt.Errorf("get sequence: %w", err)
 	}
 
-	latestLedger, err := b.rpc.GetLatestLedger(ctx)
+	latestLedger, err := b.client.LatestLedger(ctx)
 	if err != nil {
 		b.seqStore.Release(allocSeq)
 		return fmt.Errorf("get latest ledger: %w", err)
@@ -403,9 +405,14 @@ func (b *broadcaster) restoreFootprint(ctx context.Context, preamble protocolrpc
 
 	b.seqStore.AddUnconfirmed(allocSeq, submitResult.Hash)
 
-	if err := waitForTxConfirmation(ctx, b.rpc, submitResult.Hash, b.cfg.TxTimeout); err != nil {
+	resp, err := b.client.PollTransaction(ctx, submitResult.Hash, b.cfg.TxTimeout)
+	if err != nil {
 		b.seqStore.Confirm(allocSeq, false)
 		return fmt.Errorf("restore confirmation: %w", err)
+	}
+	if resp.Status == protocolrpc.TransactionStatusFailed {
+		b.seqStore.Confirm(allocSeq, true)
+		return fmt.Errorf("restore transaction failed on-chain")
 	}
 
 	b.seqStore.Confirm(allocSeq, true)

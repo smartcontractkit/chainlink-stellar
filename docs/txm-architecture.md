@@ -25,52 +25,55 @@ the duplicated RPC plumbing.
 
 ## Architecture Overview
 
+TXM (`pkg/txm/`) and the CCIP Chain Impl (`ccv/`) are **peers** — neither depends on the
+other. Both consume shared packages (`ccv/client` and `bindings`) for reusable behaviour.
+The `InvokerAdapter` is a factory-level wiring choice, not a hard import dependency.
+
+```mermaid
+graph TD
+    subgraph consumers [Consumers]
+        Transmitter["ContractTransmitter"]
+        SourceReader["SourceReader"]
+        DestReader["DestinationReader"]
+    end
+
+    subgraph txm_pkg ["pkg/txm"]
+        TXM["Txm"]
+        Adapter["InvokerAdapter"]
+    end
+
+    subgraph ccip_impl ["ccv/ CCIP Chain Impl"]
+        Chain["chain.go"]
+        ImplFactory["impl_factory.go"]
+        Deployer["Deployer"]
+    end
+
+    subgraph shared [Shared Packages]
+        ClientPkg["ccv/client.Client\n(cache · rate limiter · polling)"]
+        Bindings["bindings.Invoker"]
+        RPCIface["ccv/client.RPCClient"]
+    end
+
+    Transmitter -->|uses| Bindings
+    Adapter -->|implements| Bindings
+    Adapter --> TXM
+
+    TXM --> ClientPkg
+    SourceReader --> ClientPkg
+    DestReader --> ClientPkg
+    Deployer --> ClientPkg
+
+    ClientPkg --> RPCIface
+
+    ImplFactory -->|wires| Adapter
+    ImplFactory -->|wires| SourceReader
+    ImplFactory -->|wires| DestReader
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Consumers                              │
-│                                                          │
-│  ContractTransmitter ──► bindings.Invoker                │
-│                              │                           │
-│                    ┌─────────▼──────────┐                │
-│                    │  InvokerAdapter    │                │
-│                    │  (pkg/txm/)        │                │
-│                    └─────────┬──────────┘                │
-│                              │                           │
-│                    ┌─────────▼──────────┐                │
-│                    │  TxManager         │                │
-│                    │  interface         │                │
-│                    └─────────┬──────────┘                │
-│                              │                           │
-├──────────────────────────────┼────────────────────────────┤
-│                    pkg/txm   │                            │
-│                              │                           │
-│              ┌───────────────▼──────────────┐            │
-│              │           Txm                │            │
-│              │  ┌────────────┬────────────┐ │            │
-│              │  │Broadcaster │ Confirmer  │ │            │
-│              │  │  goroutine │ goroutine  │ │            │
-│              │  └──────┬─────┴─────┬──────┘ │            │
-│              │         │           │        │            │
-│              │  ┌──────▼──┐  ┌─────▼─────┐  │            │
-│              │  │SeqMgr   │  │ TxStore   │  │            │
-│              │  │FeeEst   │  │ (in-mem)  │  │            │
-│              │  │Keystore │  │           │  │            │
-│              │  └─────────┘  └───────────┘  │            │
-│              └───────────────┬──────────────┘            │
-│                              │                           │
-├──────────────────────────────┼────────────────────────────┤
-│                    ccv/client │                           │
-│              ┌───────────────▼──────────────┐            │
-│              │     RPCClient interface      │            │
-│              │  (unified Soroban RPC)       │            │
-│              └───────────────┬──────────────┘            │
-│                              │                           │
-│                    ┌─────────▼──────────┐                │
-│                    │ *rpcclient.Client  │                │
-│                    │ (Stellar Go SDK)   │                │
-│                    └────────────────────┘                │
-└──────────────────────────────────────────────────────────┘
-```
+
+Key points:
+- **TXM and ccv/ are sibling subgraphs**, both pointing into the shared `Client`/`RPCClient` layer.
+- `ccv/client.Client` provides caching (latest ledger), rate limiting, and polling utilities shared by all consumers.
+- The factory (`ImplFactory`) wires everything together; neither package imports the other.
 
 ## Design Decisions
 
@@ -323,6 +326,8 @@ to use the TXM without code changes.
 
 ## Shared Stellar Primitives (ccv/client/)
 
+### RPCClient interface
+
 The `RPCClient` interface in `ccv/client/client.go` is the unified Soroban JSON-RPC
 abstraction. It contains every method used across the repository:
 
@@ -339,6 +344,29 @@ abstraction. It contains every method used across the repository:
 `*rpcclient.Client` from the Stellar Go SDK satisfies this interface directly — no wrapper
 is needed. A compile-time assertion (`var _ RPCClient = (*rpcclient.Client)(nil)`) enforces
 this.
+
+### Client struct — shared infrastructure
+
+`ccv/client.Client` wraps `RPCClient` with three categories of shared infrastructure that
+all consumers (TXM, SourceReader, DestinationReader, Deployer) benefit from when sharing a
+single instance:
+
+| Feature | Method | Description |
+|---------|--------|-------------|
+| **Latest-ledger cache** | `LatestLedger(ctx)` | Short-TTL cache (default 3s ≈ half a ledger close) that coalesces the most-called RPC method across all components. Protected by `sync.Mutex` to avoid thundering herd on expiry. |
+| **Rate limiter** | `WaitRateLimit(ctx)` | Token-bucket rate limiter (`golang.org/x/time/rate`) protecting the Soroban RPC endpoint from overload when multiple pollers, TXM, and readers share one client. Default: 10 req/s, burst 20. |
+| **Transaction polling** | `PollTransaction(ctx, hash, timeout)` | Polls `GetTransaction` until a terminal status or timeout, using the rate limiter. Replaces duplicated poll loops in the TXM broadcaster, confirmer, and test helpers. |
+
+Configuration is via `ClientConfig`:
+
+```go
+type ClientConfig struct {
+    LedgerCacheTTL  time.Duration // default 3s; 0 disables
+    RateLimitPerSec float64       // default 10; 0 disables
+    RateLimitBurst  int           // default 20
+    PollInterval    time.Duration // default 1s
+}
+```
 
 ## Configuration Reference
 
@@ -373,9 +401,10 @@ The TXM is designed for incremental adoption:
 3. **Phase 3** — Migrate `Deployer` to use `ccv/client.RPCClient` and `SequenceStore`
    instead of its own inline sequence/fee logic.
 
-4. **Phase 4** — Remove duplicated RPC client instances from `SourceReader`,
-   `DestinationReader`, and `ExecutionAttemptPoller`, replacing them with injected
-   `ccv/client.RPCClient`.
+4. **Phase 4** — Migrate `SourceReader`, `DestinationReader`, and
+   `ExecutionAttemptPoller` to accept an injected `*ccv/client.Client` (instead of bare
+   `RPCClient`) so they benefit from the cached latest-ledger, rate limiting, and polling
+   utilities.
 
 ## Comparison with Other Chain TXMs
 

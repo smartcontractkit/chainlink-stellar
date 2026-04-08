@@ -2,9 +2,13 @@ package ccvclient
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"golang.org/x/time/rate"
 )
 
 // RPCClient is the unified Stellar RPC interface used by TXM, SourceReader,
@@ -23,17 +27,147 @@ type RPCClient interface {
 
 var _ RPCClient = (*rpcclient.Client)(nil)
 
-// Client wraps an RPCClient with optional convenience helpers.
+// ClientConfig configures the shared infrastructure on Client.
+type ClientConfig struct {
+	// LedgerCacheTTL controls how long a GetLatestLedger response is cached.
+	// Callers using LatestLedger() benefit from coalesced calls within this
+	// window. Zero disables caching.
+	LedgerCacheTTL time.Duration
+
+	// RateLimitPerSec is the sustained RPC request rate (requests/second).
+	// Zero disables rate limiting.
+	RateLimitPerSec float64
+
+	// RateLimitBurst is the maximum burst of RPC requests allowed.
+	RateLimitBurst int
+
+	// PollInterval is the default tick interval for PollTransaction.
+	PollInterval time.Duration
+}
+
+// DefaultClientConfig returns a ClientConfig with sensible defaults.
+func DefaultClientConfig() ClientConfig {
+	return ClientConfig{
+		LedgerCacheTTL:  3 * time.Second,
+		RateLimitPerSec: 10,
+		RateLimitBurst:  20,
+		PollInterval:    1 * time.Second,
+	}
+}
+
+// Client wraps an RPCClient with shared infrastructure: a latest-ledger
+// cache, a token-bucket rate limiter, and polling utilities. All components
+// (TXM, SourceReader, DestinationReader, Deployer) should share a single
+// Client instance to benefit from coalesced caching and unified rate limiting.
 type Client struct {
 	RPC RPCClient
+	cfg ClientConfig
+
+	limiter *rate.Limiter
+
+	ledgerMu     sync.Mutex
+	cachedLedger *protocolrpc.GetLatestLedgerResponse
+	cachedAt     time.Time
 }
 
-// NewClient creates a new Client wrapping a concrete *rpcclient.Client.
+// NewClient creates a Client wrapping a concrete *rpcclient.Client with
+// default configuration.
 func NewClient(rpcClient *rpcclient.Client) *Client {
-	return &Client{RPC: rpcClient}
+	return NewClientWithConfig(rpcClient, DefaultClientConfig())
 }
 
-// NewClientFromInterface creates a new Client from any RPCClient implementation.
+// NewClientFromInterface creates a Client from any RPCClient implementation
+// with default configuration.
 func NewClientFromInterface(rpc RPCClient) *Client {
-	return &Client{RPC: rpc}
+	return newClient(rpc, DefaultClientConfig())
+}
+
+// NewClientWithConfig creates a Client wrapping a concrete *rpcclient.Client
+// with the provided configuration.
+func NewClientWithConfig(rpcClient *rpcclient.Client, cfg ClientConfig) *Client {
+	return newClient(rpcClient, cfg)
+}
+
+func newClient(rpc RPCClient, cfg ClientConfig) *Client {
+	var limiter *rate.Limiter
+	if cfg.RateLimitPerSec > 0 {
+		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimitPerSec), cfg.RateLimitBurst)
+	}
+	if cfg.PollInterval == 0 {
+		cfg.PollInterval = 1 * time.Second
+	}
+	return &Client{
+		RPC:     rpc,
+		cfg:     cfg,
+		limiter: limiter,
+	}
+}
+
+// WaitRateLimit blocks until the rate limiter allows one event, or the
+// context is cancelled. Returns nil immediately if rate limiting is disabled.
+func (c *Client) WaitRateLimit(ctx context.Context) error {
+	if c.limiter == nil {
+		return nil
+	}
+	return c.limiter.Wait(ctx)
+}
+
+// LatestLedger returns the latest ledger response, using a short-TTL cache
+// to coalesce redundant calls from broadcaster, confirmer, pollers, etc.
+// Falls through to a direct RPC call if the cache is stale or disabled.
+func (c *Client) LatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
+	if c.cfg.LedgerCacheTTL <= 0 {
+		return c.RPC.GetLatestLedger(ctx)
+	}
+
+	c.ledgerMu.Lock()
+	defer c.ledgerMu.Unlock()
+
+	if c.cachedLedger != nil && time.Since(c.cachedAt) < c.cfg.LedgerCacheTTL {
+		return *c.cachedLedger, nil
+	}
+
+	resp, err := c.RPC.GetLatestLedger(ctx)
+	if err != nil {
+		return resp, err
+	}
+
+	c.cachedLedger = &resp
+	c.cachedAt = time.Now()
+	return resp, nil
+}
+
+// PollTransaction polls GetTransaction until the transaction reaches a
+// terminal status (success/failed) or the timeout elapses. This replaces
+// the duplicated poll loops in the TXM confirmer, broadcaster, and test
+// helpers. Respects the rate limiter if configured.
+func (c *Client) PollTransaction(ctx context.Context, hash string, timeout time.Duration) (protocolrpc.GetTransactionResponse, error) {
+	ticker := time.NewTicker(c.cfg.PollInterval)
+	defer ticker.Stop()
+
+	deadline := time.After(timeout)
+	var zero protocolrpc.GetTransactionResponse
+
+	for {
+		select {
+		case <-ctx.Done():
+			return zero, ctx.Err()
+		case <-deadline:
+			return zero, fmt.Errorf("confirmation timed out for %s", hash)
+		case <-ticker.C:
+			if err := c.WaitRateLimit(ctx); err != nil {
+				return zero, err
+			}
+			resp, err := c.RPC.GetTransaction(ctx, protocolrpc.GetTransactionRequest{Hash: hash})
+			if err != nil {
+				continue
+			}
+			switch resp.Status {
+			case protocolrpc.TransactionStatusSuccess, protocolrpc.TransactionStatusFailed:
+				return resp, nil
+			case protocolrpc.TransactionStatusNotFound:
+				continue
+			}
+		}
+	}
 }
