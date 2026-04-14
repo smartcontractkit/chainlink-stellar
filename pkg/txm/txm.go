@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog"
 
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-common/pkg/logger"
+	"github.com/smartcontractkit/chainlink-common/pkg/services"
 )
 
 const serviceName = "stellar.txm.Service"
@@ -22,6 +23,8 @@ var _ TxManager = (*Txm)(nil)
 // transaction submission with simulation, signing, broadcast, confirmation
 // polling, retry on transient failures, and ledger-bounds-based expiry.
 type Txm struct {
+	services.StateMachine
+
 	client     *ccvclient.Client
 	ks         Keystore
 	seqStore   *SequenceStore
@@ -32,14 +35,12 @@ type Txm struct {
 	metrics    *Metrics
 	cfg        Config
 	passphrase string
-	lggr       zerolog.Logger
+	lggr       logger.Logger
 
 	enqueueCh chan *txEntry
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
-	started   bool
-	mu        sync.Mutex
 
 	lastPrune time.Time
 }
@@ -52,7 +53,7 @@ func NewTxm(
 	networkPassphrase string,
 	ks Keystore,
 	cfg Config,
-	lggr zerolog.Logger,
+	lggr logger.Logger,
 ) *Txm {
 	rpc := client.RPC
 	store := NewTxStore()
@@ -60,6 +61,7 @@ func NewTxm(
 	feeEst := NewFeeEstimator(rpc, cfg)
 	metrics := NewMetrics(networkPassphrase, ks.SignerAddress())
 	enqueueCh := make(chan *txEntry, cfg.MaxQueueSize)
+	namedLggr := logger.Named(lggr, serviceName)
 
 	return &Txm{
 		client:     client,
@@ -70,72 +72,50 @@ func NewTxm(
 		metrics:    metrics,
 		cfg:        cfg,
 		passphrase: networkPassphrase,
-		lggr:       lggr.With().Str("service", serviceName).Logger(),
+		lggr:       namedLggr,
 		enqueueCh:  enqueueCh,
 		bcast: newBroadcaster(
-			client, ks, seqStore, feeEst, store, metrics, cfg, networkPassphrase, lggr,
+			client, ks, seqStore, feeEst, store, metrics, cfg, networkPassphrase, namedLggr,
 		),
-		cfm: newConfirmer(client, store, seqStore, metrics, cfg, lggr, enqueueCh),
+		cfm: newConfirmer(client, store, seqStore, metrics, cfg, namedLggr, enqueueCh),
 	}
 }
 
 // Start initialises the broadcaster and confirmer goroutines.
 func (t *Txm) Start(ctx context.Context) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	return t.StartOnce(serviceName, func() error {
+		t.ctx, t.cancel = context.WithCancel(ctx)
 
-	if t.started {
+		t.wg.Add(1)
+		go func() {
+			defer t.wg.Done()
+			t.runBroadcaster()
+		}()
+
+		t.wg.Add(1)
+		go func() {
+			defer t.wg.Done()
+			t.cfm.run(t.ctx)
+		}()
+
+		t.lggr.Info("TXM started")
 		return nil
-	}
-
-	t.ctx, t.cancel = context.WithCancel(ctx)
-
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		t.runBroadcaster()
-	}()
-
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		t.cfm.run(t.ctx)
-	}()
-
-	t.started = true
-	t.lggr.Info().Msg("TXM started")
-	return nil
+	})
 }
 
 // Close shuts down gracefully, draining in-flight work.
 func (t *Txm) Close() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.started {
+	return t.StopOnce(serviceName, func() error {
+		t.cancel()
+		t.wg.Wait()
+		t.lggr.Info("TXM stopped")
 		return nil
-	}
-
-	t.cancel()
-	t.wg.Wait()
-	t.started = false
-	t.lggr.Info().Msg("TXM stopped")
-	return nil
-}
-
-// Ready returns nil when the TXM is ready to accept transactions.
-func (t *Txm) Ready() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.started {
-		return ErrNotStarted
-	}
-	return nil
+	})
 }
 
 // HealthReport returns a map of component → error for monitoring.
 func (t *Txm) HealthReport() map[string]error {
-	return map[string]error{t.Name(): t.Ready()}
+	return map[string]error{t.Name(): t.Healthy()}
 }
 
 // Name returns the service name.
@@ -221,27 +201,27 @@ func (t *Txm) GetTransactionStatus(_ context.Context, txID string) (TxStatus, er
 
 // GetTransactionResult returns the full result of a terminal transaction.
 func (t *Txm) GetTransactionResult(_ context.Context, txID string) (*TxResult, error) {
-	entry := t.store.Get(txID)
-	if entry == nil {
+	result, ok := t.store.GetResult(txID)
+	if !ok {
+		if _, exists := t.store.Status(txID); exists {
+			return nil, ErrTxPending
+		}
 		return nil, ErrTxNotFound
 	}
-	if !entry.Status.Terminal() {
-		return nil, ErrTxPending
-	}
-	return t.buildResult(entry), nil
+	return result, nil
 }
 
 // GetTransactionFee returns the fee charged for a confirmed transaction
 // in stroops. Returns an error for non-confirmed transactions.
 func (t *Txm) GetTransactionFee(_ context.Context, txID string) (*big.Int, error) {
-	entry := t.store.Get(txID)
-	if entry == nil {
+	fee, status, ok := t.store.GetFee(txID)
+	if !ok {
 		return nil, ErrTxNotFound
 	}
-	if entry.Status != TxStatusConfirmed {
-		return nil, fmt.Errorf("tx %s is %s, not confirmed", txID, entry.Status)
+	if status != TxStatusConfirmed {
+		return nil, fmt.Errorf("tx %s is %s, not confirmed", txID, status)
 	}
-	return big.NewInt(entry.FeeCharged), nil
+	return big.NewInt(fee), nil
 }
 
 // InflightCount returns the enqueue channel depth and total unconfirmed
@@ -268,20 +248,17 @@ func (t *Txm) processTx(entry *txEntry) {
 		return
 	}
 
-	t.lggr.Warn().Err(err).Str("txID", entry.Request.ID).Int("attempt", entry.Attempt).Msg("Broadcast failed")
+	t.lggr.Warnw("Broadcast failed", "err", err, "txID", entry.Request.ID, "attempt", entry.Attempt)
 	t.metrics.IncrError()
 
 	if isRetryable(err) && entry.Attempt < t.cfg.MaxRetries {
 		if isSequenceErr(err) {
 			if syncErr := t.seqStore.Sync(t.ctx); syncErr != nil {
-				t.lggr.Error().Err(syncErr).Msg("Failed to sync sequence after conflict")
+				t.lggr.Errorw("Failed to sync sequence after conflict", "err", syncErr)
 			}
 		}
 		newAttempt := t.store.IncrementRetry(entry.Request.ID)
-		t.lggr.Info().
-			Str("txID", entry.Request.ID).
-			Int("attempt", newAttempt).
-			Msg("Retrying transaction from broadcaster")
+		t.lggr.Infow("Retrying transaction from broadcaster", "txID", entry.Request.ID, "attempt", newAttempt)
 		t.metrics.IncrRetry()
 
 		select {
@@ -318,7 +295,7 @@ func (t *Txm) maybePrune() {
 	}
 	t.lastPrune = now
 	if reaped := t.store.Reap(t.cfg.PruneThreshold); reaped > 0 {
-		t.lggr.Debug().Int("reaped", reaped).Msg("Pruned terminal transactions")
+		t.lggr.Debugw("Pruned terminal transactions", "reaped", reaped)
 	}
 }
 

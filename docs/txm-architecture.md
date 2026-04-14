@@ -146,7 +146,8 @@ set `LedgerBounds.MaxLedger` to define a hard expiry. The TXM sets this to
 
 The confirmer checks `currentLedger > entry.MaxLedger` to detect expiry, which is
 deterministic — once the network passes that ledger, the transaction can never be included.
-A wall-clock timeout (`TxTimeout`, default 60s) acts as a fallback.
+A wall-clock timeout (`TxTimeout`, default 5 min) acts as a safety-net fallback and is
+deliberately set higher than the ledger-bounds window to avoid premature expiry.
 
 ### 7. RestoreFootprint for expired persistent entries
 
@@ -209,8 +210,10 @@ States:
 
 ### Txm (`txm.go`)
 
-The orchestrator. Implements `TxManager` and manages the service lifecycle. Spawns two
-background goroutines on `Start()`:
+The orchestrator. Implements `TxManager` and manages the service lifecycle via an embedded
+`services.StateMachine` from `chainlink-common` (handles double-start, close-before-start,
+and health reporting). Uses `logger.Logger` from `chainlink-common` for structured logging
+compatible with the Chainlink node pipeline. Spawns two background goroutines on `Start()`:
 
 - **Broadcaster loop** — reads from the enqueue channel, calls `broadcaster.broadcast`,
   and handles retry logic (re-enqueue on retryable errors, sync sequence on conflicts).
@@ -234,7 +237,8 @@ loops:
 4. **Layer 2: Simulate with retries** — `simulateWithRetries` handles `tx_bad_seq` during
    simulation by syncing the sequence from chain and retrying (up to `MaxSimulateAttempts`)
 5. **RestoreFootprint** — if simulation indicates expired entries and `AutoRestore` is on.
-   Consumes its own sequence, waits for confirmation, then re-simulates the original tx.
+   Consumes its own sequence, submits with a local retry loop for `TRY_AGAIN_LATER`
+   (same `MaxSubmitAttempts`), waits for confirmation, then re-simulates the original tx.
 6. **Assemble with fee bumping** — `FeeEstimator.AssembleTransaction` applies simulation
    data and geometric fee: `MinResourceFee + FeeBuffer * FeeBumpMultiplier^attempt`
 7. **Sign** — `Keystore.Sign` with the network passphrase
@@ -249,8 +253,8 @@ Polls all broadcast transactions on each tick with jitter:
 
 1. **Get latest ledger** — single call per tick for all entries
 2. **GetTransaction(hash)** — check each broadcast entry
-3. **State transitions**:
-   - `SUCCESS` → confirmed, `SequenceStore.Confirm(seq, consumed=true)`
+3. **State transitions** (operates on `BroadcastSnapshot` copies, not live pointers):
+   - `SUCCESS` → decode `FeeCharged` from `ResultXDR`, confirmed, `SequenceStore.Confirm(seq, consumed=true)`
    - `FAILED` → `maybeRetry`, `SequenceStore.Confirm(seq, consumed=true)` (on-chain failure)
    - `NOT_FOUND` + past ledger bounds → `maybeRetry`, `SequenceStore.Confirm(seq, consumed=false)`
    - `NOT_FOUND` + past wall-clock timeout → `maybeRetry`, same as above
@@ -289,6 +293,8 @@ inclusionFee = min(FeeBuffer * FeeBumpMultiplier^attempt, MaxInclusionFee)
 In-memory map (`map[string]*txEntry`) with a secondary index by hash
 (`map[string]string`). State transitions are guarded by `sync.RWMutex`. The `Done`
 channel on each entry enables `EnqueueAndWait` to block until a terminal state is reached.
+Read APIs (`BroadcastEntries`, `GetResult`, `GetFee`, `Status`) return snapshot copies
+under the lock to prevent data races when callers read fields after the lock is released.
 `Reap` removes terminal entries older than a threshold to bound memory. `Reap` is called
 on each `Enqueue` if `PruneInterval` has elapsed.
 
@@ -374,7 +380,7 @@ type ClientConfig struct {
 |-----------|---------|-------------|
 | `MaxQueueSize` | 256 | Max pending tx requests in the enqueue channel |
 | `ConfirmPollInterval` | 2s | How often the confirmer checks broadcast tx status (with ±20% jitter) |
-| `TxTimeout` | 60s | Wall-clock timeout for tx confirmation |
+| `TxTimeout` | 5m | Wall-clock safety-net timeout for tx confirmation (should exceed ledger-bounds window) |
 | `LedgerBoundsOffset` | 50 | Ledgers into the future a tx is valid (~5 min at 6s/ledger) |
 | `MaxRetries` | 3 | Layer 3 lifecycle retries (confirm loop re-enqueue) |
 | `MaxSubmitAttempts` | 5 | Layer 1 HTTP submit retries per broadcast attempt |

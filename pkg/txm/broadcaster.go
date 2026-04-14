@@ -6,10 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -29,7 +28,7 @@ type broadcaster struct {
 	metrics    *Metrics
 	cfg        Config
 	passphrase string
-	lggr       zerolog.Logger
+	lggr       logger.Logger
 }
 
 func newBroadcaster(
@@ -41,7 +40,7 @@ func newBroadcaster(
 	metrics *Metrics,
 	cfg Config,
 	passphrase string,
-	lggr zerolog.Logger,
+	lggr logger.Logger,
 ) *broadcaster {
 	return &broadcaster{
 		client:     client,
@@ -53,7 +52,7 @@ func newBroadcaster(
 		metrics:    metrics,
 		cfg:        cfg,
 		passphrase: passphrase,
-		lggr:       lggr.With().Str("component", "txm.broadcaster").Logger(),
+		lggr:       logger.Named(lggr, "Broadcaster"),
 	}
 }
 
@@ -193,13 +192,9 @@ func (b *broadcaster) broadcast(ctx context.Context, entry *txEntry) error {
 	b.seqStore.AddUnconfirmed(allocSeq, hash)
 	b.store.SetBroadcast(req.ID, hash, allocSeq, maxLedger)
 	b.metrics.IncrBroadcasted()
-	b.lggr.Info().
-		Str("txID", req.ID).
-		Str("hash", hash).
-		Int64("seq", allocSeq).
-		Uint32("maxLedger", maxLedger).
-		Int("attempt", entry.Attempt).
-		Msg("Transaction broadcast")
+	b.lggr.Infow("Transaction broadcast",
+		"txID", req.ID, "hash", hash, "seq", allocSeq,
+		"maxLedger", maxLedger, "attempt", entry.Attempt)
 
 	return nil
 }
@@ -227,9 +222,7 @@ func (b *broadcaster) simulateWithRetries(
 			return nil, err
 		}
 
-		b.lggr.Debug().
-			Int("simAttempt", attempt+1).
-			Msg("Sequence race during simulation, syncing and retrying")
+		b.lggr.Debugw("Sequence race during simulation, syncing and retrying", "simAttempt", attempt+1)
 
 		b.seqStore.Release(*allocSeq)
 		if syncErr := b.seqStore.Sync(ctx); syncErr != nil {
@@ -271,10 +264,7 @@ func (b *broadcaster) submitWithRetries(ctx context.Context, signedXDR string) (
 		if err != nil {
 			lastErr = err
 			if isTransientNetworkError(err) {
-				b.lggr.Debug().
-					Int("submitAttempt", attempt+1).
-					Err(err).
-					Msg("Transient network error, retrying submit")
+			b.lggr.Debugw("Transient network error, retrying submit", "submitAttempt", attempt+1, "err", err)
 				sleepCtx(ctx, b.cfg.SubmitRetryDelay)
 				continue
 			}
@@ -287,9 +277,7 @@ func (b *broadcaster) submitWithRetries(ctx context.Context, signedXDR string) (
 
 		case "TRY_AGAIN_LATER":
 			lastErr = ErrOverloaded
-			b.lggr.Debug().
-				Int("submitAttempt", attempt+1).
-				Msg("Server overloaded (TRY_AGAIN_LATER), retrying")
+			b.lggr.Debugw("Server overloaded (TRY_AGAIN_LATER), retrying", "submitAttempt", attempt+1)
 			sleepCtx(ctx, b.cfg.SubmitRetryDelay)
 			continue
 
@@ -382,27 +370,42 @@ func (b *broadcaster) restoreFootprint(ctx context.Context, preamble protocolrpc
 		return fmt.Errorf("encode signed restore transaction: %w", err)
 	}
 
-	submitResult, err := b.rpc.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
-		Transaction: signedXDR,
-	})
-	if err != nil {
-		b.seqStore.Release(allocSeq)
-		return fmt.Errorf("send restore transaction: %w", err)
-	}
+	var submitResult protocolrpc.SendTransactionResponse
+	var lastErr error
+	for attempt := 0; attempt < b.cfg.MaxSubmitAttempts; attempt++ {
+		submitResult, err = b.rpc.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
+			Transaction: signedXDR,
+		})
+		if err != nil {
+			lastErr = err
+			if isTransientNetworkError(err) {
+				sleepCtx(ctx, b.cfg.SubmitRetryDelay)
+				continue
+			}
+			b.seqStore.Release(allocSeq)
+			return fmt.Errorf("send restore transaction: %w", err)
+		}
 
-	switch submitResult.Status {
-	case "PENDING", "DUPLICATE":
-	case "TRY_AGAIN_LATER":
-		b.seqStore.Release(allocSeq)
-		return fmt.Errorf("restore: %w", ErrOverloaded)
-	case "ERROR":
-		b.seqStore.Release(allocSeq)
-		return fmt.Errorf("restore rejected: %s", submitResult.ErrorResultXDR)
-	default:
-		b.seqStore.Release(allocSeq)
-		return fmt.Errorf("restore unexpected status: %s", submitResult.Status)
+		switch submitResult.Status {
+		case "PENDING", "DUPLICATE":
+			goto submitted
+		case "TRY_AGAIN_LATER":
+			lastErr = ErrOverloaded
+			b.lggr.Debugw("Restore TRY_AGAIN_LATER, retrying", "attempt", attempt+1)
+			sleepCtx(ctx, b.cfg.SubmitRetryDelay)
+			continue
+		case "ERROR":
+			b.seqStore.Release(allocSeq)
+			return fmt.Errorf("restore rejected: %s", submitResult.ErrorResultXDR)
+		default:
+			b.seqStore.Release(allocSeq)
+			return fmt.Errorf("restore unexpected status: %s", submitResult.Status)
+		}
 	}
+	b.seqStore.Release(allocSeq)
+	return fmt.Errorf("restore exhausted %d submit attempts: %w", b.cfg.MaxSubmitAttempts, lastErr)
 
+submitted:
 	b.seqStore.AddUnconfirmed(allocSeq, submitResult.Hash)
 
 	resp, err := b.client.PollTransaction(ctx, submitResult.Hash, b.cfg.TxTimeout)

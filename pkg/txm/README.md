@@ -126,7 +126,7 @@ cfg.MaxInclusionFee = 5_000_000    // 0.5 XLM cap
 |-------|---------|-------------|
 | `MaxQueueSize` | 256 | Enqueue channel capacity |
 | `ConfirmPollInterval` | 2s | Confirmer tick interval (with ±20% jitter) |
-| `TxTimeout` | 60s | Wall-clock confirmation timeout |
+| `TxTimeout` | 5m | Wall-clock safety-net timeout (should exceed ledger-bounds window) |
 | `LedgerBoundsOffset` | 50 | Ledger-based expiry window |
 | `MaxRetries` | 3 | Layer 3 lifecycle retries (confirm loop re-enqueue) |
 | `MaxSubmitAttempts` | 5 | Layer 1 HTTP submit retries |
@@ -194,6 +194,7 @@ if errors.Is(err, txm.ErrDuplicateTx) {
 - `ccv/client.Client` — shared Stellar RPC client with caching, rate limiting, and polling
 - `ccv/client.RPCClient` — unified Stellar RPC interface (satisfied by `*rpcclient.Client`)
 - `github.com/stellar/go-stellar-sdk` — Stellar Go SDK for transaction building, XDR, keypairs
-- `github.com/rs/zerolog` — structured logging
+- `github.com/smartcontractkit/chainlink-common/pkg/logger` — structured logging (compatible with Chainlink node pipeline)
+- `github.com/smartcontractkit/chainlink-common/pkg/services` — lifecycle management (`StateMachine`)
 - `github.com/prometheus/client_golang` — Prometheus metrics
 - `github.com/google/uuid` — transaction ID generation

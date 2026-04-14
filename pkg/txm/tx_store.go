@@ -154,18 +154,75 @@ func (s *TxStore) IncrementRetry(id string) int {
 	return entry.Attempt
 }
 
-// BroadcastEntries returns all entries in the broadcast state.
-func (s *TxStore) BroadcastEntries() []*txEntry {
+// BroadcastSnapshot is an immutable copy of the fields the confirmer needs
+// from a broadcast entry. Returned by BroadcastEntries so that callers
+// never hold pointers to live entries outside the store lock.
+type BroadcastSnapshot struct {
+	ID        string
+	Hash      string
+	Seq       int64
+	MaxLedger uint32
+	Created   time.Time
+	Attempt   int
+}
+
+// BroadcastEntries returns snapshot copies of all entries in the broadcast state.
+func (s *TxStore) BroadcastEntries() []BroadcastSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var entries []*txEntry
+	var entries []BroadcastSnapshot
 	for _, e := range s.byID {
 		if e.Status == TxStatusBroadcast {
-			entries = append(entries, e)
+			entries = append(entries, BroadcastSnapshot{
+				ID:        e.Request.ID,
+				Hash:      e.Hash,
+				Seq:       e.Seq,
+				MaxLedger: e.MaxLedger,
+				Created:   e.Created,
+				Attempt:   e.Attempt,
+			})
 		}
 	}
 	return entries
+}
+
+// GetResult returns an immutable TxResult for a terminal transaction under
+// the read lock. Returns (nil, false) if the entry doesn't exist or is
+// not yet terminal.
+func (s *TxStore) GetResult(id string) (*TxResult, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, ok := s.byID[id]
+	if !ok {
+		return nil, false
+	}
+	if !entry.Status.Terminal() {
+		return nil, false
+	}
+	return &TxResult{
+		Status:     entry.Status,
+		Hash:       entry.Hash,
+		ResultMeta: entry.Meta,
+		ResultXDR:  entry.ResultXDR,
+		FeeCharged: entry.FeeCharged,
+		Error:      entry.Error,
+		LedgerNum:  entry.Ledger,
+	}, true
+}
+
+// GetFee returns the fee charged and status for a transaction under the read
+// lock. Returns (0, 0, false) if the entry doesn't exist.
+func (s *TxStore) GetFee(id string) (int64, TxStatus, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, ok := s.byID[id]
+	if !ok {
+		return 0, 0, false
+	}
+	return entry.FeeCharged, entry.Status, true
 }
 
 // UnconfirmedCount returns the number of broadcast (unconfirmed) entries.

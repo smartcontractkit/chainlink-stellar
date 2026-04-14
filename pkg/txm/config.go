@@ -8,7 +8,9 @@ type Config struct {
 	MaxQueueSize int
 	// ConfirmPollInterval is how often the confirmer checks tx status.
 	ConfirmPollInterval time.Duration
-	// TxTimeout is the max wall-clock time to wait for confirmation.
+	// TxTimeout is a wall-clock safety net for confirmation. It should
+	// exceed the ledger-bounds window (LedgerBoundsOffset * ~5s/ledger)
+	// so that ledger-based expiry is the primary mechanism.
 	TxTimeout time.Duration
 	// LedgerBoundsOffset is the default number of ledgers into the
 	// future a tx is valid for. ~50 ledgers ≈ 5 min at 6s/ledger.
@@ -45,7 +47,7 @@ func DefaultConfig() Config {
 	return Config{
 		MaxQueueSize:        256,
 		ConfirmPollInterval: 2 * time.Second,
-		TxTimeout:           60 * time.Second,
+		TxTimeout:           5 * time.Minute,
 		LedgerBoundsOffset:  50, // ~5 min at 6s/ledger
 		MaxRetries:          3,
 		MaxSubmitAttempts:   5,
