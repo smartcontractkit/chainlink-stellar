@@ -39,13 +39,13 @@ func TestApplyFeeQuoterTestTokenConfig_validation(t *testing.T) {
 	dummy := fee_quoter.NewFeeQuoterClient(nil, "dummy")
 
 	t.Run("nil_client", func(t *testing.T) {
-		err := ApplyFeeQuoterTestTokenConfig(ctx, nil, "token", []uint64{1})
+		err := ApplyFeeQuoterTestTokenConfig(ctx, nil, "caller", "token", []uint64{1})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fee quoter client is nil")
 	})
 
 	t.Run("empty_test_token", func(t *testing.T) {
-		err := ApplyFeeQuoterTestTokenConfig(ctx, dummy, "", []uint64{1})
+		err := ApplyFeeQuoterTestTokenConfig(ctx, dummy, "caller", "", []uint64{1})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "test token contract id is empty")
 	})

@@ -18,10 +18,10 @@
 //! AuthorizedCallers::init(&env, authorized_callers); // Optional
 //! AccessControl::init(&env); // Optional
 //!
-//! // In protected functions:
+//! // In protected functions (caller is passed explicitly):
 //! <MyContract as Ownable>::require_owner(&env)?;
-//! AuthorizedCallers::require_authorized(&env)?;
-//! AccessControl::require_role(&env, symbol_short!("MINTER"))?;
+//! AuthorizedCallers::require_authorized(&env, &caller)?;
+//! AccessControl::require_role(&env, symbol_short!("MINTER"), &caller)?;
 //! ```
 
 pub mod allowlist;
@@ -196,26 +196,24 @@ impl AuthorizedCallers {
         false
     }
 
-    /// Require that the caller is authorized.
-    /// This finds an authorized caller that provided auth and validates it.
+    /// Require that `caller` is in the authorized set and has signed this invocation.
+    ///
+    /// Soroban has no `msg.sender`, so the caller address must be passed
+    /// explicitly. The function first checks membership (non-trapping), then
+    /// calls `require_auth()` only on the verified address.
     ///
     /// # Errors
     /// * `FeatureNotEnabled` - AuthorizedCallers not initialized
-    /// * `CallerNotAuthorized` - No authorized caller provided auth
-    pub fn require_authorized(env: &Env) -> Result<Address, CCIPError> {
+    /// * `CallerNotAuthorized` - `caller` is not in the authorized set
+    pub fn require_authorized(env: &Env, caller: &Address) -> Result<Address, CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
-
-        let callers = Self::get_callers(env);
-
-        // Try each authorized caller
-        for caller in callers.iter() {
-            caller.require_auth();
-            return Ok(caller);
+        if !Self::is_authorized(env, caller) {
+            return Err(CCIPError::CallerNotAuthorized);
         }
-
-        Err(CCIPError::CallerNotAuthorized)
+        caller.require_auth();
+        Ok(caller.clone())
     }
 }
 
@@ -257,13 +255,17 @@ impl AccessControl {
     /// # Errors
     /// * `FeatureNotEnabled` - AccessControl not initialized
     /// * `NotInitialized` - Owner not set (if not using ADMIN)
-    pub fn grant_role(env: &Env, role: Symbol, account: &Address) -> Result<(), CCIPError> {
+    pub fn grant_role(
+        env: &Env,
+        caller: &Address,
+        role: Symbol,
+        account: &Address,
+    ) -> Result<(), CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
-        // Require owner or ADMIN role
-        let sender = Self::require_admin_or_owner(env)?;
+        let sender = Self::require_admin_or_owner(env, caller)?;
 
         // Get current roles
         let mut roles: Vec<(Symbol, Vec<Address>)> = env
@@ -331,13 +333,17 @@ impl AccessControl {
     /// # Errors
     /// * `FeatureNotEnabled` - AccessControl not initialized
     /// * `NotInitialized` - Owner not set (if not using ADMIN)
-    pub fn revoke_role(env: &Env, role: Symbol, account: &Address) -> Result<(), CCIPError> {
+    pub fn revoke_role(
+        env: &Env,
+        caller: &Address,
+        role: Symbol,
+        account: &Address,
+    ) -> Result<(), CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
-        // Require owner or ADMIN role
-        let sender = Self::require_admin_or_owner(env)?;
+        let sender = Self::require_admin_or_owner(env, caller)?;
 
         // Get current roles
         let mut roles: Vec<(Symbol, Vec<Address>)> = env
@@ -465,29 +471,28 @@ impl AccessControl {
         false
     }
 
-    /// Require that the caller has a specific role.
+    /// Require that `caller` holds the given role and has signed this invocation.
+    ///
+    /// Membership is checked via the non-trapping `has_role` before calling
+    /// `require_auth()`, avoiding VM traps for unauthorized callers.
     ///
     /// # Arguments
     /// * `env` - The environment
     /// * `role` - The required role
+    /// * `caller` - The address claiming to hold the role
     ///
     /// # Errors
     /// * `FeatureNotEnabled` - AccessControl not initialized
-    /// * `RoleNotGranted` - Caller doesn't have the required role
-    pub fn require_role(env: &Env, role: Symbol) -> Result<Address, CCIPError> {
+    /// * `RoleNotGranted` - `caller` doesn't have the required role
+    pub fn require_role(env: &Env, role: Symbol, caller: &Address) -> Result<Address, CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
-
-        let members = Self::get_role_members(env, role.clone());
-
-        // Try each member with the role
-        for member in members.iter() {
-            member.require_auth();
-            return Ok(member);
+        if !Self::has_role(env, role, caller) {
+            return Err(CCIPError::RoleNotGranted);
         }
-
-        Err(CCIPError::RoleNotGranted)
+        caller.require_auth();
+        Ok(caller.clone())
     }
 
     /// Get all addresses that have a specific role.
@@ -511,15 +516,22 @@ impl AccessControl {
         Vec::new(env)
     }
 
-    /// Internal: Require owner or ADMIN role.
-    fn require_admin_or_owner(env: &Env) -> Result<Address, CCIPError> {
-        match DefaultOwnable::owner(env) {
-            Some(owner) => {
-                DefaultOwnable::require_owner(env)?;
-                Ok(owner)
+    /// Internal: Require `caller` to be the owner or hold the ADMIN role.
+    ///
+    /// Uses compare-then-auth: checks identity without trapping, then calls
+    /// `require_auth()` only on the matched address.
+    fn require_admin_or_owner(env: &Env, caller: &Address) -> Result<Address, CCIPError> {
+        if let Some(owner) = DefaultOwnable::owner(env) {
+            if *caller == owner {
+                caller.require_auth();
+                return Ok(caller.clone());
             }
-            None => Self::require_role(env, ROLE_ADMIN),
         }
+        if Self::has_role(env, ROLE_ADMIN, caller) {
+            caller.require_auth();
+            return Ok(caller.clone());
+        }
+        Err(CCIPError::Unauthorized)
     }
 }
 

@@ -17,7 +17,11 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn update_prices(env: soroban_sdk::Env, price_updates: PriceUpdates) -> Result<(), CCIPError>;
+    fn update_prices(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        price_updates: PriceUpdates,
+    ) -> Result<(), CCIPError>;
     fn get_fee_tokens(
         env: soroban_sdk::Env,
     ) -> Result<soroban_sdk::Vec<soroban_sdk::Address>, CCIPError>;

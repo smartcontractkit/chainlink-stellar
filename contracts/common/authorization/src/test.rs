@@ -71,8 +71,8 @@ impl TestAuthContract {
         AuthorizedCallers::is_authorized(&env, &addr)
     }
 
-    pub fn require_authorized(env: Env) -> Result<Address, CCIPError> {
-        AuthorizedCallers::require_authorized(&env)
+    pub fn require_authorized(env: Env, caller: Address) -> Result<Address, CCIPError> {
+        AuthorizedCallers::require_authorized(&env, &caller)
     }
 
     // ---- AccessControl ----
@@ -84,12 +84,22 @@ impl TestAuthContract {
         AccessControl::is_enabled(&env)
     }
 
-    pub fn grant_role(env: Env, role: Symbol, account: Address) -> Result<(), CCIPError> {
-        AccessControl::grant_role(&env, role, &account)
+    pub fn grant_role(
+        env: Env,
+        caller: Address,
+        role: Symbol,
+        account: Address,
+    ) -> Result<(), CCIPError> {
+        AccessControl::grant_role(&env, &caller, role, &account)
     }
 
-    pub fn revoke_role(env: Env, role: Symbol, account: Address) -> Result<(), CCIPError> {
-        AccessControl::revoke_role(&env, role, &account)
+    pub fn revoke_role(
+        env: Env,
+        caller: Address,
+        role: Symbol,
+        account: Address,
+    ) -> Result<(), CCIPError> {
+        AccessControl::revoke_role(&env, &caller, role, &account)
     }
 
     pub fn renounce_role(env: Env, role: Symbol, account: Address) -> Result<(), CCIPError> {
@@ -100,8 +110,8 @@ impl TestAuthContract {
         AccessControl::has_role(&env, role, &account)
     }
 
-    pub fn require_role(env: Env, role: Symbol) -> Result<Address, CCIPError> {
-        AccessControl::require_role(&env, role)
+    pub fn require_role(env: Env, role: Symbol, caller: Address) -> Result<Address, CCIPError> {
+        AccessControl::require_role(&env, role, &caller)
     }
 
     pub fn get_role_members(env: Env, role: Symbol) -> Vec<Address> {
@@ -233,8 +243,9 @@ fn test_authorized_callers_not_enabled() {
 fn test_authorized_callers_require_not_enabled() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
+    let random = Address::generate(&env);
 
-    client.require_authorized();
+    client.require_authorized(&random);
 }
 
 #[test]
@@ -345,7 +356,7 @@ fn test_authorized_callers_require_authorized() {
     initial.push_back(caller.clone());
     client.init_callers(&initial);
 
-    let result = client.require_authorized();
+    let result = client.require_authorized(&caller);
     assert_eq!(result, caller);
 }
 
@@ -355,11 +366,12 @@ fn test_authorized_callers_require_empty_list() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
+    let random = Address::generate(&env);
 
     client.init_owner(&owner);
     client.init_callers(&Vec::new(&env));
 
-    client.require_authorized();
+    client.require_authorized(&random);
 }
 
 #[test]
@@ -395,8 +407,9 @@ fn test_access_control_not_enabled() {
 fn test_access_control_require_not_enabled() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
+    let random = Address::generate(&env);
 
-    client.require_role(&ROLE_MINTER);
+    client.require_role(&ROLE_MINTER, &random);
 }
 
 #[test]
@@ -421,7 +434,7 @@ fn test_access_control_grant_role() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&ROLE_MINTER, &minter);
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
     assert!(client.has_role(&ROLE_MINTER, &minter));
 }
 
@@ -435,10 +448,10 @@ fn test_access_control_revoke_role() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&ROLE_MINTER, &minter);
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
     assert!(client.has_role(&ROLE_MINTER, &minter));
 
-    client.revoke_role(&ROLE_MINTER, &minter);
+    client.revoke_role(&owner, &ROLE_MINTER, &minter);
     assert!(!client.has_role(&ROLE_MINTER, &minter));
 }
 
@@ -452,7 +465,7 @@ fn test_access_control_renounce_role() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&ROLE_MINTER, &minter);
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
     assert!(client.has_role(&ROLE_MINTER, &minter));
 
     client.renounce_role(&ROLE_MINTER, &minter);
@@ -465,12 +478,12 @@ fn test_access_control_renounce_role_not_granted() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let user = Address::generate(&env);
+    let random = Address::generate(&env);
 
     client.init_owner(&owner);
     client.init_access();
 
-    client.renounce_role(&ROLE_MINTER, &user);
+    client.renounce_role(&ROLE_MINTER, &random);
 }
 
 #[test]
@@ -483,9 +496,9 @@ fn test_access_control_require_role() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&ROLE_MINTER, &minter);
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
 
-    let result = client.require_role(&ROLE_MINTER);
+    let result = client.require_role(&ROLE_MINTER, &minter);
     assert_eq!(result, minter);
 }
 
@@ -495,11 +508,12 @@ fn test_access_control_require_role_not_granted() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
+    let random = Address::generate(&env);
 
     client.init_owner(&owner);
     client.init_access();
 
-    client.require_role(&ROLE_MINTER);
+    client.require_role(&ROLE_MINTER, &random);
 }
 
 #[test]
@@ -513,8 +527,8 @@ fn test_access_control_get_role_members() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&ROLE_MINTER, &minter1);
-    client.grant_role(&ROLE_MINTER, &minter2);
+    client.grant_role(&owner, &ROLE_MINTER, &minter1);
+    client.grant_role(&owner, &ROLE_MINTER, &minter2);
 
     let members = client.get_role_members(&ROLE_MINTER);
     assert_eq!(members.len(), 2);
@@ -532,10 +546,10 @@ fn test_access_control_admin_can_grant() {
     client.init_access();
 
     // Owner grants ADMIN role to admin
-    client.grant_role(&ROLE_ADMIN, &admin);
+    client.grant_role(&owner, &ROLE_ADMIN, &admin);
 
-    // Admin can now grant other roles
-    client.grant_role(&ROLE_MINTER, &minter);
+    // Admin can now grant other roles (passing admin as caller)
+    client.grant_role(&admin, &ROLE_MINTER, &minter);
     assert!(client.has_role(&ROLE_MINTER, &minter));
 }
 
@@ -550,14 +564,14 @@ fn test_access_control_multiple_roles() {
     client.init_access();
 
     // Grant multiple roles to same user
-    client.grant_role(&ROLE_MINTER, &user);
-    client.grant_role(&ROLE_BURNER, &user);
+    client.grant_role(&owner, &ROLE_MINTER, &user);
+    client.grant_role(&owner, &ROLE_BURNER, &user);
 
     assert!(client.has_role(&ROLE_MINTER, &user));
     assert!(client.has_role(&ROLE_BURNER, &user));
 
     // Revoke one role
-    client.revoke_role(&ROLE_MINTER, &user);
+    client.revoke_role(&owner, &ROLE_MINTER, &user);
 
     assert!(!client.has_role(&ROLE_MINTER, &user));
     assert!(client.has_role(&ROLE_BURNER, &user));
@@ -574,11 +588,11 @@ fn test_access_control_custom_role() {
     client.init_owner(&owner);
     client.init_access();
 
-    client.grant_role(&custom_role, &operator);
+    client.grant_role(&owner, &custom_role, &operator);
 
     assert!(client.has_role(&custom_role, &operator));
 
-    let result = client.require_role(&custom_role);
+    let result = client.require_role(&custom_role, &operator);
     assert_eq!(result, operator);
 }
 
@@ -602,7 +616,7 @@ fn test_combined_authorization() {
     client.init_callers(&callers);
 
     client.init_access();
-    client.grant_role(&ROLE_MINTER, &minter);
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
 
     // Verify all work correctly
     assert!(client.is_owner(&owner));

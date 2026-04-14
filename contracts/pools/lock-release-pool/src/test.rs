@@ -716,7 +716,7 @@ fn test_get_current_rate_limiter_state() {
 
 #[test]
 fn test_set_rate_limit_config_updates_limits() {
-    let (env, pool_client, _owner, token_address, _token_client, token_admin_client) = setup_env();
+    let (env, pool_client, owner, token_address, _token_client, token_admin_client) = setup_env();
     env.ledger().with_mut(|li| li.timestamp = 100);
 
     let remote_chain: u64 = 5009297550715157269;
@@ -734,6 +734,7 @@ fn test_set_rate_limit_config_updates_limits() {
         rate: 5,
     };
     pool_client.set_rate_limit_config(
+        &owner,
         &remote_chain,
         &new_outbound,
         &RateLimitConfig::disabled(),
@@ -793,4 +794,72 @@ fn test_chain_remove_clears_rate_limits() {
     let state2 = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
     assert!(!state2.outbound.is_enabled);
     assert_eq!(state2.outbound.tokens, 0);
+}
+
+#[test]
+fn test_set_rate_limit_config_admin_can_set() {
+    let (env, pool_client, owner, _token_address, _token_client, _token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let admin = Address::generate(&env);
+    pool_client.set_rate_limit_admin(&admin);
+    assert_eq!(pool_client.get_rate_limit_admin().unwrap(), admin);
+
+    let cfg = RateLimitConfig {
+        is_enabled: true,
+        capacity: 100,
+        rate: 1,
+    };
+    pool_client.set_rate_limit_config(
+        &admin,
+        &remote_chain,
+        &cfg,
+        &RateLimitConfig::disabled(),
+        &false,
+    );
+
+    let state = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
+    assert!(state.outbound.is_enabled);
+    assert_eq!(state.outbound.capacity, 100);
+
+    // Owner can still set rate limits
+    pool_client.set_rate_limit_config(
+        &owner,
+        &remote_chain,
+        &RateLimitConfig::disabled(),
+        &RateLimitConfig::disabled(),
+        &false,
+    );
+
+    let state2 = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
+    assert!(!state2.outbound.is_enabled);
+}
+
+#[test]
+fn test_set_rate_limit_config_unauthorized_rejected() {
+    let (env, pool_client, _owner, _token_address, _token_client, _token_admin_client) =
+        setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let stranger = Address::generate(&env);
+    let r = pool_client.try_set_rate_limit_config(
+        &stranger,
+        &remote_chain,
+        &RateLimitConfig::disabled(),
+        &RateLimitConfig::disabled(),
+        &false,
+    );
+    assert_eq!(r, Err(Ok(CCIPError::Unauthorized)));
 }

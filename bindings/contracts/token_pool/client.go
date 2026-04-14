@@ -229,8 +229,9 @@ func (c *TokenPoolClient) ApplyChainUpdates(ctx context.Context, adds []ChainUpd
 }
 
 // SetRateLimitConfig calls the set_rate_limit_config function on the contract.
-func (c *TokenPoolClient) SetRateLimitConfig(ctx context.Context, remoteChainSelector uint64, outboundConfig RateLimitConfig, inboundConfig RateLimitConfig, fastFinality bool) error {
+func (c *TokenPoolClient) SetRateLimitConfig(ctx context.Context, caller string, remoteChainSelector uint64, outboundConfig RateLimitConfig, inboundConfig RateLimitConfig, fastFinality bool) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.Uint64ToScVal(remoteChainSelector),
 		scval.MustToScVal(outboundConfig.ToScVal()),
 		scval.MustToScVal(inboundConfig.ToScVal()),

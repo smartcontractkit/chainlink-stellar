@@ -567,7 +567,7 @@ func deployOutboundSendWire(
 			UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}),
 		})
 	}
-	if err := wire.FeeQuoterClient.UpdatePrices(ctx, fqbindings.PriceUpdates{
+	if err := wire.FeeQuoterClient.UpdatePrices(ctx, deployerAddr, fqbindings.PriceUpdates{
 		TokenPriceUpdates: tokenUpdates,
 		GasPriceUpdates: []fqbindings.GasPriceUpdate{{
 			DestChainSelector: remoteDestChainSelector,

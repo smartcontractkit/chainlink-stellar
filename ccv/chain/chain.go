@@ -454,7 +454,7 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 
 	allSelectors := selectorsFromBlockChains(env.BlockChains)
 	if c.testTokenContractID != "" && c.feeQuoterClient != nil {
-		if err := stellarccipdevenv.ApplyFeeQuoterTestTokenConfig(ctx, c.feeQuoterClient, c.testTokenContractID, allSelectors); err != nil {
+		if err := stellarccipdevenv.ApplyFeeQuoterTestTokenConfig(ctx, c.feeQuoterClient, c.deployerKeypair.Address(), c.testTokenContractID, allSelectors); err != nil {
 			return nil, fmt.Errorf("apply fee quoter test token config: %w", err)
 		}
 		c.logger.Info().Int("destChainCount", len(allSelectors)).Msg("FeeQuoter test token fees applied (post-deploy)")

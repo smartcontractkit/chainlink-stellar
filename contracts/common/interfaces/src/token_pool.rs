@@ -58,6 +58,7 @@ pub trait TokenPoolInterface {
 
     fn set_rate_limit_config(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         remote_chain_selector: u64,
         outbound_config: RateLimitConfig,
         inbound_config: RateLimitConfig,

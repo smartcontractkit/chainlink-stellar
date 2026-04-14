@@ -141,8 +141,9 @@ func (c *FeeQuoterClient) SetNewOwner(ctx context.Context, newOwner string) erro
 }
 
 // UpdatePrices calls the update_prices function on the contract.
-func (c *FeeQuoterClient) UpdatePrices(ctx context.Context, priceUpdates PriceUpdates) error {
+func (c *FeeQuoterClient) UpdatePrices(ctx context.Context, caller string, priceUpdates PriceUpdates) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.MustToScVal(priceUpdates.ToScVal()),
 	}
 

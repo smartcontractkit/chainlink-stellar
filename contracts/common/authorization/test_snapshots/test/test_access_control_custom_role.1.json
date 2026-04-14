@@ -18,6 +18,9 @@
               "function_name": "grant_role",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
                   "symbol": "OPERATOR"
                 },
                 {
@@ -42,6 +45,9 @@
               "args": [
                 {
                   "symbol": "OPERATOR"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 }
               ]
             }

@@ -77,10 +77,13 @@ fn setup_fee_quoter(
         usd_per_unit_gas: 100_000_000_000_000, // 1e14
     });
 
-    fee_quoter_client.update_prices(&PriceUpdates {
-        token_price_updates: token_updates,
-        gas_price_updates: gas_updates,
-    });
+    fee_quoter_client.update_prices(
+        owner,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: gas_updates,
+        },
+    );
 
     fee_quoter_id
 }

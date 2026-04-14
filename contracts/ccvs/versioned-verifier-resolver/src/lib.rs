@@ -271,7 +271,7 @@ impl VersionedVerifierResolverContract {
         implementations: Vec<InboundImplementationUpdate>,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as Ownable>::require_owner(&env).map_err(|_| CCIPError::Unauthorized)?;
+        <Self as Ownable>::require_owner(&env)?;
 
         let inbound_map: Map<BytesN<4>, Address> = env
             .storage()
@@ -304,7 +304,7 @@ impl VersionedVerifierResolverContract {
         implementations: Vec<OutboundImplementationUpdate>,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as Ownable>::require_owner(&env).map_err(|_| CCIPError::Unauthorized)?;
+        <Self as Ownable>::require_owner(&env)?;
 
         let outbound_map: Map<u64, Address> = env
             .storage()

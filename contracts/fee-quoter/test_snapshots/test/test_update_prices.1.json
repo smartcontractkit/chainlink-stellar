@@ -17,6 +17,9 @@
               "function_name": "update_prices",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
                   "map": [
                     {
                       "key": {

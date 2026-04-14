@@ -227,15 +227,20 @@ impl LockReleaseTokenPoolContract {
 
     /// Update rate limit configs for a chain. Callable by owner or rate limit admin.
     /// When `fast_finality` is true, sets the FTF buckets; otherwise the default buckets.
+    ///
+    /// The `caller` must be passed explicitly (Soroban has no `msg.sender`);
+    /// `require_auth()` is called only after verifying the address matches the
+    /// owner or rate-limit admin.
     pub fn set_rate_limit_config(
         env: Env,
+        caller: Address,
         remote_chain_selector: u64,
         outbound_config: RateLimitConfig,
         inbound_config: RateLimitConfig,
         fast_finality: bool,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        Self::require_owner_or_rate_limit_admin(&env)?;
+        Self::require_owner_or_rate_limit_admin(&env, &caller)?;
         <Self as BaseTokenPool>::set_rate_limit_config(
             &env,
             remote_chain_selector,
@@ -314,13 +319,18 @@ impl LockReleaseTokenPoolContract {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn require_owner_or_rate_limit_admin(env: &Env) -> Result<(), CCIPError> {
-        if <Self as Ownable>::require_owner(env).is_ok() {
-            return Ok(());
+    fn require_owner_or_rate_limit_admin(env: &Env, caller: &Address) -> Result<(), CCIPError> {
+        if let Some(owner) = <Self as Ownable>::owner(env) {
+            if *caller == owner {
+                caller.require_auth();
+                return Ok(());
+            }
         }
         if let Some(admin) = <Self as BaseTokenPool>::get_rate_limit_admin(env) {
-            admin.require_auth();
-            return Ok(());
+            if *caller == admin {
+                caller.require_auth();
+                return Ok(());
+            }
         }
         Err(CCIPError::Unauthorized)
     }

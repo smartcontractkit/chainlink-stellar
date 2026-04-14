@@ -310,9 +310,13 @@ impl FeeQuoterContract {
     ///
     /// # Arguments
     /// * `price_updates` - Token and gas price updates
-    pub fn update_prices(env: Env, price_updates: PriceUpdates) -> Result<(), CCIPError> {
+    pub fn update_prices(
+        env: Env,
+        caller: Address,
+        price_updates: PriceUpdates,
+    ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        AuthorizedCallers::require_authorized(&env)?;
+        AuthorizedCallers::require_authorized(&env, &caller)?;
 
         // Reentrancy protection for price updates
         ReentrancyGuard::enter(&env)?;

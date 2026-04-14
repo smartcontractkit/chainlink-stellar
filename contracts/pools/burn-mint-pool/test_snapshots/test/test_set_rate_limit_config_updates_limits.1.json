@@ -173,6 +173,9 @@
               "function_name": "set_rate_limit_config",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
                   "u64": "5009297550715157269"
                 },
                 {

@@ -14,6 +14,7 @@ import (
 func ApplyFeeQuoterTestTokenConfig(
 	ctx context.Context,
 	feeQuoterClient *fee_quoter.FeeQuoterClient,
+	caller string,
 	testToken string,
 	allSelectors []uint64,
 ) error {
@@ -30,7 +31,7 @@ func ApplyFeeQuoterTestTokenConfig(
 		}},
 		GasPriceUpdates: []fee_quoter.GasPriceUpdate{},
 	}
-	if err := feeQuoterClient.UpdatePrices(ctx, tokenPriceUpdates); err != nil {
+	if err := feeQuoterClient.UpdatePrices(ctx, caller, tokenPriceUpdates); err != nil {
 		return fmt.Errorf("failed to set test token price on FeeQuoter: %w", err)
 	}
 
