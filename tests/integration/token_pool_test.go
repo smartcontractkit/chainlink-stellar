@@ -139,7 +139,7 @@ func TestTokenPool(t *testing.T) {
 		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-token-send")
 		feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-fee-token")
 
-		wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", stack,
+		deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", stack,
 			localChain, remoteDestChain, feeToken, []string{sacToken})
 
 		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", sacToken)
