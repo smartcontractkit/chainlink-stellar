@@ -48,6 +48,8 @@ pub struct DestChainConfig {
     pub token_network_fee_usd_cents: u32,
     /// Base gas cost for executing a message on destination
     pub base_execution_gas_cost: u32,
+    /// Execution fee in USD cents charged by the executor
+    pub execution_fee_usd_cents: u32,
     /// Default executor for this destination
     pub default_executor: Address,
     /// Lane-mandated CCVs required for all messages
@@ -76,6 +78,8 @@ pub struct DestChainConfigArgs {
     pub token_network_fee_usd_cents: u32,
     /// Base execution gas cost
     pub base_execution_gas_cost: u32,
+    /// Execution fee (USD cents)
+    pub execution_fee_usd_cents: u32,
     /// Default executor
     pub default_executor: Address,
     /// Lane-mandated CCVs

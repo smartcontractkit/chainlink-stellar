@@ -8,8 +8,10 @@
 //!
 //! Key differences from EVM:
 //! - Soroban has no `msg.sender`; caller identity is established via `require_auth`.
-//! - `deposit` expects the **caller** to have arranged a Soroban auth tree that
-//!   permits `token::transfer(caller, lockbox, amount)`.
+//! - `deposit` expects the **caller** to have approved this lockbox as spender
+//!   for `amount` (short-lived `approve` is enough). The lockbox pulls via
+//!   `token::transfer_from(lockbox, caller, lockbox, amount)` so the allowance
+//!   is consumed and is not left outstanding after a successful deposit.
 //! - `withdraw` transfers **from the lockbox** to `recipient`; the lockbox itself
 //!   authorises via `env.current_contract_address()`.
 
@@ -99,7 +101,9 @@ impl TokenLockBox {
     /// Deposit tokens into this lockbox (EVM `ILockBox.deposit`).
     ///
     /// `caller` must be an allowed address and must have authorised this
-    /// invocation. The token transfer is `caller → lockbox`.
+    /// invocation. The caller must have `approve`d this lockbox contract for
+    /// at least `amount`; funds are pulled with `transfer_from` so allowance is
+    /// reduced (typically to zero when the approved amount equals `amount`).
     pub fn deposit(env: Env, caller: Address, amount: i128) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         require_allowed_caller(&env, &caller)?;
@@ -108,7 +112,8 @@ impl TokenLockBox {
         }
         let tok = get_token(&env)?;
         let token_client = token::Client::new(&env, &tok);
-        token_client.transfer(&caller, &env.current_contract_address(), &amount);
+        let lockbox = env.current_contract_address();
+        token_client.transfer_from(&lockbox, &caller, &lockbox, &amount);
         DepositEvent {
             token: tok,
             depositor: caller,

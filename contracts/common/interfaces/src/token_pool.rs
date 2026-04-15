@@ -43,6 +43,14 @@ pub trait TokenPoolInterface {
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError>;
 
+    /// Returns the pool's fee in USD cents for a cross-chain token transfer to
+    /// `remote_chain_selector`. Allows token issuers to charge additional fees
+    /// on top of the protocol fee (FeeQuoter + CCV + executor).
+    fn get_fee(
+        env: soroban_sdk::Env,
+        remote_chain_selector: u64,
+    ) -> Result<PoolFeeResult, CCIPError>;
+
     fn is_supported_token(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,
@@ -100,6 +108,13 @@ pub trait TokenPoolInterface {
     ) -> Result<(), CCIPError>;
 
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> u32;
+}
+
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PoolFeeResult {
+    /// Fee in USD cents charged by this pool for the transfer.
+    pub fee_usd_cents: u32,
 }
 
 #[soroban_sdk::contracttype(export = false)]

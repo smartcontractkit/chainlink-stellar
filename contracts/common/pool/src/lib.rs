@@ -24,6 +24,8 @@ use common_interfaces::pool_hooks::PoolHooksClient;
 use common_interfaces::router::RouterClient;
 use soroban_sdk::{contracttrait, Address, Bytes, Env, Vec};
 
+pub use types::PoolFeeResult;
+
 /// Base token pool trait providing shared pool configuration and chain management.
 ///
 /// Concrete pool contracts (LockRelease, BurnMint) implement this trait
@@ -153,6 +155,41 @@ pub trait BaseTokenPool {
             .instance()
             .get(&PoolDataKey::AllowedFinalityConfig)
             .unwrap_or(finality_codec::WAIT_FOR_FINALITY_FLAG)
+    }
+
+    // ------------------------------------------------------------------
+    // Pool Fee
+    // ------------------------------------------------------------------
+
+    /// Returns the pool fee for transfers to the given chain. Returns 0 if no
+    /// per-chain fee is configured.
+    fn get_fee(env: &Env, remote_chain_selector: u64) -> Result<PoolFeeResult, CCIPError> {
+        let config: Option<PoolFeeConfig> = env
+            .storage()
+            .persistent()
+            .get(&PoolDataKey::PoolFeeConfig(remote_chain_selector));
+
+        match config {
+            Some(c) if c.is_enabled => Ok(PoolFeeResult {
+                fee_usd_cents: c.fee_usd_cents,
+            }),
+            _ => Ok(PoolFeeResult { fee_usd_cents: 0 }),
+        }
+    }
+
+    /// Set the per-chain pool fee config. Caller must enforce owner-only.
+    fn set_pool_fee_config(
+        env: &Env,
+        remote_chain_selector: u64,
+        config: &PoolFeeConfig,
+    ) -> Result<(), CCIPError> {
+        if !Self::is_supported_chain(env, remote_chain_selector)? {
+            return Err(CCIPError::ChainNotSupported);
+        }
+        env.storage()
+            .persistent()
+            .set(&PoolDataKey::PoolFeeConfig(remote_chain_selector), config);
+        Ok(())
     }
 
     // ------------------------------------------------------------------

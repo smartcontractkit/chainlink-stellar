@@ -192,6 +192,9 @@ pub enum CCIPError {
     /// Requested finality combines a flag with a block depth — exactly one mode allowed
     /// (EVM `FinalityCodec.RequestedFinalityCanOnlyHaveOneMode`).
     RequestedFinalityCanOnlyHaveOneMode = 316,
+    /// Inbound source chain not allowlisted for this client (EVM `CCIPClientExample.InvalidChain` /
+    /// `validChain` when `s_chains[source].extraArgs` is empty).
+    InvalidChainForClient = 317,
 
     // ============================================================
     // Calculation errors

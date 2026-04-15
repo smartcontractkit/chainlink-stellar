@@ -144,8 +144,12 @@ func TestRouter(t *testing.T) {
 		}
 
 		recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, receiverID)
-		if err := recvClient.Initialize(ctx, routerID); err != nil {
+		if err := recvClient.Initialize(ctx, deployerKP.Address(), routerID); err != nil {
 			t.Fatalf("CcipReceiver Initialize: %v", err)
+		}
+		// EVM CCIPClientExample.validChain: receiver only accepts `ccip_receive` for allowlisted source selectors.
+		if err := recvClient.EnableRemoteChain(ctx, deployerKP.Address(), remoteSourceChain, []byte{0x01}, 0); err != nil {
+			t.Fatalf("CcipReceiver EnableRemoteChain (inbound source allowlist): %v", err)
 		}
 
 		if err := routerClient.AddOfframp(ctx, remoteSourceChain, offrampID); err != nil {

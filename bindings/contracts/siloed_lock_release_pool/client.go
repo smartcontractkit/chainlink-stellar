@@ -51,6 +51,24 @@ func (c *SiloedLockReleasePoolClient) Owner(ctx context.Context) (*string, error
 	return v, nil
 }
 
+// GetFee calls the get_fee function on the contract.
+func (c *SiloedLockReleasePoolClient) GetFee(ctx context.Context, remoteChainSelector uint64) (*PoolFeeResult, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_fee: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_fee")
+	}
+
+	return PoolFeeResultFromScVal(*result)
+}
+
 // IsOwner calls the is_owner function on the contract.
 func (c *SiloedLockReleasePoolClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
@@ -440,6 +458,22 @@ func (c *SiloedLockReleasePoolClient) ApplyChainUpdates(ctx context.Context, add
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_chain_updates", args)
 	if err != nil {
 		return fmt.Errorf("failed to call apply_chain_updates: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// SetPoolFeeConfig calls the set_pool_fee_config function on the contract.
+func (c *SiloedLockReleasePoolClient) SetPoolFeeConfig(ctx context.Context, remoteChainSelector uint64, config PoolFeeConfig) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+		scval.MustToScVal(config.ToScVal()),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_pool_fee_config", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_pool_fee_config: %w", err)
 	}
 
 	_ = result // void return

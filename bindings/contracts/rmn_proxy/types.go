@@ -563,6 +563,7 @@ const (
 	CCIPErrorDisabledNonZeroRateLimit            = 314
 	CCIPErrorInvalidRequestedFinality            = 315
 	CCIPErrorRequestedFinalityCanOnlyHaveOneMode = 316
+	CCIPErrorInvalidChainForClient               = 317
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 )
@@ -679,6 +680,7 @@ var CCIPErrorMessage = map[int]string{
 	314: "disabled non zero rate limit",
 	315: "invalid requested finality",
 	316: "requested finality can only have one mode",
+	317: "invalid chain for client",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 }

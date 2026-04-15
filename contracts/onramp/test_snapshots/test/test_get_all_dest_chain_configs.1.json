@@ -66,6 +66,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -158,6 +166,14 @@
                           },
                           "val": {
                             "u64": "200"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
                           }
                         },
                         {
@@ -288,6 +304,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -385,6 +409,14 @@
                           },
                           "val": {
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXI7N"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
                           }
                         },
                         {

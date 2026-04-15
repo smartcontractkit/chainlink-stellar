@@ -149,6 +149,7 @@ pub struct DestChainConfig {
     pub base_execution_gas_cost: u32,
     pub default_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub default_executor: soroban_sdk::Address,
+    pub execution_fee_usd_cents: u32,
     pub lane_mandated_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub message_network_fee_usd_cents: u32,
     pub message_number: u64,
@@ -165,6 +166,7 @@ pub struct DestChainConfigArgs {
     pub default_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub default_executor: soroban_sdk::Address,
     pub dest_chain_selector: u64,
+    pub execution_fee_usd_cents: u32,
     pub lane_mandated_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub message_network_fee_usd_cents: u32,
     pub off_ramp: soroban_sdk::Bytes,
@@ -285,6 +287,7 @@ pub enum CCIPError {
     DisabledNonZeroRateLimit = 314,
     InvalidRequestedFinality = 315,
     RequestedFinalityCanOnlyHaveOneMode = 316,
+    InvalidChainForClient = 317,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
 }

@@ -1168,6 +1168,24 @@ func (c *Chain) GetTokenPoolAddress() (string, error) {
 	return c.tokenPoolContractID, nil
 }
 
+// GetOnRampAddress returns the OnRamp contract ID deployed during
+// DeployContractsForSelector.
+func (c *Chain) GetOnRampAddress() (string, error) {
+	if c.onRampContractID == "" {
+		return "", fmt.Errorf("onramp not deployed; run DeployContractsForSelector first")
+	}
+	return c.onRampContractID, nil
+}
+
+// GetFeeTokenAddress returns the fee token SAC contract ID used for CCIP fee
+// payments on this chain.
+func (c *Chain) GetFeeTokenAddress() (string, error) {
+	if c.feeTokenContractID == "" {
+		return "", fmt.Errorf("fee token not deployed; run DeployContractsForSelector first")
+	}
+	return c.feeTokenContractID, nil
+}
+
 // stellarFeeAggregatorHexForTopology returns the 0x-prefixed hex encoding of the same
 // deterministic mock fee-aggregator contract ID used when initializing Stellar FeeQuoter,
 // CommitteeVerifier, and VVR (mustGenerateMockContractID(..., "fee-aggregator")).
@@ -1378,6 +1396,7 @@ func (c *Chain) buildOnRampDestConfigs(ds datastore.DataStore, remoteSelectors [
 			BaseExecutionGasCost:      100_000,
 			DefaultCcvs:               []string{c.vvrContractID},
 			DefaultExecutor:           defaultExecutor,
+			ExecutionFeeUsdCents:      0,
 			LaneMandatedCcvs:          []string{},
 			MessageNetworkFeeUsdCents: 100,
 			OffRamp:                   offRampBytes,

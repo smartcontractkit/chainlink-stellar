@@ -204,18 +204,35 @@ impl OnRampContract {
                     .ok_or(CCIPError::InvalidFeeCalculation)?)
             })?;
 
-        let ccv_fees_in_fee_token = ccv_fees_usd_cents
+        // Pool fee (if token transfer)
+        let mut additional_usd_cents: u128 = ccv_fees_usd_cents;
+
+        if !message.token_amounts.is_empty() {
+            let token_amount = message.token_amounts.get(0).unwrap();
+            let static_config = Self::get_static_config_internal(&env)?;
+            let pool_address =
+                Self::get_pool_by_source_token_internal(&env, &static_config, &token_amount.token)?;
+            let pool_client = TokenPoolClient::new(&env, &pool_address);
+            let pool_fee = pool_client.get_fee(&dest_chain_selector);
+            additional_usd_cents = additional_usd_cents
+                .checked_add(pool_fee.fee_usd_cents as u128)
+                .ok_or(CCIPError::InvalidFeeCalculation)?;
+        }
+
+        // Executor fee
+        additional_usd_cents = additional_usd_cents
+            .checked_add(dest_config.execution_fee_usd_cents as u128)
+            .ok_or(CCIPError::InvalidFeeCalculation)?;
+
+        let additional_in_fee_token = additional_usd_cents
             .checked_mul(10_u128.pow(16))
             .ok_or(CCIPError::InvalidFeeCalculation)?
             .checked_div(message_fee.fee_token_price)
             .ok_or(CCIPError::InvalidFeeCalculation)? as i128;
 
-        // TODO: Query executor for fees
-        // TODO: Query pool for fees (if token transfer)
-
         let total_fee = message_fee
             .fee_token_amount
-            .checked_add(ccv_fees_in_fee_token)
+            .checked_add(additional_in_fee_token)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
         Ok(total_fee)
@@ -387,34 +404,49 @@ impl OnRampContract {
                 .base_execution_gas_cost
                 .saturating_add(extra_args.gas_limit),
             dest_bytes_overhead: 0,
-            fee_token_amount: 0, // TODO: compute executor fee
+            fee_token_amount: dest_config.execution_fee_usd_cents as i128,
             extra_args: extra_args.executor_args.clone(),
         });
+
+        // TODO: Confirm with EVM reference whether message vs token network fees
+        // are mutually exclusive or additive (base + surcharge). Currently treated
+        // as mutually exclusive.
+        let network_fee_usd_cents = if message.token_amounts.is_empty() {
+            dest_config.message_network_fee_usd_cents
+        } else {
+            dest_config.token_network_fee_usd_cents
+        };
 
         // Network fee receipt (always last)
         receipts.push_back(Receipt {
             issuer: dest_config.router.clone(),
             dest_gas_limit: 0,
             dest_bytes_overhead: 0,
-            fee_token_amount: dest_config.token_network_fee_usd_cents as i128,
+            fee_token_amount: network_fee_usd_cents as i128,
             extra_args: Bytes::new(&env),
         });
 
         // Persist updated sequence number
         Self::set_dest_chain_config(&env, dest_chain_selector, &dest_config);
 
-        // Sum all receipt fees and validate against provided fee_token_amount.
-        // CCV receipt fees are in USD cents; convert to fee token units using message_fee price.
-        let mut total_ccv_usd_cents: u128 = 0;
+        // Sum all USD-cent-denominated receipt fees (CCVs + executor) and convert
+        // to fee token units. The network fee receipt is not summed here because the
+        // FeeQuoter already includes it in message_fee.fee_token_amount.
+        let mut additional_usd_cents: u128 = 0;
         let ccv_receipt_count = merged_ccvs.len();
         for i in 0..ccv_receipt_count {
             if let Some(r) = receipts.get(i) {
-                total_ccv_usd_cents = total_ccv_usd_cents
+                additional_usd_cents = additional_usd_cents
                     .checked_add(r.fee_token_amount as u128)
                     .ok_or(CCIPError::InvalidFeeCalculation)?;
             }
         }
-        let ccv_fees_in_fee_token = total_ccv_usd_cents
+        // Executor fee (receipt at index ccv_receipt_count)
+        additional_usd_cents = additional_usd_cents
+            .checked_add(dest_config.execution_fee_usd_cents as u128)
+            .ok_or(CCIPError::InvalidFeeCalculation)?;
+
+        let additional_in_fee_token = additional_usd_cents
             .checked_mul(10_u128.pow(16))
             .ok_or(CCIPError::InvalidFeeCalculation)?
             .checked_div(message_fee.fee_token_price)
@@ -422,7 +454,7 @@ impl OnRampContract {
 
         let total_fee = message_fee
             .fee_token_amount
-            .checked_add(ccv_fees_in_fee_token)
+            .checked_add(additional_in_fee_token)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
         if fee_token_amount < total_fee {
@@ -437,7 +469,7 @@ impl OnRampContract {
         if fee_token_amount > 0 {
             let fee_token_client = token::Client::new(&env, &message.fee_token);
             let onramp_address = env.current_contract_address();
-            let network_fee = dest_config.token_network_fee_usd_cents as i128;
+            let network_fee = network_fee_usd_cents as i128;
             if network_fee > 0 {
                 let network_fee_tokens = (network_fee as u128)
                     .checked_mul(10_u128.pow(16))
@@ -652,6 +684,7 @@ impl OnRampContract {
                 message_network_fee_usd_cents: args.message_network_fee_usd_cents,
                 token_network_fee_usd_cents: args.token_network_fee_usd_cents,
                 base_execution_gas_cost: args.base_execution_gas_cost,
+                execution_fee_usd_cents: args.execution_fee_usd_cents,
                 default_executor: args.default_executor.clone(),
                 lane_mandated_ccvs: args.lane_mandated_ccvs.clone(),
                 default_ccvs: args.default_ccvs.clone(),

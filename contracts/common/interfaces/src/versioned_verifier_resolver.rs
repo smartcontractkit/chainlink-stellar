@@ -238,6 +238,7 @@ pub enum CCIPError {
     DisabledNonZeroRateLimit = 314,
     InvalidRequestedFinality = 315,
     RequestedFinalityCanOnlyHaveOneMode = 316,
+    InvalidChainForClient = 317,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
 }

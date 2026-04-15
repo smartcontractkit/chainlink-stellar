@@ -201,8 +201,12 @@ func deployFullStack(
 
 	// 9. CCIP Receiver
 	recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, s.ReceiverID)
-	if err := recvClient.Initialize(ctx, s.RouterID); err != nil {
+	if err := recvClient.Initialize(ctx, deployerAddr, s.RouterID); err != nil {
 		t.Fatalf("CcipReceiver Initialize: %v", err)
+	}
+	// EVM CCIPClientExample.validChain: allow inbound messages from the configured remote source chain.
+	if err := recvClient.EnableRemoteChain(ctx, deployerAddr, remoteSourceChain, []byte{0x01}, 0); err != nil {
+		t.Fatalf("CcipReceiver EnableRemoteChain (inbound source allowlist): %v", err)
 	}
 
 	// 10. Register OffRamp on Router for remote source chain
@@ -646,6 +650,7 @@ func deployOutboundSendWire(
 		TokenNetworkFeeUsdCents:   100,
 		BaseExecutionGasCost:      200_000,
 		DefaultExecutor:           defaultExecutor,
+		ExecutionFeeUsdCents:      25,
 		LaneMandatedCcvs:          nil,
 		DefaultCcvs:               []string{stack.VvrID},
 		OffRamp:                   offRampEVM,

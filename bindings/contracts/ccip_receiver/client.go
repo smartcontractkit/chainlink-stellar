@@ -52,8 +52,9 @@ func (c *ExampleCcipReceiverClient) GetRouter(ctx context.Context) (string, erro
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *ExampleCcipReceiverClient) Initialize(ctx context.Context, router string) error {
+func (c *ExampleCcipReceiverClient) Initialize(ctx context.Context, owner string, router string) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(owner),
 		scval.AddressToScVal(router),
 	}
 
@@ -79,6 +80,24 @@ func (c *ExampleCcipReceiverClient) CcipReceive(ctx context.Context, message Any
 
 	_ = result // void return
 	return nil
+}
+
+// GetCcvConfig calls the get_ccv_config function on the contract.
+func (c *ExampleCcipReceiverClient) GetCcvConfig(ctx context.Context, sourceChainSelector uint64) (*CcvChainConfig, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(sourceChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_ccv_config", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_ccv_config: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_ccv_config")
+	}
+
+	return CcvChainConfigFromScVal(*result)
 }
 
 // LastMessageId calls the last_message_id function on the contract.
@@ -115,6 +134,252 @@ func (c *ExampleCcipReceiverClient) TypeAndVersion(ctx context.Context) (string,
 	}
 
 	return scval.StringFromScVal(*result)
+}
+
+// EnableRemoteChain calls the enable_remote_chain function on the contract.
+func (c *ExampleCcipReceiverClient) EnableRemoteChain(ctx context.Context, caller string, destChainSelector uint64, extraArgs []byte, allowedFinalityConfig uint32) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.Uint64ToScVal(destChainSelector),
+		scval.BytesToScVal(extraArgs),
+		scval.Uint32ToScVal(allowedFinalityConfig),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "enable_remote_chain", args)
+	if err != nil {
+		return fmt.Errorf("failed to call enable_remote_chain: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// DisableRemoteChain calls the disable_remote_chain function on the contract.
+func (c *ExampleCcipReceiverClient) DisableRemoteChain(ctx context.Context, caller string, destChainSelector uint64) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.Uint64ToScVal(destChainSelector),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "disable_remote_chain", args)
+	if err != nil {
+		return fmt.Errorf("failed to call disable_remote_chain: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetRemoteChainConfig calls the get_remote_chain_config function on the contract.
+func (c *ExampleCcipReceiverClient) GetRemoteChainConfig(ctx context.Context, chainSelector uint64) (*RemoteChainConfig, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(chainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_chain_config", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_remote_chain_config: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_remote_chain_config")
+	}
+
+	return RemoteChainConfigFromScVal(*result)
+}
+
+// SendDataPayFeeToken calls the send_data_pay_fee_token function on the contract.
+func (c *ExampleCcipReceiverClient) SendDataPayFeeToken(ctx context.Context, caller string, destChainSelector uint64, receiver []byte, data []byte, feeToken string, feeTokenAmount int64) ([32]byte, error) {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.Uint64ToScVal(destChainSelector),
+		scval.BytesToScVal(receiver),
+		scval.BytesToScVal(data),
+		scval.AddressToScVal(feeToken),
+		scval.I128ToScVal(feeTokenAmount),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "send_data_pay_fee_token", args)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("failed to call send_data_pay_fee_token: %w", err)
+	}
+
+	if result == nil {
+		return [32]byte{}, fmt.Errorf("no return value from send_data_pay_fee_token")
+	}
+
+	v, err := scval.Bytes32FromScVal(*result)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return v, nil
+}
+
+// ApplyCcvConfigUpdates calls the apply_ccv_config_updates function on the contract.
+func (c *ExampleCcipReceiverClient) ApplyCcvConfigUpdates(ctx context.Context, caller string, updates []CcvConfigUpdate) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.StructSliceToScVal(updates),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_ccv_config_updates", args)
+	if err != nil {
+		return fmt.Errorf("failed to call apply_ccv_config_updates: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetRemoteChainSelectors calls the get_remote_chain_selectors function on the contract.
+func (c *ExampleCcipReceiverClient) GetRemoteChainSelectors(ctx context.Context) ([]uint64, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_chain_selectors", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_remote_chain_selectors: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_remote_chain_selectors")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]uint64, len(*vec))
+	for i, item := range *vec {
+		v, err := scval.Uint64FromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// GetRemoteChainExtraArgs calls the get_remote_chain_extra_args function on the contract.
+func (c *ExampleCcipReceiverClient) GetRemoteChainExtraArgs(ctx context.Context, destChainSelector uint64) ([]byte, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(destChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_chain_extra_args", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_remote_chain_extra_args: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_remote_chain_extra_args")
+	}
+
+	v, ok := result.GetBytes()
+	if !ok {
+		return nil, fmt.Errorf("expected bytes return type")
+	}
+	return []byte(v), nil
+}
+
+// GetCcvsAndFinalityConfig calls the get_ccvs_and_finality_config function on the contract.
+func (c *ExampleCcipReceiverClient) GetCcvsAndFinalityConfig(ctx context.Context, sourceChainSelector uint64, unused []byte) (*CcvsAndFinalityConfig, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(sourceChainSelector),
+		scval.BytesToScVal(unused),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_ccvs_and_finality_config", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_ccvs_and_finality_config: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_ccvs_and_finality_config")
+	}
+
+	return CcvsAndFinalityConfigFromScVal(*result)
+}
+
+// WaitForCcipCcvConfigSetEvent waits for a CcipCcvConfigSetEvent event.
+func (c *ExampleCcipReceiverClient) WaitForCcipCcvConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CcipCcvConfigSetEvent) bool) (*CcipCcvConfigSetEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{CcipCcvConfigSetEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseCcipCcvConfigSetEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseCcipCcvConfigSetEvent(e protocolrpc.EventInfo) (*CcipCcvConfigSetEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &CcipCcvConfigSetEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "source_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.SourceChainSelector = v
+			}
+		case "required_len":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.RequiredLen = uint32(v)
+			}
+		case "optional_len":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.OptionalLen = uint32(v)
+			}
+		case "optional_threshold":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.OptionalThreshold = uint32(v)
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // WaitForCcipMessageReceivedEvent waits for a CcipMessageReceivedEvent event.
@@ -197,6 +462,83 @@ func ParseCcipMessageReceivedEvent(e protocolrpc.EventInfo) (*CcipMessageReceive
 			v, ok := entry.Val.GetU32()
 			if ok {
 				result.DestTokenTransfers = uint32(v)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForCcipRemoteChainConfiguredEvent waits for a CcipRemoteChainConfiguredEvent event.
+func (c *ExampleCcipReceiverClient) WaitForCcipRemoteChainConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CcipRemoteChainConfiguredEvent) bool) (*CcipRemoteChainConfiguredEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{CcipRemoteChainConfiguredEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseCcipRemoteChainConfiguredEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseCcipRemoteChainConfiguredEvent(e protocolrpc.EventInfo) (*CcipRemoteChainConfiguredEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &CcipRemoteChainConfiguredEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "dest_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.DestChainSelector = v
+			}
+		case "extra_args_len":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.ExtraArgsLen = uint32(v)
+			}
+		case "allowed_finality_config":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.AllowedFinalityConfig = uint32(v)
 			}
 		}
 	}

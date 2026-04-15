@@ -19,21 +19,24 @@ INTERFACES_DIR="$REPO_ROOT/contracts/common/interfaces/src"
 BINDINGS_DIR="$REPO_ROOT/bindings"
 CONTRACTS_DIR="$BINDINGS_DIR/contracts"
 
-# Contract config: "interface_module|PascalCaseName|go_package|use_common_message"
+# Contract config: "interface_module|PascalCaseName|go_package|use_common_message|events_file"
 # use_common_message=1 when the interface uses StellarToAnyMessage/TokenAmount from common_message
 # (fee_quoter, onramp have these structs removed by gen_interfaces; we prepend them from committee_verifier)
 # committee_verifier must come before fee_quoter and onramp (they need its TokenAmount/StellarToAnyMessage)
+# events_file: optional path (relative to REPO_ROOT) to a Rust events source file for -events flag
 CONTRACTS=(
-  "committee_verifier|CommitteeVerifier|committee_verifier|0"
-  "fee_quoter|FeeQuoter|fee_quoter|1"
-  "versioned_verifier_resolver|VersionedVerifierResolver|versioned_verifier_resolver|0"
-  "onramp|OnRamp|onramp|1"
-  "rmn_proxy|RmnProxy|rmn_proxy|0"
-  "rmn_remote|RmnRemote|rmn_remote|0"
-  "offramp|OffRamp|offramp|0"
-  "router|Router|router|0"
-  "ccip_receiver|ExampleCcipReceiver|ccip_receiver|0"
-  "token_admin_registry|TokenAdminRegistry|token_admin_registry|0"
+  "committee_verifier|CommitteeVerifier|committee_verifier|0|"
+  "fee_quoter|FeeQuoter|fee_quoter|1|"
+  "versioned_verifier_resolver|VersionedVerifierResolver|versioned_verifier_resolver|0|"
+  "onramp|OnRamp|onramp|1|"
+  "rmn_proxy|RmnProxy|rmn_proxy|0|"
+  "rmn_remote|RmnRemote|rmn_remote|0|"
+  "offramp|OffRamp|offramp|0|"
+  "router|Router|router|0|"
+  "ccip_receiver|ExampleCcipReceiver|ccip_receiver|0|"
+  "token_admin_registry|TokenAdminRegistry|token_admin_registry|0|"
+  "lock_release_pool|LockReleasePool|lock_release_pool|0|contracts/pools/lock-release-pool/src/events.rs"
+  "burn_mint_pool|BurnMintPool|burn_mint_pool|0|contracts/pools/burn-mint-pool/src/events.rs"
   "token_pool|TokenPool|token_pool|0"
   "token_lock_box|TokenLockBox|token_lock_box|0"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"
@@ -85,7 +88,7 @@ fi
 mkdir -p "$CONTRACTS_DIR"
 
 for entry in "${CONTRACTS[@]}"; do
-  IFS='|' read -r iface_module pascal_name pkg use_common_msg <<< "$entry"
+  IFS='|' read -r iface_module pascal_name pkg use_common_msg events_file <<< "$entry"
   iface_path="$INTERFACES_DIR/${iface_module}.rs"
   out_dir="$CONTRACTS_DIR/$pkg"
 
@@ -94,8 +97,13 @@ for entry in "${CONTRACTS[@]}"; do
     continue
   fi
 
+  events_flag=""
+  if [[ -n "$events_file" ]]; then
+    events_flag="-events $REPO_ROOT/$events_file"
+  fi
+
   echo "Generating Go bindings for $pascal_name..."
-  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir")
+  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir" $events_flag)
 done
 
 echo ""

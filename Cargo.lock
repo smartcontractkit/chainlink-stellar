@@ -232,7 +232,10 @@ dependencies = [
 name = "ccip_receiver_example"
 version = "0.0.0"
 dependencies = [
+ "common-authorization",
  "common-error",
+ "common-guard",
+ "common-interfaces",
  "common-message",
  "soroban-sdk",
 ]

@@ -120,6 +120,7 @@ func TestOnRamp(t *testing.T) {
 				TokenNetworkFeeUsdCents:   100,
 				BaseExecutionGasCost:      200000,
 				DefaultExecutor:           mockExecutor,
+				ExecutionFeeUsdCents:      25,
 				LaneMandatedCcvs:          []string{},
 				DefaultCcvs:               []string{mockCcv},
 				OffRamp:                   make([]byte, 20),
@@ -145,6 +146,9 @@ func TestOnRamp(t *testing.T) {
 			}
 			if stored.BaseExecutionGasCost != 200000 {
 				t.Errorf("BaseExecutionGasCost mismatch: expected 200000, got %d", stored.BaseExecutionGasCost)
+			}
+			if stored.ExecutionFeeUsdCents != 25 {
+				t.Errorf("ExecutionFeeUsdCents mismatch: expected 25, got %d", stored.ExecutionFeeUsdCents)
 			}
 			t.Log("Dest chain config applied and verified successfully")
 		})
@@ -193,6 +197,7 @@ func TestOnRamp(t *testing.T) {
 				TokenNetworkFeeUsdCents:   150,
 				BaseExecutionGasCost:      300000,
 				DefaultExecutor:           mockExecutor2,
+				ExecutionFeeUsdCents:      25,
 				LaneMandatedCcvs:          []string{},
 				DefaultCcvs:               []string{mockCcv2},
 				OffRamp:                   make([]byte, 32),

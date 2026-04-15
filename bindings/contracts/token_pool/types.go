@@ -8,6 +8,45 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// PoolFeeResult represents the PoolFeeResult struct from the contract.
+type PoolFeeResult struct {
+	FeeUsdCents uint32
+}
+
+// ToScVal converts PoolFeeResult to an xdr.ScVal for contract calls.
+func (s PoolFeeResult) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"fee_usd_cents": scval.Uint32ToScVal(s.FeeUsdCents),
+	})
+}
+
+// PoolFeeResultFromScVal parses an xdr.ScVal into PoolFeeResult.
+func PoolFeeResultFromScVal(val xdr.ScVal) (*PoolFeeResult, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PoolFeeResult{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("fee_usd_cents is not u32")
+			}
+			result.FeeUsdCents = uint32(v)
+		}
+	}
+
+	return result, nil
+}
+
 // LockOrBurnIn represents the LockOrBurnIn struct from the contract.
 type LockOrBurnIn struct {
 	Receiver            []byte

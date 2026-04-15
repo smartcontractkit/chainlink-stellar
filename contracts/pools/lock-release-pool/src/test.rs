@@ -12,7 +12,8 @@ use crate::{
 };
 use common_error::CCIPError;
 use common_pool::{
-    encode_local_decimals, ChainUpdate, LockOrBurnIn, RateLimitConfig, ReleaseOrMintIn,
+    encode_local_decimals, ChainUpdate, LockOrBurnIn, PoolFeeConfig, RateLimitConfig,
+    ReleaseOrMintIn,
 };
 
 const DEFAULT_REMOTE_CHAIN: u64 = 5009297550715157269;
@@ -1345,7 +1346,7 @@ fn test_ftf_and_default_buckets_are_independent() {
 }
 
 // ---------------------------------------------------------------------------
-// Router + advanced hooks (Phase C)
+// Router + advanced hooks
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1477,4 +1478,120 @@ fn test_release_or_mint_fails_when_hooks_postflight_rejects() {
         .try_release_or_mint(&off_ramp, &release_input, &0u32)
         .is_err());
     assert_eq!(token_client.balance(&receiver), 0);
+}
+
+// ============================================================
+// Pool Fee Tests
+// ============================================================
+
+fn add_remote_chain(env: &Env, pool_client: &LockReleaseTokenPoolContractClient, chain: u64) {
+    let remote_pool = Bytes::from_slice(env, &[1u8; 20]);
+    let remote_token = Bytes::from_slice(env, &[2u8; 20]);
+    pool_client.apply_chain_updates(
+        &Vec::from_array(
+            env,
+            [ChainUpdate {
+                remote_chain_selector: chain,
+                remote_pool_addresses: remote_pool,
+                remote_token_address: remote_token,
+                outbound_rate_limiter_config: RateLimitConfig::disabled(),
+                inbound_rate_limiter_config: RateLimitConfig::disabled(),
+            }],
+        ),
+        &Vec::new(env),
+    );
+}
+
+#[test]
+fn test_get_fee_returns_zero_when_not_configured() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _on_ramp,
+        _off_ramp,
+    ) = setup_env();
+
+    let remote_chain: u64 = 42;
+    add_remote_chain(&env, &pool_client, remote_chain);
+
+    let result = pool_client.get_fee(&remote_chain);
+    assert_eq!(result.fee_usd_cents, 0);
+}
+
+#[test]
+fn test_set_and_get_pool_fee_config() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _on_ramp,
+        _off_ramp,
+    ) = setup_env();
+
+    let remote_chain: u64 = 42;
+    add_remote_chain(&env, &pool_client, remote_chain);
+
+    let fee_config = PoolFeeConfig {
+        is_enabled: true,
+        fee_usd_cents: 150,
+    };
+    pool_client.set_pool_fee_config(&remote_chain, &fee_config);
+
+    let result = pool_client.get_fee(&remote_chain);
+    assert_eq!(result.fee_usd_cents, 150);
+}
+
+#[test]
+fn test_pool_fee_disabled_returns_zero() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _on_ramp,
+        _off_ramp,
+    ) = setup_env();
+
+    let remote_chain: u64 = 42;
+    add_remote_chain(&env, &pool_client, remote_chain);
+
+    let fee_config = PoolFeeConfig {
+        is_enabled: false,
+        fee_usd_cents: 200,
+    };
+    pool_client.set_pool_fee_config(&remote_chain, &fee_config);
+
+    let result = pool_client.get_fee(&remote_chain);
+    assert_eq!(result.fee_usd_cents, 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #302)")]
+fn test_set_pool_fee_unsupported_chain_rejected() {
+    let (
+        _env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _on_ramp,
+        _off_ramp,
+    ) = setup_env();
+
+    let unsupported_chain: u64 = 99999;
+    let fee_config = PoolFeeConfig {
+        is_enabled: true,
+        fee_usd_cents: 50,
+    };
+    pool_client.set_pool_fee_config(&unsupported_chain, &fee_config);
 }

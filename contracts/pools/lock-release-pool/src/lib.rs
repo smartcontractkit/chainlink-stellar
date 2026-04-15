@@ -11,7 +11,8 @@ use common_pool::{
     calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
     rate_limit, BaseTokenPool, ChainUpdate, FtfInboundConsumedEvent, FtfOutboundConsumedEvent,
     InboundRateLimitConsumedEvent, LockOrBurnIn, LockOrBurnOut, OutboundRateLimitConsumedEvent,
-    RateLimitConfig, RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut,
+    PoolFeeConfig, PoolFeeResult, RateLimitConfig, RateLimiterState, ReleaseOrMintIn,
+    ReleaseOrMintOut,
 };
 use events::{LockedEvent, ReleasedEvent};
 
@@ -358,6 +359,21 @@ impl LockReleaseTokenPoolContract {
 
     pub fn get_allowed_finality_config(env: Env) -> u32 {
         <Self as BaseTokenPool>::get_allowed_finality_config(&env)
+    }
+
+    pub fn get_fee(env: Env, remote_chain_selector: u64) -> Result<PoolFeeResult, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as BaseTokenPool>::get_fee(&env, remote_chain_selector)
+    }
+
+    pub fn set_pool_fee_config(
+        env: Env,
+        remote_chain_selector: u64,
+        config: PoolFeeConfig,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_pool_fee_config(&env, remote_chain_selector, &config)
     }
 
     /// Set the allowed finality configuration. Owner-only.

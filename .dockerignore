@@ -1,0 +1,21 @@
+# Rust / Soroban build output (often multi‑GB; not needed for Go-only images)
+target/
+
+# Git metadata (not needed for `go build`; reduces context size)
+.git/
+
+# Local / CI artifacts
+coverage.out
+*.out
+integration.test
+*.test
+
+# Editor & local tooling
+.idea/
+.vscode/
+.cursor/
+
+# Env and logs (never bake secrets into context)
+.env
+.env.*
+*.log

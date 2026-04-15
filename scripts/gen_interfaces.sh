@@ -44,6 +44,9 @@ CONTRACTS=(
   "offramp|offramp|OffRamp|0"
   "router|router|Router|0"
   "ccip_receiver_example|ccip_receiver|ExampleCcipReceiver|0"
+  "token_admin_registry|token_admin_registry|TokenAdminRegistry|0"
+  "pools_lock_release_pool|lock_release_pool|LockReleasePool|0"
+  "pools_burn_mint_pool|burn_mint_pool|BurnMintPool|0"
   "pools_token_lock_box|token_lock_box|TokenLockBox|0"
   "pools_siloed_lock_release_pool|siloed_lock_release_pool|SiloedLockReleasePool|0"
 )
@@ -164,6 +167,24 @@ use_common_message_types() {
   '
 }
 
+# Stellar bindings for ccip_receiver_example pull unrelated #[contracttype]s from the
+# common_interfaces dependency (e.g. AllowList*) and omit Ccv* structs referenced by the trait.
+# Normalize the checked-in interface module after generation.
+patch_ccip_receiver_interfaces() {
+  local f="$1"
+  perl -i -0pe '
+    # Drop OnRamp-style types leaked into this module via the dependency graph.
+    s/\n#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct AllowListEntry \{[^}]+\}//s;
+    s/\n#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct AllowListUpdate \{[^}]+\}//s;
+    # Drop auth events re-exported from Ownable (same names exist in authorization helpers).
+    s/\n#\[soroban_sdk::contractevent\(topics = \["auth_[^]]+"\], export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct [^{]+\{[^}]+\}//sg;
+    # stellar-cli omits contract-owned struct defs; insert before first remaining contracttype after the trait.
+    if ($_ !~ /pub struct CcvChainConfig/s) {
+      s/(\n\}\n)(#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct TokenAmount)/$1\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvConfigUpdate {\n    pub source_chain_selector: u64,\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvChainConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct RemoteChainConfig {\n    pub extra_args: soroban_sdk::Bytes,\n    pub allowed_finality_config: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvsAndFinalityConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n    pub allowed_finality_config: u32,\n}\n$2/s;
+    }
+  ' "$f"
+}
+
 do_build=true
 for arg in "$@"; do
   case "$arg" in
@@ -201,6 +222,10 @@ for entry in "${CONTRACTS[@]}"; do
     | apply_renames "$pascal_name" \
     | use_common_message_types "${use_common_msg:-0}" \
     > "$out_path"
+
+  if [[ "$output_module" == "ccip_receiver" ]]; then
+    patch_ccip_receiver_interfaces "$out_path"
+  fi
 done
 
 echo "Done. Interfaces written to $INTERFACES_DIR"

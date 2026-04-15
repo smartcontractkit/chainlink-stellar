@@ -4,9 +4,11 @@ package token_admin_registry
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -29,35 +31,24 @@ func (c *TokenAdminRegistryClient) ContractID() string {
 	return c.contractID
 }
 
-// Initialize calls the initialize function on the contract.
-func (c *TokenAdminRegistryClient) Initialize(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// TypeAndVersion calls the type_and_version function on the contract.
-func (c *TokenAdminRegistryClient) TypeAndVersion(ctx context.Context) (string, error) {
+// Owner calls the owner function on the contract.
+func (c *TokenAdminRegistryClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "type_and_version", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "owner", args)
 	if err != nil {
-		return "", fmt.Errorf("failed to call type_and_version: %w", err)
+		return nil, fmt.Errorf("failed to call owner: %w", err)
 	}
 
 	if result == nil {
-		return "", fmt.Errorf("no return value from type_and_version")
+		return nil, fmt.Errorf("no return value from owner")
 	}
 
-	return scval.StringFromScVal(*result)
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // GetPool calls the get_pool function on the contract.
@@ -80,6 +71,44 @@ func (c *TokenAdminRegistryClient) GetPool(ctx context.Context, token string) (*
 		return nil, err
 	}
 	return v, nil
+}
+
+// IsOwner calls the is_owner function on the contract.
+func (c *TokenAdminRegistryClient) IsOwner(ctx context.Context, addr string) (bool, error) {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(addr),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_owner: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_owner")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
+}
+
+// SetPool calls the set_pool function on the contract.
+func (c *TokenAdminRegistryClient) SetPool(ctx context.Context, localToken string, pool *string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(localToken),
+		scval.OptionalAddressToScVal(pool),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_pool", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_pool: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetPools calls the get_pools function on the contract.
@@ -112,6 +141,84 @@ func (c *TokenAdminRegistryClient) GetPools(ctx context.Context, tokens []string
 	return out, nil
 }
 
+// InitOwner calls the init_owner function on the contract.
+func (c *TokenAdminRegistryClient) InitOwner(ctx context.Context, owner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(owner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init_owner", args)
+	if err != nil {
+		return fmt.Errorf("failed to call init_owner: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// Initialize calls the initialize function on the contract.
+func (c *TokenAdminRegistryClient) Initialize(ctx context.Context, owner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(owner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
+	if err != nil {
+		return fmt.Errorf("failed to call initialize: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// RequireOwner calls the require_owner function on the contract.
+func (c *TokenAdminRegistryClient) RequireOwner(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call require_owner: %w", err)
+	}
+
+	if result == nil {
+		return "", fmt.Errorf("no return value from require_owner")
+	}
+
+	v, err := scval.AddressFromScVal(*result)
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// SetNewOwner calls the set_new_owner function on the contract.
+func (c *TokenAdminRegistryClient) SetNewOwner(ctx context.Context, newOwner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_new_owner: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// AcceptOwnership calls the accept_ownership function on the contract.
+func (c *TokenAdminRegistryClient) AcceptOwnership(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call accept_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // GetTokenConfig calls the get_token_config function on the contract.
 func (c *TokenAdminRegistryClient) GetTokenConfig(ctx context.Context, token string) (*TokenConfig, error) {
 	args := []xdr.ScVal{
@@ -128,6 +235,193 @@ func (c *TokenAdminRegistryClient) GetTokenConfig(ctx context.Context, token str
 	}
 
 	return TokenConfigFromScVal(*result)
+}
+
+// IsAdministrator calls the is_administrator function on the contract.
+func (c *TokenAdminRegistryClient) IsAdministrator(ctx context.Context, localToken string, administrator string) (bool, error) {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(localToken),
+		scval.AddressToScVal(administrator),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_administrator", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_administrator: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_administrator")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
+}
+
+// TypeAndVersion calls the type_and_version function on the contract.
+func (c *TokenAdminRegistryClient) TypeAndVersion(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "type_and_version", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call type_and_version: %w", err)
+	}
+
+	if result == nil {
+		return "", fmt.Errorf("no return value from type_and_version")
+	}
+
+	return scval.StringFromScVal(*result)
+}
+
+// AcceptAdminRole calls the accept_admin_role function on the contract.
+func (c *TokenAdminRegistryClient) AcceptAdminRole(ctx context.Context, localToken string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(localToken),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_admin_role", args)
+	if err != nil {
+		return fmt.Errorf("failed to call accept_admin_role: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetPendingOwner calls the get_pending_owner function on the contract.
+func (c *TokenAdminRegistryClient) GetPendingOwner(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_pending_owner: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_pending_owner")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// IsRegistryModule calls the is_registry_module function on the contract.
+func (c *TokenAdminRegistryClient) IsRegistryModule(ctx context.Context, module string) (bool, error) {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(module),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_registry_module", args)
+	if err != nil {
+		return false, fmt.Errorf("failed to call is_registry_module: %w", err)
+	}
+
+	if result == nil {
+		return false, fmt.Errorf("no return value from is_registry_module")
+	}
+
+	v, ok := result.GetB()
+	if !ok {
+		return false, fmt.Errorf("expected bool return type")
+	}
+	return v, nil
+}
+
+// TransferOwnership calls the transfer_ownership function on the contract.
+func (c *TokenAdminRegistryClient) TransferOwnership(ctx context.Context, newOwner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call transfer_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// AddRegistryModule calls the add_registry_module function on the contract.
+func (c *TokenAdminRegistryClient) AddRegistryModule(ctx context.Context, module string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(module),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_registry_module", args)
+	if err != nil {
+		return fmt.Errorf("failed to call add_registry_module: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// TransferAdminRole calls the transfer_admin_role function on the contract.
+func (c *TokenAdminRegistryClient) TransferAdminRole(ctx context.Context, localToken string, newAdmin *string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(localToken),
+		scval.OptionalAddressToScVal(newAdmin),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_admin_role", args)
+	if err != nil {
+		return fmt.Errorf("failed to call transfer_admin_role: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// ProposeAdministrator calls the propose_administrator function on the contract.
+func (c *TokenAdminRegistryClient) ProposeAdministrator(ctx context.Context, caller string, localToken string, administrator string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.AddressToScVal(localToken),
+		scval.AddressToScVal(administrator),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "propose_administrator", args)
+	if err != nil {
+		return fmt.Errorf("failed to call propose_administrator: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// RemoveRegistryModule calls the remove_registry_module function on the contract.
+func (c *TokenAdminRegistryClient) RemoveRegistryModule(ctx context.Context, module string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(module),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_registry_module", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_registry_module: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
+func (c *TokenAdminRegistryClient) CancelOwnershipTransfer(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
+	if err != nil {
+		return fmt.Errorf("failed to call cancel_ownership_transfer: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetAllConfiguredTokens calls the get_all_configured_tokens function on the contract.
@@ -161,141 +455,722 @@ func (c *TokenAdminRegistryClient) GetAllConfiguredTokens(ctx context.Context, s
 	return out, nil
 }
 
-// IsAdministrator calls the is_administrator function on the contract.
-func (c *TokenAdminRegistryClient) IsAdministrator(ctx context.Context, localToken string, administrator string) (bool, error) {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(localToken),
-		scval.AddressToScVal(administrator),
-	}
+// WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
+func (c *TokenAdminRegistryClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_administrator", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_administrator: %w", err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
 
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_administrator")
-	}
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleGrantedEventTopic})
+			if err != nil {
+				continue
+			}
 
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
+			for _, e := range events {
+				parsed, err := ParseRoleGrantedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
 	}
-	return v, nil
 }
 
-// SetPool calls the set_pool function on the contract.
-func (c *TokenAdminRegistryClient) SetPool(ctx context.Context, localToken string, pool *string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(localToken),
-		scval.OptionalAddressToScVal(pool),
+func ParseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_pool", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_pool: %w", err)
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
 	}
 
-	_ = result // void return
-	return nil
+	result := &RoleGrantedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "role":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
+		case "account":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Account = v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		}
+	}
+
+	return result, nil
 }
 
-// ProposeAdministrator calls the propose_administrator function on the contract.
-func (c *TokenAdminRegistryClient) ProposeAdministrator(ctx context.Context, caller string, localToken string, administrator string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(caller),
-		scval.AddressToScVal(localToken),
-		scval.AddressToScVal(administrator),
-	}
+// WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
+func (c *TokenAdminRegistryClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "propose_administrator", args)
-	if err != nil {
-		return fmt.Errorf("failed to call propose_administrator: %w", err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
 
-	_ = result // void return
-	return nil
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleRevokedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRoleRevokedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
 }
 
-// AcceptAdminRole calls the accept_admin_role function on the contract.
-func (c *TokenAdminRegistryClient) AcceptAdminRole(ctx context.Context, localToken string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(localToken),
+func ParseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_admin_role", args)
-	if err != nil {
-		return fmt.Errorf("failed to call accept_admin_role: %w", err)
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
 	}
 
-	_ = result // void return
-	return nil
+	result := &RoleRevokedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "role":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err == nil {
+				result.Role = v
+			}
+		case "account":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Account = v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		}
+	}
+
+	return result, nil
 }
 
-// TransferAdminRole calls the transfer_admin_role function on the contract.
-func (c *TokenAdminRegistryClient) TransferAdminRole(ctx context.Context, localToken string, newAdmin *string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(localToken),
-		scval.OptionalAddressToScVal(newAdmin),
-	}
+// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
+func (c *TokenAdminRegistryClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_admin_role", args)
-	if err != nil {
-		return fmt.Errorf("failed to call transfer_admin_role: %w", err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
 
-	_ = result // void return
-	return nil
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAuthorizedCallerAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
 }
 
-// IsRegistryModule calls the is_registry_module function on the contract.
-func (c *TokenAdminRegistryClient) IsRegistryModule(ctx context.Context, module string) (bool, error) {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(module),
+func ParseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_registry_module", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_registry_module: %w", err)
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
 	}
 
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_registry_module")
+	result := &AuthorizedCallerAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
 	}
 
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
 	}
-	return v, nil
+
+	return result, nil
 }
 
-// AddRegistryModule calls the add_registry_module function on the contract.
-func (c *TokenAdminRegistryClient) AddRegistryModule(ctx context.Context, module string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(module),
-	}
+// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
+func (c *TokenAdminRegistryClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_registry_module", args)
-	if err != nil {
-		return fmt.Errorf("failed to call add_registry_module: %w", err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
 
-	_ = result // void return
-	return nil
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAuthorizedCallerRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
 }
 
-// RemoveRegistryModule calls the remove_registry_module function on the contract.
-func (c *TokenAdminRegistryClient) RemoveRegistryModule(ctx context.Context, module string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(module),
+func ParseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_registry_module", args)
-	if err != nil {
-		return fmt.Errorf("failed to call remove_registry_module: %w", err)
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
 	}
 
-	_ = result // void return
-	return nil
+	result := &AuthorizedCallerRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
+func (c *TokenAdminRegistryClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferStartedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOwnershipTransferStartedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTransferStartedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipTransferStartedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "previous_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.PreviousOwner = v
+			}
+		case "new_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewOwner = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForPoolSetEvent waits for a PoolSetEvent event.
+func (c *TokenAdminRegistryClient) WaitForPoolSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*PoolSetEvent) bool) (*PoolSetEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{PoolSetEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParsePoolSetEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParsePoolSetEvent(e protocolrpc.EventInfo) (*PoolSetEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &PoolSetEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Token = v
+			}
+		case "previous_pool":
+			v, err := scval.OptionalAddressFromScVal(entry.Val)
+			if err == nil {
+				result.PreviousPool = v
+			}
+		case "new_pool":
+			v, err := scval.OptionalAddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewPool = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRegistryModuleAddedEvent waits for a RegistryModuleAddedEvent event.
+func (c *TokenAdminRegistryClient) WaitForRegistryModuleAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RegistryModuleAddedEvent) bool) (*RegistryModuleAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RegistryModuleAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRegistryModuleAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRegistryModuleAddedEvent(e protocolrpc.EventInfo) (*RegistryModuleAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RegistryModuleAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "module":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Module = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRegistryModuleRemovedEvent waits for a RegistryModuleRemovedEvent event.
+func (c *TokenAdminRegistryClient) WaitForRegistryModuleRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RegistryModuleRemovedEvent) bool) (*RegistryModuleRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RegistryModuleRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRegistryModuleRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRegistryModuleRemovedEvent(e protocolrpc.EventInfo) (*RegistryModuleRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RegistryModuleRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "module":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Module = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForAdminTransferRequestedEvent waits for a AdminTransferRequestedEvent event.
+func (c *TokenAdminRegistryClient) WaitForAdminTransferRequestedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AdminTransferRequestedEvent) bool) (*AdminTransferRequestedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AdminTransferRequestedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAdminTransferRequestedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseAdminTransferRequestedEvent(e protocolrpc.EventInfo) (*AdminTransferRequestedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AdminTransferRequestedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Token = v
+			}
+		case "current_admin":
+			v, err := scval.OptionalAddressFromScVal(entry.Val)
+			if err == nil {
+				result.CurrentAdmin = v
+			}
+		case "new_admin":
+			v, err := scval.OptionalAddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewAdmin = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForAdministratorTransferredEvent waits for a AdministratorTransferredEvent event.
+func (c *TokenAdminRegistryClient) WaitForAdministratorTransferredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AdministratorTransferredEvent) bool) (*AdministratorTransferredEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AdministratorTransferredEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAdministratorTransferredEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseAdministratorTransferredEvent(e protocolrpc.EventInfo) (*AdministratorTransferredEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AdministratorTransferredEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Token = v
+			}
+		case "new_admin":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewAdmin = v
+			}
+		}
+	}
+
+	return result, nil
 }

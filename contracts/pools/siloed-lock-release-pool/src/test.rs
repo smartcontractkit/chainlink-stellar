@@ -8,7 +8,8 @@ use crate::{
     mock_router::{MockRouterContract, MockRouterContractClient},
     LockBoxEntry, SiloedLockReleaseTokenPoolContract, SiloedLockReleaseTokenPoolContractClient,
 };
-use common_pool::{ChainUpdate, LockOrBurnIn, RateLimitConfig, ReleaseOrMintIn};
+use common_error::CCIPError;
+use common_pool::{ChainUpdate, LockOrBurnIn, PoolFeeConfig, RateLimitConfig, ReleaseOrMintIn};
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 
 const REMOTE_CHAIN: u64 = 99_999;
@@ -78,6 +79,58 @@ fn setup() -> TestEnv<'static> {
     pool_client.initialize(&owner, &token_addr, &7, &router_id);
 
     lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
+    add_chain(&env, &pool_client, REMOTE_CHAIN);
+
+    pool_client.configure_lock_boxes(&vec![
+        &env,
+        LockBoxEntry {
+            remote_chain_selector: REMOTE_CHAIN,
+            lock_box: lockbox_client.address.clone(),
+        },
+    ]);
+
+    TestEnv {
+        env,
+        token_addr,
+        pool_client,
+        lockbox_client,
+        sac,
+        tc,
+        on_ramp,
+        off_ramp,
+    }
+}
+
+/// Same as [`setup`] but the pool is **not** registered as an allowed caller on the lockbox,
+/// so `deposit` fails even though the pool has a lockbox configured for the chain.
+fn setup_pool_not_on_lockbox_allowlist() -> TestEnv<'static> {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    let tc = token::Client::new(&env, &token_addr);
+
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &token_addr);
+
+    let router_id = env.register(MockRouterContract, ());
+    let mock_router = MockRouterContractClient::new(&env, &router_id);
+    let on_ramp = Address::generate(&env);
+    let off_ramp = Address::generate(&env);
+    mock_router.set_onramp(&REMOTE_CHAIN, &on_ramp);
+    mock_router.add_offramp(&REMOTE_CHAIN, &off_ramp);
+    mock_router.set_onramp(&SILOED_CHAIN, &on_ramp);
+    mock_router.add_offramp(&SILOED_CHAIN, &off_ramp);
+
+    let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
+    let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
+    pool_client.initialize(&owner, &token_addr, &7, &router_id);
+
     add_chain(&env, &pool_client, REMOTE_CHAIN);
 
     pool_client.configure_lock_boxes(&vec![
@@ -196,6 +249,27 @@ fn lock_deposits_into_lockbox() {
     assert!(!out.dest_token_address.is_empty());
 }
 
+/// Integration: `lock_or_burn` must not leave a standing SAC allowance from the pool to the lockbox.
+#[test]
+fn lock_or_burn_leaves_no_token_allowance_on_lockbox() {
+    let t = setup();
+    let sender = Address::generate(&t.env);
+    t.sac.mint(&sender, &1_000);
+
+    let input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount: 500,
+        local_token: t.token_addr.clone(),
+    };
+    t.pool_client.lock_or_burn(&t.on_ramp, &input, &0);
+
+    let pool_addr = t.pool_client.address.clone();
+    let remaining = t.tc.allowance(&pool_addr, &t.lockbox_client.address);
+    assert_eq!(remaining, 0);
+}
+
 #[test]
 fn release_withdraws_from_lockbox() {
     let t = setup();
@@ -204,6 +278,8 @@ fn release_withdraws_from_lockbox() {
     t.sac.mint(&liquidity_provider, &2_000);
     t.lockbox_client
         .add_allowed_callers(&vec![&t.env, liquidity_provider.clone()]);
+    let exp = t.env.ledger().sequence().saturating_add(10_000);
+    t.tc.approve(&liquidity_provider, &t.lockbox_client.address, &2_000, &exp);
     t.lockbox_client.deposit(&liquidity_provider, &2_000);
 
     let receiver = Address::generate(&t.env);
@@ -306,6 +382,9 @@ fn many_to_one_lockbox_shared_liquidity() {
     let sender = Address::generate(&t.env);
     t.sac.mint(&sender, &1_000);
 
+    let pool_addr = t.pool_client.address.clone();
+    let lockbox_addr = t.lockbox_client.address.clone();
+
     let input_a = LockOrBurnIn {
         receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
         remote_chain_selector: REMOTE_CHAIN,
@@ -314,6 +393,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         local_token: t.token_addr.clone(),
     };
     t.pool_client.lock_or_burn(&t.on_ramp, &input_a, &0);
+    assert_eq!(t.tc.allowance(&pool_addr, &lockbox_addr), 0);
 
     let input_b = LockOrBurnIn {
         receiver: Bytes::from_slice(&t.env, &[0x02; 20]),
@@ -323,6 +403,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         local_token: t.token_addr.clone(),
     };
     t.pool_client.lock_or_burn(&t.on_ramp, &input_b, &0);
+    assert_eq!(t.tc.allowance(&pool_addr, &lockbox_addr), 0);
 
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 500);
 }
@@ -593,6 +674,26 @@ fn lock_rejects_wrong_token() {
 }
 
 #[test]
+fn lock_rejects_wrong_on_ramp() {
+    let t = setup();
+    let wrong = Address::generate(&t.env);
+    let sender = Address::generate(&t.env);
+    t.sac.mint(&sender, &100);
+    let r = t.pool_client.try_lock_or_burn(
+        &wrong,
+        &LockOrBurnIn {
+            receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+            remote_chain_selector: REMOTE_CHAIN,
+            original_sender: sender,
+            amount: 50,
+            local_token: t.token_addr.clone(),
+        },
+        &0,
+    );
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::CallerNotAuthorized);
+}
+
+#[test]
 fn lock_rejects_unsupported_chain() {
     let t = setup();
     let sender = Address::generate(&t.env);
@@ -611,6 +712,28 @@ fn lock_rejects_unsupported_chain() {
         &0,
     );
     assert!(r.is_err());
+}
+
+#[test]
+fn lock_fails_token_handling_when_lockbox_rejects_pool_deposit() {
+    let t = setup_pool_not_on_lockbox_allowlist();
+    let sender = Address::generate(&t.env);
+    t.sac.mint(&sender, &100);
+    let pool_addr = t.pool_client.address.clone();
+    let lockbox_addr = t.lockbox_client.address.clone();
+    let r = t.pool_client.try_lock_or_burn(
+        &t.on_ramp,
+        &LockOrBurnIn {
+            receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+            remote_chain_selector: REMOTE_CHAIN,
+            original_sender: sender,
+            amount: 40,
+            local_token: t.token_addr.clone(),
+        },
+        &0,
+    );
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenHandlingError);
+    assert_eq!(t.tc.allowance(&pool_addr, &lockbox_addr), 0);
 }
 
 // ================================================================
@@ -659,6 +782,8 @@ fn release_rejects_wrong_token() {
     t.sac.mint(&liquidity_provider, &1_000);
     t.lockbox_client
         .add_allowed_callers(&vec![&t.env, liquidity_provider.clone()]);
+    let exp = t.env.ledger().sequence().saturating_add(10_000);
+    t.tc.approve(&liquidity_provider, &t.lockbox_client.address, &1_000, &exp);
     t.lockbox_client.deposit(&liquidity_provider, &1_000);
 
     let other_admin = Address::generate(&t.env);
@@ -683,6 +808,41 @@ fn release_rejects_wrong_token() {
 }
 
 #[test]
+fn release_rejects_wrong_off_ramp() {
+    let t = setup();
+    let sender = Address::generate(&t.env);
+    let amount = 50_i128;
+    t.sac.mint(&sender, &amount);
+    t.pool_client.lock_or_burn(
+        &t.on_ramp,
+        &LockOrBurnIn {
+            receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+            remote_chain_selector: REMOTE_CHAIN,
+            original_sender: sender,
+            amount,
+            local_token: t.token_addr.clone(),
+        },
+        &0,
+    );
+    let wrong_off = Address::generate(&t.env);
+    let receiver = Address::generate(&t.env);
+    let r = t.pool_client.try_release_or_mint(
+        &wrong_off,
+        &ReleaseOrMintIn {
+            original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+            remote_chain_selector: REMOTE_CHAIN,
+            receiver: receiver.clone(),
+            amount,
+            local_token: t.token_addr.clone(),
+            source_pool_address: Bytes::from_slice(&t.env, &[0xaa; 32]),
+            source_pool_data: Bytes::new(&t.env),
+        },
+        &0,
+    );
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::CallerNotAuthorized);
+}
+
+#[test]
 fn release_rejects_unsupported_chain() {
     let t = setup();
     let receiver = Address::generate(&t.env);
@@ -702,4 +862,55 @@ fn release_rejects_unsupported_chain() {
         &0,
     );
     assert!(r.is_err());
+}
+
+// ============================================================
+// Pool fee (BaseTokenPool re-exports)
+// ============================================================
+
+#[test]
+fn get_fee_returns_zero_when_not_configured() {
+    let t = setup();
+    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+    assert_eq!(result.fee_usd_cents, 0);
+}
+
+#[test]
+fn set_and_get_pool_fee_config() {
+    let t = setup();
+    let fee_config = PoolFeeConfig {
+        is_enabled: true,
+        fee_usd_cents: 150,
+    };
+    t.pool_client
+        .set_pool_fee_config(&REMOTE_CHAIN, &fee_config);
+    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+    assert_eq!(result.fee_usd_cents, 150);
+}
+
+#[test]
+fn pool_fee_disabled_returns_zero() {
+    let t = setup();
+    let fee_config = PoolFeeConfig {
+        is_enabled: false,
+        fee_usd_cents: 200,
+    };
+    t.pool_client
+        .set_pool_fee_config(&REMOTE_CHAIN, &fee_config);
+    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+    assert_eq!(result.fee_usd_cents, 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #302)")]
+fn set_pool_fee_unsupported_chain_rejected() {
+    let t = setup();
+    // Must differ from `REMOTE_CHAIN` (99_999 == 99999 in Rust).
+    let unsupported_chain: u64 = 12_345;
+    let fee_config = PoolFeeConfig {
+        is_enabled: true,
+        fee_usd_cents: 50,
+    };
+    t.pool_client
+        .set_pool_fee_config(&unsupported_chain, &fee_config);
 }

@@ -638,6 +638,7 @@ type DestChainConfig struct {
 	BaseExecutionGasCost      uint32
 	DefaultCcvs               []string
 	DefaultExecutor           string
+	ExecutionFeeUsdCents      uint32
 	LaneMandatedCcvs          []string
 	MessageNetworkFeeUsdCents uint32
 	MessageNumber             uint64
@@ -654,6 +655,7 @@ func (s DestChainConfig) ToScVal() (xdr.ScVal, error) {
 		"base_execution_gas_cost":       scval.Uint32ToScVal(s.BaseExecutionGasCost),
 		"default_ccvs":                  scval.AddressSliceToScVal(s.DefaultCcvs),
 		"default_executor":              scval.AddressToScVal(s.DefaultExecutor),
+		"execution_fee_usd_cents":       scval.Uint32ToScVal(s.ExecutionFeeUsdCents),
 		"lane_mandated_ccvs":            scval.AddressSliceToScVal(s.LaneMandatedCcvs),
 		"message_network_fee_usd_cents": scval.Uint32ToScVal(s.MessageNetworkFeeUsdCents),
 		"message_number":                scval.Uint64ToScVal(s.MessageNumber),
@@ -710,6 +712,12 @@ func DestChainConfigFromScVal(val xdr.ScVal) (*DestChainConfig, error) {
 				return nil, fmt.Errorf("default_executor: %w", err)
 			}
 			result.DefaultExecutor = v
+		case "execution_fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("execution_fee_usd_cents is not u32")
+			}
+			result.ExecutionFeeUsdCents = uint32(v)
 		case "lane_mandated_ccvs":
 			vec, ok := entry.Val.GetVec()
 			if !ok || vec == nil {
@@ -772,6 +780,7 @@ type DestChainConfigArgs struct {
 	DefaultCcvs               []string
 	DefaultExecutor           string
 	DestChainSelector         uint64
+	ExecutionFeeUsdCents      uint32
 	LaneMandatedCcvs          []string
 	MessageNetworkFeeUsdCents uint32
 	OffRamp                   []byte
@@ -788,6 +797,7 @@ func (s DestChainConfigArgs) ToScVal() (xdr.ScVal, error) {
 		"default_ccvs":                  scval.AddressSliceToScVal(s.DefaultCcvs),
 		"default_executor":              scval.AddressToScVal(s.DefaultExecutor),
 		"dest_chain_selector":           scval.Uint64ToScVal(s.DestChainSelector),
+		"execution_fee_usd_cents":       scval.Uint32ToScVal(s.ExecutionFeeUsdCents),
 		"lane_mandated_ccvs":            scval.AddressSliceToScVal(s.LaneMandatedCcvs),
 		"message_network_fee_usd_cents": scval.Uint32ToScVal(s.MessageNetworkFeeUsdCents),
 		"off_ramp":                      scval.BytesToScVal(s.OffRamp),
@@ -849,6 +859,12 @@ func DestChainConfigArgsFromScVal(val xdr.ScVal) (*DestChainConfigArgs, error) {
 				return nil, fmt.Errorf("dest_chain_selector: %w", err)
 			}
 			result.DestChainSelector = v
+		case "execution_fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("execution_fee_usd_cents is not u32")
+			}
+			result.ExecutionFeeUsdCents = uint32(v)
 		case "lane_mandated_ccvs":
 			vec, ok := entry.Val.GetVec()
 			if !ok || vec == nil {
@@ -1010,6 +1026,7 @@ const (
 	CCIPErrorDisabledNonZeroRateLimit            = 314
 	CCIPErrorInvalidRequestedFinality            = 315
 	CCIPErrorRequestedFinalityCanOnlyHaveOneMode = 316
+	CCIPErrorInvalidChainForClient               = 317
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 )
@@ -1126,6 +1143,7 @@ var CCIPErrorMessage = map[int]string{
 	314: "disabled non zero rate limit",
 	315: "invalid requested finality",
 	316: "requested finality can only have one mode",
+	317: "invalid chain for client",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 }

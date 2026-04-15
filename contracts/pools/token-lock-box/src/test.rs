@@ -4,6 +4,8 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, token, vec, Address, Env};
 
+use common_error::CCIPError;
+
 use crate::{TokenLockBox, TokenLockBoxClient};
 
 fn setup() -> (Env, Address, Address, Address, TokenLockBoxClient<'static>) {
@@ -39,8 +41,10 @@ fn deposit_and_withdraw() {
     let sac = token::StellarAssetClient::new(&env, &token_addr);
     sac.mint(&pool, &1_000);
 
-    client.deposit(&pool, &500);
     let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &500, &exp);
+    client.deposit(&pool, &500);
     assert_eq!(tc.balance(&pool), 500);
     assert_eq!(tc.balance(&client.address), 500);
 
@@ -59,6 +63,9 @@ fn withdraw_insufficient_balance() {
 
     let sac = token::StellarAssetClient::new(&env, &token_addr);
     sac.mint(&pool, &100);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &100, &exp);
     client.deposit(&pool, &100);
 
     let receiver = Address::generate(&env);
@@ -72,7 +79,7 @@ fn unauthorized_caller_rejected() {
 
     let stranger = Address::generate(&env);
     let r = client.try_deposit(&stranger, &100);
-    assert!(r.is_err());
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::CallerNotAuthorized);
 }
 
 #[test]
@@ -100,5 +107,112 @@ fn deposit_zero_rejected() {
     client.add_allowed_callers(&vec![&env, pool.clone()]);
 
     let r = client.try_deposit(&pool, &0);
-    assert!(r.is_err());
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidTokenAmount);
+}
+
+#[test]
+fn withdraw_unauthorized_caller_rejected() {
+    let (env, _owner, token_addr, _token_admin, client) = setup();
+
+    let pool = Address::generate(&env);
+    client.add_allowed_callers(&vec![&env, pool.clone()]);
+
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    sac.mint(&pool, &500);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &500, &exp);
+    client.deposit(&pool, &500);
+    assert_eq!(tc.balance(&client.address), 500);
+
+    let stranger = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let r = client.try_withdraw(&stranger, &100, &receiver);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::CallerNotAuthorized);
+    assert_eq!(tc.balance(&client.address), 500);
+}
+
+#[test]
+fn withdraw_zero_amount_rejected() {
+    let (env, _owner, token_addr, _token_admin, client) = setup();
+
+    let pool = Address::generate(&env);
+    client.add_allowed_callers(&vec![&env, pool.clone()]);
+
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    sac.mint(&pool, &100);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &100, &exp);
+    client.deposit(&pool, &100);
+
+    let receiver = Address::generate(&env);
+    let r = client.try_withdraw(&pool, &0, &receiver);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidTokenAmount);
+}
+
+#[test]
+fn multiple_deposits_accumulate_in_lockbox() {
+    let (env, _owner, token_addr, _token_admin, client) = setup();
+
+    let pool = Address::generate(&env);
+    client.add_allowed_callers(&vec![&env, pool.clone()]);
+
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    sac.mint(&pool, &3_000);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &3_000, &exp);
+
+    client.deposit(&pool, &1_000);
+    client.deposit(&pool, &2_000);
+
+    assert_eq!(tc.balance(&client.address), 3_000);
+    assert_eq!(tc.balance(&pool), 0);
+}
+
+#[test]
+fn two_allowed_callers_each_deposit() {
+    let (env, _owner, token_addr, _token_admin, client) = setup();
+
+    let caller1 = Address::generate(&env);
+    let caller2 = Address::generate(&env);
+    client.add_allowed_callers(&vec![&env, caller1.clone(), caller2.clone()]);
+
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    sac.mint(&caller1, &1_000);
+    sac.mint(&caller2, &1_000);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&caller1, &client.address, &1_000, &exp);
+    tc.approve(&caller2, &client.address, &1_000, &exp);
+
+    client.deposit(&caller1, &1_000);
+    client.deposit(&caller2, &1_000);
+
+    assert_eq!(tc.balance(&client.address), 2_000);
+}
+
+#[test]
+fn multiple_withdrawals_to_distinct_recipients() {
+    let (env, _owner, token_addr, _token_admin, client) = setup();
+
+    let pool = Address::generate(&env);
+    client.add_allowed_callers(&vec![&env, pool.clone()]);
+
+    let sac = token::StellarAssetClient::new(&env, &token_addr);
+    sac.mint(&pool, &3_000);
+    let tc = token::Client::new(&env, &token_addr);
+    let exp = env.ledger().sequence().saturating_add(10_000);
+    tc.approve(&pool, &client.address, &3_000, &exp);
+    client.deposit(&pool, &3_000);
+
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    client.withdraw(&pool, &1_000, &recipient1);
+    client.withdraw(&pool, &2_000, &recipient2);
+
+    assert_eq!(tc.balance(&recipient1), 1_000);
+    assert_eq!(tc.balance(&recipient2), 2_000);
+    assert_eq!(tc.balance(&client.address), 0);
 }

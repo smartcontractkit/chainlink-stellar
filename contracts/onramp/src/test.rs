@@ -28,6 +28,7 @@ fn create_test_dest_chain_config_args(env: &Env, dest_selector: u64) -> DestChai
         message_network_fee_usd_cents: 50, // $0.50
         token_network_fee_usd_cents: 100,  // $1.00
         base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25, // $0.25
         default_executor: Address::generate(env),
         lane_mandated_ccvs: Vec::new(env),
         default_ccvs: vec![env, Address::generate(env)],
@@ -372,6 +373,37 @@ fn test_update_dest_chain_config() {
 
     let stored = client.get_dest_chain_config(&dest_selector);
     assert_eq!(stored.base_execution_gas_cost, 500_000);
+}
+
+#[test]
+fn test_dest_chain_config_stores_execution_fee() {
+    let env = Env::default();
+    let (client, dest_selector, dest_config, _) = init_onramp_with_dest(&env);
+
+    let stored = client.get_dest_chain_config(&dest_selector);
+    assert_eq!(
+        stored.execution_fee_usd_cents,
+        dest_config.execution_fee_usd_cents
+    );
+    assert_eq!(stored.execution_fee_usd_cents, 25);
+}
+
+#[test]
+fn test_dest_chain_config_stores_network_fees() {
+    let env = Env::default();
+    let (client, dest_selector, dest_config, _) = init_onramp_with_dest(&env);
+
+    let stored = client.get_dest_chain_config(&dest_selector);
+    assert_eq!(
+        stored.message_network_fee_usd_cents,
+        dest_config.message_network_fee_usd_cents
+    );
+    assert_eq!(
+        stored.token_network_fee_usd_cents,
+        dest_config.token_network_fee_usd_cents
+    );
+    assert_eq!(stored.message_network_fee_usd_cents, 50);
+    assert_eq!(stored.token_network_fee_usd_cents, 100);
 }
 
 #[test]

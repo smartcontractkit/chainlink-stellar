@@ -259,6 +259,27 @@ func parseErrors(input string) []ErrorEnum {
 	return errors
 }
 
+// qualifySorobanType adds the soroban_sdk:: prefix to bare Soroban types
+// so that codegen type-matching works uniformly regardless of whether the
+// source uses `use soroban_sdk::Address` or the fully-qualified form.
+func qualifySorobanType(t string) string {
+	switch t {
+	case "Address":
+		return "soroban_sdk::Address"
+	case "Bytes":
+		return "soroban_sdk::Bytes"
+	case "Symbol":
+		return "soroban_sdk::Symbol"
+	}
+	if strings.HasPrefix(t, "BytesN<") {
+		return "soroban_sdk::" + t
+	}
+	if strings.HasPrefix(t, "Vec<") {
+		return "soroban_sdk::" + t
+	}
+	return t
+}
+
 func parseEvents(input string) []Event {
 	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)]
 	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(\s*topics\s*=\s*\[([^\]]+)\][^)]*\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
@@ -284,7 +305,7 @@ func parseEvents(input string) []Event {
 		for _, fm := range fieldMatches {
 			fields = append(fields, Field{
 				Name: fm[1],
-				Type: strings.TrimSpace(fm[2]),
+				Type: qualifySorobanType(strings.TrimSpace(fm[2])),
 			})
 		}
 

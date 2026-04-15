@@ -66,6 +66,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -162,6 +170,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -254,6 +270,14 @@
                           },
                           "val": {
                             "u64": "300"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
                           }
                         },
                         {
@@ -387,6 +411,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -488,6 +520,14 @@
                         },
                         {
                           "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
+                          }
+                        },
+                        {
+                          "key": {
                             "symbol": "lane_mandated_ccvs"
                           },
                           "val": {
@@ -585,6 +625,14 @@
                           },
                           "val": {
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4BV5"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "execution_fee_usd_cents"
+                          },
+                          "val": {
+                            "u32": 25
                           }
                         },
                         {

@@ -22,7 +22,8 @@ use common_pool::{
     calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
     rate_limit, BaseTokenPool, ChainUpdate, FtfInboundConsumedEvent, FtfOutboundConsumedEvent,
     InboundRateLimitConsumedEvent, LockOrBurnIn, LockOrBurnOut, OutboundRateLimitConsumedEvent,
-    RateLimitConfig, RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut,
+    PoolFeeConfig, PoolFeeResult, RateLimitConfig, RateLimiterState, ReleaseOrMintIn,
+    ReleaseOrMintOut,
 };
 use events::{LockBoxConfiguredEvent, LockedEvent, ReleasedEvent};
 
@@ -31,6 +32,16 @@ const OWNER: Symbol = symbol_short!("OWNER");
 const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
 /// Persistent: `(LOCKBOX, remote_chain_selector) → Address` of the lockbox for that chain.
 const LOCKBOX: Symbol = symbol_short!("LOCKBOX");
+/// `approve` expiry ledger for pool→lockbox allowance: `ledger.sequence() + this`.
+///
+/// In the intended CCIP path (`Router::ccip_send` → `OnRamp::forward_from_router` →
+/// pool `lock_or_burn`), the whole graph runs in **one Stellar transaction**, i.e.
+/// one ledger close, with a **fixed** `ledger.sequence()` for the entire invocation.
+/// This buffer is therefore **not** waiting “N ledgers of wall time” for the happy path;
+/// it only caps worst-case on-chain allowance validity if `approve(0)` cleanup fails
+/// (see SEP‑41: expiry must not be before current ledger for non-zero amounts).
+/// Keep this **small** to minimize residual exposure; `1` is enough for SAC in tests.
+const LOCKBOX_ALLOWANCE_EXPIRY_BUFFER: u32 = 1;
 
 #[contract]
 pub struct SiloedLockReleaseTokenPoolContract;
@@ -70,8 +81,8 @@ impl SiloedLockReleaseTokenPoolContract {
         Ok(())
     }
 
-    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
-        soroban_sdk::String::from_str(&_env, "SiloedLockReleaseTokenPool 1.0.0")
+    pub fn type_and_version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "SiloedLockReleaseTokenPool 1.0.0")
     }
 
     // ------------------------------------------------------------------
@@ -133,7 +144,9 @@ impl SiloedLockReleaseTokenPoolContract {
     /// Lock tokens by depositing into the lockbox configured for `remote_chain_selector`.
     ///
     /// The OnRamp / Router arranges auth for `transfer(original_sender, pool, amount)`
-    /// in the invocation tree. This pool then deposits into the lockbox.
+    /// in the invocation tree. The pool then `approve`s the lockbox for `amount`
+    /// (short-lived expiry); the lockbox `deposit` pulls via `transfer_from`, and
+    /// the pool revokes any residual allowance afterward.
     pub fn lock_or_burn(
         env: Env,
         on_ramp: Address,
@@ -167,8 +180,16 @@ impl SiloedLockReleaseTokenPoolContract {
 
         let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
         let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
-        token_client.approve(&pool_address, &lock_box_addr, &input.amount, &1_000_000);
-        lb_client.deposit(&pool_address, &input.amount);
+        let allowance_exp = env
+            .ledger()
+            .sequence()
+            .saturating_add(LOCKBOX_ALLOWANCE_EXPIRY_BUFFER);
+        token_client.approve(&pool_address, &lock_box_addr, &input.amount, &allowance_exp);
+        if lb_client.try_deposit(&pool_address, &input.amount).is_err() {
+            revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
+            return Err(CCIPError::TokenHandlingError);
+        }
+        revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
 
         LockedEvent {
             sender: input.original_sender.clone(),
@@ -361,6 +382,21 @@ impl SiloedLockReleaseTokenPoolContract {
         <Self as BaseTokenPool>::get_allowed_finality_config(&env)
     }
 
+    pub fn get_fee(env: Env, remote_chain_selector: u64) -> Result<PoolFeeResult, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as BaseTokenPool>::get_fee(&env, remote_chain_selector)
+    }
+
+    pub fn set_pool_fee_config(
+        env: Env,
+        remote_chain_selector: u64,
+        config: PoolFeeConfig,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_pool_fee_config(&env, remote_chain_selector, &config)
+    }
+
     pub fn set_allowed_finality_config(env: Env, allowed_finality: u32) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         <Self as Ownable>::require_owner(&env)?;
@@ -399,6 +435,18 @@ pub struct LockBoxEntry {
 // ============================================================
 // Internal helpers
 // ============================================================
+
+/// Clears pool→lockbox token allowance (best-effort hygiene after `deposit` or on error).
+fn revoke_pool_allowance_to_lockbox(
+    env: &Env,
+    pool_token: &Address,
+    pool_address: &Address,
+    lock_box_addr: &Address,
+) {
+    let token_client = token::Client::new(env, pool_token);
+    let seq = env.ledger().sequence();
+    token_client.approve(pool_address, lock_box_addr, &0i128, &seq);
+}
 
 fn resolve_lock_box(env: &Env, remote_chain_selector: u64) -> Result<Address, CCIPError> {
     let key = (LOCKBOX, remote_chain_selector);

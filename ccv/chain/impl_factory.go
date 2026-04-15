@@ -43,8 +43,10 @@ import (
 	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
+	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	stellarccipdevenv "github.com/smartcontractkit/chainlink-stellar/deployment/ccip/devenv"
 )
 
 var _ ccv.ImplFactory = &ImplFactory{}
@@ -307,6 +309,21 @@ func (f *ImplFactory) New(ctx context.Context, cfg *ccv.Cfg, lggr zerolog.Logger
 			if convErr == nil {
 				chain.rmnRemoteContractID = rmnRemoteContractID
 				chain.rmnRemoteClient = rmnremotebindings.NewRmnRemoteClient(deployer, rmnRemoteContractID)
+			}
+		}
+
+		poolKey := datastore.NewAddressRefKey(
+			details.ChainSelector,
+			datastore.ContractType(stellarccipdevenv.LockReleaseTokenPoolContractType),
+			semver.MustParse("1.0.0"),
+			stellarccipdevenv.DevenvTestTokenPoolQualifier,
+		)
+		poolRef, err := env.DataStore.Addresses().Get(poolKey)
+		if err == nil && poolRef.Address != "" {
+			poolContractID, convErr := scval.HexToContractStrkey(poolRef.Address)
+			if convErr == nil {
+				chain.tokenPoolContractID = poolContractID
+				chain.tokenPoolClient = tokenpoolbindings.NewTokenPoolClient(deployer, poolContractID)
 			}
 		}
 	}

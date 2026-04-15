@@ -393,12 +393,13 @@ fn test_ccip_send_full_flow() {
     // ---- Configure OnRamp's dest chain config with Router as the authorized caller ----
     let dest_chain_config = DestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
-        router: router_id.clone(), // Router must be the caller for forward_from_router
-        address_bytes_length: 20,  // EVM-style addresses
+        router: router_id.clone(),
+        address_bytes_length: 20,
         token_receiver_allowed: true,
         message_network_fee_usd_cents: 50,
         token_network_fee_usd_cents: 100,
         base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
         default_executor: Address::generate(&env),
         lane_mandated_ccvs: Vec::new(&env),
         default_ccvs: vec![&env, Address::generate(&env)],
@@ -522,6 +523,7 @@ fn test_get_fee_via_onramp() {
             message_network_fee_usd_cents: 50,
             token_network_fee_usd_cents: 100,
             base_execution_gas_cost: 200_000,
+            execution_fee_usd_cents: 25,
             default_executor: Address::generate(&env),
             lane_mandated_ccvs: Vec::new(&env),
             default_ccvs: vec![&env, Address::generate(&env)],
@@ -559,7 +561,9 @@ fn test_route_message_happy_path() {
 
     let receiver_id = env.register(ExampleCcipReceiver, ());
     let receiver_client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    receiver_client.initialize(&router_id);
+    receiver_client.initialize(&owner, &router_id);
+    let extra = Bytes::from_slice(&env, &[0x01]);
+    receiver_client.enable_remote_chain(&owner, &ROUTE_MSG_SOURCE_CHAIN, &extra, &0u32);
 
     let message = sample_any_to_stellar_message(&env);
     let result =
@@ -581,7 +585,7 @@ fn test_route_message_unregistered_offramp() {
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &registered);
 
     let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&router_id);
+    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
 
     let message = sample_any_to_stellar_message(&env);
     let result =
@@ -599,7 +603,7 @@ fn test_route_message_cursed_network() {
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
 
     let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&router_id);
+    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
 
     let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
     let subject = BytesN::from_array(&env, &ROUTE_MSG_GLOBAL_CURSE_SUBJECT);
@@ -680,7 +684,7 @@ fn test_route_message_wrong_source_chain_for_offramp() {
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
 
     let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&router_id);
+    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
 
     let other_chain: u64 = 999;
     let message = AnyToStellarMessage {

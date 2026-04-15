@@ -711,6 +711,92 @@ func LockOrBurnOutFromScVal(val xdr.ScVal) (*LockOrBurnOut, error) {
 	return result, nil
 }
 
+// PoolFeeConfig represents the PoolFeeConfig struct from the contract.
+type PoolFeeConfig struct {
+	FeeUsdCents uint32
+	IsEnabled   bool
+}
+
+// ToScVal converts PoolFeeConfig to an xdr.ScVal for contract calls.
+func (s PoolFeeConfig) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"fee_usd_cents": scval.Uint32ToScVal(s.FeeUsdCents),
+		"is_enabled":    scval.BoolToScVal(s.IsEnabled),
+	})
+}
+
+// PoolFeeConfigFromScVal parses an xdr.ScVal into PoolFeeConfig.
+func PoolFeeConfigFromScVal(val xdr.ScVal) (*PoolFeeConfig, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PoolFeeConfig{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("fee_usd_cents is not u32")
+			}
+			result.FeeUsdCents = uint32(v)
+		case "is_enabled":
+			v, ok := entry.Val.GetB()
+			if !ok {
+				return nil, fmt.Errorf("is_enabled is not bool")
+			}
+			result.IsEnabled = v
+		}
+	}
+
+	return result, nil
+}
+
+// PoolFeeResult represents the PoolFeeResult struct from the contract.
+type PoolFeeResult struct {
+	FeeUsdCents uint32
+}
+
+// ToScVal converts PoolFeeResult to an xdr.ScVal for contract calls.
+func (s PoolFeeResult) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"fee_usd_cents": scval.Uint32ToScVal(s.FeeUsdCents),
+	})
+}
+
+// PoolFeeResultFromScVal parses an xdr.ScVal into PoolFeeResult.
+func PoolFeeResultFromScVal(val xdr.ScVal) (*PoolFeeResult, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PoolFeeResult{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("fee_usd_cents is not u32")
+			}
+			result.FeeUsdCents = uint32(v)
+		}
+	}
+
+	return result, nil
+}
+
 // RateLimitConfig represents the RateLimitConfig struct from the contract.
 type RateLimitConfig struct {
 	Capacity  scval.U128
@@ -1145,6 +1231,7 @@ const (
 	CCIPErrorDisabledNonZeroRateLimit            = 314
 	CCIPErrorInvalidRequestedFinality            = 315
 	CCIPErrorRequestedFinalityCanOnlyHaveOneMode = 316
+	CCIPErrorInvalidChainForClient               = 317
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 )
@@ -1261,6 +1348,7 @@ var CCIPErrorMessage = map[int]string{
 	314: "disabled non zero rate limit",
 	315: "invalid requested finality",
 	316: "requested finality can only have one mode",
+	317: "invalid chain for client",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 }
