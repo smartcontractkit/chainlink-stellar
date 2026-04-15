@@ -14,6 +14,8 @@ pub trait TokenPoolInterface {
         token_decimals: u32,
     ) -> Result<(), CCIPError>;
 
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
+
     fn lock_or_burn(
         env: soroban_sdk::Env,
         input: LockOrBurnIn,

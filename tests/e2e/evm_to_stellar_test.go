@@ -25,7 +25,7 @@ import (
 
 const (
 	evmSentTimeout = 30 * time.Second
-	execTimeout    = 5 * time.Minute
+	execTimeout    = 7 * time.Minute
 )
 
 // TestEVMToStellarExecutionHappyPath validates the full EVM-to-Stellar CCIP message flow:

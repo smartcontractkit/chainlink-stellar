@@ -2,6 +2,8 @@
 pub trait TokenAdminRegistryInterface {
     fn initialize(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
 
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
+
     fn get_pool(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,

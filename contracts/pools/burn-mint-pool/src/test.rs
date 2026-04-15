@@ -1136,3 +1136,292 @@ fn test_both_outbound_and_inbound_limits_enforced() {
     let r = pool_client.try_release_or_mint(&release_input2, &0u32);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
 }
+
+// ================================================================
+//  Fast-Finality (FTF) Rate Limit Tests
+// ================================================================
+
+const WAIT_FOR_SAFE: u32 = 1 << 16; // 0x00010000
+
+#[test]
+fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
+    let (env, pool_client, owner, token_address, token_client, _token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Configure FTF inbound bucket with smaller capacity than default
+    let ftf_inbound = RateLimitConfig {
+        is_enabled: true,
+        capacity: 200,
+        rate: 2,
+    };
+    pool_client.set_rate_limit_config(
+        &owner,
+        &remote_chain,
+        &RateLimitConfig::disabled(),
+        &ftf_inbound,
+        &true,
+    );
+
+    let receiver = Address::generate(&env);
+
+    // FTF inbound: 200 should succeed (exactly at FTF capacity)
+    let release_input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 200,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    pool_client.release_or_mint(&release_input, &WAIT_FOR_SAFE);
+    assert_eq!(token_client.balance(&receiver), 200);
+
+    // FTF inbound: 1 more should fail (FTF bucket exhausted)
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    let release_input2 = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 3,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    let r = pool_client.try_release_or_mint(&release_input2, &WAIT_FOR_SAFE);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
+
+    // Default inbound should still be unaffected (disabled = no limit)
+    let release_default = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 500,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    pool_client.release_or_mint(&release_default, &0u32);
+    assert_eq!(token_client.balance(&receiver), 700);
+}
+
+#[test]
+fn test_ftf_inbound_falls_back_to_default_bucket_when_not_configured() {
+    let (env, pool_client, _owner, token_address, token_client, _token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    let inbound = RateLimitConfig {
+        is_enabled: true,
+        capacity: 500,
+        rate: 5,
+    };
+    pool_client.apply_chain_updates(
+        &Vec::from_array(
+            &env,
+            [chain_update_with_limits(
+                &env,
+                remote_chain,
+                1,
+                2,
+                RateLimitConfig::disabled(),
+                inbound,
+            )],
+        ),
+        &Vec::new(&env),
+    );
+    // No FTF buckets configured — FTF requests should fall back to the default inbound bucket.
+
+    let receiver = Address::generate(&env);
+    let release_input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 500,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    pool_client.release_or_mint(&release_input, &WAIT_FOR_SAFE);
+    assert_eq!(token_client.balance(&receiver), 500);
+
+    // Default bucket exhausted; another FTF request should fail
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    let release_input2 = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 6,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    let r = pool_client.try_release_or_mint(&release_input2, &WAIT_FOR_SAFE);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
+}
+
+#[test]
+fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
+    let (env, pool_client, owner, token_address, _token_client, token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Configure allowed finality to permit WAIT_FOR_SAFE
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+
+    // Configure FTF outbound bucket
+    let ftf_outbound = RateLimitConfig {
+        is_enabled: true,
+        capacity: 300,
+        rate: 3,
+    };
+    pool_client.set_rate_limit_config(
+        &owner,
+        &remote_chain,
+        &ftf_outbound,
+        &RateLimitConfig::disabled(),
+        &true,
+    );
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &5000);
+
+    // FTF outbound: 300 should succeed (exactly at FTF capacity)
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender.clone(),
+        amount: 300,
+        local_token: token_address.clone(),
+    };
+    pool_client.lock_or_burn(&lock_input, &WAIT_FOR_SAFE);
+
+    // FTF outbound: 1 more should fail (FTF bucket exhausted)
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    let lock_input2 = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender.clone(),
+        amount: 4,
+        local_token: token_address.clone(),
+    };
+    let r = pool_client.try_lock_or_burn(&lock_input2, &WAIT_FOR_SAFE);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
+
+    // Default outbound should still be unaffected (disabled = no limit)
+    let lock_default = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender.clone(),
+        amount: 1000,
+        local_token: token_address.clone(),
+    };
+    pool_client.lock_or_burn(&lock_default, &0u32);
+}
+
+#[test]
+fn test_ftf_outbound_rejected_when_finality_not_allowed() {
+    let (env, pool_client, _owner, token_address, _token_client, token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // allowed finality is default (0) — WAIT_FOR_SAFE is not allowed
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &1000);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender,
+        amount: 100,
+        local_token: token_address,
+    };
+    let r = pool_client.try_lock_or_burn(&lock_input, &WAIT_FOR_SAFE);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
+}
+
+#[test]
+fn test_ftf_and_default_buckets_are_independent() {
+    let (env, pool_client, owner, token_address, token_client, _token_admin_client) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    // Set up default inbound bucket
+    let default_inbound = RateLimitConfig {
+        is_enabled: true,
+        capacity: 1000,
+        rate: 10,
+    };
+    pool_client.apply_chain_updates(
+        &Vec::from_array(
+            &env,
+            [chain_update_with_limits(
+                &env,
+                remote_chain,
+                1,
+                2,
+                RateLimitConfig::disabled(),
+                default_inbound,
+            )],
+        ),
+        &Vec::new(&env),
+    );
+
+    // Set up FTF inbound bucket with different capacity
+    let ftf_inbound = RateLimitConfig {
+        is_enabled: true,
+        capacity: 300,
+        rate: 3,
+    };
+    pool_client.set_rate_limit_config(
+        &owner,
+        &remote_chain,
+        &RateLimitConfig::disabled(),
+        &ftf_inbound,
+        &true,
+    );
+
+    let receiver = Address::generate(&env);
+
+    // Exhaust the FTF bucket
+    let release_ftf = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 300,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    pool_client.release_or_mint(&release_ftf, &WAIT_FOR_SAFE);
+    assert_eq!(token_client.balance(&receiver), 300);
+
+    // Default bucket should still have its full 1000 capacity
+    let release_default = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 1000,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    pool_client.release_or_mint(&release_default, &0u32);
+    assert_eq!(token_client.balance(&receiver), 1300);
+}

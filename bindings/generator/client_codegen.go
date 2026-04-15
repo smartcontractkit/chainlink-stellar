@@ -203,6 +203,8 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\t\treturn nil, fmt.Errorf(\"expected bytes return type\")\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn []byte(v), nil\n")
+	case returnType == "soroban_sdk::String":
+		b.WriteString("\treturn scval.StringFromScVal(*result)\n")
 	case strings.HasPrefix(returnType, "Option<") && strings.Contains(returnType, "soroban_sdk::Address"):
 		b.WriteString("\tv, err := scval.OptionalAddressFromScVal(*result)\n")
 		b.WriteString("\tif err != nil {\n")
@@ -634,7 +636,7 @@ func isStructType(rustType string) bool {
 	switch rustType {
 	case "u64", "u32", "u128", "i128", "bool":
 		return false
-	case "soroban_sdk::Address", "soroban_sdk::Bytes", "soroban_sdk::Symbol":
+	case "soroban_sdk::Address", "soroban_sdk::Bytes", "soroban_sdk::Symbol", "soroban_sdk::String":
 		return false
 	}
 	if strings.HasPrefix(rustType, "soroban_sdk::") {
@@ -716,7 +718,7 @@ func zeroValue(rustType string) string {
 		return "scval.U128{}"
 	case "bool":
 		return "false"
-	case "soroban_sdk::Address":
+	case "soroban_sdk::Address", "soroban_sdk::String":
 		return "\"\""
 	}
 	if strings.HasPrefix(rustType, "Option<") {

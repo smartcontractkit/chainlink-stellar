@@ -121,6 +121,10 @@ impl OnRampContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "OnRamp 1.0.0")
+    }
+
     // ========================================
     // Core Messaging Functions
     // ========================================

@@ -124,6 +124,10 @@ impl FeeQuoterContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "FeeQuoter 1.0.0")
+    }
+
     // ========================================
     // Price Query Functions
     // ========================================

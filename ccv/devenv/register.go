@@ -17,6 +17,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/services/executor"
 
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	"github.com/smartcontractkit/chainlink-stellar/ccv/devenv/adapter"
 	"github.com/smartcontractkit/chainlink-stellar/ccv/devenv/modifier"
 )
 
@@ -42,15 +43,15 @@ func RegisterStellarComponents() {
 		executor.RegisterModifier(chainsel.FamilyStellar, modifier.StellarExecutorModifier)
 		ccv.RegisterImplFactory(chainsel.FamilyStellar, ccvchain.NewImplFactory())
 		registry.RegisterCLDFProviderFactory(chainsel.FamilyStellar, ccvchain.NewCLDFProviderFactory())
-		ccvadapters.GetCommitteeVerifierContractRegistry().Register(chainsel.FamilyStellar, &StellarCommitteeVerifierContractAdapter{})
-		stellarAdapter := &StellarLaneAdapter{}
+		ccvadapters.GetCommitteeVerifierContractRegistry().Register(chainsel.FamilyStellar, &adapter.StellarCommitteeVerifierContractAdapter{})
+		stellarAdapter := &adapter.StellarLaneAdapter{}
 		lanes.GetLaneAdapterRegistry().RegisterLaneAdapter(chainsel.FamilyStellar, semver.MustParse("2.0.0"), stellarAdapter)
 		ccvadapters.GetChainFamilyRegistry().RegisterChainFamily(chainsel.FamilyStellar, stellarAdapter)
-		ccvadapters.GetAggregatorConfigRegistry().Register(chainsel.FamilyStellar, &StellarAggregatorConfigAdapter{})
-		ccvadapters.GetIndexerConfigRegistry().Register(chainsel.FamilyStellar, &StellarIndexerConfigAdapter{})
-		ccvadapters.GetVerifierJobConfigRegistry().Register(chainsel.FamilyStellar, &StellarVerifierConfigAdapter{})
-		ccvadapters.GetExecutorConfigRegistry().Register(chainsel.FamilyStellar, &StellarExecutorConfigAdapter{})
-		ccvadapters.GetTokenVerifierConfigRegistry().Register(chainsel.FamilyStellar, &StellarTokenVerifierConfigAdapter{})
+		ccvadapters.GetAggregatorConfigRegistry().Register(chainsel.FamilyStellar, &adapter.StellarAggregatorConfigAdapter{})
+		ccvadapters.GetIndexerConfigRegistry().Register(chainsel.FamilyStellar, &adapter.StellarIndexerConfigAdapter{})
+		ccvadapters.GetVerifierJobConfigRegistry().Register(chainsel.FamilyStellar, &adapter.StellarVerifierConfigAdapter{})
+		ccvadapters.GetExecutorConfigRegistry().Register(chainsel.FamilyStellar, &adapter.StellarExecutorConfigAdapter{})
+		ccvadapters.GetTokenVerifierConfigRegistry().Register(chainsel.FamilyStellar, &adapter.StellarTokenVerifierConfigAdapter{})
 		ccvadapters.GetDeployChainContractsRegistry().Register(chainsel.FamilyStellar, &ccvchain.StellarDeployChainContractsAdapter{})
 	})
 }

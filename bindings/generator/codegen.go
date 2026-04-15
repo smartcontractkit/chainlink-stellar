@@ -138,6 +138,12 @@ func generateFromScValField(b *strings.Builder, f Field, target string) {
 		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s is not bytes\")\n", f.Name))
 		b.WriteString("\t\t\t}\n")
 		b.WriteString(fmt.Sprintf("\t\t\t%s = []byte(v)\n", target))
+	case f.Type == "soroban_sdk::String":
+		b.WriteString("\t\t\tv, err := scval.StringFromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", f.Name))
+		b.WriteString("\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t%s = v\n", target))
 	case f.Type == "u128":
 		b.WriteString("\t\t\tv, err := scval.U128FromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err != nil {\n")
@@ -199,6 +205,12 @@ func generateVecItemParse(b *strings.Builder, innerType, target string) {
 		b.WriteString("\t\t\t\t\treturn nil, fmt.Errorf(\"vec item is not bytes\")\n")
 		b.WriteString("\t\t\t\t}\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = []byte(v)\n", target))
+	case "soroban_sdk::String":
+		b.WriteString("\t\t\t\tv, err := scval.StringFromScVal(item)\n")
+		b.WriteString("\t\t\t\tif err != nil {\n")
+		b.WriteString("\t\t\t\t\treturn nil, err\n")
+		b.WriteString("\t\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 	case "u128":
 		b.WriteString("\t\t\t\tv, err := scval.U128FromScVal(item)\n")
 		b.WriteString("\t\t\t\tif err != nil {\n")
@@ -319,6 +331,8 @@ func rustTypeToGo(rustType string) string {
 		return "[]byte"
 	case "soroban_sdk::Symbol":
 		return "string"
+	case "soroban_sdk::String":
+		return "string"
 	}
 
 	if strings.HasPrefix(rustType, "Option<") {
@@ -389,6 +403,8 @@ func getToScValConverter(rustType, expr string) string {
 		return fmt.Sprintf("scval.AddressToScVal(%s)", expr)
 	case "soroban_sdk::Bytes":
 		return fmt.Sprintf("scval.BytesToScVal(%s)", expr)
+	case "soroban_sdk::String":
+		return fmt.Sprintf("scval.StringToScVal(%s)", expr)
 	}
 
 	if strings.HasPrefix(rustType, "Option<") && strings.Contains(rustType, "soroban_sdk::Address") {

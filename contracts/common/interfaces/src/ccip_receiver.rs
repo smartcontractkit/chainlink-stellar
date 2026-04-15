@@ -5,6 +5,7 @@ pub trait ExampleCcipReceiverInterface {
     fn initialize(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn ccip_receive(env: soroban_sdk::Env, message: AnyToStellarMessage) -> Result<(), CCIPError>;
     fn last_message_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

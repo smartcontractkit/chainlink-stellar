@@ -158,6 +158,24 @@ func SymbolFromScVal(val xdr.ScVal) (string, error) {
 	return string(sym), nil
 }
 
+// StringToScVal converts a Go string to an xdr.ScVal representing Soroban String.
+func StringToScVal(s string) xdr.ScVal {
+	scStr := xdr.ScString(s)
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvString,
+		Str:  &scStr,
+	}
+}
+
+// StringFromScVal extracts a Go string from an xdr.ScVal containing Soroban String.
+func StringFromScVal(val xdr.ScVal) (string, error) {
+	s, ok := val.GetStr()
+	if !ok {
+		return "", fmt.Errorf("not a string type: %v", val.Type)
+	}
+	return string(s), nil
+}
+
 // BuildStructScVal builds a struct xdr.ScVal from a map of field names to values.
 // Soroban requires ScMap keys to be sorted lexicographically.
 func BuildStructScVal(fields map[string]xdr.ScVal) (xdr.ScVal, error) {
