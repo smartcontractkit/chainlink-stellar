@@ -52,6 +52,7 @@ pub trait RouterInterface {
         source_chain_selector: u64,
         offramp: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn apply_ramp_updates(
         env: soroban_sdk::Env,
         onramp_updates: soroban_sdk::Vec<OnRampEntry>,

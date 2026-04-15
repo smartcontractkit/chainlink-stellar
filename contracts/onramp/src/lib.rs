@@ -121,6 +121,10 @@ impl OnRampContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "OnRamp 1.0.0")
+    }
+
     // ========================================
     // Core Messaging Functions
     // ========================================
@@ -298,12 +302,15 @@ impl OnRampContract {
                 Self::get_pool_by_source_token_internal(&env, &static_config, &token_amount.token)?;
             let pool_client = TokenPoolClient::new(&env, &pool_address);
 
+            let onramp_address = env.current_contract_address();
+
             // TODO: On Stellar as the source chain, `block_confirmations` will
             // always be 0 (WAIT_FOR_FINALITY) since Stellar has deterministic ~5s
             // finality and no fast confirmation rules. The pool's FTF outbound
             // branch is unreachable in practice. Consider asserting this invariant
             // or hardcoding 0 instead of threading the extra_args value.
             let lock_result = pool_client.lock_or_burn(
+                &onramp_address,
                 &LockOrBurnIn {
                     receiver: message.receiver.clone(),
                     remote_chain_selector: dest_chain_selector,

@@ -35,6 +35,7 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<soroban_sdk::Vec<TimestampedPrice>, CCIPError>;
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
     fn remove_fee_tokens(

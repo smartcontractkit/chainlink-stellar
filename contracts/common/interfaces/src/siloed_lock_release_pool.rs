@@ -20,6 +20,7 @@ pub trait SiloedLockReleasePoolInterface {
     ) -> Result<soroban_sdk::Address, CCIPError>;
     fn lock_or_burn(
         env: soroban_sdk::Env,
+        on_ramp: soroban_sdk::Address,
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
@@ -34,6 +35,7 @@ pub trait SiloedLockReleasePoolInterface {
     ) -> Result<soroban_sdk::Bytes, CCIPError>;
     fn release_or_mint(
         env: soroban_sdk::Env,
+        off_ramp: soroban_sdk::Address,
         input: ReleaseOrMintIn,
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError>;

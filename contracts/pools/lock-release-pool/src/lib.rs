@@ -57,6 +57,10 @@ impl LockReleaseTokenPoolContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "LockReleaseTokenPool 1.0.0")
+    }
+
     // ------------------------------------------------------------------
     // Pool Operations
     // ------------------------------------------------------------------
@@ -69,11 +73,12 @@ impl LockReleaseTokenPoolContract {
     /// authorizes a `transfer(sender, pool, amount)` as a sub-invocation.
     pub fn lock_or_burn(
         env: Env,
+        on_ramp: Address,
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseTokenPool>::require_router(&env)?;
+        <Self as BaseTokenPool>::require_on_ramp(&env, &on_ramp, input.remote_chain_selector)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -153,11 +158,12 @@ impl LockReleaseTokenPoolContract {
     /// on the destination chain after verifying the cross-chain message.
     pub fn release_or_mint(
         env: Env,
+        off_ramp: Address,
         input: ReleaseOrMintIn,
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseTokenPool>::require_router(&env)?;
+        <Self as BaseTokenPool>::require_off_ramp(&env, &off_ramp, input.remote_chain_selector)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -380,5 +386,7 @@ impl LockReleaseTokenPoolContract {
 
 #[cfg(test)]
 mod hooks_mock;
+#[cfg(test)]
+mod mock_router;
 #[cfg(test)]
 mod test;

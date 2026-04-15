@@ -27,15 +27,18 @@ pub trait TokenPoolInterface {
     fn remove_advanced_pool_hooks(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 
     fn get_advanced_pool_hooks(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
 
     fn lock_or_burn(
         env: soroban_sdk::Env,
+        on_ramp: soroban_sdk::Address,
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
 
     fn release_or_mint(
         env: soroban_sdk::Env,
+        off_ramp: soroban_sdk::Address,
         input: ReleaseOrMintIn,
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError>;

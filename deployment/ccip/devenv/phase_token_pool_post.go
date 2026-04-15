@@ -60,7 +60,7 @@ func DeployLockReleaseTestTokenPool(ctx context.Context, host Host) error {
 	const testTokenPoolDecimals uint32 = 7
 	routerID := h.RouterContractID()
 	if routerID == "" {
-		return fmt.Errorf("router contract ID is not set on host; cannot initialize token pool with ramp gating")
+		return fmt.Errorf("router contract ID is not set on host; cannot initialize token pool")
 	}
 	if err := poolClient.Initialize(ctx, h.DeployerKeypair().Address(), tokenContractID, testTokenPoolDecimals, routerID); err != nil {
 		return fmt.Errorf("failed to initialize pool with token: %w", err)

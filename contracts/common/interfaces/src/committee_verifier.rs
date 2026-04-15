@@ -36,6 +36,7 @@ pub trait CommitteeVerifierInterface {
     ) -> Result<(), CCIPError>;
     fn is_in_allowlist(env: soroban_sdk::Env, key: u64, addr: soroban_sdk::Address) -> bool;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
     fn set_dynamic_config(

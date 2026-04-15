@@ -5,6 +5,7 @@ extern crate std;
 use soroban_sdk::{testutils::Address as _, token, vec, Address, Bytes, Env, Vec};
 
 use crate::{
+    mock_router::{MockRouterContract, MockRouterContractClient},
     LockBoxEntry, SiloedLockReleaseTokenPoolContract, SiloedLockReleaseTokenPoolContractClient,
 };
 use common_pool::{ChainUpdate, LockOrBurnIn, RateLimitConfig, ReleaseOrMintIn};
@@ -44,6 +45,8 @@ struct TestEnv<'a> {
     lockbox_client: TokenLockBoxClient<'a>,
     sac: token::StellarAssetClient<'a>,
     tc: token::Client<'a>,
+    on_ramp: Address,
+    off_ramp: Address,
 }
 
 fn setup() -> TestEnv<'static> {
@@ -61,11 +64,18 @@ fn setup() -> TestEnv<'static> {
     let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
     lockbox_client.initialize(&owner, &token_addr);
 
-    let router = Address::generate(&env);
+    let router_id = env.register(MockRouterContract, ());
+    let mock_router = MockRouterContractClient::new(&env, &router_id);
+    let on_ramp = Address::generate(&env);
+    let off_ramp = Address::generate(&env);
+    mock_router.set_onramp(&REMOTE_CHAIN, &on_ramp);
+    mock_router.add_offramp(&REMOTE_CHAIN, &off_ramp);
+    mock_router.set_onramp(&SILOED_CHAIN, &on_ramp);
+    mock_router.add_offramp(&SILOED_CHAIN, &off_ramp);
 
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    pool_client.initialize(&owner, &token_addr, &7, &router);
+    pool_client.initialize(&owner, &token_addr, &7, &router_id);
 
     lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
     add_chain(&env, &pool_client, REMOTE_CHAIN);
@@ -85,6 +95,8 @@ fn setup() -> TestEnv<'static> {
         lockbox_client,
         sac,
         tc,
+        on_ramp,
+        off_ramp,
     }
 }
 
@@ -97,6 +109,8 @@ struct MultiLockboxEnv<'a> {
     siloed_lockbox: TokenLockBoxClient<'a>,
     sac: token::StellarAssetClient<'a>,
     tc: token::Client<'a>,
+    on_ramp: Address,
+    off_ramp: Address,
 }
 
 fn setup_multi_lockbox() -> MultiLockboxEnv<'static> {
@@ -118,10 +132,18 @@ fn setup_multi_lockbox() -> MultiLockboxEnv<'static> {
     let siloed_lockbox = TokenLockBoxClient::new(&env, &siloed_id);
     siloed_lockbox.initialize(&owner, &token_addr);
 
-    let router = Address::generate(&env);
+    let router_id = env.register(MockRouterContract, ());
+    let mock_router = MockRouterContractClient::new(&env, &router_id);
+    let on_ramp = Address::generate(&env);
+    let off_ramp = Address::generate(&env);
+    mock_router.set_onramp(&REMOTE_CHAIN, &on_ramp);
+    mock_router.add_offramp(&REMOTE_CHAIN, &off_ramp);
+    mock_router.set_onramp(&SILOED_CHAIN, &on_ramp);
+    mock_router.add_offramp(&SILOED_CHAIN, &off_ramp);
+
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    pool_client.initialize(&owner, &token_addr, &7, &router);
+    pool_client.initialize(&owner, &token_addr, &7, &router_id);
 
     shared_lockbox.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
     siloed_lockbox.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
@@ -149,6 +171,8 @@ fn setup_multi_lockbox() -> MultiLockboxEnv<'static> {
         siloed_lockbox,
         sac,
         tc,
+        on_ramp,
+        off_ramp,
     }
 }
 
@@ -165,7 +189,7 @@ fn lock_deposits_into_lockbox() {
         amount: 500,
         local_token: t.token_addr.clone(),
     };
-    let out = t.pool_client.lock_or_burn(&input, &0);
+    let out = t.pool_client.lock_or_burn(&t.on_ramp, &input, &0);
 
     assert_eq!(t.tc.balance(&sender), 500);
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 500);
@@ -192,7 +216,7 @@ fn release_withdraws_from_lockbox() {
         source_pool_address: Bytes::from_slice(&t.env, &[0xaa; 32]),
         source_pool_data: Bytes::new(&t.env),
     };
-    let out = t.pool_client.release_or_mint(&input, &0);
+    let out = t.pool_client.release_or_mint(&t.off_ramp, &input, &0);
 
     assert_eq!(out.destination_amount, 800);
     assert_eq!(t.tc.balance(&receiver), 800);
@@ -225,11 +249,15 @@ fn unconfigured_lockbox_rejects_lock() {
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_addr = token_contract.address();
-    let router = Address::generate(&env);
+
+    let router_id = env.register(MockRouterContract, ());
+    let mock_router = MockRouterContractClient::new(&env, &router_id);
+    let on_ramp = Address::generate(&env);
+    mock_router.set_onramp(&REMOTE_CHAIN, &on_ramp);
 
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    pool_client.initialize(&owner, &token_addr, &7, &router);
+    pool_client.initialize(&owner, &token_addr, &7, &router_id);
 
     let remote_pool = Bytes::from_slice(&env, &[0xaa; 32]);
     let remote_token = Bytes::from_slice(&env, &[0xbb; 32]);
@@ -258,7 +286,7 @@ fn unconfigured_lockbox_rejects_lock() {
         amount: 100,
         local_token: token_addr,
     };
-    let r = pool_client.try_lock_or_burn(&input, &0);
+    let r = pool_client.try_lock_or_burn(&on_ramp, &input, &0);
     assert!(r.is_err());
 }
 
@@ -285,7 +313,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         amount: 300,
         local_token: t.token_addr.clone(),
     };
-    t.pool_client.lock_or_burn(&input_a, &0);
+    t.pool_client.lock_or_burn(&t.on_ramp, &input_a, &0);
 
     let input_b = LockOrBurnIn {
         receiver: Bytes::from_slice(&t.env, &[0x02; 20]),
@@ -294,7 +322,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         amount: 200,
         local_token: t.token_addr.clone(),
     };
-    t.pool_client.lock_or_burn(&input_b, &0);
+    t.pool_client.lock_or_burn(&t.on_ramp, &input_b, &0);
 
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 500);
 }
@@ -433,7 +461,7 @@ fn siloed_and_shared_lockbox_isolation() {
         amount: 600,
         local_token: m.token_addr.clone(),
     };
-    m.pool_client.lock_or_burn(&lock_shared, &0);
+    m.pool_client.lock_or_burn(&m.on_ramp, &lock_shared, &0);
 
     let lock_siloed = LockOrBurnIn {
         receiver: Bytes::from_slice(&m.env, &[0x02; 20]),
@@ -442,7 +470,7 @@ fn siloed_and_shared_lockbox_isolation() {
         amount: 400,
         local_token: m.token_addr.clone(),
     };
-    m.pool_client.lock_or_burn(&lock_siloed, &0);
+    m.pool_client.lock_or_burn(&m.on_ramp, &lock_siloed, &0);
 
     assert_eq!(m.tc.balance(&m.shared_lockbox.address), 600);
     assert_eq!(m.tc.balance(&m.siloed_lockbox.address), 400);
@@ -462,6 +490,7 @@ fn release_drains_siloed_lockbox() {
     m.sac.mint(&sender, &1_000);
 
     m.pool_client.lock_or_burn(
+        &m.on_ramp,
         &LockOrBurnIn {
             receiver: Bytes::from_slice(&m.env, &[0x01; 20]),
             remote_chain_selector: SILOED_CHAIN,
@@ -476,6 +505,7 @@ fn release_drains_siloed_lockbox() {
 
     let receiver = Address::generate(&m.env);
     let out = m.pool_client.release_or_mint(
+        &m.off_ramp,
         &ReleaseOrMintIn {
             original_sender: Bytes::from_slice(&m.env, &[0xcd; 20]),
             remote_chain_selector: SILOED_CHAIN,
@@ -502,6 +532,7 @@ fn release_drains_shared_lockbox() {
     m.sac.mint(&sender, &500);
 
     m.pool_client.lock_or_burn(
+        &m.on_ramp,
         &LockOrBurnIn {
             receiver: Bytes::from_slice(&m.env, &[0x01; 20]),
             remote_chain_selector: REMOTE_CHAIN,
@@ -516,6 +547,7 @@ fn release_drains_shared_lockbox() {
 
     let receiver = Address::generate(&m.env);
     let out = m.pool_client.release_or_mint(
+        &m.off_ramp,
         &ReleaseOrMintIn {
             original_sender: Bytes::from_slice(&m.env, &[0xcd; 20]),
             remote_chain_selector: REMOTE_CHAIN,
@@ -547,6 +579,7 @@ fn lock_rejects_wrong_token() {
 
     let sender = Address::generate(&t.env);
     let r = t.pool_client.try_lock_or_burn(
+        &t.on_ramp,
         &LockOrBurnIn {
             receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
             remote_chain_selector: REMOTE_CHAIN,
@@ -567,6 +600,7 @@ fn lock_rejects_unsupported_chain() {
 
     let unknown_chain: u64 = 12_345;
     let r = t.pool_client.try_lock_or_burn(
+        &t.on_ramp,
         &LockOrBurnIn {
             receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
             remote_chain_selector: unknown_chain,
@@ -590,6 +624,7 @@ fn release_rejects_insufficient_liquidity() {
     m.sac.mint(&sender, &100);
 
     m.pool_client.lock_or_burn(
+        &m.on_ramp,
         &LockOrBurnIn {
             receiver: Bytes::from_slice(&m.env, &[0x01; 20]),
             remote_chain_selector: SILOED_CHAIN,
@@ -602,6 +637,7 @@ fn release_rejects_insufficient_liquidity() {
 
     let receiver = Address::generate(&m.env);
     let r = m.pool_client.try_release_or_mint(
+        &m.off_ramp,
         &ReleaseOrMintIn {
             original_sender: Bytes::from_slice(&m.env, &[0xcd; 20]),
             remote_chain_selector: SILOED_CHAIN,
@@ -631,6 +667,7 @@ fn release_rejects_wrong_token() {
 
     let receiver = Address::generate(&t.env);
     let r = t.pool_client.try_release_or_mint(
+        &t.off_ramp,
         &ReleaseOrMintIn {
             original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
             remote_chain_selector: REMOTE_CHAIN,
@@ -652,6 +689,7 @@ fn release_rejects_unsupported_chain() {
     let unknown_chain: u64 = 12_345;
 
     let r = t.pool_client.try_release_or_mint(
+        &t.off_ramp,
         &ReleaseOrMintIn {
             original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
             remote_chain_selector: unknown_chain,

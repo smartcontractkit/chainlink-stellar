@@ -184,8 +184,9 @@ func (c *SiloedLockReleasePoolClient) GetLockBox(ctx context.Context, remoteChai
 }
 
 // LockOrBurn calls the lock_or_burn function on the contract.
-func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, input LockOrBurnIn, requestedFinality uint32) (*LockOrBurnOut, error) {
+func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, onRamp string, input LockOrBurnIn, requestedFinality uint32) (*LockOrBurnOut, error) {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(onRamp),
 		scval.MustToScVal(input.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
 	}
@@ -260,8 +261,9 @@ func (c *SiloedLockReleasePoolClient) GetRemotePool(ctx context.Context, remoteC
 }
 
 // ReleaseOrMint calls the release_or_mint function on the contract.
-func (c *SiloedLockReleasePoolClient) ReleaseOrMint(ctx context.Context, input ReleaseOrMintIn, requestedFinality uint32) (*ReleaseOrMintOut, error) {
+func (c *SiloedLockReleasePoolClient) ReleaseOrMint(ctx context.Context, offRamp string, input ReleaseOrMintIn, requestedFinality uint32) (*ReleaseOrMintOut, error) {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(offRamp),
 		scval.MustToScVal(input.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
 	}

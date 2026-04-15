@@ -102,6 +102,10 @@ impl OffRampContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "OffRamp 1.0.0")
+    }
+
     // ========================================
     // Core Execution
     // ========================================
@@ -586,7 +590,10 @@ impl OffRampContract {
 
         let receiver_address = Self::address_from_token_bytes(env, &token_transfer.token_receiver)?;
 
+        let offramp_address = env.current_contract_address();
+
         let release_result = pool_client.release_or_mint(
+            &offramp_address,
             &ReleaseOrMintIn {
                 original_sender: original_sender.clone(),
                 remote_chain_selector: source_chain_selector,

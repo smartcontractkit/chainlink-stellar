@@ -139,6 +139,9 @@ func TestTokenPool(t *testing.T) {
 		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-token-send")
 		feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-fee-token")
 
+		wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", stack,
+			localChain, remoteDestChain, feeToken, []string{sacToken})
+
 		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", sacToken)
 
 		remotePool := make([]byte, 20)
@@ -156,9 +159,6 @@ func TestTokenPool(t *testing.T) {
 		}}, nil); err != nil {
 			t.Fatalf("TokenPool ApplyChainUpdates: %v", err)
 		}
-
-		_ = deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", stack,
-			localChain, remoteDestChain, feeToken, []string{sacToken})
 
 		defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, "ccip-token-send-executor")
 		extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{

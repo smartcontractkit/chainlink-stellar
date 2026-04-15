@@ -101,6 +101,22 @@ func (c *ExampleCcipReceiverClient) LastMessageId(ctx context.Context) ([32]byte
 	return v, nil
 }
 
+// TypeAndVersion calls the type_and_version function on the contract.
+func (c *ExampleCcipReceiverClient) TypeAndVersion(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "type_and_version", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call type_and_version: %w", err)
+	}
+
+	if result == nil {
+		return "", fmt.Errorf("no return value from type_and_version")
+	}
+
+	return scval.StringFromScVal(*result)
+}
+
 // WaitForCcipMessageReceivedEvent waits for a CcipMessageReceivedEvent event.
 func (c *ExampleCcipReceiverClient) WaitForCcipMessageReceivedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CcipMessageReceivedEvent) bool) (*CcipMessageReceivedEvent, error) {
 	startTime := time.Now()

@@ -146,6 +146,10 @@ impl CommitteeVerifierContract {
         Ok(())
     }
 
+    pub fn type_and_version(_env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&_env, "CommitteeVerifier 1.0.0")
+    }
+
     // ========================================
     // Core verifier methods
     // ========================================

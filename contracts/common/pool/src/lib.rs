@@ -21,6 +21,7 @@ pub use types::*;
 
 use common_error::CCIPError;
 use common_interfaces::pool_hooks::PoolHooksClient;
+use common_interfaces::router::RouterClient;
 use soroban_sdk::{contracttrait, Address, Bytes, Env, Vec};
 
 /// Base token pool trait providing shared pool configuration and chain management.
@@ -315,11 +316,10 @@ pub trait BaseTokenPool {
     }
 
     // ------------------------------------------------------------------
-    // Router / Ramp Gating (EVM `_onlyOnRamp` / `_onlyOffRamp`)
+    // Router & ramp gating (EVM `_onlyOnRamp` / `_onlyOffRamp`)
     // ------------------------------------------------------------------
 
     /// Store the router address. Owner-only — caller must enforce.
-    /// On EVM this is part of `setDynamicConfig`.
     fn set_router(env: &Env, router: &Address) {
         env.storage().instance().set(&PoolDataKey::Router, router);
     }
@@ -328,21 +328,42 @@ pub trait BaseTokenPool {
         env.storage().instance().get(&PoolDataKey::Router)
     }
 
-    /// Require that the configured router has provided authorization in the
-    /// current invocation's auth tree. This is the Soroban analogue of EVM's
-    /// `_onlyOnRamp` / `_onlyOffRamp`: only calls originating from the
-    /// router (which in turn is called by onramp/offramp) are accepted.
+    /// Soroban analogue of EVM `_onlyOnRamp(remoteChainSelector)`.
     ///
-    /// If no router is configured the check is skipped (permissive — allows
-    /// pools to work before router is wired up, matching existing behavior).
-    fn require_router(env: &Env) -> Result<(), CCIPError> {
-        if let Some(router) = env
-            .storage()
-            .instance()
-            .get::<PoolDataKey, Address>(&PoolDataKey::Router)
-        {
-            router.require_auth();
+    /// Queries the Router for the registered OnRamp for `dest_chain_selector`,
+    /// checks that the supplied `on_ramp` matches, and calls `require_auth()`
+    /// to bind it into the Soroban authorization tree.  The `on_ramp` parameter
+    /// is the Soroban equivalent of EVM's `msg.sender`.
+    fn require_on_ramp(
+        env: &Env,
+        on_ramp: &Address,
+        dest_chain_selector: u64,
+    ) -> Result<(), CCIPError> {
+        let router = Self::get_router(env).ok_or(CCIPError::NotInitialized)?;
+        let router_client = RouterClient::new(env, &router);
+        let expected = router_client.get_onramp(&dest_chain_selector);
+        if on_ramp != &expected {
+            return Err(CCIPError::CallerNotAuthorized);
         }
+        on_ramp.require_auth();
+        Ok(())
+    }
+
+    /// Soroban analogue of EVM `_onlyOffRamp()`.
+    ///
+    /// Queries the Router to verify `off_ramp` is a registered OffRamp for
+    /// `source_chain_selector`, then calls `require_auth()`.
+    fn require_off_ramp(
+        env: &Env,
+        off_ramp: &Address,
+        source_chain_selector: u64,
+    ) -> Result<(), CCIPError> {
+        let router = Self::get_router(env).ok_or(CCIPError::NotInitialized)?;
+        let router_client = RouterClient::new(env, &router);
+        if !router_client.is_offramp(&source_chain_selector, off_ramp) {
+            return Err(CCIPError::CallerNotAuthorized);
+        }
+        off_ramp.require_auth();
         Ok(())
     }
 

@@ -136,11 +136,12 @@ impl SiloedLockReleaseTokenPoolContract {
     /// in the invocation tree. This pool then deposits into the lockbox.
     pub fn lock_or_burn(
         env: Env,
+        on_ramp: Address,
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseTokenPool>::require_router(&env)?;
+        <Self as BaseTokenPool>::require_on_ramp(&env, &on_ramp, input.remote_chain_selector)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -189,11 +190,12 @@ impl SiloedLockReleaseTokenPoolContract {
     /// Release tokens by withdrawing from the lockbox to the receiver.
     pub fn release_or_mint(
         env: Env,
+        off_ramp: Address,
         input: ReleaseOrMintIn,
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseTokenPool>::require_router(&env)?;
+        <Self as BaseTokenPool>::require_off_ramp(&env, &off_ramp, input.remote_chain_selector)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -481,5 +483,7 @@ fn consume_inbound_rate_limit(
     Ok(())
 }
 
+#[cfg(test)]
+mod mock_router;
 #[cfg(test)]
 mod test;
