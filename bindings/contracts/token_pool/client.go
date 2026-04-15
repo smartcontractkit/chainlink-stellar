@@ -30,11 +30,12 @@ func (c *TokenPoolClient) ContractID() string {
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *TokenPoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32) error {
+func (c *TokenPoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressToScVal(token),
 		scval.Uint32ToScVal(tokenDecimals),
+		scval.AddressToScVal(router),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -44,6 +45,89 @@ func (c *TokenPoolClient) Initialize(ctx context.Context, owner string, token st
 
 	_ = result // void return
 	return nil
+}
+
+// SetRouter calls the set_router function on the contract.
+func (c *TokenPoolClient) SetRouter(ctx context.Context, router string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(router),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_router", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_router: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetRouter calls the get_router function on the contract.
+func (c *TokenPoolClient) GetRouter(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_router", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_router: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_router")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// SetAdvancedPoolHooks calls the set_advanced_pool_hooks function on the contract.
+func (c *TokenPoolClient) SetAdvancedPoolHooks(ctx context.Context, hooks string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(hooks),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_advanced_pool_hooks", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_advanced_pool_hooks: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// RemoveAdvancedPoolHooks calls the remove_advanced_pool_hooks function on the contract.
+func (c *TokenPoolClient) RemoveAdvancedPoolHooks(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_advanced_pool_hooks", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_advanced_pool_hooks: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetAdvancedPoolHooks calls the get_advanced_pool_hooks function on the contract.
+func (c *TokenPoolClient) GetAdvancedPoolHooks(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_advanced_pool_hooks", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_advanced_pool_hooks: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_advanced_pool_hooks")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // LockOrBurn calls the lock_or_burn function on the contract.

@@ -12,7 +12,21 @@ pub trait TokenPoolInterface {
         owner: soroban_sdk::Address,
         token: soroban_sdk::Address,
         token_decimals: u32,
+        router: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+
+    fn set_router(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;
+
+    fn get_router(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+
+    fn set_advanced_pool_hooks(
+        env: soroban_sdk::Env,
+        hooks: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+
+    fn remove_advanced_pool_hooks(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+
+    fn get_advanced_pool_hooks(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
 
     fn lock_or_burn(
         env: soroban_sdk::Env,

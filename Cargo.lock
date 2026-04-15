@@ -1102,6 +1102,7 @@ dependencies = [
  "common-authorization",
  "common-error",
  "common-guard",
+ "common-interfaces",
  "common-pool",
  "soroban-sdk",
 ]
@@ -1113,6 +1114,7 @@ dependencies = [
  "common-authorization",
  "common-error",
  "common-guard",
+ "common-interfaces",
  "common-pool",
  "soroban-sdk",
 ]

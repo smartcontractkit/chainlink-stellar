@@ -368,7 +368,10 @@ func (s *fullStack) deployTokenPool(
 
 	// Initialize pool with the token (decimals must match pool math; SAC test asset uses 7).
 	const tokenPoolDecimals uint32 = 7
-	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals); err != nil {
+	if s.RouterID == "" {
+		t.Fatal("RouterID must be set on fullStack before deployTokenPool (pool initialize requires router)")
+	}
+	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID); err != nil {
 		t.Fatalf("TokenPool Initialize: %v", err)
 	}
 

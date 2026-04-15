@@ -2,7 +2,13 @@
 
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Bytes, Env, Vec};
 
-use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
+use crate::{
+    hooks_mock::{
+        AcceptingPoolHooksContract, RejectingPostflightHooksContract,
+        RejectingPreflightHooksContract,
+    },
+    BurnMintTokenPoolContract, BurnMintTokenPoolContractClient,
+};
 use common_error::CCIPError;
 use common_pool::{
     encode_local_decimals, ChainUpdate, LockOrBurnIn, RateLimitConfig, ReleaseOrMintIn,
@@ -32,7 +38,8 @@ fn setup_env() -> (
     // Set the pool contract as the token admin so it can mint
     token_admin_client.set_admin(&pool_id);
 
-    pool_client.initialize(&owner, &token_address, &7u32);
+    let router = Address::generate(&env);
+    pool_client.initialize(&owner, &token_address, &7u32, &router);
 
     (
         env,
@@ -179,7 +186,7 @@ fn chain_update_with_limits(
 #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
 fn test_initialize_twice_rejected() {
     let (_env, pool_client, owner, token_address, _token_client, _token_admin_client) = setup_env();
-    pool_client.initialize(&owner, &token_address, &7u32);
+    pool_client.initialize(&owner, &token_address, &7u32, &Address::generate(&_env));
 }
 
 #[test]
@@ -390,7 +397,8 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     token_admin_client.set_admin(&pool_id);
 
     let local_decimals: u32 = 6;
-    pool_client.initialize(&owner, &token_address, &local_decimals);
+    let router = Address::generate(&env);
+    pool_client.initialize(&owner, &token_address, &local_decimals, &router);
 
     let remote_chain: u64 = 5009297550715157269;
     pool_client.apply_chain_updates(
@@ -434,7 +442,8 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
     token_admin_client.set_admin(&pool_id);
 
     let local_decimals: u32 = 9;
-    pool_client.initialize(&owner, &token_address, &local_decimals);
+    let router = Address::generate(&env);
+    pool_client.initialize(&owner, &token_address, &local_decimals, &router);
 
     let remote_chain: u64 = 5009297550715157269;
     pool_client.apply_chain_updates(
@@ -500,8 +509,9 @@ fn test_initialize_rejects_decimals_above_uint8() {
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin);
     let token_address = token_contract.address();
+    let router = Address::generate(&env);
 
-    let r = pool_client.try_initialize(&owner, &token_address, &256u32);
+    let r = pool_client.try_initialize(&owner, &token_address, &256u32, &router);
     assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
 
@@ -1380,4 +1390,92 @@ fn test_ftf_and_default_buckets_are_independent() {
     };
     pool_client.release_or_mint(&release_default, &0u32);
     assert_eq!(token_client.balance(&receiver), 1300);
+}
+
+// ---------------------------------------------------------------------------
+// Router + advanced hooks (Phase C)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_get_router_set_at_initialize() {
+    let (_env, pool_client, _owner, _token_address, _token_client, _token_admin_client) =
+        setup_env();
+    assert!(pool_client.get_router().is_some());
+}
+
+#[test]
+fn test_owner_set_router_updates_get_router() {
+    let (env, pool_client, _owner, _token_address, _token_client, _token_admin_client) =
+        setup_env();
+    let new_router = Address::generate(&env);
+    pool_client.set_router(&new_router);
+    assert_eq!(pool_client.get_router(), Some(new_router));
+}
+
+#[test]
+fn test_owner_advanced_pool_hooks_roundtrip() {
+    let (env, pool_client, _owner, _token_address, _token_client, _token_admin_client) =
+        setup_env();
+    let hooks_id = env.register(AcceptingPoolHooksContract, ());
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+    assert_eq!(
+        pool_client.get_advanced_pool_hooks(),
+        Some(hooks_id.clone())
+    );
+    pool_client.remove_advanced_pool_hooks();
+    assert_eq!(pool_client.get_advanced_pool_hooks(), None);
+}
+
+#[test]
+fn test_lock_or_burn_fails_when_hooks_preflight_rejects() {
+    let (env, pool_client, _owner, token_address, _token_client, token_admin_client) = setup_env();
+
+    let hooks_id = env.register(RejectingPreflightHooksContract, ());
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &100);
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender,
+        amount: 100,
+        local_token: token_address,
+    };
+    assert!(pool_client.try_lock_or_burn(&lock_input, &0u32).is_err());
+}
+
+#[test]
+fn test_release_or_mint_fails_when_hooks_postflight_rejects() {
+    let (env, pool_client, _owner, token_address, token_client, _token_admin_client) = setup_env();
+
+    let hooks_id = env.register(RejectingPostflightHooksContract, ());
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let receiver = Address::generate(&env);
+    let release_input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: receiver.clone(),
+        amount: 100,
+        local_token: token_address,
+        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    assert!(pool_client
+        .try_release_or_mint(&release_input, &0u32)
+        .is_err());
+    assert_eq!(token_client.balance(&receiver), 0);
 }

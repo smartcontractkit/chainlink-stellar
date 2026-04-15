@@ -47,11 +47,13 @@ impl BurnMintTokenPoolContract {
         owner: Address,
         token: Address,
         token_decimals: u32,
+        router: Address,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as BaseTokenPool>::init_pool(&env, &token, token_decimals)?;
+        <Self as BaseTokenPool>::set_router(&env, &router);
         Ok(())
     }
 
@@ -71,6 +73,7 @@ impl BurnMintTokenPoolContract {
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
+        <Self as BaseTokenPool>::require_router(&env)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -116,6 +119,14 @@ impl BurnMintTokenPoolContract {
             .publish(&env);
         }
 
+        <Self as BaseTokenPool>::preflight_check(
+            &env,
+            &input.original_sender,
+            input.remote_chain_selector,
+            input.amount,
+            requested_finality,
+        )?;
+
         let token_client = token::Client::new(&env, &pool_token);
         token_client.burn(&input.original_sender, &input.amount);
 
@@ -148,6 +159,7 @@ impl BurnMintTokenPoolContract {
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
+        <Self as BaseTokenPool>::require_router(&env)?;
 
         let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
         if pool_token != input.local_token {
@@ -190,6 +202,14 @@ impl BurnMintTokenPoolContract {
             }
             .publish(&env);
         }
+
+        <Self as BaseTokenPool>::postflight_check(
+            &env,
+            input.remote_chain_selector,
+            &input.receiver,
+            local_amount,
+            requested_finality,
+        )?;
 
         let admin_client = token::StellarAssetClient::new(&env, &pool_token);
         admin_client.mint(&input.receiver, &local_amount);
@@ -246,6 +266,38 @@ impl BurnMintTokenPoolContract {
         <Self as Ownable>::require_owner(&env)?;
         <Self as BaseTokenPool>::set_rate_limit_admin(&env, &admin);
         Ok(())
+    }
+
+    /// Set the router address. Owner-only (EVM `setDynamicConfig`).
+    pub fn set_router(env: Env, router: Address) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_router(&env, &router);
+        Ok(())
+    }
+
+    pub fn get_router(env: Env) -> Option<Address> {
+        <Self as BaseTokenPool>::get_router(&env)
+    }
+
+    /// Set the advanced pool hooks contract (EVM `updateAdvancedPoolHooks`). Owner-only.
+    pub fn set_advanced_pool_hooks(env: Env, hooks: Address) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_advanced_pool_hooks(&env, &hooks);
+        Ok(())
+    }
+
+    /// Remove the hooks contract, disabling pre/post-flight checks. Owner-only.
+    pub fn remove_advanced_pool_hooks(env: Env) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::remove_advanced_pool_hooks(&env);
+        Ok(())
+    }
+
+    pub fn get_advanced_pool_hooks(env: Env) -> Option<Address> {
+        <Self as BaseTokenPool>::get_advanced_pool_hooks(&env)
     }
 
     // ------------------------------------------------------------------
@@ -321,5 +373,7 @@ impl BurnMintTokenPoolContract {
     }
 }
 
+#[cfg(test)]
+mod hooks_mock;
 #[cfg(test)]
 mod test;

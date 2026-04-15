@@ -446,6 +446,12 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 	if env == nil {
 		return nil, fmt.Errorf("environment is nil")
 	}
+	if env.DataStore == nil {
+		return nil, fmt.Errorf("environment datastore is nil")
+	}
+	if err := c.ensureLocalContracts(env.DataStore, selector); err != nil {
+		return nil, fmt.Errorf("ensure local contracts before token pool deploy: %w", err)
+	}
 
 	host := &stellarCCIPDeployHost{c: c}
 	if err := stellarccipdevenv.DeployLockReleaseTestTokenPool(ctx, host); err != nil {

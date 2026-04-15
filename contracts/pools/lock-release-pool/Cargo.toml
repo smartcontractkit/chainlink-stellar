@@ -16,4 +16,5 @@ common-authorization = { workspace = true }
 common-pool = { workspace = true }
 
 [dev-dependencies]
+common-interfaces = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }

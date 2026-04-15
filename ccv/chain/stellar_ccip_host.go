@@ -77,6 +77,8 @@ func (h *stellarCCIPDeployHost) OffRampClient() *offrampbindings.OffRampClient {
 	return h.c.offRampClient
 }
 
+func (h *stellarCCIPDeployHost) RouterContractID() string { return h.c.routerContractID }
+
 func (h *stellarCCIPDeployHost) SetRouter(contractID string, client *routerbindings.RouterClient) {
 	h.c.routerContractID = contractID
 	h.c.routerClient = client
