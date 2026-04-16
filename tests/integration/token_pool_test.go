@@ -20,9 +20,10 @@ import (
 )
 
 func TestTokenPool(t *testing.T) {
-	// Many subtests each deploy stacks / use RPC; 5m is too tight on CI (shared ctx expires →
-	// "context deadline exceeded" on WASM upload or get_ledger_entries).
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// Cap total test wall time (WASM deploys, RPC, event waits). Previously 20m when every subtest
+	// called deployFullStack; with two shared stacks, 10m matches headroom above other integration
+	// tests (5m) without keeping an oversized ceiling. Raise if CI flakes on slow uploads/RPC.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
@@ -104,351 +105,198 @@ func TestTokenPool(t *testing.T) {
 		t.Logf("Chain %d supported after update", remoteChain)
 	})
 
-	t.Run("deploy full stack with token pool", func(t *testing.T) {
+	// Single deployFullStack(false) for outbound: registry smoke test + router ccip_send share the same contracts.
+	t.Run("outbound full stack (shared)", func(t *testing.T) {
 		const destChain = uint64(11111)
-		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, destChain, "token-pool-stack", false)
-
-		mockToken := helpers.GenerateMockContractID(t, deployerAddr, "stack-test-token")
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "token-pool-stack", mockToken)
-
-		if stack.TokenAdminRegistryID == "" {
-			t.Fatal("TokenAdminRegistryID not set after deployTokenPool")
-		}
-		if stack.TokenPoolID == "" {
-			t.Fatal("TokenPoolID not set after deployTokenPool")
-		}
-
-		pool, err := stack.TokenAdminRegistryClient.GetPool(ctx, mockToken)
-		if err != nil {
-			t.Fatalf("GetPool: %v", err)
-		}
-		if pool == nil || *pool != stack.TokenPoolID {
-			t.Fatalf("pool mismatch: want %s, got %v", stack.TokenPoolID, pool)
-		}
-		t.Log("Full stack with token pool: TokenAdminRegistry correctly maps token to pool")
-	})
-
-	t.Run("router ccip_send with lock-release pool token amount", func(t *testing.T) {
-		const localChain = uint64(11111)
 		const remoteDestChain = uint64(22222)
-		const tokenTransferAmount = int64(1_000_000) // 0.1 INTG at 7 decimals (same scale as ccv/chain E2E test token)
+		const outboundSalt = "token-pool-outbound"
+		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, destChain, outboundSalt, false)
 
-		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, "ccip-token-send", false)
+		t.Run("registry maps token to pool", func(t *testing.T) {
+			mockToken := helpers.GenerateMockContractID(t, deployerAddr, outboundSalt+"-mock-token")
+			// Suffix avoids same deployTokenPool WASM salt as SAC pool below (lock-release-pool → ExistingValue).
+			stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt+"-mock-pool", mockToken)
 
-		// Real SAC + minted balance on deployer (classic issue + trustline), like a mock ERC20 on EVM.
-		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-token-send")
-		feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "ccip-fee-token")
+			if stack.TokenAdminRegistryID == "" {
+				t.Fatal("TokenAdminRegistryID not set after deployTokenPool")
+			}
+			if stack.TokenPoolID == "" {
+				t.Fatal("TokenPoolID not set after deployTokenPool")
+			}
 
-		deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", stack,
-			localChain, remoteDestChain, feeToken, []string{sacToken})
-
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "ccip-token-send", sacToken)
-
-		remotePool := make([]byte, 20)
-		remoteToken := make([]byte, 20)
-		for i := range remotePool {
-			remotePool[i] = 0x11
-			remoteToken[i] = 0x22
-		}
-		if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
-			RemoteChainSelector:       remoteDestChain,
-			RemotePoolAddresses:       remotePool,
-			RemoteTokenAddress:        remoteToken,
-			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
-			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
-		}}, nil); err != nil {
-			t.Fatalf("TokenPool ApplyChainUpdates: %v", err)
-		}
-
-		defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, "ccip-token-send-executor")
-		extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
-			Ccvs:               []string{stack.VvrID},
-			CcvArgs:            [][]byte{{}},
-			Executor:           defaultExecutor,
-			ExecutorArgs:       []byte{},
-			GasLimit:           0,
-			BlockConfirmations: 0,
-			TokenReceiver:      []byte{},
-			TokenArgs:          []byte{},
+			pool, err := stack.TokenAdminRegistryClient.GetPool(ctx, mockToken)
+			if err != nil {
+				t.Fatalf("GetPool: %v", err)
+			}
+			if pool == nil || *pool != stack.TokenPoolID {
+				t.Fatalf("pool mismatch: want %s, got %v", stack.TokenPoolID, pool)
+			}
+			t.Log("Full stack with token pool: TokenAdminRegistry correctly maps token to pool")
 		})
-		if err != nil {
-			t.Fatalf("encode extra args: %v", err)
-		}
 
-		evmReceiver := make([]byte, 20)
-		for i := range evmReceiver {
-			evmReceiver[i] = 0x33
-		}
+		t.Run("router ccip_send with lock-release pool token amount", func(t *testing.T) {
+			const tokenTransferAmount = int64(1_000_000) // 0.1 INTG at 7 decimals (same scale as ccv/chain E2E test token)
 
-		msg := routerbindings.StellarToAnyMessage{
-			Receiver:     evmReceiver,
-			Data:         []byte("integration token ccip_send"),
-			FeeToken:     feeToken,
-			ExtraArgs:    extraArgs,
-			TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: tokenTransferAmount}},
-		}
+			sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, outboundSalt+"-sac")
+			feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, outboundSalt+"-fee")
 
-		requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
-		if err != nil {
-			t.Fatalf("Router GetFee: %v", err)
-		}
-		if requiredFee <= 0 {
-			t.Fatalf("expected positive fee for token message, got %d", requiredFee)
-		}
-		t.Logf("quoted fee (fee token base units): %d", requiredFee)
+			stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt+"-sac-pool", sacToken)
 
-		// Successful send (no tokens): Router returns a message ID and emits CCIPSendRequested.
-		msgNoTokens := msg
-		msgNoTokens.TokenAmounts = nil
-		msgNoTokens.Data = []byte("integration ccip_send without tokens")
+			remotePool := make([]byte, 20)
+			remoteToken := make([]byte, 20)
+			for i := range remotePool {
+				remotePool[i] = 0x11
+				remoteToken[i] = 0x22
+			}
+			if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
+				RemoteChainSelector:       remoteDestChain,
+				RemotePoolAddresses:       remotePool,
+				RemoteTokenAddress:        remoteToken,
+				OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
+				InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
+			}}, nil); err != nil {
+				t.Fatalf("TokenPool ApplyChainUpdates: %v", err)
+			}
 
-		feeNoTokens, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msgNoTokens)
-		if err != nil {
-			t.Fatalf("Router GetFee (no tokens): %v", err)
-		}
-		if feeNoTokens <= 0 {
-			t.Fatalf("expected positive fee, got %d", feeNoTokens)
-		}
+			_ = deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt, stack,
+				destChain, remoteDestChain, feeToken, []string{sacToken})
 
-		latest, err := rpcClient.GetLatestLedger(ctx)
-		if err != nil {
-			t.Fatalf("GetLatestLedger: %v", err)
-		}
-		startLedger := latest.Sequence
-
-		messageID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msgNoTokens, feeNoTokens)
-		if err != nil {
-			t.Fatalf("Router CcipSend (no tokens): %v", err)
-		}
-		if messageID == [32]byte{} {
-			t.Fatal("CcipSend returned empty message_id")
-		}
-		t.Logf("message_id: %x", messageID)
-
-		const eventWait = 30 * time.Second
-		sendEvt, err := stack.RouterClient.WaitForCCIPSendRequestedEvent(ctx, startLedger, eventWait,
-			func(e *routerbindings.CCIPSendRequestedEvent) bool {
-				if e.DestChainSelector != remoteDestChain || e.Sender != deployerAddr {
-					return false
-				}
-				return bytes.Equal(e.MessageId[:], messageID[:])
+			defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, outboundSalt+"-executor")
+			extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
+				Ccvs:               []string{stack.VvrID},
+				CcvArgs:            [][]byte{{}},
+				Executor:           defaultExecutor,
+				ExecutorArgs:       []byte{},
+				GasLimit:           0,
+				BlockConfirmations: 0,
+				TokenReceiver:      []byte{},
+				TokenArgs:          []byte{},
 			})
-		if err != nil {
-			t.Fatalf("WaitForCCIPSendRequestedEvent: %v", err)
-		}
-		if !bytes.Equal(sendEvt.MessageId[:], messageID[:]) {
-			t.Fatalf("event message_id %x != return value %x", sendEvt.MessageId, messageID)
-		}
-		t.Logf("CCIPSendRequested at ledger %d tx %s", sendEvt.Ledger, sendEvt.TxHash)
+			if err != nil {
+				t.Fatalf("encode extra args: %v", err)
+			}
 
-		senderBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
-		poolBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-		t.Logf("SAC balances before token send: sender=%d pool=%d", senderBefore, poolBefore)
+			evmReceiver := make([]byte, 20)
+			for i := range evmReceiver {
+				evmReceiver[i] = 0x33
+			}
 
-		// Token transfer: deployer authorizes SAC transfer into the pool via simulation-derived auth (see deployment.Deployer).
-		latest2, err := rpcClient.GetLatestLedger(ctx)
-		if err != nil {
-			t.Fatalf("GetLatestLedger (token send): %v", err)
-		}
-		tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
-		if err != nil {
-			t.Fatalf("Router CcipSend (with SAC token): %v", err)
-		}
-		if tokenMsgID == [32]byte{} {
-			t.Fatal("CcipSend (token) returned empty message_id")
-		}
-		t.Logf("token transfer message_id: %x", tokenMsgID)
+			msg := routerbindings.StellarToAnyMessage{
+				Receiver:     evmReceiver,
+				Data:         []byte("integration token ccip_send"),
+				FeeToken:     feeToken,
+				ExtraArgs:    extraArgs,
+				TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: tokenTransferAmount}},
+			}
 
-		tokenEvt, err := stack.RouterClient.WaitForCCIPSendRequestedEvent(ctx, latest2.Sequence, eventWait,
-			func(e *routerbindings.CCIPSendRequestedEvent) bool {
-				if e.DestChainSelector != remoteDestChain || e.Sender != deployerAddr {
-					return false
-				}
-				return bytes.Equal(e.MessageId[:], tokenMsgID[:])
-			})
-		if err != nil {
-			t.Fatalf("WaitForCCIPSendRequestedEvent (token send): %v", err)
-		}
-		if !bytes.Equal(tokenEvt.MessageId[:], tokenMsgID[:]) {
-			t.Fatalf("event message_id %x != return value %x", tokenEvt.MessageId, tokenMsgID)
-		}
-		t.Logf("token CCIPSendRequested at ledger %d tx %s", tokenEvt.Ledger, tokenEvt.TxHash)
+			requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
+			if err != nil {
+				t.Fatalf("Router GetFee: %v", err)
+			}
+			if requiredFee <= 0 {
+				t.Fatalf("expected positive fee for token message, got %d", requiredFee)
+			}
+			t.Logf("quoted fee (fee token base units): %d", requiredFee)
 
-		senderAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
-		poolAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-		t.Logf("SAC balances after token send: sender=%d pool=%d", senderAfter, poolAfter)
+			// Successful send (no tokens): Router returns a message ID and emits CCIPSendRequested.
+			msgNoTokens := msg
+			msgNoTokens.TokenAmounts = nil
+			msgNoTokens.Data = []byte("integration ccip_send without tokens")
 
-		if got := senderBefore - senderAfter; got != tokenTransferAmount {
-			t.Fatalf("sender SAC balance should drop by %d; before=%d after=%d (delta=%d)",
-				tokenTransferAmount, senderBefore, senderAfter, got)
-		}
-		if got := poolAfter - poolBefore; got != tokenTransferAmount {
-			t.Fatalf("pool SAC balance should increase by %d; before=%d after=%d (delta=%d)",
-				tokenTransferAmount, poolBefore, poolAfter, got)
-		}
-	})
+			feeNoTokens, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msgNoTokens)
+			if err != nil {
+				t.Fatalf("Router GetFee (no tokens): %v", err)
+			}
+			if feeNoTokens <= 0 {
+				t.Fatalf("expected positive fee, got %d", feeNoTokens)
+			}
 
-	// Inbound: OffRamp execute decodes CcipMessageV1 with a token leg, resolves pool via TokenAdminRegistry,
-	// and calls lock-release pool release_or_mint (pool must hold SAC liquidity first).
-	t.Run("offramp execute releases SAC from pool to receiver (inbound)", func(t *testing.T) {
-		const localChain = uint64(11111)
-		const releaseAmount = int64(2_000_000)
+			latest, err := rpcClient.GetLatestLedger(ctx)
+			if err != nil {
+				t.Fatalf("GetLatestLedger: %v", err)
+			}
+			startLedger := latest.Sequence
 
-		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, "token-pool-inbound", true)
-		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "token-pool-inbound")
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "token-pool-inbound", sacToken)
+			messageID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msgNoTokens, feeNoTokens)
+			if err != nil {
+				t.Fatalf("Router CcipSend (no tokens): %v", err)
+			}
+			if messageID == [32]byte{} {
+				t.Fatal("CcipSend returned empty message_id")
+			}
+			t.Logf("message_id: %x", messageID)
 
-		evmPool := bytes.Repeat([]byte{0x51}, 20)
-		evmTok := bytes.Repeat([]byte{0x52}, 20)
-		if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
-			RemoteChainSelector:       remoteSourceChain,
-			RemotePoolAddresses:       evmPool,
-			RemoteTokenAddress:        evmTok,
-			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
-			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
-		}}, nil); err != nil {
-			t.Fatalf("TokenPool ApplyChainUpdates (inbound): %v", err)
-		}
+			const eventWait = 30 * time.Second
+			sendEvt, err := stack.RouterClient.WaitForCCIPSendRequestedEvent(ctx, startLedger, eventWait,
+				func(e *routerbindings.CCIPSendRequestedEvent) bool {
+					if e.DestChainSelector != remoteDestChain || e.Sender != deployerAddr {
+						return false
+					}
+					return bytes.Equal(e.MessageId[:], messageID[:])
+				})
+			if err != nil {
+				t.Fatalf("WaitForCCIPSendRequestedEvent: %v", err)
+			}
+			if !bytes.Equal(sendEvt.MessageId[:], messageID[:]) {
+				t.Fatalf("event message_id %x != return value %x", sendEvt.MessageId, messageID)
+			}
+			t.Logf("CCIPSendRequested at ledger %d tx %s", sendEvt.Ledger, sendEvt.TxHash)
 
-		sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, releaseAmount)
+			senderBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
+			poolBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			t.Logf("SAC balances before token send: sender=%d pool=%d", senderBefore, poolBefore)
 
-		poolBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-		rcvBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
-		if poolBefore < releaseAmount {
-			t.Fatalf("pool underfunded: %d < %d", poolBefore, releaseAmount)
-		}
+			// Token transfer: deployer authorizes SAC transfer into the pool via simulation-derived auth (see deployment.Deployer).
+			latest2, err := rpcClient.GetLatestLedger(ctx)
+			if err != nil {
+				t.Fatalf("GetLatestLedger (token send): %v", err)
+			}
+			tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+			if err != nil {
+				t.Fatalf("Router CcipSend (with SAC token): %v", err)
+			}
+			if tokenMsgID == [32]byte{} {
+				t.Fatal("CcipSend (token) returned empty message_id")
+			}
+			t.Logf("token transfer message_id: %x", tokenMsgID)
 
-		tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
-		if err != nil {
-			t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
-		}
+			tokenEvt, err := stack.RouterClient.WaitForCCIPSendRequestedEvent(ctx, latest2.Sequence, eventWait,
+				func(e *routerbindings.CCIPSendRequestedEvent) bool {
+					if e.DestChainSelector != remoteDestChain || e.Sender != deployerAddr {
+						return false
+					}
+					return bytes.Equal(e.MessageId[:], tokenMsgID[:])
+				})
+			if err != nil {
+				t.Fatalf("WaitForCCIPSendRequestedEvent (token send): %v", err)
+			}
+			if !bytes.Equal(tokenEvt.MessageId[:], tokenMsgID[:]) {
+				t.Fatalf("event message_id %x != return value %x", tokenEvt.MessageId, tokenMsgID)
+			}
+			t.Logf("token CCIPSendRequested at ledger %d tx %s", tokenEvt.Ledger, tokenEvt.TxHash)
 
-		evmSender := bytes.Repeat([]byte{0xcd}, 20)
-		var ccvZero [32]byte
-		encoded, err := encodeCcipMessageV1(ccipV1Wire{
-			SourceChainSelector: remoteSourceChain,
-			DestChainSelector:   localChain,
-			SequenceNumber:      1,
-			ExecutionGasLimit:   0,
-			CcipReceiveGasLimit: 0,
-			Finality:            0,
-			CcvExecutorHash:     ccvZero,
-			OnRampAddress:       stack.OnRampWire,
-			OffRampAddress:      stack.OffRampSuffix,
-			Sender:              evmSender,
-			Receiver:            stack.ReceiverRaw,
-			DestBlob:            nil,
-			TokenTransfer:       tokenXfer,
-			Data:                nil,
-		})
-		if err != nil {
-			t.Fatalf("encodeCcipMessageV1: %v", err)
-		}
-		msgID := keccak256MessageID(encoded)
-		verifierBlob := stack.signVerifierBlob(t, msgID)
+			senderAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
+			poolAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			t.Logf("SAC balances after token send: sender=%d pool=%d", senderAfter, poolAfter)
 
-		if err := stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0); err != nil {
-			t.Fatalf("OffRamp Execute (inbound release): %v", err)
-		}
-
-		state, err := stack.OfframpClient.GetExecutionState(ctx, msgID)
-		if err != nil {
-			t.Fatalf("GetExecutionState: %v", err)
-		}
-		if state != offrampbindings.MessageExecutionStateSuccess {
-			t.Fatalf("execution state = %d, want Success (%d)", state, offrampbindings.MessageExecutionStateSuccess)
-		}
-
-		poolAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-		rcvAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
-
-		if got := poolBefore - poolAfter; got != releaseAmount {
-			t.Fatalf("pool SAC should drop by %d; before=%d after=%d (delta=%d)",
-				releaseAmount, poolBefore, poolAfter, got)
-		}
-		if got := rcvAfter - rcvBefore; got != releaseAmount {
-			t.Fatalf("receiver SAC should increase by %d; before=%d after=%d (delta=%d)",
-				releaseAmount, rcvBefore, rcvAfter, got)
-		}
-		t.Logf("inbound release_or_mint: moved %d SAC base units pool -> receiver %s", releaseAmount, stack.ReceiverID)
-	})
-
-	// Inbound unhappy: RMN curse on source chain selector (16-byte subject, last 8 = selector BE) must reject execute
-	// before CCV verification (matches CurseCheckable::require_chain_not_cursed).
-	t.Run("offramp inbound execute rejects when source chain is cursed", func(t *testing.T) {
-		const localChain = uint64(11111)
-		const releaseAmount = int64(2_000_000)
-
-		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, "token-pool-inbound-curse-src", true)
-		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "token-pool-inbound-curse-src")
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "token-pool-inbound-curse-src", sacToken)
-
-		evmPool := bytes.Repeat([]byte{0x51}, 20)
-		evmTok := bytes.Repeat([]byte{0x52}, 20)
-		if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
-			RemoteChainSelector:       remoteSourceChain,
-			RemotePoolAddresses:       evmPool,
-			RemoteTokenAddress:        evmTok,
-			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
-			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
-		}}, nil); err != nil {
-			t.Fatalf("TokenPool ApplyChainUpdates (curse-src): %v", err)
-		}
-
-		sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, releaseAmount)
-
-		tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
-		if err != nil {
-			t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
-		}
-		evmSender := bytes.Repeat([]byte{0xcd}, 20)
-		var ccvZero [32]byte
-		encoded, err := encodeCcipMessageV1(ccipV1Wire{
-			SourceChainSelector: remoteSourceChain,
-			DestChainSelector:   localChain,
-			SequenceNumber:      1,
-			ExecutionGasLimit:   0,
-			CcipReceiveGasLimit: 0,
-			Finality:            0,
-			CcvExecutorHash:     ccvZero,
-			OnRampAddress:       stack.OnRampWire,
-			OffRampAddress:      stack.OffRampSuffix,
-			Sender:              evmSender,
-			Receiver:            stack.ReceiverRaw,
-			DestBlob:            nil,
-			TokenTransfer:       tokenXfer,
-			Data:                nil,
-		})
-		if err != nil {
-			t.Fatalf("encodeCcipMessageV1: %v", err)
-		}
-		msgID := keccak256MessageID(encoded)
-		verifierBlob := stack.signVerifierBlob(t, msgID)
-
-		subject := rmnSubjectForRouterDestChain(remoteSourceChain)
-		if err := stack.RmnRemoteClient.Curse(ctx, [][16]byte{subject}); err != nil {
-			t.Fatalf("RmnRemote Curse(source chain subject): %v", err)
-		}
-		t.Cleanup(func() {
-			if err := stack.RmnRemoteClient.Uncurse(ctx, [][16]byte{subject}); err != nil {
-				t.Logf("cleanup Uncurse: %v", err)
+			if got := senderBefore - senderAfter; got != tokenTransferAmount {
+				t.Fatalf("sender SAC balance should drop by %d; before=%d after=%d (delta=%d)",
+					tokenTransferAmount, senderBefore, senderAfter, got)
+			}
+			if got := poolAfter - poolBefore; got != tokenTransferAmount {
+				t.Fatalf("pool SAC balance should increase by %d; before=%d after=%d (delta=%d)",
+					tokenTransferAmount, poolBefore, poolAfter, got)
 			}
 		})
-
-		err = stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0)
-		assertHostContractErrorContainsCode(t, err, offrampbindings.CCIPErrorCursedByRMN)
-		t.Logf("inbound execute rejected when source chain cursed (CCIPErrorCursedByRMN): %v", err)
 	})
 
-	// Inbound unhappy: lock-release pool returns InsufficientPoolLiquidity when release amount exceeds on-ledger balance.
-	t.Run("offramp inbound execute rejects when pool has insufficient SAC balance", func(t *testing.T) {
+	// Single deployFullStack(true) for inbound: subtests share stack + SAC + pool; distinct SequenceNumber per Execute.
+	t.Run("inbound full stack (shared)", func(t *testing.T) {
 		const localChain = uint64(11111)
-		const poolFunding = int64(500_000)
-		const releaseAmount = int64(2_000_000)
-
-		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, "token-pool-inbound-low-liq", true)
-		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "token-pool-inbound-low-liq")
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, "token-pool-inbound-low-liq", sacToken)
+		const inboundSalt = "token-pool-inbound-shared"
+		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, inboundSalt, true)
+		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, inboundSalt)
+		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt, sacToken)
 
 		evmPool := bytes.Repeat([]byte{0x51}, 20)
 		evmTok := bytes.Repeat([]byte{0x52}, 20)
@@ -459,46 +307,174 @@ func TestTokenPool(t *testing.T) {
 			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
 		}}, nil); err != nil {
-			t.Fatalf("TokenPool ApplyChainUpdates (low-liq): %v", err)
+			t.Fatalf("TokenPool ApplyChainUpdates (inbound shared): %v", err)
 		}
 
-		sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, poolFunding)
-		poolBal := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-		if poolBal < releaseAmount {
-			t.Logf("pool balance %d < release %d (expected for this test)", poolBal, releaseAmount)
-		}
+		// Run low-liquidity first (underfunded pool), then curse, then happy-path release, so pool balances line up.
+		t.Run("offramp inbound execute rejects when pool has insufficient SAC balance", func(t *testing.T) {
+			const poolFunding = int64(500_000)
+			const releaseAmount = int64(2_000_000)
+			const seqNo = uint64(1)
 
-		tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
-		if err != nil {
-			t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
-		}
-		evmSender := bytes.Repeat([]byte{0xcd}, 20)
-		var ccvZero [32]byte
-		encoded, err := encodeCcipMessageV1(ccipV1Wire{
-			SourceChainSelector: remoteSourceChain,
-			DestChainSelector:   localChain,
-			SequenceNumber:      1,
-			ExecutionGasLimit:   0,
-			CcipReceiveGasLimit: 0,
-			Finality:            0,
-			CcvExecutorHash:     ccvZero,
-			OnRampAddress:       stack.OnRampWire,
-			OffRampAddress:      stack.OffRampSuffix,
-			Sender:              evmSender,
-			Receiver:            stack.ReceiverRaw,
-			DestBlob:            nil,
-			TokenTransfer:       tokenXfer,
-			Data:                nil,
+			sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, poolFunding)
+			poolBal := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			if poolBal < releaseAmount {
+				t.Logf("pool balance %d < release %d (expected for this test)", poolBal, releaseAmount)
+			}
+
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			if err != nil {
+				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
+			}
+			evmSender := bytes.Repeat([]byte{0xcd}, 20)
+			var ccvZero [32]byte
+			encoded, err := encodeCcipMessageV1(ccipV1Wire{
+				SourceChainSelector: remoteSourceChain,
+				DestChainSelector:   localChain,
+				SequenceNumber:      seqNo,
+				ExecutionGasLimit:   0,
+				CcipReceiveGasLimit: 0,
+				Finality:            0,
+				CcvExecutorHash:     ccvZero,
+				OnRampAddress:       stack.OnRampWire,
+				OffRampAddress:      stack.OffRampSuffix,
+				Sender:              evmSender,
+				Receiver:            stack.ReceiverRaw,
+				DestBlob:            nil,
+				TokenTransfer:       tokenXfer,
+				Data:                nil,
+			})
+			if err != nil {
+				t.Fatalf("encodeCcipMessageV1: %v", err)
+			}
+			msgID := keccak256MessageID(encoded)
+			verifierBlob := stack.signVerifierBlob(t, msgID)
+
+			err = stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0)
+			assertHostContractErrorContainsCode(t, err, tokenpoolbindings.CCIPErrorInsufficientPoolLiquidity)
+			t.Logf("inbound execute rejected for insufficient pool liquidity: %v", err)
 		})
-		if err != nil {
-			t.Fatalf("encodeCcipMessageV1: %v", err)
-		}
-		msgID := keccak256MessageID(encoded)
-		verifierBlob := stack.signVerifierBlob(t, msgID)
 
-		err = stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0)
-		assertHostContractErrorContainsCode(t, err, tokenpoolbindings.CCIPErrorInsufficientPoolLiquidity)
-		t.Logf("inbound execute rejected for insufficient pool liquidity: %v", err)
+		// Inbound unhappy: RMN curse on source chain selector must reject execute before CCV verification.
+		t.Run("offramp inbound execute rejects when source chain is cursed", func(t *testing.T) {
+			const releaseAmount = int64(2_000_000)
+			const seqNo = uint64(2)
+
+			sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, releaseAmount)
+
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			if err != nil {
+				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
+			}
+			evmSender := bytes.Repeat([]byte{0xcd}, 20)
+			var ccvZero [32]byte
+			encoded, err := encodeCcipMessageV1(ccipV1Wire{
+				SourceChainSelector: remoteSourceChain,
+				DestChainSelector:   localChain,
+				SequenceNumber:      seqNo,
+				ExecutionGasLimit:   0,
+				CcipReceiveGasLimit: 0,
+				Finality:            0,
+				CcvExecutorHash:     ccvZero,
+				OnRampAddress:       stack.OnRampWire,
+				OffRampAddress:      stack.OffRampSuffix,
+				Sender:              evmSender,
+				Receiver:            stack.ReceiverRaw,
+				DestBlob:            nil,
+				TokenTransfer:       tokenXfer,
+				Data:                nil,
+			})
+			if err != nil {
+				t.Fatalf("encodeCcipMessageV1: %v", err)
+			}
+			msgID := keccak256MessageID(encoded)
+			verifierBlob := stack.signVerifierBlob(t, msgID)
+
+			subject := rmnSubjectForRouterDestChain(remoteSourceChain)
+			if err := stack.RmnRemoteClient.Curse(ctx, [][16]byte{subject}); err != nil {
+				t.Fatalf("RmnRemote Curse(source chain subject): %v", err)
+			}
+			t.Cleanup(func() {
+				if err := stack.RmnRemoteClient.Uncurse(ctx, [][16]byte{subject}); err != nil {
+					t.Logf("cleanup Uncurse: %v", err)
+				}
+			})
+
+			err = stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0)
+			assertHostContractErrorContainsCode(t, err, offrampbindings.CCIPErrorCursedByRMN)
+			t.Logf("inbound execute rejected when source chain cursed (CCIPErrorCursedByRMN): %v", err)
+		})
+
+		// Inbound: OffRamp execute decodes token leg, resolves pool via TokenAdminRegistry, calls release_or_mint.
+		t.Run("offramp execute releases SAC from pool to receiver (inbound)", func(t *testing.T) {
+			const releaseAmount = int64(2_000_000)
+			const seqNo = uint64(3)
+
+			poolBal := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			if poolBal < releaseAmount {
+				sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, releaseAmount-poolBal)
+			}
+
+			poolBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			rcvBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
+			if poolBefore < releaseAmount {
+				t.Fatalf("pool underfunded: %d < %d", poolBefore, releaseAmount)
+			}
+
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			if err != nil {
+				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
+			}
+
+			evmSender := bytes.Repeat([]byte{0xcd}, 20)
+			var ccvZero [32]byte
+			encoded, err := encodeCcipMessageV1(ccipV1Wire{
+				SourceChainSelector: remoteSourceChain,
+				DestChainSelector:   localChain,
+				SequenceNumber:      seqNo,
+				ExecutionGasLimit:   0,
+				CcipReceiveGasLimit: 0,
+				Finality:            0,
+				CcvExecutorHash:     ccvZero,
+				OnRampAddress:       stack.OnRampWire,
+				OffRampAddress:      stack.OffRampSuffix,
+				Sender:              evmSender,
+				Receiver:            stack.ReceiverRaw,
+				DestBlob:            nil,
+				TokenTransfer:       tokenXfer,
+				Data:                nil,
+			})
+			if err != nil {
+				t.Fatalf("encodeCcipMessageV1: %v", err)
+			}
+			msgID := keccak256MessageID(encoded)
+			verifierBlob := stack.signVerifierBlob(t, msgID)
+
+			if err := stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{verifierBlob}, 0); err != nil {
+				t.Fatalf("OffRamp Execute (inbound release): %v", err)
+			}
+
+			state, err := stack.OfframpClient.GetExecutionState(ctx, msgID)
+			if err != nil {
+				t.Fatalf("GetExecutionState: %v", err)
+			}
+			if state != offrampbindings.MessageExecutionStateSuccess {
+				t.Fatalf("execution state = %d, want Success (%d)", state, offrampbindings.MessageExecutionStateSuccess)
+			}
+
+			poolAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
+			rcvAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
+
+			if got := poolBefore - poolAfter; got != releaseAmount {
+				t.Fatalf("pool SAC should drop by %d; before=%d after=%d (delta=%d)",
+					releaseAmount, poolBefore, poolAfter, got)
+			}
+			if got := rcvAfter - rcvBefore; got != releaseAmount {
+				t.Fatalf("receiver SAC should increase by %d; before=%d after=%d (delta=%d)",
+					releaseAmount, rcvBefore, rcvAfter, got)
+			}
+			t.Logf("inbound release_or_mint: moved %d SAC base units pool -> receiver %s", releaseAmount, stack.ReceiverID)
+		})
 	})
 }
 

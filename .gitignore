@@ -16,6 +16,7 @@ generated/
 
 # Misc
 .DS_Store
+*.out
 
 # E2E test output topology
 /tests/e2e/env/*-out.toml
