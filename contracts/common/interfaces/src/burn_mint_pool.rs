@@ -182,12 +182,14 @@ pub struct LockOrBurnIn {
     pub original_sender: soroban_sdk::Address,
     pub receiver: soroban_sdk::Bytes,
     pub remote_chain_selector: u64,
+    pub token_args: soroban_sdk::Bytes,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockOrBurnOut {
     pub dest_pool_data: soroban_sdk::Bytes,
     pub dest_token_address: soroban_sdk::Bytes,
+    pub required_outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

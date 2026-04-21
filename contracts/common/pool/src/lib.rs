@@ -508,6 +508,7 @@ fn lock_or_burn_in_to_iface(input: &LockOrBurnIn) -> IfaceLockOrBurnIn {
         original_sender: input.original_sender.clone(),
         amount: input.amount,
         local_token: input.local_token.clone(),
+        token_args: input.token_args.clone(),
     }
 }
 

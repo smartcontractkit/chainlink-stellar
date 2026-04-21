@@ -163,6 +163,16 @@ impl SiloedLockReleaseTokenPoolContract {
             return Err(CCIPError::ChainNotSupported);
         }
 
+        let required_outbound_ccvs = <Self as BaseTokenPool>::get_required_ccvs(
+            &env,
+            &input.local_token,
+            input.remote_chain_selector,
+            input.amount,
+            requested_finality,
+            &input.token_args,
+            &MessageDirection::Outbound,
+        );
+
         consume_outbound_rate_limit(&env, &input, requested_finality)?;
 
         <Self as BaseTokenPool>::preflight_check(&env, &input, requested_finality, input.amount)?;
@@ -198,6 +208,7 @@ impl SiloedLockReleaseTokenPoolContract {
         Ok(LockOrBurnOut {
             dest_token_address: remote_token,
             dest_pool_data,
+            required_outbound_ccvs,
         })
     }
 

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes};
+use soroban_sdk::{contracttype, Address, Bytes, Vec};
 
 // ============================================================
 // Rate Limit Types (EVM RateLimiter.sol parity)
@@ -69,6 +69,8 @@ pub struct LockOrBurnIn {
     pub original_sender: Address,
     pub amount: i128,
     pub local_token: Address,
+    /// Mirrors EVM `tokenArgs` / onramp extra args; hooks need this for `get_required_ccvs`.
+    pub token_args: Bytes,
 }
 
 #[contracttype]
@@ -76,6 +78,9 @@ pub struct LockOrBurnIn {
 pub struct LockOrBurnOut {
     pub dest_token_address: Bytes,
     pub dest_pool_data: Bytes,
+    /// Same CCVs as `get_required_ccvs` for this transfer, computed inside `lock_or_burn` so the
+    /// onramp does not make a second pool call (Soroban instruction budget).
+    pub required_outbound_ccvs: Vec<Address>,
 }
 
 #[contracttype]

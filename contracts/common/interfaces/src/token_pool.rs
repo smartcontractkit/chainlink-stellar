@@ -134,6 +134,7 @@ pub struct LockOrBurnIn {
     pub original_sender: soroban_sdk::Address,
     pub amount: i128,
     pub local_token: soroban_sdk::Address,
+    pub token_args: soroban_sdk::Bytes,
 }
 
 #[soroban_sdk::contracttype(export = false)]
@@ -141,6 +142,7 @@ pub struct LockOrBurnIn {
 pub struct LockOrBurnOut {
     pub dest_token_address: soroban_sdk::Bytes,
     pub dest_pool_data: soroban_sdk::Bytes,
+    pub required_outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
 }
 
 #[soroban_sdk::contracttype(export = false)]

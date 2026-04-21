@@ -227,6 +227,7 @@ fn lock_deposits_into_lockbox() {
         original_sender: sender.clone(),
         amount: 500,
         local_token: t.token_addr.clone(),
+        token_args: Bytes::new(&t.env),
     };
     let out = t.pool_client.lock_or_burn(&input, &0);
 
@@ -248,6 +249,7 @@ fn lock_or_burn_leaves_no_token_allowance_on_lockbox() {
         original_sender: sender.clone(),
         amount: 500,
         local_token: t.token_addr.clone(),
+        token_args: Bytes::new(&t.env),
     };
     t.pool_client.lock_or_burn(&input, &0);
 
@@ -343,6 +345,7 @@ fn unconfigured_lockbox_rejects_lock() {
         original_sender: sender,
         amount: 100,
         local_token: token_addr,
+        token_args: Bytes::new(&env),
     };
     let r = pool_client.try_lock_or_burn(&input, &0);
     assert!(r.is_err());
@@ -370,6 +373,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         original_sender: sender.clone(),
         amount: 300,
         local_token: t.token_addr.clone(),
+        token_args: Bytes::new(&t.env),
     };
     t.pool_client.lock_or_burn(&input_a, &0);
 
@@ -379,6 +383,7 @@ fn many_to_one_lockbox_shared_liquidity() {
         original_sender: sender.clone(),
         amount: 200,
         local_token: t.token_addr.clone(),
+        token_args: Bytes::new(&t.env),
     };
     t.pool_client.lock_or_burn(&input_b, &0);
 
@@ -518,6 +523,7 @@ fn siloed_and_shared_lockbox_isolation() {
         original_sender: sender.clone(),
         amount: 600,
         local_token: m.token_addr.clone(),
+        token_args: Bytes::new(&m.env),
     };
     m.pool_client.lock_or_burn(&lock_shared, &0);
 
@@ -527,6 +533,7 @@ fn siloed_and_shared_lockbox_isolation() {
         original_sender: sender.clone(),
         amount: 400,
         local_token: m.token_addr.clone(),
+        token_args: Bytes::new(&m.env),
     };
     m.pool_client.lock_or_burn(&lock_siloed, &0);
 
@@ -554,6 +561,7 @@ fn release_drains_siloed_lockbox() {
             original_sender: sender.clone(),
             amount: 1_000,
             local_token: m.token_addr.clone(),
+            token_args: Bytes::new(&m.env),
         },
         &0,
     );
@@ -594,6 +602,7 @@ fn release_drains_shared_lockbox() {
             original_sender: sender.clone(),
             amount: 500,
             local_token: m.token_addr.clone(),
+            token_args: Bytes::new(&m.env),
         },
         &0,
     );
@@ -639,6 +648,7 @@ fn lock_rejects_wrong_token() {
             original_sender: sender,
             amount: 100,
             local_token: wrong_token,
+            token_args: Bytes::new(&t.env),
         },
         &0,
     );
@@ -659,6 +669,7 @@ fn lock_rejects_unsupported_chain() {
             original_sender: sender,
             amount: 100,
             local_token: t.token_addr.clone(),
+            token_args: Bytes::new(&t.env),
         },
         &0,
     );
@@ -682,6 +693,7 @@ fn release_rejects_insufficient_liquidity() {
             original_sender: sender,
             amount: 100,
             local_token: m.token_addr.clone(),
+            token_args: Bytes::new(&m.env),
         },
         &0,
     );

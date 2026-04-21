@@ -218,6 +218,7 @@ fn test_lock_and_release() {
         original_sender: sender.clone(),
         amount: lock_amount,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
 
     let lock_result = pool_client.lock_or_burn(&lock_input, &0u32);
@@ -257,6 +258,7 @@ fn test_unsupported_chain_rejected() {
         original_sender: sender,
         amount: 100,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
 
     let result = pool_client.try_lock_or_burn(&lock_input, &0u32);
@@ -277,6 +279,7 @@ fn test_wrong_token_rejected() {
         original_sender: sender,
         amount: 100,
         local_token: wrong_token,
+        token_args: Bytes::new(&env),
     };
 
     let result = pool_client.try_lock_or_burn(&lock_input, &0u32);
@@ -334,6 +337,7 @@ fn test_lock_or_burn_zero_amount_succeeds_when_chain_configured() {
         original_sender: sender.clone(),
         amount: 0,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
 
     let out = pool_client.lock_or_burn(&lock_input, &0u32);
@@ -387,6 +391,7 @@ fn test_lock_or_burn_amount_exceeds_sender_balance_fails() {
         original_sender: sender,
         amount: 101,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
 
     let result = pool_client.try_lock_or_burn(&lock_input, &0u32);
@@ -412,6 +417,7 @@ fn test_lock_or_burn_negative_amount_fails() {
         original_sender: sender,
         amount: -1,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
 
     let result = pool_client.try_lock_or_burn(&lock_input, &0u32);
@@ -438,6 +444,7 @@ fn test_release_or_mint_insufficient_pool_liquidity() {
         original_sender: sender,
         amount: locked,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_input, &0u32);
 
@@ -477,6 +484,7 @@ fn test_apply_chain_updates_remove_unlists_chain() {
         original_sender: sender,
         amount: 1,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     let result = pool_client.try_lock_or_burn(&lock_input, &0u32);
     assert_eq!(result, Err(Ok(CCIPError::ChainNotSupported)));
@@ -528,6 +536,7 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         original_sender: sender,
         amount: 1,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     let out = pool_client.try_lock_or_burn(&lock_input, &0u32);
     assert!(out.is_ok());
@@ -551,6 +560,7 @@ fn test_lock_or_burn_dest_pool_data_encodes_local_decimals() {
         original_sender: sender,
         amount: 100,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     let out = pool_client.lock_or_burn(&lock_input, &0u32);
     assert_eq!(out.dest_pool_data, encode_local_decimals(&env, 7).unwrap());
@@ -655,6 +665,7 @@ fn test_lock_or_burn_exceeds_outbound_capacity_rejected() {
         original_sender: sender,
         amount: 501,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     let r = pool_client.try_lock_or_burn(&lock_input, &0u32);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
@@ -695,6 +706,7 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         original_sender: sender.clone(),
         amount: 1000,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_input, &0u32);
     assert_eq!(token_client.balance(&pool_client.address), 1000);
@@ -707,6 +719,7 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         original_sender: sender,
         amount: 500,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_input2, &0u32);
     assert_eq!(token_client.balance(&pool_client.address), 1500);
@@ -890,6 +903,7 @@ fn test_set_rate_limit_config_updates_limits() {
         original_sender: sender,
         amount: 501,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     let r = pool_client.try_lock_or_burn(&lock_input, &0u32);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
@@ -1108,6 +1122,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         original_sender: sender.clone(),
         amount: 300,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_input, &WAIT_FOR_SAFE);
 
@@ -1119,6 +1134,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         original_sender: sender.clone(),
         amount: 4,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     let r = pool_client.try_lock_or_burn(&lock_input2, &WAIT_FOR_SAFE);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
@@ -1130,6 +1146,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         original_sender: sender.clone(),
         amount: 1000,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_default, &0u32);
 }
@@ -1155,6 +1172,7 @@ fn test_ftf_outbound_rejected_when_finality_not_allowed() {
         original_sender: sender,
         amount: 100,
         local_token: token_address,
+        token_args: Bytes::new(&env),
     };
     let r = pool_client.try_lock_or_burn(&lock_input, &WAIT_FOR_SAFE);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
@@ -1368,6 +1386,7 @@ fn test_preflight_hook_rejects_lock_or_burn() {
         original_sender: sender.clone(),
         amount: 1_000_000_000,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
 
     let r = pool_client.try_lock_or_burn(&lock_input, &0u32);
@@ -1396,6 +1415,7 @@ fn test_postflight_hook_rejects_release_or_mint() {
         original_sender: sender.clone(),
         amount: 1_000_000_000,
         local_token: token_address.clone(),
+        token_args: Bytes::new(&env),
     };
     pool_client.lock_or_burn(&lock_input, &0u32);
 

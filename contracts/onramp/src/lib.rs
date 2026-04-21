@@ -329,22 +329,9 @@ impl OnRampContract {
             &dest_config.default_ccvs,
         )?;
 
-        if !message.token_amounts.is_empty() {
-            let token_amount = message.token_amounts.get(0).unwrap();
-            let pool_req = Self::get_outbound_pool_required_ccvs(
-                &env,
-                dest_chain_selector,
-                &token_amount.token,
-                token_amount.amount,
-                extra_args.block_confirmations,
-                extra_args.token_args.clone(),
-                &static_config,
-                &dest_config.default_ccvs,
-            )?;
-            Self::append_unique_pool_ccvs(&env, &mut merged_ccvs, &mut merged_ccv_args, &pool_req);
-        }
-
-        // Lock or burn tokens via the pool (if token transfer)
+        // Lock or burn tokens via the pool (if token transfer). Pool-required CCVs are returned
+        // from `lock_or_burn` (same logic as `get_required_ccvs`) so we do not invoke the pool
+        // twice in one send — avoids Soroban instruction budget exhaustion when hooks run.
         let token_transfer_bytes = if !message.token_amounts.is_empty() {
             let token_amount = message.token_amounts.get(0).unwrap();
             let pool_address =
@@ -363,9 +350,17 @@ impl OnRampContract {
                     original_sender: original_sender.clone(),
                     amount: token_amount.amount,
                     local_token: token_amount.token.clone(),
+                    token_args: extra_args.token_args.clone(),
                 },
                 &extra_args.block_confirmations,
             );
+
+            let pool_req = if lock_result.required_outbound_ccvs.is_empty() {
+                dest_config.default_ccvs.clone()
+            } else {
+                lock_result.required_outbound_ccvs.clone()
+            };
+            Self::append_unique_pool_ccvs(&env, &mut merged_ccvs, &mut merged_ccv_args, &pool_req);
 
             let token_transfer = CcipTokenTransferV1 {
                 version: MESSAGE_V1_VERSION,

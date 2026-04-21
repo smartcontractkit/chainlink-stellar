@@ -86,6 +86,16 @@ impl LockReleaseTokenPoolContract {
             return Err(CCIPError::ChainNotSupported);
         }
 
+        let required_outbound_ccvs = <Self as BaseTokenPool>::get_required_ccvs(
+            &env,
+            &input.local_token,
+            input.remote_chain_selector,
+            input.amount,
+            requested_finality,
+            &input.token_args,
+            &MessageDirection::Outbound,
+        );
+
         // TODO: Remove FTF outbound rate limiting from lock_or_burn. Stellar has
         // deterministic ~5s finality with no reorg risk, so there is no meaningful
         // "fast finality" concept when Stellar is the source chain. Senders on
@@ -142,6 +152,7 @@ impl LockReleaseTokenPoolContract {
         Ok(LockOrBurnOut {
             dest_token_address: remote_token,
             dest_pool_data,
+            required_outbound_ccvs,
         })
     }
 

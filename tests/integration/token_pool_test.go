@@ -251,6 +251,12 @@ func TestTokenPool(t *testing.T) {
 			}
 			tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
 			if err != nil {
+				// #region agent log
+				deployment.DebugSessionLogStellar("H4", "tests/integration/token_pool_test.go:CcipSendWithToken", err.Error(), map[string]any{
+					"test":        "router_ccip_send_with_lock-release_pool_token_amount",
+					"remoteChain": remoteDestChain,
+				})
+				// #endregion
 				t.Fatalf("Router CcipSend (with SAC token): %v", err)
 			}
 			if tokenMsgID == [32]byte{} {

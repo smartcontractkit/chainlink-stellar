@@ -21,6 +21,21 @@ import (
 // Compile-time check that Deployer satisfies the common bindings.Invoker interface.
 var _ bindings.Invoker = (*Deployer)(nil)
 
+// sorobanSimulationInstructionLeeway is extra CPU instructions allowed during simulateTransaction
+// (Soroban RPC resourceConfig.instructionLeeway). CCIP Router→OnRamp→TokenPool→SAC auth trees
+// can exceed the default simulation ceiling; 100M was still returning ExceededLimit in integration.
+const sorobanSimulationInstructionLeeway uint64 = 2_000_000_000
+
+// sorobanSimResourceConfig sets instruction leeway for simulateTransaction so the RPC can
+// measure large multi-contract invocations (e.g. Router → OnRamp → pool). With the default
+// leeway of 0, simulation may return HostError(Budget, ExceededLimit) even when the submitted
+// transaction is valid after assembly.
+func sorobanSimResourceConfig() *protocolrpc.ResourceConfig {
+	return &protocolrpc.ResourceConfig{
+		InstructionLeeway: sorobanSimulationInstructionLeeway,
+	}
+}
+
 // stellarRPCClient abstracts the Soroban RPC methods used by Deployer,
 // allowing tests to inject a mock without hitting a real network.
 type stellarRPCClient interface {
@@ -291,13 +306,29 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 
 	// Simulate the transaction
 	simResult, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
-		Transaction: txXDR,
+		Transaction:    txXDR,
+		ResourceConfig: sorobanSimResourceConfig(),
 	})
 	if err != nil {
+		// #region agent log
+		DebugSessionLogStellar("H3", "deployment/deployer.go:SimulateContract", err.Error(), map[string]any{
+			"stage":        "SimulateTransactionRPC",
+			"path":         "SimulateContract",
+			"functionName": functionName,
+		})
+		// #endregion
 		return nil, fmt.Errorf("simulation failed: %w", err)
 	}
 
 	if simResult.Error != "" {
+		// #region agent log
+		DebugSessionLogStellar("H1", "deployment/deployer.go:SimulateContract", simResult.Error, map[string]any{
+			"stage":                    "SimulateContract",
+			"functionName":             functionName,
+			"txDataLen":                len(simResult.TransactionDataXDR),
+			"instructionLeewayApplied": sorobanSimulationInstructionLeeway,
+		})
+		// #endregion
 		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
 	}
 
@@ -337,13 +368,27 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 		}
 
 		simResult, err = d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
-			Transaction: txXDR,
+			Transaction:    txXDR,
+			ResourceConfig: sorobanSimResourceConfig(),
 		})
 		if err != nil {
+			// #region agent log
+			DebugSessionLogStellar("H3", "deployment/deployer.go:SimulateContract:afterRestore", err.Error(), map[string]any{
+				"stage": "SimulateTransactionRPC",
+				"path":  "SimulateContractAfterRestore",
+			})
+			// #endregion
 			return nil, fmt.Errorf("simulation failed after restore: %w", err)
 		}
 
 		if simResult.Error != "" {
+			// #region agent log
+			DebugSessionLogStellar("H1", "deployment/deployer.go:SimulateContract:afterRestore", simResult.Error, map[string]any{
+				"stage":                    "SimulateContract",
+				"path":                     "afterRestore",
+				"instructionLeewayApplied": sorobanSimulationInstructionLeeway,
+			})
+			// #endregion
 			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
 		}
 	}
@@ -451,13 +496,32 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 
 	// Simulate to get resource estimates
 	simResult, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
-		Transaction: txXDR,
+		Transaction:    txXDR,
+		ResourceConfig: sorobanSimResourceConfig(),
 	})
 	if err != nil {
+		// #region agent log
+		DebugSessionLogStellar("H3", "deployment/deployer.go:buildAndSubmitTransaction", err.Error(), map[string]any{
+			"stage": "SimulateTransactionRPC",
+			"path":  "buildAndSubmitTransaction",
+		})
+		// #endregion
 		return nil, fmt.Errorf("simulation failed: %w", err)
 	}
 
 	if simResult.Error != "" {
+		// #region agent log
+		DebugSessionLogStellar("H1", "deployment/deployer.go:buildAndSubmitTransaction", simResult.Error, map[string]any{
+			"stage":                    "buildAndSubmitTransaction",
+			"path":                     "first_sim",
+			"txDataLen":                len(simResult.TransactionDataXDR),
+			"hasRestorePre":            simResult.RestorePreamble != nil,
+			"minResourceFee":           simResult.MinResourceFee,
+			"resultsLen":               len(simResult.Results),
+			"instructionLeewayApplied": sorobanSimulationInstructionLeeway,
+			"hypothesisNote":           "H1=budget; if leeway applied and still fails, tx may exceed host max or stale WASM",
+		})
+		// #endregion
 		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
 	}
 
@@ -492,13 +556,27 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		}
 
 		simResult, err = d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
-			Transaction: txXDR,
+			Transaction:    txXDR,
+			ResourceConfig: sorobanSimResourceConfig(),
 		})
 		if err != nil {
+			// #region agent log
+			DebugSessionLogStellar("H3", "deployment/deployer.go:buildAndSubmitTransaction:afterRestore", err.Error(), map[string]any{
+				"stage": "SimulateTransactionRPC",
+				"path":  "afterRestore",
+			})
+			// #endregion
 			return nil, fmt.Errorf("simulation failed after restore: %w", err)
 		}
 
 		if simResult.Error != "" {
+			// #region agent log
+			DebugSessionLogStellar("H1", "deployment/deployer.go:buildAndSubmitTransaction:afterRestore", simResult.Error, map[string]any{
+				"stage":                    "buildAndSubmitTransaction",
+				"path":                     "after_restore_sim",
+				"instructionLeewayApplied": sorobanSimulationInstructionLeeway,
+			})
+			// #endregion
 			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
 		}
 	}

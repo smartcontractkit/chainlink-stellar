@@ -54,6 +54,7 @@ type LockOrBurnIn struct {
 	OriginalSender      string
 	Amount              int64
 	LocalToken          string
+	TokenArgs           []byte
 }
 
 // ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
@@ -64,6 +65,7 @@ func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
 		"original_sender":       scval.AddressToScVal(s.OriginalSender),
 		"amount":                scval.I128ToScVal(s.Amount),
 		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"token_args":            scval.BytesToScVal(s.TokenArgs),
 	})
 }
 
@@ -112,6 +114,12 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 				return nil, fmt.Errorf("local_token: %w", err)
 			}
 			result.LocalToken = v
+		case "token_args":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("token_args is not bytes")
+			}
+			result.TokenArgs = []byte(v)
 		}
 	}
 
@@ -120,15 +128,17 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 
 // LockOrBurnOut represents the LockOrBurnOut struct from the contract.
 type LockOrBurnOut struct {
-	DestTokenAddress []byte
-	DestPoolData     []byte
+	DestTokenAddress     []byte
+	DestPoolData         []byte
+	RequiredOutboundCcvs []string
 }
 
 // ToScVal converts LockOrBurnOut to an xdr.ScVal for contract calls.
 func (s LockOrBurnOut) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"dest_token_address": scval.BytesToScVal(s.DestTokenAddress),
-		"dest_pool_data":     scval.BytesToScVal(s.DestPoolData),
+		"dest_token_address":     scval.BytesToScVal(s.DestTokenAddress),
+		"dest_pool_data":         scval.BytesToScVal(s.DestPoolData),
+		"required_outbound_ccvs": scval.AddressSliceToScVal(s.RequiredOutboundCcvs),
 	})
 }
 
@@ -159,6 +169,19 @@ func LockOrBurnOutFromScVal(val xdr.ScVal) (*LockOrBurnOut, error) {
 				return nil, fmt.Errorf("dest_pool_data is not bytes")
 			}
 			result.DestPoolData = []byte(v)
+		case "required_outbound_ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("required_outbound_ccvs is not a vec")
+			}
+			result.RequiredOutboundCcvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.RequiredOutboundCcvs[i] = v
+			}
 		}
 	}
 
