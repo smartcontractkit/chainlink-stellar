@@ -68,6 +68,9 @@ func (s *stubRPC) GetLatestLedger(_ context.Context) (protocolrpc.GetLatestLedge
 func (s *stubRPC) GetLedgers(_ context.Context, _ protocolrpc.GetLedgersRequest) (protocolrpc.GetLedgersResponse, error) {
 	return s.getLedgersResp, s.getLedgersErr
 }
+func (s *stubRPC) GetFeeStats(_ context.Context) (protocolrpc.GetFeeStatsResponse, error) {
+	return protocolrpc.GetFeeStatsResponse{}, nil
+}
 
 func txResp(status string) protocolrpc.GetTransactionResponse {
 	return protocolrpc.GetTransactionResponse{

@@ -44,6 +44,11 @@ var (
 		Help: "Transaction retries by reason",
 	}, []string{"chainID", "reason"})
 
+	promStellarTxmDroppedTxs = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellar_txm_tx_dropped",
+		Help: "Transactions dropped due to backpressure (oldest-evicted or new-rejected)",
+	}, []string{"chainID", "reason"})
+
 	// Stellar-specific metrics
 
 	promStellarTxmRestoreTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -91,6 +96,7 @@ type stellarTxmMetrics struct {
 	pendingTxs     metric.Int64Gauge
 	errorTxs       metric.Int64Counter
 	retryTxs       metric.Int64Counter
+	droppedTxs     metric.Int64Counter
 
 	// Stellar-specific metrics
 	restoreTotal   metric.Int64Counter
@@ -134,6 +140,11 @@ func newStellarTxmMetrics(chainID string) (*stellarTxmMetrics, error) {
 		return nil, fmt.Errorf("failed to register retry txs counter: %w", err)
 	}
 
+	droppedTxs, err := m.Int64Counter("stellar_txm_tx_dropped")
+	if err != nil {
+		return nil, fmt.Errorf("failed to register dropped txs counter: %w", err)
+	}
+
 	restoreTotal, err := m.Int64Counter("stellar_txm_restore_total")
 	if err != nil {
 		return nil, fmt.Errorf("failed to register restore total counter: %w", err)
@@ -174,6 +185,7 @@ func newStellarTxmMetrics(chainID string) (*stellarTxmMetrics, error) {
 		pendingTxs:     pendingTxs,
 		errorTxs:       errorTxs,
 		retryTxs:       retryTxs,
+		droppedTxs:     droppedTxs,
 
 		restoreTotal:   restoreTotal,
 		restoreSuccess: restoreSuccess,
@@ -220,6 +232,12 @@ func (m *stellarTxmMetrics) IncrementRetryTxs(ctx context.Context, reason string
 	promStellarTxmRetryTxs.WithLabelValues(m.chainID, reason).Add(1)
 	otelAttrs := append(m.getOtelAttributes(), attribute.String("reason", reason))
 	m.retryTxs.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+}
+
+func (m *stellarTxmMetrics) IncrementDroppedTxs(ctx context.Context, reason string) {
+	promStellarTxmDroppedTxs.WithLabelValues(m.chainID, reason).Add(1)
+	otelAttrs := append(m.getOtelAttributes(), attribute.String("reason", reason))
+	m.droppedTxs.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
 }
 
 // --- Stellar-specific metrics ---

@@ -30,7 +30,7 @@ func NewFeeStrategyFromConfig(cfg Config) FeeStrategy {
 // The inclusion fee is geometrically bumped per attempt; the resource fee is passed
 // through from simulation with a flat safety buffer.
 func (f *FeeStrategy) Calculate(minResourceFee int64, attempt uint64) int64 {
-	inclusionFee := f.inclusionFee(attempt)
+	inclusionFee := f.InclusionFee(attempt)
 	resourceFee := minResourceFee + f.ResourceFeeBuffer
 	return inclusionFee + resourceFee
 }
@@ -42,7 +42,7 @@ func (f *FeeStrategy) CalculateRestoreFee(preambleMinResourceFee int64, restoreF
 }
 
 // InclusionFee returns the inclusion fee for the given attempt number.
-func (f *FeeStrategy) inclusionFee(attempt uint64) int64 {
+func (f *FeeStrategy) InclusionFee(attempt uint64) int64 {
 	if attempt == 0 {
 		return f.BaseInclusionFee
 	}

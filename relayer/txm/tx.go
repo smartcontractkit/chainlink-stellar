@@ -5,7 +5,6 @@ import (
 	"math/big"
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
-	"github.com/stellar/go-stellar-sdk/xdr"
 
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 )
@@ -18,34 +17,30 @@ type StellarTx struct {
 	FromAddress string           // G... strkey
 	PublicKey   ed25519.PublicKey
 
-	// Pre-built operation (when the caller provides one directly).
-	Operation txnbuild.Operation
+	Operations         []txnbuild.Operation
+	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
 
-	// Contract invocation fields (used when TxRequest specifies contract/function directly).
-	ContractID   string      // C… strkey
-	FunctionName string
-	Args         []xdr.ScVal
-
-	Attempt    uint64
-	Status     commontypes.TransactionStatus
-	TxHash     string
-	Fee        *big.Int // total fee in stroops
-	ResultCode string   // result code from GetTransaction (for diagnostics)
+	Attempt        uint64
+	Status         commontypes.TransactionStatus
+	TxHash         string
+	Fee            *big.Int // total fee in stroops; updated to actual FeeCharged on confirmation
+	ResultCode     string   // result code from GetTransaction (for diagnostics)
+	ResultMetaXDR  string   // XDR-encoded result meta from GetTransaction SUCCESS
+	MaxLedger      uint32   // ledger bounds set during broadcast
+	MinResourceFee int64    // from simulation result
 
 	// Done is closed when the transaction reaches a terminal state.
 	// Used by EnqueueAndWait to block until completion.
 	Done chan struct{}
 }
 
-// TxRequest is the input accepted by Enqueue / EnqueueAndWait / Simulate.
+// TxRequest is the input accepted by Enqueue / EnqueueAndWait.
 type TxRequest struct {
-	ID               string // idempotency key (auto-generated if empty)
-	FromAddress      string // optional; defaults to TXM's signer address
-	ContractID       string // C… strkey of the Soroban contract
-	FunctionName     string
-	Args             []xdr.ScVal
-	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
-	SimulateOnly     bool   // if true, simulate without broadcasting
+	ID                 string               // idempotency key (auto-generated if empty)
+	FromAddress        string               // optional; defaults to TXM's signer address
+	Operations         []txnbuild.Operation // the Stellar operations to execute
+	LedgerBoundsOffset uint32               // per-tx override (0 = use config default)
+	Metadata           *commontypes.TxMeta  // optional; carries WorkflowExecutionID and other node-level context
 }
 
 // TxResult is returned by EnqueueAndWait and Simulate with the outcome of a transaction.
@@ -76,6 +71,18 @@ const (
 	ErrorReasonRestoreFailed   = "restore_failed"
 	ErrorReasonBadAuth         = "bad_auth"
 	ErrorReasonTryAgainLater   = "try_again_later"
+)
+
+// Drop reasons classify why a pending transaction was dropped from the broadcast queue.
+const (
+	// DropReasonChannelFullOldestEvicted: the oldest queued tx was evicted to make
+	// room for a newer one. The oldest has the stalest simulation data and the
+	// nearest LedgerBounds expiry, so the new tx's intent takes priority.
+	DropReasonChannelFullOldestEvicted = "channel_full_oldest_evicted"
+
+	// DropReasonChannelFullNewRejected: the incoming tx was rejected because the
+	// channel was still full after an attempted oldest-evict (concurrent enqueue race).
+	DropReasonChannelFullNewRejected = "channel_full_new_rejected"
 )
 
 // RetryReason classifies why a transaction is being retried (Layer 3 lifecycle retries).

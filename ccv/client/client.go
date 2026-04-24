@@ -42,6 +42,7 @@ type RPCClient interface {
 	GetEvents(ctx context.Context, req protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
 	GetLatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error)
 	GetLedgers(ctx context.Context, req protocolrpc.GetLedgersRequest) (protocolrpc.GetLedgersResponse, error)
+	GetFeeStats(ctx context.Context) (protocolrpc.GetFeeStatsResponse, error)
 }
 
 var _ RPCClient = (*rpcclient.Client)(nil)
@@ -274,6 +275,16 @@ func (c *Client) GetLedgers(ctx context.Context, req protocolrpc.GetLedgersReque
 	start := time.Now()
 	resp, err := c.RPC.GetLedgers(ctx, req)
 	c.recordLatency("GetLedgers", time.Since(start), err)
+	return resp, err
+}
+
+func (c *Client) GetFeeStats(ctx context.Context) (protocolrpc.GetFeeStatsResponse, error) {
+	if err := c.WaitRateLimit(ctx); err != nil {
+		return protocolrpc.GetFeeStatsResponse{}, fmt.Errorf("rate limiter: %w", err)
+	}
+	start := time.Now()
+	resp, err := c.RPC.GetFeeStats(ctx)
+	c.recordLatency("GetFeeStats", time.Since(start), err)
 	return resp, err
 }
 

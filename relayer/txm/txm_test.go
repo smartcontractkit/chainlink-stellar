@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
-	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -58,8 +60,14 @@ type mockRPCClient struct {
 	getEventsErr         error
 	getLedgersResp       protocolrpc.GetLedgersResponse
 	getLedgersErr        error
+	getFeeStatsResp      protocolrpc.GetFeeStatsResponse
+	getFeeStatsErr       error
 
 	getTransactionCalls atomic.Int32
+
+	// getLatestLedgerHook, when set, is used instead of getLatestLedgerResp (avoids
+	// racy test updates to getLatestLedgerResp after Start).
+	getLatestLedgerHook func() (protocolrpc.GetLatestLedgerResponse, error)
 }
 
 func (m *mockRPCClient) SimulateTransaction(_ context.Context, _ protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
@@ -79,10 +87,16 @@ func (m *mockRPCClient) GetEvents(_ context.Context, _ protocolrpc.GetEventsRequ
 	return m.getEventsResp, m.getEventsErr
 }
 func (m *mockRPCClient) GetLatestLedger(_ context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
+	if m.getLatestLedgerHook != nil {
+		return m.getLatestLedgerHook()
+	}
 	return m.getLatestLedgerResp, m.getLatestLedgerErr
 }
 func (m *mockRPCClient) GetLedgers(_ context.Context, _ protocolrpc.GetLedgersRequest) (protocolrpc.GetLedgersResponse, error) {
 	return m.getLedgersResp, m.getLedgersErr
+}
+func (m *mockRPCClient) GetFeeStats(_ context.Context) (protocolrpc.GetFeeStatsResponse, error) {
+	return m.getFeeStatsResp, m.getFeeStatsErr
 }
 
 // buildAccountEntryXDR creates a base64-encoded XDR LedgerEntryData for an account
@@ -122,7 +136,7 @@ const testAddress = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
 func TestNew_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 	require.NotNil(t, txm)
 	assert.Equal(t, "StellarTxm", txm.Name())
@@ -133,7 +147,7 @@ func TestNew_Success(t *testing.T) {
 func TestStellarTxm_StartStop(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	err = txm.Start(context.Background())
@@ -149,7 +163,7 @@ func TestStellarTxm_StartStop(t *testing.T) {
 func TestStellarTxm_DoubleStart(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
@@ -164,38 +178,81 @@ func TestStellarTxm_DoubleStart(t *testing.T) {
 func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
-	t.Run("missing ContractID", func(t *testing.T) {
-		_, err := txm.Enqueue(context.Background(), TxRequest{
-			FunctionName: "transfer",
-		})
+	t.Run("missing Operations", func(t *testing.T) {
+		_, err := txm.Enqueue(context.Background(), TxRequest{})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ContractID is required")
+		assert.Contains(t, err.Error(), "currently only single-operation transactions are supported")
 	})
 
-	t.Run("missing FunctionName", func(t *testing.T) {
+	t.Run("too many Operations", func(t *testing.T) {
 		_, err := txm.Enqueue(context.Background(), TxRequest{
-			ContractID: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+			Operations: []txnbuild.Operation{
+				&txnbuild.InvokeHostFunction{
+					HostFunction: xdr.HostFunction{
+						Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+						InvokeContract: &xdr.InvokeContractArgs{
+							ContractAddress: xdr.ScAddress{
+								Type:       xdr.ScAddressTypeScAddressTypeContract,
+								ContractId: &xdr.ContractId{},
+							},
+							FunctionName: xdr.ScSymbol("noop"),
+						},
+					},
+				},
+				&txnbuild.InvokeHostFunction{
+					HostFunction: xdr.HostFunction{
+						Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+						InvokeContract: &xdr.InvokeContractArgs{
+							ContractAddress: xdr.ScAddress{
+								Type:       xdr.ScAddressTypeScAddressTypeContract,
+								ContractId: &xdr.ContractId{},
+							},
+							FunctionName: xdr.ScSymbol("noop"),
+						},
+					},
+				},
+			},
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "FunctionName is required")
+		assert.Contains(t, err.Error(), "currently only single-operation transactions are supported")
 	})
 
 	t.Run("duplicate ID", func(t *testing.T) {
 		id := "dup-test-id"
 		_, err := txm.Enqueue(context.Background(), TxRequest{
-			ID:           id,
-			ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-			FunctionName: "init",
+			ID: id,
+			Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+				HostFunction: xdr.HostFunction{
+					Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+					InvokeContract: &xdr.InvokeContractArgs{
+						ContractAddress: xdr.ScAddress{
+							Type:       xdr.ScAddressTypeScAddressTypeContract,
+							ContractId: &xdr.ContractId{},
+						},
+						FunctionName: xdr.ScSymbol("noop"),
+					},
+				},
+			}},
 		})
 		require.NoError(t, err)
 
 		_, err = txm.Enqueue(context.Background(), TxRequest{
-			ID:           id,
-			ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-			FunctionName: "init",
+			ID: id,
+			Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+				HostFunction: xdr.HostFunction{
+					Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+					InvokeContract: &xdr.InvokeContractArgs{
+						ContractAddress: xdr.ScAddress{
+							Type:       xdr.ScAddressTypeScAddressTypeContract,
+							ContractId: &xdr.ContractId{},
+						},
+						FunctionName: xdr.ScSymbol("noop"),
+					},
+				},
+			}},
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
@@ -205,36 +262,78 @@ func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 func TestStellarTxm_Enqueue_AutoID(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	txID, err := txm.Enqueue(context.Background(), TxRequest{
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, txID)
 }
 
-func TestStellarTxm_Enqueue_ChannelFull(t *testing.T) {
+// TestStellarTxm_Enqueue_ChannelFull_EvictsOldest verifies drop-oldest backpressure:
+// when the broadcast channel is full, the oldest queued tx is evicted (marked Failed
+// with DropReasonChannelFullOldestEvicted) to make room for the newer tx, which is
+// accepted. The TXM is not started, so broadcastLoop never drains the channel.
+func TestStellarTxm_Enqueue_ChannelFull_EvictsOldest(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
 	cfg := Config{BroadcastChanSize: ptr(uint(1))}
-	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
-	_, err = txm.Enqueue(context.Background(), TxRequest{
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
-	})
+	op := &txnbuild.InvokeHostFunction{
+		HostFunction: xdr.HostFunction{
+			Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+			InvokeContract: &xdr.InvokeContractArgs{
+				ContractAddress: xdr.ScAddress{
+					Type:       xdr.ScAddressTypeScAddressTypeContract,
+					ContractId: &xdr.ContractId{},
+				},
+				FunctionName: xdr.ScSymbol("noop"),
+			},
+		},
+	}
+
+	oldID, err := txm.Enqueue(context.Background(), TxRequest{Operations: []txnbuild.Operation{op}})
 	require.NoError(t, err)
 
-	_, err = txm.Enqueue(context.Background(), TxRequest{
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "broadcast channel full")
+	newID, err := txm.Enqueue(context.Background(), TxRequest{Operations: []txnbuild.Operation{op}})
+	require.NoError(t, err, "new tx should be accepted after evicting oldest")
+	assert.NotEqual(t, oldID, newID)
+
+	// Old tx should be marked Failed with the drop reason; its Done channel closed.
+	oldStatus, err := txm.GetStatus(oldID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, oldStatus, "evicted tx should be Failed")
+
+	txm.transactionsLock.RLock()
+	oldTx := txm.transactions[oldID]
+	newTx := txm.transactions[newID]
+	txm.transactionsLock.RUnlock()
+	require.NotNil(t, oldTx)
+	require.NotNil(t, newTx)
+	assert.Equal(t, DropReasonChannelFullOldestEvicted, oldTx.ResultCode)
+	select {
+	case <-oldTx.Done:
+		// expected — closeDone was called
+	default:
+		t.Fatal("evicted tx's Done channel should be closed")
+	}
+	// New tx should still be in the channel, not terminated.
+	assert.Equal(t, commontypes.Pending, newTx.Status)
 }
 
 // --- GetStatus tests ---
@@ -242,7 +341,7 @@ func TestStellarTxm_Enqueue_ChannelFull(t *testing.T) {
 func TestStellarTxm_GetStatus(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -257,8 +356,18 @@ func TestStellarTxm_GetStatus(t *testing.T) {
 
 	t.Run("existing tx", func(t *testing.T) {
 		txID, err := txm.Enqueue(context.Background(), TxRequest{
-			ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-			FunctionName: "init",
+			Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+				HostFunction: xdr.HostFunction{
+					Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+					InvokeContract: &xdr.InvokeContractArgs{
+						ContractAddress: xdr.ScAddress{
+							Type:       xdr.ScAddressTypeScAddressTypeContract,
+							ContractId: &xdr.ContractId{},
+						},
+						FunctionName: xdr.ScSymbol("noop"),
+					},
+				},
+			}},
 		})
 		require.NoError(t, err)
 
@@ -273,7 +382,7 @@ func TestStellarTxm_GetStatus(t *testing.T) {
 func TestStellarTxm_GetTransactionFee(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -283,8 +392,18 @@ func TestStellarTxm_GetTransactionFee(t *testing.T) {
 
 	t.Run("not finalized", func(t *testing.T) {
 		txID, err := txm.Enqueue(context.Background(), TxRequest{
-			ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-			FunctionName: "init",
+			Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+				HostFunction: xdr.HostFunction{
+					Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+					InvokeContract: &xdr.InvokeContractArgs{
+						ContractAddress: xdr.ScAddress{
+							Type:       xdr.ScAddressTypeScAddressTypeContract,
+							ContractId: &xdr.ContractId{},
+						},
+						FunctionName: xdr.ScSymbol("noop"),
+					},
+				},
+			}},
 		})
 		require.NoError(t, err)
 
@@ -295,8 +414,18 @@ func TestStellarTxm_GetTransactionFee(t *testing.T) {
 
 	t.Run("finalized with fee", func(t *testing.T) {
 		txID, err := txm.Enqueue(context.Background(), TxRequest{
-			ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-			FunctionName: "init",
+			Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+				HostFunction: xdr.HostFunction{
+					Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+					InvokeContract: &xdr.InvokeContractArgs{
+						ContractAddress: xdr.ScAddress{
+							Type:       xdr.ScAddressTypeScAddressTypeContract,
+							ContractId: &xdr.ContractId{},
+						},
+						FunctionName: xdr.ScSymbol("noop"),
+					},
+				},
+			}},
 		})
 		require.NoError(t, err)
 
@@ -317,7 +446,7 @@ func TestStellarTxm_GetTransactionFee(t *testing.T) {
 func TestStellarTxm_InflightCount(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	chanLen, storeCount := txm.InflightCount()
@@ -339,18 +468,29 @@ func TestStellarTxm_BroadcastLoop_ProcessesTx(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
 	}
 
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
 	defer txm.Close()
 
 	txID, err := txm.Enqueue(context.Background(), TxRequest{
-		FromAddress:  testAddress,
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -374,6 +514,7 @@ func TestStellarTxm_ConfirmLoop_FinalizesSuccess(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
 				Status: protocolrpc.TransactionStatusSuccess,
@@ -382,16 +523,26 @@ func TestStellarTxm_ConfirmLoop_FinalizesSuccess(t *testing.T) {
 	}
 
 	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
-	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
 	defer txm.Close()
 
 	txID, err := txm.Enqueue(context.Background(), TxRequest{
-		FromAddress:  testAddress,
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -405,6 +556,8 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 	t.Parallel()
 
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	var latestLedgerSeq atomic.Uint32
+	latestLedgerSeq.Store(1000)
 
 	mock := &mockRPCClient{
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
@@ -412,24 +565,37 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 				{DataXDR: accountXDR},
 			},
 		},
-		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
 		getTransactionErr:   fmt.Errorf("not found"),
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedgerSeq.Load()}, nil
+		},
 	}
 
 	cfg := Config{
 		ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond),
 		MaxTxRetryAttempts:  ptr(uint64(0)),
 	}
-	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
 	defer txm.Close()
 
 	txID, err := txm.Enqueue(context.Background(), TxRequest{
-		FromAddress:  testAddress,
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -440,7 +606,7 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond)
 
 	// Now simulate the ledger advancing past MaxLedger (which is 1000+50=1050)
-	mock.getLatestLedgerResp = protocolrpc.GetLatestLedgerResponse{Sequence: 2000}
+	latestLedgerSeq.Store(2000)
 
 	// MaxTxRetryAttempts=0, so after expiry it should go to Failed
 	require.Eventually(t, func() bool {
@@ -463,6 +629,7 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
 				Status: protocolrpc.TransactionStatusSuccess,
@@ -471,7 +638,7 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 	}
 
 	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
-	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
@@ -481,9 +648,19 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 	defer cancel()
 
 	result, err := txm.EnqueueAndWait(ctx, TxRequest{
-		FromAddress:  testAddress,
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -503,6 +680,7 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
 		// Never return success — tx stays unconfirmed
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
@@ -512,7 +690,7 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 	}
 
 	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
-	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
@@ -522,9 +700,19 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 	defer cancel()
 
 	_, err = txm.EnqueueAndWait(ctx, TxRequest{
-		FromAddress:  testAddress,
-		ContractID:   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		FunctionName: "init",
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context")
@@ -545,7 +733,7 @@ func TestStellarTxm_GetSequenceNumber(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	client := newTestClient(mock)
@@ -563,7 +751,7 @@ func TestStellarTxm_GetSequenceNumber_AccountNotFound(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
 	require.NoError(t, err)
 
 	client := newTestClient(mock)
@@ -572,3 +760,214 @@ func TestStellarTxm_GetSequenceNumber_AccountNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestStellarTxm_GetSequenceNumber_EmptyAddress(t *testing.T) {
+	t.Parallel()
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	require.NoError(t, err)
+	client := newTestClient(mock)
+	_, err = txm.getSequenceNumber(context.Background(), client, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "address is required")
+}
+
+// --- Simulate tests ---
+
+func testInvokeNoopOp() *txnbuild.InvokeHostFunction {
+	return &txnbuild.InvokeHostFunction{
+		HostFunction: xdr.HostFunction{
+			Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+			InvokeContract: &xdr.InvokeContractArgs{
+				ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &xdr.ContractId{}},
+				FunctionName:    xdr.ScSymbol("noop"),
+			},
+		},
+	}
+}
+
+func TestStellarTxm_Simulate_validation(t *testing.T) {
+	t.Parallel()
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(&mockRPCClient{}), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+
+	t.Run("no operations", func(t *testing.T) {
+		t.Parallel()
+		_, err := txm.Simulate(context.Background(), TxRequest{FromAddress: testAddress})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "at least one operation")
+	})
+	t.Run("empty FromAddress", func(t *testing.T) {
+		t.Parallel()
+		_, err := txm.Simulate(context.Background(), TxRequest{Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "FromAddress is required")
+	})
+}
+
+func TestStellarTxm_Simulate_getClientError(t *testing.T) {
+	t.Parallel()
+	bad := func() (*ccvclient.Client, error) { return nil, fmt.Errorf("unreachable") }
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, bad, "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	_, err = txm.Simulate(context.Background(), TxRequest{
+		FromAddress: testAddress,
+		Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get client")
+}
+
+func TestStellarTxm_Simulate_LatestLedgerError(t *testing.T) {
+	t.Parallel()
+	inner := &mockRPCClient{getLatestLedgerErr: fmt.Errorf("ledger err")}
+	client := newTestClient(inner)
+	getClient := func() (*ccvclient.Client, error) { return client, nil }
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, getClient, "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	_, err = txm.Simulate(context.Background(), TxRequest{
+		FromAddress: testAddress,
+		Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "latest ledger")
+}
+
+func TestStellarTxm_Simulate_success(t *testing.T) {
+	t.Parallel()
+	mock := &mockRPCClient{
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 9},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 5},
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	res, err := txm.Simulate(context.Background(), TxRequest{
+		FromAddress: testAddress,
+		Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), res.MinResourceFee)
+}
+
+// --- maybeRetry: broadcast channel full ---
+
+// blockingAfterFirstSimulateRPC runs the first Simulate in "started, then block until
+// unblock is closed" mode so the broadcast loop can be stuck mid-tx while the channel holds another ID.
+type blockingAfterFirstSimulateRPC struct {
+	*mockRPCClient
+	started chan struct{} // closed when the first sim call has entered
+	unblock chan struct{} // close to let sim calls finish (tests control lifecycle)
+	calls   int32
+}
+
+func (b *blockingAfterFirstSimulateRPC) SimulateTransaction(ctx context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+	if atomic.AddInt32(&b.calls, 1) == 1 {
+		close(b.started)
+		<-b.unblock
+	}
+	return b.mockRPCClient.SimulateTransaction(ctx, req)
+}
+
+func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	inner := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "h"},
+	}
+	bmock := &blockingAfterFirstSimulateRPC{
+		mockRPCClient: inner,
+		started:       make(chan struct{}),
+		unblock:       make(chan struct{}),
+	}
+	getClient := func() (*ccvclient.Client, error) {
+		return ccvclient.NewClientFromInterfaceWithConfig(bmock, ccvclient.ClientConfig{LedgerCacheTTL: 0, PollInterval: 10 * time.Millisecond}), nil
+	}
+	cfg := Config{
+		BroadcastChanSize:  ptr(uint(1)),
+		MaxTxRetryAttempts: ptr(uint64(3)),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer func() { _ = txm.Close() }()
+
+	op := testInvokeNoopOp()
+
+	_, err = txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{op}})
+	require.NoError(t, err)
+	// Wait until the first tx is inside Simulate (broadcast loop is blocked there).
+	<-bmock.started
+	// Buffer size 1: the second id sits in the channel while the first tx is still in sim.
+	_, err = txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{op}})
+	require.NoError(t, err)
+
+	retried := txm.maybeRetry(context.Background(), &UnconfirmedTx{
+		Tx:   &StellarTx{ID: "retry", Attempt: 0},
+		Hash: "h",
+	}, RetryReasonTimedOut)
+	assert.False(t, retried, "with a full broadcast buffer maybeRetry should not block or drop a retry")
+	close(bmock.unblock) // Unblock sim so the test can shut down the txm.
+}
+
+func buildSuccessTransactionResultXDR(t *testing.T, fee int64) string {
+	t.Helper()
+	inner, err := xdr.NewTransactionResultResult(xdr.TransactionResultCodeTxSuccess, []xdr.OperationResult{})
+	require.NoError(t, err)
+	res := xdr.TransactionResult{FeeCharged: xdr.Int64(fee), Result: inner}
+	b64, err := xdr.MarshalBase64(res)
+	require.NoError(t, err)
+	return b64
+}
+
+func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	resultB64 := buildSuccessTransactionResultXDR(t, 40_200)
+	metaB64 := "QVFMTUFURURfVE1fVEVTVA=="
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		getTransactionResp: protocolrpc.GetTransactionResponse{
+			TransactionDetails: protocolrpc.TransactionDetails{
+				Status:        protocolrpc.TransactionStatusSuccess,
+				ResultXDR:     resultB64,
+				ResultMetaXDR: metaB64,
+			},
+		},
+	}
+	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &xdr.ContractId{}},
+					FunctionName:    xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(txID)
+		return err == nil && st == commontypes.Finalized
+	}, 5*time.Second, 20*time.Millisecond)
+
+	txm.transactionsLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsLock.RUnlock()
+	require.NotNil(t, tracked)
+	assert.Equal(t, big.NewInt(40_200), tracked.Fee)
+	assert.Equal(t, metaB64, tracked.ResultMetaXDR)
+}

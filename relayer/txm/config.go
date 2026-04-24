@@ -14,7 +14,7 @@ var DefaultNodeConfig = NodeConfig{
 	Timeout: config.MustNewDuration(30 * time.Second),
 }
 
-// NodeConfig defines per-node RPC endpoint configuration. Mirrors the Aptos
+// NodeConfig defines per-node RPC endpoint configuration.
 // Node config pattern: each configured node gets its own name, URL, and
 // timeout. The ClientFactory uses these to build and cache *ccvclient.Client
 // instances per URL.
@@ -92,7 +92,7 @@ var DefaultConfigSet = Config{
 	MaxTxRetryAttempts:     ptr(uint64(5)),
 	MaxRestoreAttempts:     ptr(uint(3)),
 
-	PruneInterval:     config.MustNewDuration(4 * time.Hour),
+	PruneInterval:     config.MustNewDuration(2 * time.Hour),
 	PruneTxExpiration: config.MustNewDuration(2 * time.Hour),
 }
 

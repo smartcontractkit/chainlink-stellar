@@ -78,15 +78,16 @@ func TestClientFactory_GetClient_SingleNode(t *testing.T) {
 func TestClientFactory_GetClient_EvictsUnhealthyNode(t *testing.T) {
 	t.Parallel()
 
+	// Single-node setup: the bad node is the only cached client so it is
+	// always tried by the fast path, making the test deterministic.
+	// (Two-node setups with rand.Perm are 50/50 — the healthy node may be
+	// returned before the bad one is ever checked.)
 	failStub := &stubRPC{
 		latestLedgerErr: fmt.Errorf("connection refused"),
 	}
-	healthyStub := &stubRPC{
-		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 42},
-	}
 
 	f := &ClientFactory{
-		nodes:       testNodes("http://bad:8080", "http://good:8080"),
+		nodes:       testNodes("http://bad:8080"),
 		chainID:     "test",
 		cfg:         testCfg(),
 		lggr:        logger.Nop(),
@@ -94,13 +95,10 @@ func TestClientFactory_GetClient_EvictsUnhealthyNode(t *testing.T) {
 	}
 
 	f.clientCache["http://bad:8080"] = NewClientFromInterfaceWithConfig(failStub, testCfg())
-	f.clientCache["http://good:8080"] = NewClientFromInterfaceWithConfig(healthyStub, testCfg())
 
-	client, err := f.GetClient()
-	require.NoError(t, err)
-	require.NotNil(t, client)
+	// GetClient will fail (no healthy node), but should still evict the bad entry.
+	_, _ = f.GetClient() //nolint:errcheck
 
-	// Bad node should have been evicted
 	f.clientCacheMu.RLock()
 	_, badExists := f.clientCache["http://bad:8080"]
 	f.clientCacheMu.RUnlock()
