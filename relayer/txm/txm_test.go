@@ -68,16 +68,28 @@ type mockRPCClient struct {
 	// getLatestLedgerHook, when set, is used instead of getLatestLedgerResp (avoids
 	// racy test updates to getLatestLedgerResp after Start).
 	getLatestLedgerHook func() (protocolrpc.GetLatestLedgerResponse, error)
+	simulateHook        func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error)
+	sendHook            func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error)
+	getTransactionHook  func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error)
 }
 
-func (m *mockRPCClient) SimulateTransaction(_ context.Context, _ protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+func (m *mockRPCClient) SimulateTransaction(_ context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+	if m.simulateHook != nil {
+		return m.simulateHook(req)
+	}
 	return m.simulateResp, m.simulateErr
 }
-func (m *mockRPCClient) SendTransaction(_ context.Context, _ protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+func (m *mockRPCClient) SendTransaction(_ context.Context, req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	if m.sendHook != nil {
+		return m.sendHook(req)
+	}
 	return m.sendTransactionResp, m.sendTransactionErr
 }
-func (m *mockRPCClient) GetTransaction(_ context.Context, _ protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+func (m *mockRPCClient) GetTransaction(_ context.Context, req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
 	m.getTransactionCalls.Add(1)
+	if m.getTransactionHook != nil {
+		return m.getTransactionHook(req)
+	}
 	return m.getTransactionResp, m.getTransactionErr
 }
 func (m *mockRPCClient) GetLedgerEntries(_ context.Context, _ protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error) {
@@ -113,6 +125,19 @@ func buildAccountEntryXDR(t *testing.T, address string, seqNum int64) string {
 		},
 	}
 	b64, err := xdr.MarshalBase64(entry)
+	require.NoError(t, err)
+	return b64
+}
+
+func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
+	t.Helper()
+	data := xdr.SorobanTransactionData{
+		Resources: xdr.SorobanResources{
+			Footprint: xdr.LedgerFootprint{},
+		},
+		ResourceFee: 1,
+	}
+	b64, err := xdr.MarshalBase64(data)
 	require.NoError(t, err)
 	return b64
 }
@@ -970,4 +995,45 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 	require.NotNil(t, tracked)
 	assert.Equal(t, big.NewInt(40_200), tracked.Fee)
 	assert.Equal(t, metaB64, tracked.ResultMetaXDR)
+}
+
+func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	resultB64 := buildFailedInvokeHostFunctionResultXDR(t, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
+		getTransactionResp: protocolrpc.GetTransactionResponse{
+			TransactionDetails: protocolrpc.TransactionDetails{
+				Status:    protocolrpc.TransactionStatusFailed,
+				ResultXDR: resultB64,
+			},
+		},
+	}
+	cfg := Config{ConfirmPollInterval: config.MustNewDuration(20 * time.Millisecond)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(txID)
+		return err == nil && st == commontypes.Failed
+	}, 5*time.Second, 20*time.Millisecond)
+
+	txm.transactionsLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsLock.RUnlock()
+	require.NotNil(t, tracked)
+	assert.Equal(t, uint64(0), tracked.Attempt)
+	assert.Equal(t, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped.String(), tracked.ResultCode)
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	require.NotNil(t, store)
+	assert.Equal(t, int64(102), store.GetNextSequence(), "on-chain FAILED consumed sequence 101, so the next tx should use 102")
 }

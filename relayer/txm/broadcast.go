@@ -2,13 +2,43 @@ package txm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
+
+type simulationErrorSource int
+
+const (
+	simulationErrorSourceRPC simulationErrorSource = iota
+	simulationErrorSourceResponse
+)
+
+type simulationError struct {
+	source simulationErrorSource
+	err    error
+}
+
+func (e *simulationError) Error() string {
+	switch e.source {
+	case simulationErrorSourceRPC:
+		return fmt.Sprintf("RPC SimulateTransaction failed: %v", e.err)
+	case simulationErrorSourceResponse:
+		return fmt.Sprintf("simulation error: %v", e.err)
+	default:
+		return e.err.Error()
+	}
+}
+
+func (e *simulationError) Unwrap() error {
+	return e.err
+}
 
 func (s *StellarTxm) buildPreliminaryTx(tx *StellarTx, seq int64, maxLedger uint32) (*txnbuild.Transaction, error) {
 	// seq is the NEXT sequence to submit (TxStore convention).
@@ -36,18 +66,77 @@ func (s *StellarTxm) simulateTransaction(ctx context.Context, client *ccvclient.
 		return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("failed to base64 encode preliminary tx: %w", err)
 	}
 
+	start := time.Now()
 	simResult, err := client.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
 		Transaction: txXDR,
 	})
+	s.metrics.ObserveSimulationDuration(ctx, time.Since(start).Seconds())
 	if err != nil {
-		return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("RPC SimulateTransaction failed: %w", err)
+		return protocolrpc.SimulateTransactionResponse{}, &simulationError{source: simulationErrorSourceRPC, err: err}
 	}
 
 	if simResult.Error != "" {
-		return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("simulation error: %s", simResult.Error)
+		return protocolrpc.SimulateTransactionResponse{}, &simulationError{source: simulationErrorSourceResponse, err: errors.New(simResult.Error)}
 	}
 
 	return simResult, nil
+}
+
+func isRetryableSimulationError(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	terminalHints := []string{
+		"error(contract",
+		"contract error",
+		"trapped",
+		"trap",
+		"malformed",
+		"bad auth",
+		"invalid",
+		"unknown function",
+		"no such contract",
+	}
+	for _, hint := range terminalHints {
+		if strings.Contains(msg, hint) {
+			return false
+		}
+	}
+
+	retryableHints := []string{
+		"timeout",
+		"temporarily unavailable",
+		"try_again_later",
+		"too many requests",
+		"rate limit",
+		"connection refused",
+		"connection reset",
+		"eof",
+		"bad_seq",
+		"tx_bad_seq",
+		"sequence",
+		"stale",
+		"ledger",
+	}
+
+	var simErr *simulationError
+	if errors.As(err, &simErr) && simErr.source == simulationErrorSourceResponse {
+		for _, hint := range retryableHints {
+			if strings.Contains(msg, hint) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, hint := range retryableHints {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+	return true
 }
 
 // assembleTransaction rebuilds tx with simulation results and a caller-supplied inclusionFee.

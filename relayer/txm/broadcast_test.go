@@ -5,6 +5,7 @@ import (
 	"fmt"
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,7 +93,11 @@ func TestStellarTxm_BroadcastPipeline_SimulateError(t *testing.T) {
 		simulateErr:         fmt.Errorf("RPC down"),
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	cfg := Config{
+		MaxSimulateAttempts: ptr(uint(2)),
+		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(context.Background()))
@@ -124,6 +129,46 @@ func TestStellarTxm_BroadcastPipeline_SimulateError(t *testing.T) {
 	store := txm.accountStore.GetTxStore(testAddress)
 	assert.Equal(t, int64(101), store.GetNextSequence())
 	assert.Equal(t, 0, store.InflightCount())
+}
+
+func TestStellarTxm_BroadcastPipeline_SimulateRPCErrorRetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+
+	var simulateCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+	}
+	mock.simulateHook = func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		if simulateCalls.Add(1) == 1 {
+			return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("temporary EOF")
+		}
+		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
+	}
+
+	cfg := Config{
+		MaxSimulateAttempts: ptr(uint(2)),
+		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(2), simulateCalls.Load())
 }
 
 func TestStellarTxm_BroadcastPipeline_TryAgainLater(t *testing.T) {
@@ -309,12 +354,20 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCError(t *testing.T) {
 func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	var simulateCalls atomic.Int32
 	mock := &mockRPCClient{
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
 		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		simulateResp:         protocolrpc.SimulateTransactionResponse{Error: "soroban simulation failed"},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	mock.simulateHook = func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		simulateCalls.Add(1)
+		return protocolrpc.SimulateTransactionResponse{Error: "soroban simulation failed"}, nil
+	}
+	cfg := Config{
+		MaxSimulateAttempts: ptr(uint(3)),
+		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(context.Background()))
 	defer txm.Close()
@@ -324,9 +377,72 @@ func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
 		st, e := txm.GetStatus(txID)
 		return e == nil && st == commontypes.Failed
 	}, 5*time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(1), simulateCalls.Load())
 }
 
-func TestStellarTxm_BroadcastPipeline_RestorePreambleFails(t *testing.T) {
+func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	accountAfterRestoreXDR := buildAccountEntryXDR(t, testAddress, 101)
+	preamble := protocolrpc.RestorePreamble{
+		MinResourceFee:     1_000,
+		TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+	}
+
+	var simulateCalls atomic.Int32
+	var sendCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+	}
+	mock.simulateHook = func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		if simulateCalls.Add(1) == 1 {
+			return protocolrpc.SimulateTransactionResponse{
+				MinResourceFee:  10_000,
+				RestorePreamble: &preamble,
+			}, nil
+		}
+		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
+	}
+	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		if sendCalls.Add(1) == 1 {
+			mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
+			return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "restore-hash"}, nil
+		}
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "original-hash"}, nil
+	}
+	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+		if req.Hash == "restore-hash" {
+			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
+		}
+		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
+	}
+
+	cfg := Config{
+		MaxSubmitRetryAttempts: ptr(uint(1)),
+		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, e := txm.GetStatus(txID)
+		return e == nil && st == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond)
+
+	assert.Equal(t, int32(2), simulateCalls.Load(), "should simulate before and after restore")
+	assert.Equal(t, int32(2), sendCalls.Load(), "should send restore then original")
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	require.NotNil(t, store)
+	assert.Equal(t, int64(103), store.GetNextSequence(), "restore uses 101, original uses 102, next available is 103")
+}
+
+func TestStellarTxm_BroadcastPipeline_RestorePreambleInvalidXDRFails(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
 	preamble := protocolrpc.RestorePreamble{MinResourceFee: 1}
@@ -350,6 +466,51 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleFails(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
+func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	accountAfterRestoreXDR := buildAccountEntryXDR(t, testAddress, 101)
+	preamble := protocolrpc.RestorePreamble{
+		MinResourceFee:     1_000,
+		TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+	}
+
+	var sendCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp: protocolrpc.SimulateTransactionResponse{
+			MinResourceFee:  10_000,
+			RestorePreamble: &preamble,
+		},
+	}
+	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		sendCalls.Add(1)
+		mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "restore-hash"}, nil
+	}
+	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+		if req.Hash == "restore-hash" {
+			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
+		}
+		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
+	}
+
+	cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, e := txm.GetStatus(txID)
+		return e == nil && st == commontypes.Failed
+	}, 5*time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(1), sendCalls.Load(), "should not try a second restore")
+}
+
 func TestStellarTxm_BroadcastPipeline_SigningError(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
@@ -371,19 +532,61 @@ func TestStellarTxm_BroadcastPipeline_SigningError(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
-func TestStellarTxm_BroadcastPipeline_GetClientFails_DoesNotFinalize(t *testing.T) {
+func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 	t.Parallel()
-	bad := func() (*ccvclient.Client, error) { return nil, fmt.Errorf("no rpc") }
-	txm, err := New(logger.Nop(), &mockKeystore{}, Config{}, bad, "c", "Test SDF Network ; September 2015")
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+	}
+	client := newTestClient(mock)
+	var getClientCalls atomic.Int32
+	getClient := func() (*ccvclient.Client, error) {
+		if getClientCalls.Add(1) == 1 {
+			return nil, fmt.Errorf("no rpc")
+		}
+		return client, nil
+	}
+	cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
+	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, getClient, "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(context.Background()))
 	defer txm.Close()
 	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
-	time.Sleep(80 * time.Millisecond)
-	st, err := txm.GetStatus(txID)
+	require.Eventually(t, func() bool {
+		st, e := txm.GetStatus(txID)
+		return e == nil && st == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond)
+	assert.GreaterOrEqual(t, getClientCalls.Load(), int32(2))
+}
+
+func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t *testing.T) {
+	t.Parallel()
+	getClient := func() (*ccvclient.Client, error) { return nil, fmt.Errorf("no rpc") }
+	cfg := Config{
+		MaxTxRetryAttempts: ptr(uint64(2)),
+		SubmitRetryDelay:   config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, getClient, "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
-	assert.Equal(t, commontypes.Pending, st, "getClient error returns early from broadcast; tx stays pending (current behavior)")
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, e := txm.GetStatus(txID)
+		return e == nil && st == commontypes.Failed
+	}, 5*time.Second, 50*time.Millisecond)
+
+	txm.transactionsLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsLock.RUnlock()
+	require.NotNil(t, tracked)
+	assert.Equal(t, uint64(2), tracked.Attempt)
+	assert.Equal(t, 0, txm.accountStore.GetTotalInflightCount(), "client failures happen before sequence allocation")
 }
 
 func TestStellarTxm_BroadcastPipeline_DUPLICATE(t *testing.T) {

@@ -14,7 +14,7 @@ type StellarTx struct {
 	ID          string
 	Metadata    *commontypes.TxMeta
 	Timestamp   uint64
-	FromAddress string           // G... strkey
+	FromAddress string // G... strkey
 	PublicKey   ed25519.PublicKey
 
 	Operations         []txnbuild.Operation
@@ -55,22 +55,23 @@ type TxResult struct {
 
 // Error reason constants classify broadcast and confirmation failures.
 const (
-	ErrorReasonSequenceNumber  = "sequence_number"
-	ErrorReasonStoreCreate     = "store_create"
-	ErrorReasonSimulation      = "simulation"
-	ErrorReasonAssembly        = "assembly"
-	ErrorReasonSigning         = "signing"
-	ErrorReasonNoHash          = "no_hash"
-	ErrorReasonStoreAdd        = "store_add"
-	ErrorReasonUnknownSubmit   = "unknown_submit"
-	ErrorReasonMaxRetries      = "max_retries"
-	ErrorReasonRevert          = "revert"
-	ErrorReasonTimedOut        = "timed_out"
-	ErrorReasonBadSeq          = "bad_seq"
-	ErrorReasonInsufficientBal = "insufficient_balance"
-	ErrorReasonRestoreFailed   = "restore_failed"
-	ErrorReasonBadAuth         = "bad_auth"
-	ErrorReasonTryAgainLater   = "try_again_later"
+	ErrorReasonSequenceNumber    = "sequence_number"
+	ErrorReasonStoreCreate       = "store_create"
+	ErrorReasonSimulation        = "simulation"
+	ErrorReasonAssembly          = "assembly"
+	ErrorReasonSigning           = "signing"
+	ErrorReasonNoHash            = "no_hash"
+	ErrorReasonStoreAdd          = "store_add"
+	ErrorReasonUnknownSubmit     = "unknown_submit"
+	ErrorReasonMaxRetries        = "max_retries"
+	ErrorReasonRevert            = "revert"
+	ErrorReasonTimedOut          = "timed_out"
+	ErrorReasonBadSeq            = "bad_seq"
+	ErrorReasonInsufficientBal   = "insufficient_balance"
+	ErrorReasonRestoreFailed     = "restore_failed"
+	ErrorReasonBadAuth           = "bad_auth"
+	ErrorReasonTryAgainLater     = "try_again_later"
+	ErrorReasonClientUnavailable = "client_unavailable"
 )
 
 // Drop reasons classify why a pending transaction was dropped from the broadcast queue.
@@ -93,4 +94,5 @@ const (
 	RetryReasonTimedOut
 	RetryReasonBadSeq
 	RetryReasonTryAgainLater
+	RetryReasonClientUnavailable
 )

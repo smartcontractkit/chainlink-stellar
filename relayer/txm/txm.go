@@ -21,6 +21,7 @@ import (
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -40,11 +41,11 @@ type StellarTxm struct {
 	transactionsLock          sync.RWMutex
 	transactionsLastPruneTime uint64
 
-	broadcastChan     chan string
-	accountStore      *AccountStore
-	starter           commonutils.StartStopOnce
-	done              sync.WaitGroup
-	stop              chan struct{}
+	broadcastChan chan string
+	accountStore  *AccountStore
+	starter       commonutils.StartStopOnce
+	done          sync.WaitGroup
+	stop          chan struct{}
 
 	getClient         func() (*ccvclient.Client, error)
 	networkPassphrase string
@@ -445,6 +446,19 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 	client, err := s.getClient()
 	if err != nil {
 		ctxLogger.Errorw("failed to get RPC client", "error", err)
+		s.incrementTransactionAttempt(tx)
+		if s.getTransactionAttempt(tx) < *s.config.MaxTxRetryAttempts {
+			select {
+			case <-time.After(s.config.SubmitRetryDelay.Duration()):
+			case <-ctx.Done():
+				return
+			}
+		}
+		if !s.maybeRetry(ctx, &UnconfirmedTx{Tx: tx}, RetryReasonClientUnavailable) {
+			s.updateTransactionStatus(tx, commontypes.Failed)
+			s.closeDone(tx)
+			s.metrics.IncrementErrorTxs(ctx, ErrorReasonClientUnavailable)
+		}
 		return
 	}
 
@@ -493,36 +507,10 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 	}
 
 	seq := txStore.GetNextSequence()
+	restoreHandled := false
 
-	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; submitAttempt++ {
-		latestLedger, err := client.LatestLedger(ctx)
-		if err != nil {
-			ctxLogger.Errorw("failed to get latest ledger", "error", err)
-			txStore.Release(seq)
-			s.updateTransactionStatus(tx, commontypes.Failed)
-			s.closeDone(tx)
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonSimulation)
-			return
-		}
-
-		offset := *s.config.LedgerBoundsOffset
-		if tx.LedgerBoundsOffset > 0 {
-			offset = tx.LedgerBoundsOffset
-		}
-		maxLedger := latestLedger.Sequence + offset
-		tx.MaxLedger = maxLedger
-
-		prelimTx, err := s.buildPreliminaryTx(tx, seq, maxLedger)
-		if err != nil {
-			ctxLogger.Errorw("failed to build preliminary tx", "error", err)
-			txStore.Release(seq)
-			s.updateTransactionStatus(tx, commontypes.Failed)
-			s.closeDone(tx)
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonSimulation)
-			return
-		}
-
-		simResult, err := s.simulateTransaction(ctx, client, prelimTx)
+	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
+		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq)
 		if err != nil {
 			ctxLogger.Errorw("simulation failed", "error", err)
 			txStore.Release(seq)
@@ -533,12 +521,25 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 
 		if simResult.RestorePreamble != nil {
-			ctxLogger.Errorw("restore required but not implemented yet")
-			txStore.Release(seq)
-			s.updateTransactionStatus(tx, commontypes.Failed)
-			s.closeDone(tx)
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonRestoreFailed)
-			return
+			if restoreHandled {
+				ctxLogger.Errorw("restore still required after RestoreFootprint transaction")
+				txStore.Release(seq)
+				s.updateTransactionStatus(tx, commontypes.Failed)
+				s.closeDone(tx)
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonRestoreFailed)
+				return
+			}
+			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq); err != nil {
+				ctxLogger.Errorw("failed to restore archived ledger entries", "error", err)
+				txStore.Release(seq)
+				s.updateTransactionStatus(tx, commontypes.Failed)
+				s.closeDone(tx)
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonRestoreFailed)
+				return
+			}
+			restoreHandled = true
+			seq = txStore.GetNextSequence()
+			continue
 		}
 
 		tx.MinResourceFee = simResult.MinResourceFee
@@ -553,6 +554,12 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
+		resourceFee := totalFee - inclusionFee
+		if resourceFee < 0 {
+			resourceFee = 0
+		}
+		s.metrics.ObserveInclusionFee(ctx, inclusionFee)
+		s.metrics.ObserveResourceFee(ctx, resourceFee)
 		s.updateTransactionFee(tx, big.NewInt(totalFee))
 
 		signedTx, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
@@ -608,6 +615,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			ctxLogger.Warnw("tx rejected with bad_seq, resyncing and retrying", "attempt", submitAttempt)
 			_ = s.resyncSequence(ctx, client, tx)
 			seq = txStore.GetNextSequence()
+			submitAttempt++
 			continue
 		}
 
@@ -627,6 +635,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			ctxLogger.Warnw("tx rejected with try_again_later, bumping inclusion fee",
 				"attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped)
 			inclusionFee = bumped
+			submitAttempt++
 			select {
 			case <-time.After(s.config.SubmitRetryDelay.Duration()):
 			case <-ctx.Done():
@@ -638,6 +647,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		// Other retryable errors
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
+		submitAttempt++
 		select {
 		case <-time.After(s.config.SubmitRetryDelay.Duration()):
 		case <-ctx.Done():
@@ -651,6 +661,77 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 	s.updateTransactionStatus(tx, commontypes.Failed)
 	s.closeDone(tx)
 	s.metrics.IncrementErrorTxs(ctx, ErrorReasonMaxRetries)
+}
+
+func (s *StellarTxm) prepareAndSimulateWithRetry(
+	ctx context.Context,
+	client *ccvclient.Client,
+	tx *StellarTx,
+	seq int64,
+) (*txnbuild.Transaction, protocolrpc.SimulateTransactionResponse, uint32, error) {
+	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
+
+	maxAttempts := *s.config.MaxSimulateAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 1
+	}
+
+	var lastErr error
+	for attempt := uint(0); attempt < maxAttempts; attempt++ {
+		latestLedger, err := client.LatestLedger(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get latest ledger: %w", err)
+			if !s.shouldRetrySimulation(ctx, lastErr, attempt, maxAttempts) {
+				return nil, protocolrpc.SimulateTransactionResponse{}, 0, lastErr
+			}
+			ctxLogger.Warnw("latest ledger fetch failed before simulation, retrying", "attempt", attempt, "error", err)
+			if !s.sleepBeforeSimulationRetry(ctx) {
+				return nil, protocolrpc.SimulateTransactionResponse{}, 0, ctx.Err()
+			}
+			continue
+		}
+
+		offset := *s.config.LedgerBoundsOffset
+		if tx.LedgerBoundsOffset > 0 {
+			offset = tx.LedgerBoundsOffset
+		}
+		maxLedger := latestLedger.Sequence + offset
+		tx.MaxLedger = maxLedger
+
+		prelimTx, err := s.buildPreliminaryTx(tx, seq, maxLedger)
+		if err != nil {
+			return nil, protocolrpc.SimulateTransactionResponse{}, 0, fmt.Errorf("failed to build preliminary tx: %w", err)
+		}
+
+		simResult, err := s.simulateTransaction(ctx, client, prelimTx)
+		if err == nil {
+			return prelimTx, simResult, maxLedger, nil
+		}
+
+		lastErr = err
+		if !s.shouldRetrySimulation(ctx, err, attempt, maxAttempts) {
+			return nil, protocolrpc.SimulateTransactionResponse{}, 0, err
+		}
+		ctxLogger.Warnw("simulation failed, retrying", "attempt", attempt, "error", err)
+		if !s.sleepBeforeSimulationRetry(ctx) {
+			return nil, protocolrpc.SimulateTransactionResponse{}, 0, ctx.Err()
+		}
+	}
+
+	return nil, protocolrpc.SimulateTransactionResponse{}, 0, fmt.Errorf("simulation attempts exhausted: %w", lastErr)
+}
+
+func (s *StellarTxm) shouldRetrySimulation(ctx context.Context, err error, attempt uint, maxAttempts uint) bool {
+	return attempt+1 < maxAttempts && isRetryableSimulationError(ctx, err)
+}
+
+func (s *StellarTxm) sleepBeforeSimulationRetry(ctx context.Context) bool {
+	select {
+	case <-time.After(s.config.SubmitRetryDelay.Duration()):
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // --- Confirm loop ---
@@ -735,14 +816,20 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					continue
 
 				case protocolrpc.TransactionStatusFailed:
-					if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
+					if confirmErr := txStore.Confirm(utx.Sequence, hash, false); confirmErr != nil {
 						ctxLogger.Errorw("failed to confirm failed tx in TxStore", "hash", hash, "error", confirmErr)
 					}
-					s.updateTransactionResultCode(utx.Tx, resp.Status)
+					classification := classifyFailedTransactionResult(resp.ResultXDR)
+					s.updateTransactionResultCode(utx.Tx, classification.resultCode)
 
-					ctxLogger.Infow("confirmed tx: failed on-chain", "hash", hash)
-					s.metrics.IncrementErrorTxs(ctx, ErrorReasonRevert)
+					ctxLogger.Infow("confirmed tx: failed on-chain", "hash", hash, "resultCode", classification.resultCode, "retryable", classification.retryable)
+					s.metrics.IncrementErrorTxs(ctx, classification.resultCode)
 
+					if !classification.retryable {
+						s.updateTransactionStatus(utx.Tx, commontypes.Failed)
+						s.closeDone(utx.Tx)
+						continue
+					}
 					s.incrementTransactionAttempt(utx.Tx)
 					if !s.maybeRetry(ctx, utx, RetryReasonResourceExhaustion) {
 						s.updateTransactionStatus(utx.Tx, commontypes.Failed)
@@ -812,6 +899,8 @@ func (r RetryReason) String() string {
 		return "bad_seq"
 	case RetryReasonTryAgainLater:
 		return "try_again_later"
+	case RetryReasonClientUnavailable:
+		return "client_unavailable"
 	default:
 		return "unknown"
 	}
