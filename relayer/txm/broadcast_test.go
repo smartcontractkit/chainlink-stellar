@@ -327,7 +327,87 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	assert.Equal(t, int64(107), store.GetNextSequence()) // 105 + 1 + 1 (used)
 }
 
-func TestStellarTxm_BroadcastPipeline_SendTransactionRPCError(t *testing.T) {
+func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	var sendCalls atomic.Int32
+	var simulateCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+	}
+	mock.simulateHook = func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		simulateCalls.Add(1)
+		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
+	}
+	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		if sendCalls.Add(1) == 1 {
+			return protocolrpc.SendTransactionResponse{}, fmt.Errorf("rpc submit failed")
+		}
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"}, nil
+	}
+
+	cfg := Config{
+		MaxSubmitRetryAttempts: ptr(uint(2)),
+		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(txID)
+		return err == nil && st == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(2), sendCalls.Load())
+	assert.Equal(t, int32(2), simulateCalls.Load(), "submit retry should re-simulate before resubmitting")
+}
+
+func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget(t *testing.T) {
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	var sendCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
+	}
+	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		sendCalls.Add(1)
+		return protocolrpc.SendTransactionResponse{}, fmt.Errorf("rpc submit failed")
+	}
+
+	cfg := Config{
+		MaxSubmitRetryAttempts: ptr(uint(2)),
+		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(context.Background()))
+	defer txm.Close()
+
+	txID, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(txID)
+		return err == nil && st == commontypes.Failed
+	}, 5*time.Second, 50*time.Millisecond)
+	assert.Equal(t, int32(2), sendCalls.Load())
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	require.NotNil(t, store)
+	assert.Equal(t, int64(101), store.GetNextSequence())
+	assert.Equal(t, 0, store.InflightCount())
+}
+
+func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
 	mock := &mockRPCClient{
@@ -336,7 +416,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCError(t *testing.T) {
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-		sendTransactionErr:  fmt.Errorf("rpc submit failed"),
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING"},
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
@@ -349,6 +429,11 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCError(t *testing.T) {
 		st, err := txm.GetStatus(txID)
 		return err == nil && st == commontypes.Failed
 	}, 5*time.Second, 50*time.Millisecond)
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	require.NotNil(t, store)
+	assert.Equal(t, int64(101), store.GetNextSequence())
+	assert.Equal(t, 0, store.InflightCount())
 }
 
 func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {

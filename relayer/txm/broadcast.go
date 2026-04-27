@@ -245,12 +245,20 @@ func (s *StellarTxm) handleSendResult(
 
 	switch submitResult.Status {
 	case "PENDING", "DUPLICATE":
+		if submitResult.Hash == "" {
+			ctxLogger.Errorw("accepted transaction response missing hash", "status", submitResult.Status)
+			return false, true, ErrorReasonNoHash
+		}
+
 		err := txStore.AddUnconfirmed(seq, submitResult.Hash, maxLedger, tx)
 		if err != nil {
 			ctxLogger.Errorw("failed to add unconfirmed tx", "error", err)
 			return false, true, ErrorReasonStoreAdd
 		}
 		s.updateTransactionHash(tx, submitResult.Hash)
+		s.updateTransactionResultXDR(tx, "")
+		s.updateTransactionResultMeta(tx, "")
+		s.updateTransactionResultCode(tx, "")
 		return true, false, ""
 
 	case "TRY_AGAIN_LATER":

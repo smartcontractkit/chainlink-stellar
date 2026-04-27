@@ -24,6 +24,7 @@ type StellarTx struct {
 	Status         commontypes.TransactionStatus
 	TxHash         string
 	Fee            *big.Int // total fee in stroops; updated to actual FeeCharged on confirmation
+	ResultXDR      string   // XDR-encoded transaction result from GetTransaction
 	ResultCode     string   // result code from GetTransaction (for diagnostics)
 	ResultMetaXDR  string   // XDR-encoded result meta from GetTransaction SUCCESS
 	MaxLedger      uint32   // ledger bounds set during broadcast
@@ -49,6 +50,7 @@ type TxResult struct {
 	Hash          string
 	Status        commontypes.TransactionStatus
 	Fee           *big.Int // total fee charged in stroops
+	ResultXDR     string   // XDR-encoded transaction result from GetTransaction
 	ResultMetaXDR string   // XDR-encoded result meta from GetTransaction
 	Error         error
 }

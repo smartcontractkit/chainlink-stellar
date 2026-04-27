@@ -142,14 +142,11 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 
 	fromAddr := req.FromAddress
 	if fromAddr == "" {
-		accounts, err := s.keystore.Accounts(ctx)
+		var err error
+		fromAddr, err = s.defaultFromAddress(ctx)
 		if err != nil {
-			return "", fmt.Errorf("keystore.Accounts: %w", err)
+			return "", err
 		}
-		if len(accounts) == 0 {
-			return "", errors.New("keystore has no accounts")
-		}
-		fromAddr = accounts[0]
 	}
 
 	tx := &StellarTx{
@@ -195,11 +192,16 @@ func (s *StellarTxm) txResult(tx *StellarTx) *TxResult {
 	s.transactionsLock.RLock()
 	defer s.transactionsLock.RUnlock()
 
+	return s.txResultLocked(tx)
+}
+
+func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 	result := &TxResult{
 		ID:            tx.ID,
 		Hash:          tx.TxHash,
 		Status:        tx.Status,
 		Fee:           tx.Fee,
+		ResultXDR:     tx.ResultXDR,
 		ResultMetaXDR: tx.ResultMetaXDR,
 	}
 	if tx.ResultCode != "" {
@@ -310,6 +312,21 @@ func (s *StellarTxm) GetStatus(transactionID string) (commontypes.TransactionSta
 	return tx.Status, nil
 }
 
+func (s *StellarTxm) GetTransactionResult(transactionID string) (*TxResult, error) {
+	if transactionID == "" {
+		return nil, errors.New("empty transaction ID")
+	}
+
+	s.transactionsLock.RLock()
+	defer s.transactionsLock.RUnlock()
+	tx, ok := s.transactions[transactionID]
+	if !ok {
+		return nil, errors.New("no such transaction")
+	}
+
+	return s.txResultLocked(tx), nil
+}
+
 func (s *StellarTxm) GetTransactionFee(transactionID string) (*big.Int, error) {
 	if transactionID == "" {
 		return nil, errors.New("empty transaction ID")
@@ -353,6 +370,12 @@ func (s *StellarTxm) updateTransactionFee(tx *StellarTx, fee *big.Int) {
 	s.transactionsLock.Lock()
 	defer s.transactionsLock.Unlock()
 	tx.Fee = fee
+}
+
+func (s *StellarTxm) updateTransactionResultXDR(tx *StellarTx, resultXDR string) {
+	s.transactionsLock.Lock()
+	defer s.transactionsLock.Unlock()
+	tx.ResultXDR = resultXDR
 }
 
 func (s *StellarTxm) updateTransactionResultCode(tx *StellarTx, code string) {
@@ -586,12 +609,18 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			Transaction: signedXDR,
 		})
 		if err != nil {
-			ctxLogger.Errorw("failed to submit transaction", "error", err)
-			txStore.Release(seq)
-			s.updateTransactionStatus(tx, commontypes.Failed)
-			s.closeDone(tx)
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonUnknownSubmit)
-			return
+			ctxLogger.Warnw("failed to submit transaction", "attempt", submitAttempt, "error", err)
+			submitAttempt++
+			if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+				break
+			}
+			select {
+			case <-time.After(s.config.SubmitRetryDelay.Duration()):
+			case <-ctx.Done():
+				txStore.Release(seq)
+				return
+			}
+			continue
 		}
 
 		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger)
@@ -795,6 +824,8 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					}
 
 					// Replace estimated fee with the actual fee charged by the network.
+					s.updateTransactionResultXDR(utx.Tx, resp.ResultXDR)
+					s.updateTransactionResultCode(utx.Tx, "")
 					if resp.ResultXDR != "" {
 						var txResult xdr.TransactionResult
 						if decodeErr := xdr.SafeUnmarshalBase64(resp.ResultXDR, &txResult); decodeErr != nil {
@@ -819,6 +850,7 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					if confirmErr := txStore.Confirm(utx.Sequence, hash, false); confirmErr != nil {
 						ctxLogger.Errorw("failed to confirm failed tx in TxStore", "hash", hash, "error", confirmErr)
 					}
+					s.updateTransactionResultXDR(utx.Tx, resp.ResultXDR)
 					classification := classifyFailedTransactionResult(resp.ResultXDR)
 					s.updateTransactionResultCode(utx.Tx, classification.resultCode)
 
@@ -935,8 +967,14 @@ func (s *StellarTxm) Simulate(ctx context.Context, req TxRequest) (protocolrpc.S
 	if len(req.Operations) == 0 {
 		return protocolrpc.SimulateTransactionResponse{}, errors.New("Simulate: at least one operation is required")
 	}
-	if req.FromAddress == "" {
-		return protocolrpc.SimulateTransactionResponse{}, errors.New("Simulate: FromAddress is required")
+
+	fromAddr := req.FromAddress
+	if fromAddr == "" {
+		var err error
+		fromAddr, err = s.defaultFromAddress(ctx)
+		if err != nil {
+			return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("Simulate: %w", err)
+		}
 	}
 
 	client, err := s.getClient()
@@ -953,7 +991,7 @@ func (s *StellarTxm) Simulate(ctx context.Context, req TxRequest) (protocolrpc.S
 
 	// Sequence 0 is valid for simulation — the network never commits it.
 	dummyTx := &StellarTx{
-		FromAddress: req.FromAddress,
+		FromAddress: fromAddr,
 		Operations:  req.Operations,
 	}
 	prelimTx, err := s.buildPreliminaryTx(dummyTx, 0, maxLedger)
@@ -962,6 +1000,17 @@ func (s *StellarTxm) Simulate(ctx context.Context, req TxRequest) (protocolrpc.S
 	}
 
 	return s.simulateTransaction(ctx, client, prelimTx)
+}
+
+func (s *StellarTxm) defaultFromAddress(ctx context.Context) (string, error) {
+	accounts, err := s.keystore.Accounts(ctx)
+	if err != nil {
+		return "", fmt.Errorf("keystore.Accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return "", errors.New("keystore has no accounts")
+	}
+	return accounts[0], nil
 }
 
 // --- Sequence helpers ---

@@ -83,6 +83,25 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		require.Equal(t, "", reason)
 	})
 
+	t.Run("PENDING clears stale previous result fields", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		retriedTx := &StellarTx{
+			ID:            "retried",
+			FromAddress:   testAddress,
+			ResultXDR:     "old-result",
+			ResultMetaXDR: "old-meta",
+			ResultCode:    "old-code",
+		}
+		acc, fatal, reason := s.handleSendResult(ctx, retriedTx, protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "a1"}, 1, store, 9)
+		require.True(t, acc)
+		require.False(t, fatal)
+		require.Equal(t, "", reason)
+		assert.Empty(t, retriedTx.ResultXDR)
+		assert.Empty(t, retriedTx.ResultMetaXDR)
+		assert.Empty(t, retriedTx.ResultCode)
+	})
+
 	t.Run("DUPLICATE", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
@@ -90,6 +109,26 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		require.True(t, acc)
 		require.False(t, fatal)
 		require.Equal(t, "", reason)
+	})
+
+	t.Run("PENDING without hash is fatal", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: "PENDING"}, 1, store, 9)
+		require.False(t, acc)
+		require.True(t, fatal)
+		assert.Equal(t, ErrorReasonNoHash, reason)
+		assert.Equal(t, 0, store.InflightCount())
+	})
+
+	t.Run("DUPLICATE without hash is fatal", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: "DUPLICATE"}, 1, store, 9)
+		require.False(t, acc)
+		require.True(t, fatal)
+		assert.Equal(t, ErrorReasonNoHash, reason)
+		assert.Equal(t, 0, store.InflightCount())
 	})
 
 	t.Run("TRY_AGAIN_LATER", func(t *testing.T) {

@@ -71,6 +71,7 @@ type mockRPCClient struct {
 	simulateHook        func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error)
 	sendHook            func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error)
 	getTransactionHook  func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error)
+	getEventsHook       func(protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
 }
 
 func (m *mockRPCClient) SimulateTransaction(_ context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
@@ -95,7 +96,10 @@ func (m *mockRPCClient) GetTransaction(_ context.Context, req protocolrpc.GetTra
 func (m *mockRPCClient) GetLedgerEntries(_ context.Context, _ protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error) {
 	return m.getLedgerEntriesResp, m.getLedgerEntriesErr
 }
-func (m *mockRPCClient) GetEvents(_ context.Context, _ protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error) {
+func (m *mockRPCClient) GetEvents(_ context.Context, req protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error) {
+	if m.getEventsHook != nil {
+		return m.getEventsHook(req)
+	}
 	return m.getEventsResp, m.getEventsErr
 }
 func (m *mockRPCClient) GetLatestLedger(_ context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
@@ -399,6 +403,93 @@ func TestStellarTxm_GetStatus(t *testing.T) {
 		status, err := txm.GetStatus(txID)
 		require.NoError(t, err)
 		assert.Equal(t, commontypes.Pending, status)
+	})
+}
+
+func TestStellarTxm_GetTransactionResult(t *testing.T) {
+	t.Parallel()
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	require.NoError(t, err)
+
+	t.Run("empty ID", func(t *testing.T) {
+		_, err := txm.GetTransactionResult("")
+		require.Error(t, err)
+	})
+
+	t.Run("non-existent", func(t *testing.T) {
+		_, err := txm.GetTransactionResult("non-existent")
+		require.Error(t, err)
+	})
+
+	t.Run("pending", func(t *testing.T) {
+		txID, err := txm.Enqueue(context.Background(), TxRequest{
+			FromAddress: testAddress,
+			Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+		})
+		require.NoError(t, err)
+
+		result, err := txm.GetTransactionResult(txID)
+		require.NoError(t, err)
+		assert.Equal(t, txID, result.ID)
+		assert.Equal(t, commontypes.Pending, result.Status)
+		assert.Empty(t, result.Hash)
+		assert.Empty(t, result.ResultXDR)
+		assert.Empty(t, result.ResultMetaXDR)
+		assert.NoError(t, result.Error)
+	})
+
+	t.Run("finalized", func(t *testing.T) {
+		txID, err := txm.Enqueue(context.Background(), TxRequest{
+			FromAddress: testAddress,
+			Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+		})
+		require.NoError(t, err)
+
+		fee := big.NewInt(12345)
+		txm.transactionsLock.Lock()
+		tx := txm.transactions[txID]
+		tx.Status = commontypes.Finalized
+		tx.TxHash = "hash-finalized"
+		tx.Fee = fee
+		tx.ResultXDR = "result-xdr"
+		tx.ResultMetaXDR = "meta-xdr"
+		txm.transactionsLock.Unlock()
+
+		result, err := txm.GetTransactionResult(txID)
+		require.NoError(t, err)
+		assert.Equal(t, txID, result.ID)
+		assert.Equal(t, "hash-finalized", result.Hash)
+		assert.Equal(t, commontypes.Finalized, result.Status)
+		assert.Equal(t, fee, result.Fee)
+		assert.Equal(t, "result-xdr", result.ResultXDR)
+		assert.Equal(t, "meta-xdr", result.ResultMetaXDR)
+		assert.NoError(t, result.Error)
+	})
+
+	t.Run("failed with result code", func(t *testing.T) {
+		txID, err := txm.Enqueue(context.Background(), TxRequest{
+			FromAddress: testAddress,
+			Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+		})
+		require.NoError(t, err)
+
+		txm.transactionsLock.Lock()
+		tx := txm.transactions[txID]
+		tx.Status = commontypes.Failed
+		tx.TxHash = "hash-failed"
+		tx.ResultXDR = "failed-result-xdr"
+		tx.ResultCode = "contract_error"
+		txm.transactionsLock.Unlock()
+
+		result, err := txm.GetTransactionResult(txID)
+		require.NoError(t, err)
+		assert.Equal(t, txID, result.ID)
+		assert.Equal(t, "hash-failed", result.Hash)
+		assert.Equal(t, commontypes.Failed, result.Status)
+		assert.Equal(t, "failed-result-xdr", result.ResultXDR)
+		require.Error(t, result.Error)
+		assert.Contains(t, result.Error.Error(), "contract_error")
 	})
 }
 
@@ -821,12 +912,6 @@ func TestStellarTxm_Simulate_validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one operation")
 	})
-	t.Run("empty FromAddress", func(t *testing.T) {
-		t.Parallel()
-		_, err := txm.Simulate(context.Background(), TxRequest{Operations: []txnbuild.Operation{testInvokeNoopOp()}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "FromAddress is required")
-	})
 }
 
 func TestStellarTxm_Simulate_getClientError(t *testing.T) {
@@ -994,7 +1079,17 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 	txm.transactionsLock.RUnlock()
 	require.NotNil(t, tracked)
 	assert.Equal(t, big.NewInt(40_200), tracked.Fee)
+	assert.Equal(t, resultB64, tracked.ResultXDR)
 	assert.Equal(t, metaB64, tracked.ResultMetaXDR)
+
+	result, err := txm.GetTransactionResult(txID)
+	require.NoError(t, err)
+	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, commontypes.Finalized, result.Status)
+	assert.Equal(t, big.NewInt(40_200), result.Fee)
+	assert.Equal(t, resultB64, result.ResultXDR)
+	assert.Equal(t, metaB64, result.ResultMetaXDR)
+	assert.NoError(t, result.Error)
 }
 
 func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T) {
@@ -1031,7 +1126,16 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 	txm.transactionsLock.RUnlock()
 	require.NotNil(t, tracked)
 	assert.Equal(t, uint64(0), tracked.Attempt)
+	assert.Equal(t, resultB64, tracked.ResultXDR)
 	assert.Equal(t, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped.String(), tracked.ResultCode)
+
+	result, err := txm.GetTransactionResult(txID)
+	require.NoError(t, err)
+	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	assert.Equal(t, resultB64, result.ResultXDR)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped.String())
 
 	store := txm.accountStore.GetTxStore(testAddress)
 	require.NotNil(t, store)
