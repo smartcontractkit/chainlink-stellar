@@ -14,8 +14,6 @@ import (
 )
 
 // NodeConfig holds per-node RPC endpoint settings used by ClientFactory.
-// This is a lightweight struct consumed by the factory; the canonical config
-// definition with TOML tags lives in relayer/txm/config.go.
 type NodeConfig struct {
 	Name    string
 	URL     string
@@ -116,9 +114,9 @@ func (f *ClientFactory) GetClient() (*Client, error) {
 
 		clientCfg := f.cfg
 		clientCfg.ChainID = f.chainID
-		clientCfg.NodeURL = node.URL
+		clientCfg.RPCURL = node.URL
 
-		client := NewClientWithConfig(rpc, clientCfg)
+		client := NewClient(rpc, &clientCfg)
 		f.clientCache[node.URL] = client
 		f.lggr.Debugw("Created and cached client",
 			"node", node.Name, "url", node.URL)

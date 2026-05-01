@@ -10,6 +10,8 @@ import (
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
 // stubRPC is a minimal mock of RPCClient for unit tests.
@@ -86,11 +88,11 @@ func TestClient_LatestLedger_CacheHit(t *testing.T) {
 	stub := &stubRPC{
 		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 42},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		LedgerCacheTTL: 5 * time.Second,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		LedgerCacheTTL: config.MustNewDuration(time.Minute),
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	resp1, err := client.LatestLedger(ctx)
 	require.NoError(t, err)
@@ -110,11 +112,11 @@ func TestClient_LatestLedger_CacheExpiry(t *testing.T) {
 	stub := &stubRPC{
 		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 42},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		LedgerCacheTTL: 10 * time.Millisecond,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		LedgerCacheTTL: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	resp1, err := client.LatestLedger(ctx)
 	require.NoError(t, err)
@@ -138,11 +140,11 @@ func TestClient_LatestLedger_CacheDisabled(t *testing.T) {
 	stub := &stubRPC{
 		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		LedgerCacheTTL: 0,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		LedgerCacheTTL: config.MustNewDuration(0),
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := client.LatestLedger(ctx)
 	require.NoError(t, err)
@@ -159,9 +161,9 @@ func TestClient_LatestLedger_NoCacheOnFirstCall(t *testing.T) {
 	stub := &stubRPC{
 		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1},
 	}
-	client := NewClientFromInterface(stub)
+	client := NewClientFromInterface(stub, nil)
 
-	resp, err := client.LatestLedger(context.Background())
+	resp, err := client.LatestLedger(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.Sequence)
 	assert.Equal(t, int32(1), stub.latestLedgerCalls.Load())
@@ -177,11 +179,11 @@ func TestClient_PollTransaction_ImmediateSuccess(t *testing.T) {
 			return txResp(protocolrpc.TransactionStatusSuccess)
 		},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		PollInterval: 10 * time.Millisecond,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		PollInterval: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	resp, err := client.PollTransaction(context.Background(), "abc123", 5*time.Second)
+	resp, err := client.PollTransaction(t.Context(), "abc123", 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, protocolrpc.TransactionStatusSuccess, resp.Status)
 }
@@ -199,11 +201,11 @@ func TestClient_PollTransaction_EventualSuccess(t *testing.T) {
 			return txResp(protocolrpc.TransactionStatusSuccess)
 		},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		PollInterval: 10 * time.Millisecond,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		PollInterval: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	resp, err := client.PollTransaction(context.Background(), "abc123", 5*time.Second)
+	resp, err := client.PollTransaction(t.Context(), "abc123", 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, protocolrpc.TransactionStatusSuccess, resp.Status)
 	assert.GreaterOrEqual(t, calls.Load(), int32(3))
@@ -217,11 +219,11 @@ func TestClient_PollTransaction_Failed(t *testing.T) {
 			return txResp(protocolrpc.TransactionStatusFailed)
 		},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		PollInterval: 10 * time.Millisecond,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		PollInterval: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	resp, err := client.PollTransaction(context.Background(), "abc123", 5*time.Second)
+	resp, err := client.PollTransaction(t.Context(), "abc123", 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, protocolrpc.TransactionStatusFailed, resp.Status)
 }
@@ -234,11 +236,11 @@ func TestClient_PollTransaction_Timeout(t *testing.T) {
 			return txResp(protocolrpc.TransactionStatusNotFound)
 		},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		PollInterval: 10 * time.Millisecond,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		PollInterval: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	_, err := client.PollTransaction(context.Background(), "abc123", 50*time.Millisecond)
+	_, err := client.PollTransaction(t.Context(), "abc123", 50*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "poll timed out")
 }
@@ -247,11 +249,11 @@ func TestClient_PollTransaction_SwallowsTransientRPCErrors(t *testing.T) {
 	t.Parallel()
 
 	errorStub := &errorThenSuccessStub{errUntil: 2}
-	client := NewClientFromInterfaceWithConfig(errorStub, ClientConfig{
-		PollInterval: 10 * time.Millisecond,
+	client := NewClientFromInterface(errorStub, &ClientConfig{
+		PollInterval: config.MustNewDuration(10 * time.Millisecond),
 	})
 
-	resp, err := client.PollTransaction(context.Background(), "abc123", 5*time.Second)
+	resp, err := client.PollTransaction(t.Context(), "abc123", 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, protocolrpc.TransactionStatusSuccess, resp.Status)
 	assert.GreaterOrEqual(t, errorStub.calls.Load(), int32(3),
@@ -282,13 +284,13 @@ func TestClient_RateLimitDisabled(t *testing.T) {
 	stub := &stubRPC{
 		latestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1},
 	}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		RateLimitPerSec: 0,
-		LedgerCacheTTL:  0,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		RateLimitPerSec: ptr(0.0),
+		LedgerCacheTTL:  config.MustNewDuration(0),
 	})
 
 	for i := 0; i < 50; i++ {
-		_, err := client.GetLatestLedger(context.Background())
+		_, err := client.GetLatestLedger(t.Context())
 		require.NoError(t, err)
 	}
 	assert.Equal(t, int32(50), stub.latestLedgerCalls.Load())
@@ -300,11 +302,11 @@ func TestNewClient_DefaultConfig(t *testing.T) {
 	t.Parallel()
 
 	stub := &stubRPC{}
-	client := NewClientFromInterface(stub)
+	client := NewClientFromInterface(stub, nil)
 
-	assert.Equal(t, 3*time.Second, client.cfg.LedgerCacheTTL)
-	assert.Equal(t, 1*time.Second, client.cfg.PollInterval)
-	assert.NotNil(t, client.limiter)
+	assert.Equal(t, 3*time.Second, client.cfg.LedgerCacheTTL.Duration())
+	assert.Equal(t, 1*time.Second, client.cfg.PollInterval.Duration())
+	assert.Nil(t, client.limiter)
 }
 
 func TestNewClient_CustomConfig(t *testing.T) {
@@ -312,15 +314,15 @@ func TestNewClient_CustomConfig(t *testing.T) {
 
 	stub := &stubRPC{}
 	cfg := ClientConfig{
-		LedgerCacheTTL:  10 * time.Second,
-		RateLimitPerSec: 5,
-		RateLimitBurst:  10,
-		PollInterval:    2 * time.Second,
+		LedgerCacheTTL:  config.MustNewDuration(10 * time.Second),
+		RateLimitPerSec: ptr(5.0),
+		RateLimitBurst:  ptr(10),
+		PollInterval:    config.MustNewDuration(2 * time.Second),
 	}
-	client := NewClientFromInterfaceWithConfig(stub, cfg)
+	client := NewClientFromInterface(stub, &cfg)
 
-	assert.Equal(t, 10*time.Second, client.cfg.LedgerCacheTTL)
-	assert.Equal(t, 2*time.Second, client.cfg.PollInterval)
+	assert.Equal(t, 10*time.Second, client.cfg.LedgerCacheTTL.Duration())
+	assert.Equal(t, 2*time.Second, client.cfg.PollInterval.Duration())
 	assert.NotNil(t, client.limiter)
 }
 
@@ -328,11 +330,11 @@ func TestNewClient_ZeroPollIntervalDefaultsToOneSecond(t *testing.T) {
 	t.Parallel()
 
 	stub := &stubRPC{}
-	client := NewClientFromInterfaceWithConfig(stub, ClientConfig{
-		PollInterval: 0,
+	client := NewClientFromInterface(stub, &ClientConfig{
+		PollInterval: config.MustNewDuration(0),
 	})
 
-	assert.Equal(t, 1*time.Second, client.cfg.PollInterval)
+	assert.Equal(t, 1*time.Second, client.cfg.PollInterval.Duration())
 }
 
 // --- Interface satisfaction ---
@@ -341,6 +343,6 @@ func TestClient_SatisfiesRPCClient(t *testing.T) {
 	t.Parallel()
 
 	stub := &stubRPC{}
-	client := NewClientFromInterface(stub)
+	client := NewClientFromInterface(stub, nil)
 	var _ RPCClient = client
 }

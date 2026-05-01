@@ -1,48 +1,12 @@
 package txm
 
 import (
-	"errors"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
 func ptr[T any](v T) *T { return &v }
-
-// DefaultNodeConfig provides sensible defaults for per-node RPC settings.
-var DefaultNodeConfig = NodeConfig{
-	Timeout: config.MustNewDuration(30 * time.Second),
-}
-
-// NodeConfig defines per-node RPC endpoint configuration.
-// Node config pattern: each configured node gets its own name, URL, and
-// timeout. The ClientFactory uses these to build and cache *ccvclient.Client
-// instances per URL.
-type NodeConfig struct {
-	Name    *string          `toml:"Name"`
-	URL     *string          `toml:"URL"`
-	Timeout *config.Duration `toml:"Timeout"`
-}
-
-// Resolve fills nil fields with defaults from DefaultNodeConfig.
-func (n *NodeConfig) Resolve() {
-	if n.Timeout == nil {
-		v := *DefaultNodeConfig.Timeout
-		n.Timeout = &v
-	}
-}
-
-// ValidateConfig checks that required fields are set.
-func (n *NodeConfig) ValidateConfig() error {
-	var err error
-	if n.Name == nil || *n.Name == "" {
-		err = errors.Join(err, config.ErrMissing{Name: "Name", Msg: "required for all nodes"})
-	}
-	if n.URL == nil || *n.URL == "" {
-		err = errors.Join(err, config.ErrMissing{Name: "URL", Msg: "required for all nodes"})
-	}
-	return err
-}
 
 // Config defines the Stellar transaction manager configuration.
 // Pointer fields are used for TOML deserialization — nil means "not set by user".

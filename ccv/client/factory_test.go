@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 )
 
@@ -28,8 +29,8 @@ func testNodes(urls ...string) []NodeConfig {
 
 func testCfg() ClientConfig {
 	return ClientConfig{
-		LedgerCacheTTL: 0,
-		PollInterval:   10 * time.Millisecond,
+		LedgerCacheTTL: config.MustNewDuration(0),
+		PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 	}
 }
 
@@ -68,7 +69,8 @@ func TestClientFactory_GetClient_SingleNode(t *testing.T) {
 	}
 
 	// Manually seed a cached client with our stub
-	f.clientCache["http://node1:8080"] = NewClientFromInterfaceWithConfig(stub, testCfg())
+	cfg := testCfg()
+	f.clientCache["http://node1:8080"] = NewClientFromInterface(stub, &cfg)
 
 	client, err := f.GetClient()
 	require.NoError(t, err)
@@ -94,7 +96,8 @@ func TestClientFactory_GetClient_EvictsUnhealthyNode(t *testing.T) {
 		clientCache: make(map[string]*Client),
 	}
 
-	f.clientCache["http://bad:8080"] = NewClientFromInterfaceWithConfig(failStub, testCfg())
+	cfg := testCfg()
+	f.clientCache["http://bad:8080"] = NewClientFromInterface(failStub, &cfg)
 
 	// GetClient will fail (no healthy node), but should still evict the bad entry.
 	_, _ = f.GetClient() //nolint:errcheck
@@ -122,14 +125,16 @@ func TestClientFactory_GetClient_CachesClient(t *testing.T) {
 	}
 
 	// Pre-seed cache
-	f.clientCache["http://node1:8080"] = NewClientFromInterfaceWithConfig(stub, testCfg())
+	cfg := testCfg()
+	f.clientCache["http://node1:8080"] = NewClientFromInterface(stub, &cfg)
 
 	// Override stub to count calls
 	countingStub := &countingLatestLedgerStub{
 		calls: &calls,
 		resp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1},
 	}
-	f.clientCache["http://node1:8080"] = NewClientFromInterfaceWithConfig(countingStub, testCfg())
+	cfg = testCfg()
+	f.clientCache["http://node1:8080"] = NewClientFromInterface(countingStub, &cfg)
 
 	client1, err := f.GetClient()
 	require.NoError(t, err)
@@ -165,8 +170,10 @@ func TestClientFactory_GetClient_AllNodesDown(t *testing.T) {
 		clientCache: make(map[string]*Client),
 	}
 
-	f.clientCache["http://bad1:8080"] = NewClientFromInterfaceWithConfig(failStub, testCfg())
-	f.clientCache["http://bad2:8080"] = NewClientFromInterfaceWithConfig(failStub, testCfg())
+	cfg := testCfg()
+	f.clientCache["http://bad1:8080"] = NewClientFromInterface(failStub, &cfg)
+	cfg = testCfg()
+	f.clientCache["http://bad2:8080"] = NewClientFromInterface(failStub, &cfg)
 
 	// All cached clients fail health check, slow path tries to create new
 	// clients but they also fail. With stubbed clients we can't go through
@@ -192,7 +199,8 @@ func TestClientFactory_EvictClient(t *testing.T) {
 		clientCache: make(map[string]*Client),
 	}
 
-	f.clientCache["http://node1:8080"] = NewClientFromInterfaceWithConfig(stub, testCfg())
+	cfg := testCfg()
+	f.clientCache["http://node1:8080"] = NewClientFromInterface(stub, &cfg)
 
 	f.EvictClient("http://node1:8080")
 

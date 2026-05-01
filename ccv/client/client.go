@@ -12,6 +12,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"golang.org/x/time/rate"
+
+	"github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
 var promStellarRPCLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -27,7 +29,7 @@ var promStellarRPCLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		float64(4 * time.Second),
 		float64(8 * time.Second),
 	},
-}, []string{"chainID", "nodeURL", "success", "rpcCallName"})
+}, []string{"chainID", "rpcUrl", "success", "rpcCallName"})
 
 // RPCClient captures the subset of *rpcclient.Client methods used across all
 // Stellar components (TXM, Deployer, SourceReader, DestinationReader). It
@@ -47,39 +49,60 @@ type RPCClient interface {
 
 var _ RPCClient = (*rpcclient.Client)(nil)
 
+func ptr[T any](v T) *T { return &v }
+
 // ClientConfig configures the shared infrastructure on Client.
 type ClientConfig struct {
 	// LedgerCacheTTL controls how long a GetLatestLedger response is cached.
 	// Callers using LatestLedger() benefit from coalesced calls within this
-	// window. Zero disables caching.
-	LedgerCacheTTL time.Duration
+	// window. Nil applies the default; zero disables caching.
+	LedgerCacheTTL *config.Duration
 
 	// RateLimitPerSec is the sustained RPC request rate (requests/second).
-	// Zero disables rate limiting.
-	RateLimitPerSec float64
+	// Nil applies the default; zero disables rate limiting.
+	RateLimitPerSec *float64
 
 	// RateLimitBurst is the maximum burst of RPC requests allowed.
-	RateLimitBurst int
+	RateLimitBurst *int
 
 	// PollInterval is the default tick interval for PollTransaction.
-	PollInterval time.Duration
+	PollInterval *config.Duration
 
 	// ChainID is used as a Prometheus label for per-method latency tracking.
 	// Leave empty to disable latency metrics.
 	ChainID string
 
-	// NodeURL is used as a Prometheus label to identify which RPC node is
+	// RPCURL is used as a Prometheus label to identify which RPC endpoint is
 	// being called. Set by the ClientFactory for each cached client.
-	NodeURL string
+	RPCURL string
 }
 
 // DefaultClientConfig returns a ClientConfig with sensible defaults.
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		LedgerCacheTTL:  3 * time.Second,
-		RateLimitPerSec: 10,
-		RateLimitBurst:  20,
-		PollInterval:    1 * time.Second,
+		LedgerCacheTTL:  config.MustNewDuration(3 * time.Second),
+		RateLimitPerSec: ptr(0.0),
+		RateLimitBurst:  ptr(0),
+		PollInterval:    config.MustNewDuration(1 * time.Second),
+	}
+}
+
+// Resolve fills nil fields with defaults from DefaultClientConfig.
+func (c *ClientConfig) Resolve() {
+	defaults := DefaultClientConfig()
+	if c.LedgerCacheTTL == nil {
+		v := *defaults.LedgerCacheTTL
+		c.LedgerCacheTTL = &v
+	}
+	if c.RateLimitPerSec == nil {
+		c.RateLimitPerSec = ptr(*defaults.RateLimitPerSec)
+	}
+	if c.RateLimitBurst == nil {
+		c.RateLimitBurst = ptr(*defaults.RateLimitBurst)
+	}
+	if c.PollInterval == nil || c.PollInterval.Duration() <= 0 {
+		v := *defaults.PollInterval
+		c.PollInterval = &v
 	}
 }
 
@@ -99,7 +122,7 @@ type Client struct {
 
 	// Metrics labels for per-method Prometheus latency tracking.
 	chainID string
-	nodeURL string
+	rpcURL  string
 
 	ledgerMu     sync.Mutex
 	cachedLedger *protocolrpc.GetLatestLedgerResponse
@@ -107,55 +130,51 @@ type Client struct {
 }
 
 func (c *Client) recordLatency(rpcCallName string, d time.Duration, err error) {
-	if c.chainID == "" && c.nodeURL == "" {
+	if c.chainID == "" && c.rpcURL == "" {
 		return
 	}
 	promStellarRPCLatency.WithLabelValues(
 		c.chainID,
-		c.nodeURL,
+		c.rpcURL,
 		strconv.FormatBool(err == nil),
 		rpcCallName,
 	).Observe(float64(d.Milliseconds()))
 }
 
 // NewClient creates a Client wrapping a concrete *rpcclient.Client with
-// default configuration.
-func NewClient(rpcClient *rpcclient.Client) *Client {
-	return NewClientWithConfig(rpcClient, DefaultClientConfig())
-}
-
-// NewClientFromInterface creates a Client from any RPCClient implementation
-// with default configuration. Useful for injecting mocks in tests.
-func NewClientFromInterface(rpc RPCClient) *Client {
-	return newClient(rpc, DefaultClientConfig())
-}
-
-// NewClientWithConfig creates a Client wrapping a concrete *rpcclient.Client
-// with the provided configuration.
-func NewClientWithConfig(rpcClient *rpcclient.Client, cfg ClientConfig) *Client {
+// the provided configuration. A nil config applies defaults.
+func NewClient(rpcClient *rpcclient.Client, cfg *ClientConfig) *Client {
 	return newClient(rpcClient, cfg)
 }
 
-// NewClientFromInterfaceWithConfig creates a Client from any RPCClient
-// implementation with the provided configuration.
-func NewClientFromInterfaceWithConfig(rpc RPCClient, cfg ClientConfig) *Client {
+// NewClientFromInterface creates a Client from any RPCClient implementation
+// with the provided configuration. Useful for injecting mocks in tests.
+// A nil config applies defaults.
+func NewClientFromInterface(rpc RPCClient, cfg *ClientConfig) *Client {
 	return newClient(rpc, cfg)
 }
 
-func newClient(rpc RPCClient, cfg ClientConfig) *Client {
-	var limiter *rate.Limiter
-	if cfg.RateLimitPerSec > 0 {
-		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimitPerSec), cfg.RateLimitBurst)
+func newClient(rpc RPCClient, cfg *ClientConfig) *Client {
+	resolved := DefaultClientConfig()
+	if cfg != nil {
+		resolved = *cfg
+		resolved.Resolve()
 	}
-	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 1 * time.Second
+
+	var limiter *rate.Limiter
+	if *resolved.RateLimitPerSec > 0 {
+		burst := *resolved.RateLimitBurst
+		if burst <= 0 {
+			burst = 1
+		}
+		limiter = rate.NewLimiter(rate.Limit(*resolved.RateLimitPerSec), burst)
 	}
 	return &Client{
 		RPC:     rpc,
-		cfg:     cfg,
+		cfg:     resolved,
 		limiter: limiter,
-		chainID: cfg.ChainID,
-		nodeURL: cfg.NodeURL,
+		chainID: resolved.ChainID,
+		rpcURL:  resolved.RPCURL,
 	}
 }
 
@@ -175,7 +194,7 @@ func (c *Client) WaitRateLimit(ctx context.Context) error {
 // to coalesce redundant calls from broadcaster, confirmer, pollers, etc.
 // Falls through to a direct RPC call if the cache is stale or disabled.
 func (c *Client) LatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
-	if c.cfg.LedgerCacheTTL <= 0 {
+	if c.cfg.LedgerCacheTTL.Duration() <= 0 {
 		if err := c.WaitRateLimit(ctx); err != nil {
 			return protocolrpc.GetLatestLedgerResponse{}, fmt.Errorf("rate limiter: %w", err)
 		}
@@ -185,7 +204,7 @@ func (c *Client) LatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerR
 	c.ledgerMu.Lock()
 	defer c.ledgerMu.Unlock()
 
-	if c.cachedLedger != nil && time.Since(c.cachedAt) < c.cfg.LedgerCacheTTL {
+	if c.cachedLedger != nil && time.Since(c.cachedAt) < c.cfg.LedgerCacheTTL.Duration() {
 		return *c.cachedLedger, nil
 	}
 
@@ -296,7 +315,7 @@ func (c *Client) PollTransaction(ctx context.Context, hash string, timeout time.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(c.cfg.PollInterval)
+	ticker := time.NewTicker(c.cfg.PollInterval.Duration())
 	defer ticker.Stop()
 
 	var zero protocolrpc.GetTransactionResponse

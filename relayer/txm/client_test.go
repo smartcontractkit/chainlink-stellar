@@ -3,6 +3,7 @@ package txm
 import (
 	"testing"
 
+	"github.com/smartcontractkit/chainlink-common/pkg/config"
 	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
 	"github.com/stretchr/testify/assert"
 )
@@ -18,8 +19,8 @@ func TestTxm_ClientTypeAliases(t *testing.T) {
 
 	// ClientConfig alias matches the shared struct
 	cfg := ClientConfig{
-		LedgerCacheTTL:  0,
-		RateLimitPerSec: 0,
+		LedgerCacheTTL:  config.MustNewDuration(0),
+		RateLimitPerSec: ptr(0.0),
 	}
 	var sharedCfg ccvclient.ClientConfig = cfg
 	assert.Equal(t, cfg, sharedCfg)

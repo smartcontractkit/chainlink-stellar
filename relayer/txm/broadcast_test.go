@@ -289,9 +289,9 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	}
 
 	// Create a custom client factory for the wrapper
-	client := ccvclient.NewClientFromInterfaceWithConfig(wrapper, ccvclient.ClientConfig{
-		LedgerCacheTTL: 0,
-		PollInterval:   10 * time.Millisecond,
+	client := ccvclient.NewClientFromInterface(wrapper, &ccvclient.ClientConfig{
+		LedgerCacheTTL: config.MustNewDuration(0),
+		PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 	})
 	getClient := func() (*ccvclient.Client, error) { return client, nil }
 

@@ -147,9 +147,9 @@ func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
 }
 
 func newTestClient(mock *mockRPCClient) *ccvclient.Client {
-	return ccvclient.NewClientFromInterfaceWithConfig(mock, ccvclient.ClientConfig{
-		LedgerCacheTTL: 0,
-		PollInterval:   10 * time.Millisecond,
+	return ccvclient.NewClientFromInterface(mock, &ccvclient.ClientConfig{
+		LedgerCacheTTL: config.MustNewDuration(0),
+		PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 	})
 }
 
@@ -994,7 +994,10 @@ func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing
 		unblock:       make(chan struct{}),
 	}
 	getClient := func() (*ccvclient.Client, error) {
-		return ccvclient.NewClientFromInterfaceWithConfig(bmock, ccvclient.ClientConfig{LedgerCacheTTL: 0, PollInterval: 10 * time.Millisecond}), nil
+		return ccvclient.NewClientFromInterface(bmock, &ccvclient.ClientConfig{
+			LedgerCacheTTL: config.MustNewDuration(0),
+			PollInterval:   config.MustNewDuration(10 * time.Millisecond),
+		}), nil
 	}
 	cfg := Config{
 		BroadcastChanSize:  ptr(uint(1)),
