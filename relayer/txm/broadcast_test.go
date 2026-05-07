@@ -3,12 +3,13 @@ package txm
 import (
 	"context"
 	"fmt"
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	"math/big"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -36,7 +38,7 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 			MinResourceFee: 10000,
 		},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{
-			Status: "PENDING",
+			Status: stellarcore.TXStatusPending,
 			Hash:   "test-hash",
 		},
 	}
@@ -142,7 +144,7 @@ func TestStellarTxm_BroadcastPipeline_SimulateRPCErrorRetriesThenSucceeds(t *tes
 			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 	}
 	mock.simulateHook = func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
 		if simulateCalls.Add(1) == 1 {
@@ -187,7 +189,7 @@ func TestStellarTxm_BroadcastPipeline_TryAgainLater(t *testing.T) {
 			MinResourceFee: 10000,
 		},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{
-			Status: "TRY_AGAIN_LATER",
+			Status: stellarcore.TXStatusTryAgainLater,
 		},
 	}
 
@@ -272,12 +274,12 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 			b64, _ := xdr.MarshalBase64(txResult)
 
 			return protocolrpc.SendTransactionResponse{
-				Status:         "ERROR",
+				Status:         stellarcore.TXStatusError,
 				ErrorResultXDR: b64,
 			}, nil
 		}
 		return protocolrpc.SendTransactionResponse{
-			Status: "PENDING",
+			Status: stellarcore.TXStatusPending,
 			Hash:   "test-hash-2",
 		}, nil
 	}
@@ -289,11 +291,11 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	}
 
 	// Create a custom client factory for the wrapper
-	client := ccvclient.NewClientFromInterface(wrapper, &ccvclient.ClientConfig{
+	c := client.NewClientFromInterface(wrapper, &client.ClientConfig{
 		LedgerCacheTTL: config.MustNewDuration(0),
 		PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 	})
-	getClient := func() (*ccvclient.Client, error) { return client, nil }
+	getClient := func() (*client.Client, error) { return c, nil }
 
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
@@ -346,7 +348,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds
 		if sendCalls.Add(1) == 1 {
 			return protocolrpc.SendTransactionResponse{}, fmt.Errorf("rpc submit failed")
 		}
-		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
 	}
 
 	cfg := Config{
@@ -416,7 +418,7 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending},
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
@@ -492,9 +494,9 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		if sendCalls.Add(1) == 1 {
 			mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-			return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "restore-hash"}, nil
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
 		}
-		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "original-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "original-hash"}, nil
 	}
 	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
 		if req.Hash == "restore-hash" {
@@ -572,7 +574,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		sendCalls.Add(1)
 		mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "restore-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
 	}
 	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
 		if req.Hash == "restore-hash" {
@@ -624,15 +626,15 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
 		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 	}
-	client := newTestClient(mock)
+	c := newTestClient(mock)
 	var getClientCalls atomic.Int32
-	getClient := func() (*ccvclient.Client, error) {
+	getClient := func() (*client.Client, error) {
 		if getClientCalls.Add(1) == 1 {
 			return nil, fmt.Errorf("no rpc")
 		}
-		return client, nil
+		return c, nil
 	}
 	cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
 	txm, err := New(logger.Nop(), &mockKeystore{}, cfg, getClient, "c", "Test SDF Network ; September 2015")
@@ -650,7 +652,7 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 
 func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t *testing.T) {
 	t.Parallel()
-	getClient := func() (*ccvclient.Client, error) { return nil, fmt.Errorf("no rpc") }
+	getClient := func() (*client.Client, error) { return nil, fmt.Errorf("no rpc") }
 	cfg := Config{
 		MaxTxRetryAttempts: ptr(uint64(2)),
 		SubmitRetryDelay:   config.MustNewDuration(10 * time.Millisecond),
@@ -681,7 +683,7 @@ func TestStellarTxm_BroadcastPipeline_DUPLICATE(t *testing.T) {
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
 		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "DUPLICATE", Hash: "dup-h"},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "dup-h"},
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
@@ -693,4 +695,145 @@ func TestStellarTxm_BroadcastPipeline_DUPLICATE(t *testing.T) {
 		st, e := txm.GetStatus(txID)
 		return e == nil && st == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestStellarTxm_HandleRestore_RestoreTotalNotInflatedByRetry(t *testing.T) {
+	t.Parallel()
+
+	// Use a per-test chainID so the prometheus counter cell is isolated from
+	// any other test running in parallel.
+	chainID := "test-restore-total-once"
+
+	preamble := protocolrpc.RestorePreamble{
+		MinResourceFee:     1_000,
+		TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+	}
+
+	var sendCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+	}
+	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		n := sendCalls.Add(1)
+		// Stellar core returns PENDING for the first submission and
+		// DUPLICATE for the resubmission of the same hash — the exact
+		// scenario that double-counted Total under the pre-fix code.
+		if n == 1 {
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-h"}, nil
+		}
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "restore-h"}, nil
+	}
+
+	cfg := Config{
+		MaxRestoreAttempts: ptr(uint(2)),
+		// 0 → PollTransaction's WithTimeout(ctx, 0) is already past
+		// deadline, so it returns "poll timed out" immediately and the
+		// loop falls into its `continue` path without wall-clock delay.
+		TxTimeoutSecs:    ptr(int64(0)),
+		SubmitRetryDelay: config.MustNewDuration(1 * time.Millisecond),
+	}
+
+	totalBefore := testutil.ToFloat64(promStellarTxmRestoreTotal.WithLabelValues(chainID))
+	failedBefore := testutil.ToFloat64(promStellarTxmRestoreFailed.WithLabelValues(chainID))
+	successBefore := testutil.ToFloat64(promStellarTxmRestoreSuccess.WithLabelValues(chainID))
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainID, "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+
+	tx := &StellarTx{ID: "restore-test", FromAddress: testAddress, Done: make(chan struct{})}
+	client := newTestClient(mock)
+
+	// handleRestore is expected to fail (loop exhausts), but the metric
+	// invariant must hold regardless of outcome.
+	err = txm.handleRestore(context.Background(), client, tx, preamble, 1)
+	require.Error(t, err)
+
+	assert.GreaterOrEqual(t, sendCalls.Load(), int32(2),
+		"loop must iterate at least twice — that's the scenario that exposed the bug")
+
+	totalAfter := testutil.ToFloat64(promStellarTxmRestoreTotal.WithLabelValues(chainID))
+	failedAfter := testutil.ToFloat64(promStellarTxmRestoreFailed.WithLabelValues(chainID))
+	successAfter := testutil.ToFloat64(promStellarTxmRestoreSuccess.WithLabelValues(chainID))
+
+	assert.Equal(t, float64(1), totalAfter-totalBefore,
+		"RestoreTotal must increment exactly once per logical restore")
+	assert.Equal(t, float64(1), failedAfter-failedBefore,
+		"RestoreFailed fires once on attempt-exhaustion")
+	assert.Equal(t, float64(0), successAfter-successBefore,
+		"no success expected on this path")
+}
+
+func TestStellarTxm_HandleRestore_RestoreTotalCountsOnceOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	chainID := "test-restore-total-once-success"
+
+	accountAfterRestoreXDR := buildAccountEntryXDR(t, testAddress, 101)
+	preamble := protocolrpc.RestorePreamble{
+		MinResourceFee:     1_000,
+		TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+	}
+
+	mock := &mockRPCClient{
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-h"},
+		getTransactionResp: protocolrpc.GetTransactionResponse{
+			TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess},
+		},
+	}
+
+	cfg := Config{
+		MaxRestoreAttempts: ptr(uint(2)),
+		TxTimeoutSecs:      ptr(int64(5)),
+		SubmitRetryDelay:   config.MustNewDuration(1 * time.Millisecond),
+	}
+
+	totalBefore := testutil.ToFloat64(promStellarTxmRestoreTotal.WithLabelValues(chainID))
+	successBefore := testutil.ToFloat64(promStellarTxmRestoreSuccess.WithLabelValues(chainID))
+	failedBefore := testutil.ToFloat64(promStellarTxmRestoreFailed.WithLabelValues(chainID))
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainID, "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+
+	// Pre-seed an account store so resyncSequence after restore has somewhere to update.
+	_, err = txm.accountStore.CreateTxStore(testAddress, 100)
+	require.NoError(t, err)
+
+	tx := &StellarTx{ID: "restore-test-ok", FromAddress: testAddress, Done: make(chan struct{})}
+	client := newTestClient(mock)
+
+	require.NoError(t, txm.handleRestore(context.Background(), client, tx, preamble, 1))
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(promStellarTxmRestoreTotal.WithLabelValues(chainID))-totalBefore,
+		"RestoreTotal must increment exactly once per logical restore")
+	assert.Equal(t, float64(1), testutil.ToFloat64(promStellarTxmRestoreSuccess.WithLabelValues(chainID))-successBefore,
+		"RestoreSuccess fires once on terminal success")
+	assert.Equal(t, float64(0), testutil.ToFloat64(promStellarTxmRestoreFailed.WithLabelValues(chainID))-failedBefore,
+		"no failure expected on this path")
+}
+
+func TestStellarTxm_BuildPreliminaryTx_SeqZero_DoesNotProduceNegativeSequence(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "c", "Test SDF Network ; September 2015")
+	require.NoError(t, err)
+
+	tx := &StellarTx{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}}
+
+	require.NotPanics(t, func() {
+		built, err := txm.buildPreliminaryTx(tx, 0, 1500)
+		require.NoError(t, err)
+		require.NotNil(t, built)
+		assert.GreaterOrEqual(t, built.SequenceNumber(), int64(0),
+			"on-wire sequence must never be negative")
+	})
+
+	// Sanity: the normal broadcast path (seq>=1) is unaffected by the clamp.
+	require.NotPanics(t, func() {
+		built, err := txm.buildPreliminaryTx(tx, 50, 1500)
+		require.NoError(t, err)
+		assert.Equal(t, int64(50), built.SequenceNumber())
+	})
 }

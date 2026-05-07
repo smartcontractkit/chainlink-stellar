@@ -7,7 +7,7 @@ import (
 
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -50,7 +50,7 @@ func TestInvokerAdapter_InvokeContract(t *testing.T) {
 	}
 	adapter, err := NewInvokerAdapter(
 		fake,
-		func() (*ccvclient.Client, error) { return newTestClient(&mockRPCClient{}), nil },
+		func() (*client.Client, error) { return newTestClient(&mockRPCClient{}), nil },
 		WithInvokerFromAddress(testAddress),
 		WithInvokerLedgerBoundsOffset(12),
 	)
@@ -77,7 +77,7 @@ func TestInvokerAdapter_InvokeContractReturnsTxFailure(t *testing.T) {
 			Error:  fmt.Errorf("transaction result: trapped"),
 		},
 	}
-	adapter, err := NewInvokerAdapter(fake, func() (*ccvclient.Client, error) { return newTestClient(&mockRPCClient{}), nil })
+	adapter, err := NewInvokerAdapter(fake, func() (*client.Client, error) { return newTestClient(&mockRPCClient{}), nil })
 	require.NoError(t, err)
 
 	_, err = adapter.InvokeContract(context.Background(), testContractStrkey(t), "execute", nil)
@@ -100,7 +100,7 @@ func TestInvokerAdapter_SimulateContract(t *testing.T) {
 	}
 	adapter, err := NewInvokerAdapter(
 		fake,
-		func() (*ccvclient.Client, error) { return newTestClient(&mockRPCClient{}), nil },
+		func() (*client.Client, error) { return newTestClient(&mockRPCClient{}), nil },
 		WithInvokerFromAddress(testAddress),
 	)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestInvokerAdapter_SimulateContractRestoreRequired(t *testing.T) {
 			RestorePreamble: &protocolrpc.RestorePreamble{},
 		},
 	}
-	adapter, err := NewInvokerAdapter(fake, func() (*ccvclient.Client, error) { return newTestClient(&mockRPCClient{}), nil })
+	adapter, err := NewInvokerAdapter(fake, func() (*client.Client, error) { return newTestClient(&mockRPCClient{}), nil })
 	require.NoError(t, err)
 
 	_, err = adapter.SimulateContract(context.Background(), testContractStrkey(t), "get_count", nil)
@@ -142,7 +142,7 @@ func TestInvokerAdapter_GetEvents(t *testing.T) {
 			return protocolrpc.GetEventsResponse{Events: expected}, nil
 		},
 	}
-	adapter, err := NewInvokerAdapter(&fakeInvokerTxm{}, func() (*ccvclient.Client, error) { return newTestClient(mock), nil })
+	adapter, err := NewInvokerAdapter(&fakeInvokerTxm{}, func() (*client.Client, error) { return newTestClient(mock), nil })
 	require.NoError(t, err)
 
 	events, err := adapter.GetEvents(context.Background(), contractID, 99, []string{"MessageExecuted"})

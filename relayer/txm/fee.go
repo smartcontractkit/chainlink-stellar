@@ -55,3 +55,18 @@ func (f *FeeStrategy) InclusionFee(attempt uint64) int64 {
 	}
 	return result
 }
+
+// SeedInclusionFee returns the starting inclusion fee for a transaction broadcast.
+// It picks max(geometric baseline for `attempt`, network percentile from getFeeStats)
+// and caps the result at MaxInclusionFee.
+
+func (f *FeeStrategy) SeedInclusionFee(attempt uint64, networkPercentile uint64) (fee int64, clampedToMax bool) {
+	fee = f.InclusionFee(attempt)
+	if networkFee := int64(networkPercentile); networkFee > fee { //nolint:gosec // wrap-to-negative is safe; see comment above
+		fee = networkFee
+	}
+	if fee > f.MaxInclusionFee {
+		return f.MaxInclusionFee, true
+	}
+	return fee, false
+}

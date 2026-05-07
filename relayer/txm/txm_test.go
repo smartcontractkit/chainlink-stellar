@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,10 +13,11 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 
 	"github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
@@ -43,7 +45,7 @@ func (m *mockKeystore) Decrypt(_ context.Context, _ string, encrypted []byte) ([
 	return encrypted, nil
 }
 
-// --- Mock RPC client that satisfies ccvclient.RPCClient ---
+// --- Mock RPC client that satisfies client.RPCClient ---
 
 type mockRPCClient struct {
 	getLatestLedgerResp  protocolrpc.GetLatestLedgerResponse
@@ -146,16 +148,16 @@ func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
 	return b64
 }
 
-func newTestClient(mock *mockRPCClient) *ccvclient.Client {
-	return ccvclient.NewClientFromInterface(mock, &ccvclient.ClientConfig{
+func newTestClient(mock *mockRPCClient) *client.Client {
+	return client.NewClientFromInterface(mock, &client.ClientConfig{
 		LedgerCacheTTL: config.MustNewDuration(0),
 		PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 	})
 }
 
-func newTestGetClient(mock *mockRPCClient) func() (*ccvclient.Client, error) {
-	client := newTestClient(mock)
-	return func() (*ccvclient.Client, error) { return client, nil }
+func newTestGetClient(mock *mockRPCClient) func() (*client.Client, error) {
+	c := newTestClient(mock)
+	return func() (*client.Client, error) { return c, nil }
 }
 
 const testAddress = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
@@ -285,6 +287,55 @@ func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
+	})
+
+	// Defense regression: an invalid FromAddress must be rejected at the entry
+	// point with a clean error rather than panic deep in the broadcast loop
+	// (where xdr.MustAddress used to crash the goroutine on untrusted input).
+	t.Run("invalid FromAddress rejected at Enqueue", func(t *testing.T) {
+		require.NotPanics(t, func() {
+			_, err := txm.Enqueue(context.Background(), TxRequest{
+				FromAddress: "not-a-valid-strkey",
+				Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+					HostFunction: xdr.HostFunction{
+						Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+						InvokeContract: &xdr.InvokeContractArgs{
+							ContractAddress: xdr.ScAddress{
+								Type:       xdr.ScAddressTypeScAddressTypeContract,
+								ContractId: &xdr.ContractId{},
+							},
+							FunctionName: xdr.ScSymbol("noop"),
+						},
+					},
+				}},
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid FromAddress")
+		})
+	})
+
+	t.Run("contract strkey is rejected as FromAddress", func(t *testing.T) {
+		// Contract addresses (C…) must not be accepted as a transaction source —
+		// only ed25519 account ids (G…) are valid sources.
+		require.NotPanics(t, func() {
+			_, err := txm.Enqueue(context.Background(), TxRequest{
+				FromAddress: "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA",
+				Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+					HostFunction: xdr.HostFunction{
+						Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+						InvokeContract: &xdr.InvokeContractArgs{
+							ContractAddress: xdr.ScAddress{
+								Type:       xdr.ScAddressTypeScAddressTypeContract,
+								ContractId: &xdr.ContractId{},
+							},
+							FunctionName: xdr.ScSymbol("noop"),
+						},
+					},
+				}},
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid FromAddress")
+		})
 	})
 }
 
@@ -557,6 +608,47 @@ func TestStellarTxm_GetTransactionFee(t *testing.T) {
 	})
 }
 
+// --- closeDone tests ---
+
+// closeDone must be safe under concurrent calls. The pre-fix implementation
+// guarded a check-then-close pattern with a *shared* RLock, so two goroutines
+// could both observe tx.Done as not-yet-closed and both call close(tx.Done),
+// panicking on the second close. sync.Once provides a structural exactly-once
+// guarantee that this test exercises directly.
+func TestStellarTxm_CloseDone_ConcurrentSafe(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	require.NoError(t, err)
+
+	tx := &StellarTx{ID: "concurrent-close", Done: make(chan struct{})}
+
+	const goroutines = 64
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			require.NotPanics(t, func() { txm.closeDone(tx) })
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	select {
+	case <-tx.Done:
+	default:
+		t.Fatal("Done was not closed after closeDone calls")
+	}
+
+	// Subsequent calls must remain idempotent and panic-free.
+	require.NotPanics(t, func() { txm.closeDone(tx) })
+	require.NotPanics(t, func() { txm.closeDone(tx) })
+}
+
 // --- InflightCount test ---
 
 func TestStellarTxm_InflightCount(t *testing.T) {
@@ -584,7 +676,7 @@ func TestStellarTxm_BroadcastLoop_ProcessesTx(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 	}
 
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "Test SDF Network ; September 2015")
@@ -630,7 +722,7 @@ func TestStellarTxm_ConfirmLoop_FinalizesSuccess(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
 				Status: protocolrpc.TransactionStatusSuccess,
@@ -681,7 +773,7 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 				{DataXDR: accountXDR},
 			},
 		},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		getTransactionErr:   fmt.Errorf("not found"),
 		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
 			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedgerSeq.Load()}, nil
@@ -745,7 +837,7 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
 				Status: protocolrpc.TransactionStatusSuccess,
@@ -796,7 +888,7 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 			},
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		// Never return success — tx stays unconfirmed
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
@@ -887,6 +979,58 @@ func TestStellarTxm_GetSequenceNumber_EmptyAddress(t *testing.T) {
 	assert.Contains(t, err.Error(), "address is required")
 }
 
+// Defense regression: getSequenceNumber must NOT panic on a malformed strkey.
+// Earlier code used xdr.MustAddress which panics on bad input; this test pins
+// the contract that the helper now returns a clean error instead.
+func TestStellarTxm_GetSequenceNumber_InvalidAddress(t *testing.T) {
+	t.Parallel()
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	require.NoError(t, err)
+	client := newTestClient(mock)
+
+	require.NotPanics(t, func() {
+		_, err := txm.getSequenceNumber(context.Background(), client, "not-a-stellar-address")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid stellar account address")
+	})
+}
+
+// Defense regression: getSequenceNumber must NOT panic if the RPC returns a
+// ledger entry of an unexpected type (e.g. an offer or trustline entry under
+// the account key). The pre-fix entry.MustAccount() would panic; we now error.
+func TestStellarTxm_GetSequenceNumber_NonAccountLedgerEntry(t *testing.T) {
+	t.Parallel()
+
+	// Build a ledger entry of a different type (Offer) — the SDK populates
+	// only the matching arm, so MustAccount() on this would panic.
+	nonAccount := xdr.LedgerEntryData{
+		Type: xdr.LedgerEntryTypeOffer,
+		Offer: &xdr.OfferEntry{
+			SellerId: xdr.MustAddress(testAddress),
+			OfferId:  1,
+		},
+	}
+	nonAccountXDR, err := xdr.MarshalBase64(nonAccount)
+	require.NoError(t, err)
+
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: nonAccountXDR}},
+		},
+	}
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), "test-chain", "")
+	require.NoError(t, err)
+	client := newTestClient(mock)
+
+	require.NotPanics(t, func() {
+		_, err := txm.getSequenceNumber(context.Background(), client, testAddress)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not an account entry")
+	})
+}
+
 // --- Simulate tests ---
 
 func testInvokeNoopOp() *txnbuild.InvokeHostFunction {
@@ -916,7 +1060,7 @@ func TestStellarTxm_Simulate_validation(t *testing.T) {
 
 func TestStellarTxm_Simulate_getClientError(t *testing.T) {
 	t.Parallel()
-	bad := func() (*ccvclient.Client, error) { return nil, fmt.Errorf("unreachable") }
+	bad := func() (*client.Client, error) { return nil, fmt.Errorf("unreachable") }
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, bad, "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 	_, err = txm.Simulate(context.Background(), TxRequest{
@@ -930,8 +1074,8 @@ func TestStellarTxm_Simulate_getClientError(t *testing.T) {
 func TestStellarTxm_Simulate_LatestLedgerError(t *testing.T) {
 	t.Parallel()
 	inner := &mockRPCClient{getLatestLedgerErr: fmt.Errorf("ledger err")}
-	client := newTestClient(inner)
-	getClient := func() (*ccvclient.Client, error) { return client, nil }
+	c := newTestClient(inner)
+	getClient := func() (*client.Client, error) { return c, nil }
 	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, getClient, "c", "Test SDF Network ; September 2015")
 	require.NoError(t, err)
 	_, err = txm.Simulate(context.Background(), TxRequest{
@@ -986,15 +1130,15 @@ func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing
 		},
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "h"},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h"},
 	}
 	bmock := &blockingAfterFirstSimulateRPC{
 		mockRPCClient: inner,
 		started:       make(chan struct{}),
 		unblock:       make(chan struct{}),
 	}
-	getClient := func() (*ccvclient.Client, error) {
-		return ccvclient.NewClientFromInterface(bmock, &ccvclient.ClientConfig{
+	getClient := func() (*client.Client, error) {
+		return client.NewClientFromInterface(bmock, &client.ClientConfig{
 			LedgerCacheTTL: config.MustNewDuration(0),
 			PollInterval:   config.MustNewDuration(10 * time.Millisecond),
 		}), nil
@@ -1044,7 +1188,7 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 	mock := &mockRPCClient{
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
 		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{
 				Status:        protocolrpc.TransactionStatusSuccess,
@@ -1102,7 +1246,7 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 	mock := &mockRPCClient{
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
 		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "test-hash"},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 		getTransactionResp: protocolrpc.GetTransactionResponse{
 			TransactionDetails: protocolrpc.TransactionDetails{

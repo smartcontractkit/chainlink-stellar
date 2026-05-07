@@ -1,4 +1,4 @@
-package ccvclient
+package client
 
 import (
 	"context"

@@ -1,6 +1,7 @@
 package txm
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,4 +123,77 @@ func TestFeeStrategy_Calculate_MultiplierOfOne(t *testing.T) {
 	for attempt := uint64(0); attempt < 5; attempt++ {
 		assert.Equal(t, int64(100+50_000+5_000), fs.Calculate(50_000, attempt))
 	}
+}
+
+func TestFeeStrategy_SeedInclusionFee(t *testing.T) {
+	t.Parallel()
+
+	fs := FeeStrategy{
+		BaseInclusionFee:  100,
+		MaxInclusionFee:   10_000,
+		BumpMultiplier:    1.5,
+		ResourceFeeBuffer: 0,
+	}
+
+	t.Run("attempt 0, no network data, returns geometric baseline", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(0, 0)
+		assert.Equal(t, int64(100), fee)
+		assert.False(t, clamped)
+	})
+
+	t.Run("attempt 1, no network data, returns geometric baseline", func(t *testing.T) {
+		// InclusionFee(1) = ceil(100 * 1.5) = 150
+		fee, clamped := fs.SeedInclusionFee(1, 0)
+		assert.Equal(t, int64(150), fee)
+		assert.False(t, clamped)
+	})
+
+	t.Run("network fee above geometric baseline but below cap is adopted", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(0, 500)
+		assert.Equal(t, int64(500), fee)
+		assert.False(t, clamped)
+	})
+
+	t.Run("network fee below geometric baseline is ignored", func(t *testing.T) {
+		// Geometric baseline at attempt 5 = ceil(100 * 1.5^5) = 760
+		fee, clamped := fs.SeedInclusionFee(5, 50)
+		assert.Equal(t, int64(760), fee)
+		assert.False(t, clamped)
+	})
+
+	// Security regression: a malicious RPC reporting a huge percentile must be
+	// clamped at MaxInclusionFee so the source account cannot be drained via
+	// fee bidding.
+	t.Run("malicious RPC: huge network percentile is clamped", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(0, 1_000_000_000)
+		assert.Equal(t, int64(10_000), fee)
+		assert.True(t, clamped)
+	})
+
+	t.Run("malicious RPC: network percentile near MaxInt64 is clamped", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(0, math.MaxInt64-1)
+		assert.Equal(t, int64(10_000), fee)
+		assert.True(t, clamped)
+	})
+
+	// Defensive: uint64 values above MaxInt64 wrap to negative when cast; the
+	// helper must still produce a bounded result (the geometric baseline).
+	t.Run("malicious RPC: uint64 above MaxInt64 is ignored, baseline used", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(0, math.MaxUint64)
+		assert.Equal(t, int64(100), fee)
+		assert.False(t, clamped)
+	})
+
+	t.Run("retry attempt with network P99 below cap is adopted", func(t *testing.T) {
+		// At attempt 3, geometric = ceil(100 * 1.5^3) = 338. Network P99 = 5_000.
+		fee, clamped := fs.SeedInclusionFee(3, 5_000)
+		assert.Equal(t, int64(5_000), fee)
+		assert.False(t, clamped)
+	})
+
+	t.Run("retry attempt with malicious P99 is clamped", func(t *testing.T) {
+		fee, clamped := fs.SeedInclusionFee(3, 999_999_999)
+		assert.Equal(t, int64(10_000), fee)
+		assert.True(t, clamped)
+	})
 }

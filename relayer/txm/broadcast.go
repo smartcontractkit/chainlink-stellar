@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -44,7 +45,8 @@ func (s *StellarTxm) buildPreliminaryTx(tx *StellarTx, seq int64, maxLedger uint
 	// seq is the NEXT sequence to submit (TxStore convention).
 	// txnbuild.NewSimpleAccount expects the LAST USED sequence, so pass seq-1;
 	// IncrementSequenceNum:true then produces exactly seq on the wire.
-	sourceAccount := txnbuild.NewSimpleAccount(tx.FromAddress, seq-1)
+	lastUsedSeq := max(int64(0), seq-1)
+	sourceAccount := txnbuild.NewSimpleAccount(tx.FromAddress, lastUsedSeq)
 
 	return txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        &sourceAccount,
@@ -60,7 +62,14 @@ func (s *StellarTxm) buildPreliminaryTx(tx *StellarTx, seq int64, maxLedger uint
 	})
 }
 
-func (s *StellarTxm) simulateTransaction(ctx context.Context, client *ccvclient.Client, tx *txnbuild.Transaction) (protocolrpc.SimulateTransactionResponse, error) {
+func (s *StellarTxm) simulateTransaction(ctx context.Context, client *client.Client, tx *txnbuild.Transaction) (protocolrpc.SimulateTransactionResponse, error) {
+	if client == nil {
+		return protocolrpc.SimulateTransactionResponse{}, errors.New("client is nil")
+	}
+	if tx == nil {
+		return protocolrpc.SimulateTransactionResponse{}, errors.New("transaction is nil")
+	}
+
 	txXDR, err := tx.Base64()
 	if err != nil {
 		return protocolrpc.SimulateTransactionResponse{}, fmt.Errorf("failed to base64 encode preliminary tx: %w", err)
@@ -244,7 +253,7 @@ func (s *StellarTxm) handleSendResult(
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 
 	switch submitResult.Status {
-	case "PENDING", "DUPLICATE":
+	case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
 		if submitResult.Hash == "" {
 			ctxLogger.Errorw("accepted transaction response missing hash", "status", submitResult.Status)
 			return false, true, ErrorReasonNoHash
@@ -261,21 +270,17 @@ func (s *StellarTxm) handleSendResult(
 		s.updateTransactionResultCode(tx, "")
 		return true, false, ""
 
-	case "TRY_AGAIN_LATER":
+	case stellarcore.TXStatusTryAgainLater:
 		return false, false, ErrorReasonTryAgainLater
 
-	case "ERROR":
-		resultCode := s.classifyErrorResult(submitResult.ErrorResultXDR)
+	case stellarcore.TXStatusError:
+		typedCode, resultCode, decoded := parseSubmitErrorResult(submitResult.ErrorResultXDR)
 		ctxLogger.Warnw("tx rejected by network", "resultCode", resultCode, "errorXDR", submitResult.ErrorResultXDR)
 
-		switch resultCode {
-		case xdr.TransactionResultCodeTxBadSeq.String():
-			return false, false, ErrorReasonBadSeq
-		case xdr.TransactionResultCodeTxInsufficientBalance.String(), xdr.TransactionResultCodeTxBadAuth.String():
+		if !decoded {
 			return false, true, resultCode
-		default:
-			return false, false, resultCode
 		}
+		return classifySubmitErrorCode(typedCode, resultCode)
 
 	default:
 		ctxLogger.Errorw("unknown submit status", "status", submitResult.Status)
@@ -284,14 +289,31 @@ func (s *StellarTxm) handleSendResult(
 }
 
 func (s *StellarTxm) classifyErrorResult(errorResultXDR string) string {
-	if errorResultXDR == "" {
-		return "unknown_error"
-	}
+	_, label, _ := parseSubmitErrorResult(errorResultXDR)
+	return label
+}
 
+func parseSubmitErrorResult(errorResultXDR string) (code xdr.TransactionResultCode, label string, decoded bool) {
+	if errorResultXDR == "" {
+		return 0, "unknown_error", false
+	}
 	var txResult xdr.TransactionResult
 	if err := xdr.SafeUnmarshalBase64(errorResultXDR, &txResult); err != nil {
-		return "decode_error"
+		return 0, "decode_error", false
 	}
+	return txResult.Result.Code, txResult.Result.Code.String(), true
+}
 
-	return txResult.Result.Code.String()
+
+func classifySubmitErrorCode(code xdr.TransactionResultCode, label string) (accepted, fatal bool, reason string) {
+	switch code {
+	case xdr.TransactionResultCodeTxBadSeq:
+		return false, false, ErrorReasonBadSeq
+	case xdr.TransactionResultCodeTxInsufficientFee:
+		return false, false, ErrorReasonInsufficientFee
+	case xdr.TransactionResultCodeTxInternalError:
+		return false, false, ErrorReasonInternalError
+	default:
+		return false, true, label
+	}
 }

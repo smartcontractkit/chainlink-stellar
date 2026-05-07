@@ -8,7 +8,7 @@ import (
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -47,7 +47,7 @@ func WithInvokerLedgerBoundsOffset(offset uint32) InvokerAdapterOption {
 // event reads delegate directly to the shared RPC client.
 type InvokerAdapter struct {
 	txm                InvokerTxManager
-	getClient          func() (*ccvclient.Client, error)
+	getClient          func() (*client.Client, error)
 	fromAddress        string
 	ledgerBoundsOffset uint32
 }
@@ -55,7 +55,7 @@ type InvokerAdapter struct {
 // NewInvokerAdapter creates a bindings.Invoker backed by the Stellar TXM.
 func NewInvokerAdapter(
 	txm InvokerTxManager,
-	getClient func() (*ccvclient.Client, error),
+	getClient func() (*client.Client, error),
 	opts ...InvokerAdapterOption,
 ) (*InvokerAdapter, error) {
 	if txm == nil {

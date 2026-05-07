@@ -37,7 +37,7 @@ import (
 	"github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -195,12 +195,12 @@ func setupTXM(t *testing.T, cfg manualCfg) *StellarTxm {
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	rpc := rpcclient.NewClient(cfg.RPCURL, httpClient)
-	clientCfg := ccvclient.DefaultClientConfig()
+	clientCfg := client.DefaultClientConfig()
 	clientCfg.ChainID = "manual-test"
-	clientCfg.NodeURL = cfg.RPCURL
-	client := ccvclient.NewClientWithConfig(rpc, clientCfg)
+	clientCfg.RPCURL = cfg.RPCURL
+	c := client.NewClient(rpc, &clientCfg)
 
-	getClient := func() (*ccvclient.Client, error) { return client, nil }
+	getClient := func() (*client.Client, error) { return c, nil }
 
 	txmCfg := DefaultConfigSet
 	txmCfg.ConfirmPollInterval = config.MustNewDuration(3 * time.Second)
@@ -238,21 +238,21 @@ func TestTXMManual(t *testing.T) {
 
 		httpClient := &http.Client{Timeout: 15 * time.Second}
 		rpc := rpcclient.NewClient(cfg.RPCURL, httpClient)
-		c1Cfg := ccvclient.DefaultClientConfig()
+		c1Cfg := client.DefaultClientConfig()
 		c1Cfg.ChainID = "manual-test"
-		c1Cfg.NodeURL = cfg.RPCURL
-		client := ccvclient.NewClientWithConfig(rpc, c1Cfg)
+		c1Cfg.RPCURL = cfg.RPCURL
+		c := client.NewClient(rpc, &c1Cfg)
 
-		ledger, err := client.GetLatestLedger(context.Background())
+		ledger, err := c.GetLatestLedger(context.Background())
 		require.NoError(t, err, "GetLatestLedger failed — is the RPC reachable?")
 		t.Logf("  ✓ RPC alive  latestLedger=%d  protocolVersion=%d", ledger.Sequence, ledger.ProtocolVersion)
 
 		// Fetch account sequence the same way the TXM does it.
 		seqLggr, _ := logger.New()
-		stellarTxm, err := New(seqLggr, &mockKeystore{}, Config{}, func() (*ccvclient.Client, error) { return client, nil }, "test", cfg.NetworkPassphrase)
+		stellarTxm, err := New(seqLggr, &mockKeystore{}, Config{}, func() (*client.Client, error) { return c, nil }, "test", cfg.NetworkPassphrase)
 		require.NoError(t, err)
 
-		seq, err := stellarTxm.getSequenceNumber(context.Background(), client, cfg.Address)
+		seq, err := stellarTxm.getSequenceNumber(context.Background(), c, cfg.Address)
 		require.NoError(t, err, "getSequenceNumber — does the account exist and have XLM?")
 		t.Logf("  ✓ Account exists  onChainSeqNum(last used)=%d  nextValid=%d", seq, seq+1)
 	})
@@ -462,16 +462,16 @@ func TestTXMManual(t *testing.T) {
 
 		httpClient := &http.Client{Timeout: 15 * time.Second}
 		rpc := rpcclient.NewClient(cfg.RPCURL, httpClient)
-		c7Cfg := ccvclient.DefaultClientConfig()
+		c7Cfg := client.DefaultClientConfig()
 		c7Cfg.ChainID = "manual-test"
-		c7Cfg.NodeURL = cfg.RPCURL
-		client := ccvclient.NewClientWithConfig(rpc, c7Cfg)
+		c7Cfg.RPCURL = cfg.RPCURL
+		c := client.NewClient(rpc, &c7Cfg)
 
 		// Size-1 channel so the second enqueue immediately saturates it.
 		tiny := DefaultConfigSet
 		tiny.BroadcastChanSize = ptr(uint(1))
 
-		txm2, err := New(lggr, ks, tiny, func() (*ccvclient.Client, error) { return client, nil }, "test", cfg.NetworkPassphrase)
+		txm2, err := New(lggr, ks, tiny, func() (*client.Client, error) { return c, nil }, "test", cfg.NetworkPassphrase)
 		require.NoError(t, err)
 		// NOTE: do not Start() — we want the channel to stay full.
 

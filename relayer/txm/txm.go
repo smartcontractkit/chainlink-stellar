@@ -18,7 +18,7 @@ import (
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	commonutils "github.com/smartcontractkit/chainlink-common/pkg/utils"
 
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -47,7 +47,7 @@ type StellarTxm struct {
 	done          sync.WaitGroup
 	stop          chan struct{}
 
-	getClient         func() (*ccvclient.Client, error)
+	getClient         func() (*client.Client, error)
 	networkPassphrase string
 }
 
@@ -57,7 +57,7 @@ func New(
 	lgr logger.Logger,
 	keystore loop.Keystore,
 	cfg Config,
-	getClient func() (*ccvclient.Client, error),
+	getClient func() (*client.Client, error),
 	chainID string,
 	networkPassphrase string,
 ) (*StellarTxm, error) {
@@ -147,6 +147,10 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		if err != nil {
 			return "", err
 		}
+	}
+	// Validate caller-supplied addresses up front so an invalid value can't reach downstream 
+	if _, err := xdr.AddressToAccountId(fromAddr); err != nil {
+		return "", fmt.Errorf("invalid FromAddress %q: %w", fromAddr, err)
 	}
 
 	tx := &StellarTx{
@@ -404,13 +408,9 @@ func (s *StellarTxm) getTransactionAttempt(tx *StellarTx) uint64 {
 
 // closeDone closes the transaction's Done channel to unblock EnqueueAndWait callers.
 func (s *StellarTxm) closeDone(tx *StellarTx) {
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
-	select {
-	case <-tx.Done:
-	default:
+	tx.doneOnce.Do(func() {
 		close(tx.Done)
-	}
+	})
 }
 
 // --- Broadcast loop ---
@@ -511,22 +511,25 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		_ = s.resyncSequence(ctx, client, tx)
 	}
 
-	// Seed inclusion fee from live network data, with geometric bump as fallback.
-	// Mirrors Aptos EstimateGasPrice(): first attempt uses normal tier (P50),
-	// outer retries jump to priority tier (P99) to get ahead of the queue.
-	inclusionFee := s.feeStrat.InclusionFee(currentAttempt)
+	// Seed inclusion fee from live network data
+	// SeedInclusionFee caps the result at MaxInclusionFee
+	var networkPercentile uint64
 	if feeStats, fsErr := client.GetFeeStats(ctx); fsErr == nil {
-		var networkFee int64
 		if currentAttempt > 0 {
-			networkFee = int64(feeStats.SorobanInclusionFee.P99)
+			networkPercentile = feeStats.SorobanInclusionFee.P99
 		} else {
-			networkFee = int64(feeStats.SorobanInclusionFee.P50)
-		}
-		if networkFee > inclusionFee {
-			inclusionFee = networkFee
+			networkPercentile = feeStats.SorobanInclusionFee.P50
 		}
 	} else {
-		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr, "inclusionFee", inclusionFee)
+		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
+	}
+	inclusionFee, clampedToMax := s.feeStrat.SeedInclusionFee(currentAttempt, networkPercentile)
+	if clampedToMax {
+		ctxLogger.Warnw("seeded inclusion fee clamped to MaxInclusionFee — possible misbehaving RPC",
+			"networkPercentile", networkPercentile,
+			"maxInclusionFee", s.feeStrat.MaxInclusionFee,
+			"attempt", currentAttempt,
+		)
 	}
 
 	seq := txStore.GetNextSequence()
@@ -648,7 +651,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		if retryReason == ErrorReasonTryAgainLater {
+		if retryReason == ErrorReasonTryAgainLater || retryReason == ErrorReasonInsufficientFee {
 			// Bump inclusion fee: apply multiplier then take max with live P90.
 			// This mirrors Aptos using PrioritizedGasEstimate on retry — we jump
 			// to the current clearing price instead of climbing blindly.
@@ -661,8 +664,8 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			if bumped > s.feeStrat.MaxInclusionFee {
 				bumped = s.feeStrat.MaxInclusionFee
 			}
-			ctxLogger.Warnw("tx rejected with try_again_later, bumping inclusion fee",
-				"attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped)
+			ctxLogger.Warnw("tx rejected, bumping inclusion fee and retrying",
+				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped)
 			inclusionFee = bumped
 			submitAttempt++
 			select {
@@ -694,7 +697,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 func (s *StellarTxm) prepareAndSimulateWithRetry(
 	ctx context.Context,
-	client *ccvclient.Client,
+	client *client.Client,
 	tx *StellarTx,
 	seq int64,
 ) (*txnbuild.Transaction, protocolrpc.SimulateTransactionResponse, uint32, error) {
@@ -1017,14 +1020,18 @@ func (s *StellarTxm) defaultFromAddress(ctx context.Context) (string, error) {
 
 // getSequenceNumber fetches the on-chain sequence number for a Stellar account.
 // Returns the LAST USED sequence (the caller must add +1 for the next expected).
-func (s *StellarTxm) getSequenceNumber(ctx context.Context, client *ccvclient.Client, address string) (int64, error) {
+func (s *StellarTxm) getSequenceNumber(ctx context.Context, client *client.Client, address string) (int64, error) {
 	if address == "" {
 		return 0, errors.New("address is required for sequence number lookup")
+	}
+	accountID, err := xdr.AddressToAccountId(address)
+	if err != nil {
+		return 0, fmt.Errorf("invalid stellar account address %q: %w", address, err)
 	}
 	accountKey := xdr.LedgerKey{
 		Type: xdr.LedgerEntryTypeAccount,
 		Account: &xdr.LedgerKeyAccount{
-			AccountId: xdr.MustAddress(address),
+			AccountId: accountID,
 		},
 	}
 
@@ -1054,11 +1061,14 @@ func (s *StellarTxm) getSequenceNumber(ctx context.Context, client *ccvclient.Cl
 		return 0, fmt.Errorf("failed to unmarshal account entry: %w", err)
 	}
 
-	account := entry.MustAccount()
+	account, ok := entry.GetAccount()
+	if !ok {
+		return 0, fmt.Errorf("ledger entry for %s is not an account entry (type=%v)", address, entry.Type)
+	}
 	return int64(account.SeqNum), nil
 }
 
-func (s *StellarTxm) resyncSequence(ctx context.Context, client *ccvclient.Client, tx *StellarTx) error {
+func (s *StellarTxm) resyncSequence(ctx context.Context, client *client.Client, tx *StellarTx) error {
 	seqNum, err := s.getSequenceNumber(ctx, client, tx.FromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to resync sequence for %s: %w", tx.FromAddress, err)

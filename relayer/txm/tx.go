@@ -3,6 +3,7 @@ package txm
 import (
 	"crypto/ed25519"
 	"math/big"
+	"sync"
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
@@ -31,8 +32,8 @@ type StellarTx struct {
 	MinResourceFee int64    // from simulation result
 
 	// Done is closed when the transaction reaches a terminal state.
-	// Used by EnqueueAndWait to block until completion.
-	Done chan struct{}
+	Done     chan struct{}
+	doneOnce sync.Once
 }
 
 // TxRequest is the input accepted by Enqueue / EnqueueAndWait.
@@ -74,6 +75,8 @@ const (
 	ErrorReasonBadAuth           = "bad_auth"
 	ErrorReasonTryAgainLater     = "try_again_later"
 	ErrorReasonClientUnavailable = "client_unavailable"
+	ErrorReasonInsufficientFee = "insufficient_fee"
+	ErrorReasonInternalError = "internal_error"
 )
 
 // Drop reasons classify why a pending transaction was dropped from the broadcast queue.

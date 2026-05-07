@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	ccvclient "github.com/smartcontractkit/chainlink-stellar/ccv/client"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/client"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 func (s *StellarTxm) handleRestore(
 	ctx context.Context,
-	client *ccvclient.Client,
+	client *client.Client,
 	tx *StellarTx,
 	preamble protocolrpc.RestorePreamble,
 	seq int64,
@@ -58,6 +59,9 @@ func (s *StellarTxm) handleRestore(
 		return fmt.Errorf("failed to encode signed restore transaction: %w", err)
 	}
 
+	// Count one RestoreTotal per logical restore
+	s.metrics.IncrementRestoreTotal(ctx)
+
 	var lastErr error
 	for attempt := uint(0); attempt < *s.config.MaxRestoreAttempts; attempt++ {
 		submitResult, err := client.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
@@ -73,8 +77,7 @@ func (s *StellarTxm) handleRestore(
 		}
 
 		switch submitResult.Status {
-		case "PENDING", "DUPLICATE":
-			s.metrics.IncrementRestoreTotal(ctx)
+		case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
 			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", submitResult.Hash)
 
 			timeout := time.Duration(*s.config.TxTimeoutSecs) * time.Second
@@ -98,20 +101,20 @@ func (s *StellarTxm) handleRestore(
 			s.metrics.IncrementRestoreFailed(ctx)
 			return fmt.Errorf("restore transaction failed on-chain: %s", resp.Status)
 
-		case "TRY_AGAIN_LATER":
-			lastErr = fmt.Errorf("restore transaction rejected with TRY_AGAIN_LATER")
+		case stellarcore.TXStatusTryAgainLater:
+			lastErr = fmt.Errorf("restore transaction rejected with %s", stellarcore.TXStatusTryAgainLater)
 			ctxLogger.Warnw("restore transaction asked to try again later", "attempt", attempt)
 			if !s.sleepBeforeRestoreRetry(ctx) {
 				return ctx.Err()
 			}
 			continue
 
-		case "ERROR":
+		case stellarcore.TXStatusError:
 			s.metrics.IncrementRestoreFailed(ctx)
 			if submitResult.ErrorResultXDR != "" {
 				return fmt.Errorf("restore transaction rejected: %s", submitResult.ErrorResultXDR)
 			}
-			return fmt.Errorf("restore transaction rejected with ERROR")
+			return fmt.Errorf("restore transaction rejected with %s", stellarcore.TXStatusError)
 
 		default:
 			s.metrics.IncrementRestoreFailed(ctx)
