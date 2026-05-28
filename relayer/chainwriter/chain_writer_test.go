@@ -3,6 +3,7 @@ package chainwriter
 
 import (
 	"context"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,28 @@ func TestChainWriter_SubmitTransaction(t *testing.T) {
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "simulation returned error")
+	})
+
+	t.Run("gas limit not supported", func(t *testing.T) {
+		mockTxm := &mockTxManager{
+			simulateFunc: func(ctx context.Context, req txm.TxRequest) (protocolrpc.SimulateTransactionResponse, error) {
+				return protocolrpc.SimulateTransactionResponse{MinResourceFee: 500000}, nil
+			},
+		}
+		cw, _ := NewChainWriter(lggr, mockTxm, ks, validConfig)
+
+		args := []stellartypes.ScVal{}
+		err := cw.SubmitTransaction(
+			t.Context(),
+			"MyContract",
+			"myFunction",
+			args,
+			"my-tx-id",
+			validContractID,
+			&commontypes.TxMeta{GasLimit: big.NewInt(400000)},
+			nil,
+		)
+		require.ErrorIs(t, err, commontypes.ErrSettingTransactionGasLimitNotSupported)
 	})
 }
 
