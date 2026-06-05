@@ -45,7 +45,7 @@ type Chain interface {
 
 	ID() string
 	Config() *config.TOMLConfig
-	TxManager() *txm.StellarTxm
+	TxManager() txm.TxManager
 	KeyStore() core.Keystore
 	GetClient() (RPCClient, error)
 }
@@ -115,7 +115,7 @@ func NewChain(cfg *config.TOMLConfig, opts Opts, chainInfo chainsel.StellarChain
 func (c *chain) Name() string               { return c.lggr.Name() }
 func (c *chain) ID() string                 { return c.chainInfo.ChainID }
 func (c *chain) Config() *config.TOMLConfig { return c.cfg }
-func (c *chain) TxManager() *txm.StellarTxm { return c.txm }
+func (c *chain) TxManager() txm.TxManager { return c.txm }
 func (c *chain) KeyStore() core.Keystore    { return c.keyStore }
 
 func (c *chain) Start(ctx context.Context) error {

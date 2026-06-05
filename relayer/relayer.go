@@ -3,6 +3,7 @@ package relayer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
@@ -10,6 +11,7 @@ import (
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
 	relaytypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/chain"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/chainwriter"
 )
 
 var _ loop.Relayer = (*Relayer)(nil)
@@ -95,4 +97,23 @@ func (r *Relayer) Transact(ctx context.Context, from, to string, amount *big.Int
 
 func (r *Relayer) Stellar() (relaytypes.StellarService, error) {
 	return &r.stellarService, nil
+}
+
+func (r *Relayer) NewContractWriter(_ context.Context, configBytes []byte) (relaytypes.ContractWriter, error) {
+	cfg, err := chainwriter.ParseConfig(configBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse chain writer config: %w", err)
+	}
+
+	txm := r.chainService.TxManager()
+	if txm == nil {
+		return nil, errors.New("stellar txm is unavailable")
+	}
+
+	ks := r.chainService.KeyStore()
+	if ks == nil {
+		return nil, errors.New("stellar keystore is unavailable")
+	}
+
+	return chainwriter.NewChainWriter(r.lggr, txm, ks, cfg)
 }
