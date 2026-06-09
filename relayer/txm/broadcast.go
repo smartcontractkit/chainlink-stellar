@@ -254,6 +254,12 @@ func (s *StellarTxm) handleSendResult(
 	}
 }
 
+// ParseSubmitErrorResult decodes errorResultXDR into a transaction result code.
+// ok is false when errorResultXDR is empty or cannot be unmarshaled as XDR.
+func ParseSubmitErrorResult(errorResultXDR string) (code xdr.TransactionResultCode, ok bool) {
+	return parseSubmitErrorResult(errorResultXDR)
+}
+
 // parseSubmitErrorResult decodes errorResultXDR into a transaction result code.
 // ok is false when errorResultXDR is empty or cannot be unmarshaled as XDR.
 func parseSubmitErrorResult(errorResultXDR string) (code xdr.TransactionResultCode, ok bool) {

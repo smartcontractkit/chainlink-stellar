@@ -10,17 +10,25 @@ import (
 	stellartypes "github.com/smartcontractkit/chainlink-common/pkg/types/chains/stellar"
 
 	"github.com/smartcontractkit/chainlink-stellar/relayer/chain"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
+
+// stellarTxManager is the subset of txm.StellarTxm used by SubmitTransaction.
+// Defining a narrow interface here keeps stellarService testable without a live TXM.
+type stellarTxManager interface {
+	EnqueueAndWait(ctx context.Context, req txm.TxRequest) (*txm.TxResult, error)
+}
 
 type stellarService struct {
 	relaytypes.UnimplementedStellarService
 	chain chain.Chain
+	txMgr stellarTxManager
 }
 
 var _ relaytypes.StellarService = (*stellarService)(nil)
 
 func newStellarService(ch chain.Chain) stellarService {
-	return stellarService{chain: ch}
+	return stellarService{chain: ch, txMgr: ch.TxManager()}
 }
 
 func (s *stellarService) GetLedgerEntries(ctx context.Context, req stellartypes.GetLedgerEntriesRequest) (stellartypes.GetLedgerEntriesResponse, error) {

@@ -85,7 +85,7 @@ func NewInvokerAdapter(
 // blocks until the transaction reaches a terminal state (or ctx is cancelled),
 // then returns the Soroban return value from the confirmed transaction metadata.
 func (a *InvokerAdapter) InvokeContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {
-	op, err := buildInvokeContractOperation(contractID, functionName, args, a.fromAddress)
+	op, err := BuildInvokeContractOperation(contractID, functionName, args, a.fromAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (a *InvokerAdapter) InvokeContract(ctx context.Context, contractID string, 
 // SimulateContract performs a read-only Soroban simulation through the TXM and
 // returns the simulated Soroban return value.
 func (a *InvokerAdapter) SimulateContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {
-	op, err := buildInvokeContractOperation(contractID, functionName, args, a.fromAddress)
+	op, err := BuildInvokeContractOperation(contractID, functionName, args, a.fromAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +164,13 @@ func (a *InvokerAdapter) GetEvents(ctx context.Context, contractID string, start
 	}
 
 	return resp.Events, nil
+}
+
+// BuildInvokeContractOperation creates a txnbuild.InvokeHostFunction operation for calling
+// a Soroban contract function. It is exported so callers outside the txm package (e.g.
+// stellarService.SubmitTransaction) can reuse it without duplicating the XDR wiring.
+func BuildInvokeContractOperation(contractID string, functionName string, args []xdr.ScVal, fromAddress string) (*txnbuild.InvokeHostFunction, error) {
+	return buildInvokeContractOperation(contractID, functionName, args, fromAddress)
 }
 
 func buildInvokeContractOperation(contractID string, functionName string, args []xdr.ScVal, fromAddress string) (*txnbuild.InvokeHostFunction, error) {
