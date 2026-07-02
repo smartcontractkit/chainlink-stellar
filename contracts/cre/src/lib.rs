@@ -56,11 +56,6 @@ impl Ownable for KeystoneForwarder {
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
 
-// #[contractimpl]
-// impl SignatureVerifiable for KeystoneForwarder {
-//     const SIGNATURE_FORMAT: SignatureFormat = SignatureFormat::Secp256k1;
-// }
-
 #[contractimpl]
 impl KeystoneForwarder {
     pub fn initialize(env: Env, owner: Address) -> Result<(), ForwarderError> {
