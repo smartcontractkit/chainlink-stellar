@@ -145,6 +145,7 @@ impl KeystoneForwarder {
             signers: cfg.signers,
         }
         .publish(&env);
+
         Ok(())
     }
 

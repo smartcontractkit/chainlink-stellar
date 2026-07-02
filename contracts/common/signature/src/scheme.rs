@@ -58,7 +58,8 @@ impl SignatureScheme for Secp256k1EthAddress {
         // SDK's "secure hash" invariant for `secp256k1_recover`.
         let hash_ref: &Hash<32> = unsafe { &*(digest as *const BytesN<32> as *const Hash<32>) };
         let uncompressed_pubkey: BytesN<65> =
-            env.crypto().secp256k1_recover(hash_ref, signature, recovery_id);
+            env.crypto()
+                .secp256k1_recover(hash_ref, signature, recovery_id);
 
         // keccak256(pubkey[1..65]) — skip the 0x04 prefix byte.
         let pubkey_body = Bytes::from_slice(env, &uncompressed_pubkey.to_array()[1..]);
@@ -90,7 +91,8 @@ impl SignatureScheme for Ed25519 {
     ) -> BytesN<32> {
         // ed25519 signs the 32-byte digest as its message. Traps if invalid.
         let message = Bytes::from_array(env, &digest.to_array());
-        env.crypto().ed25519_verify(&public_key, &message, signature);
+        env.crypto()
+            .ed25519_verify(&public_key, &message, signature);
         public_key
     }
 }
