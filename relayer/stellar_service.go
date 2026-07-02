@@ -16,11 +16,12 @@ import (
 	stellartypes "github.com/smartcontractkit/chainlink-common/pkg/types/chains/stellar"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+
 	"github.com/smartcontractkit/chainlink-stellar/relayer/chain"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 
-const readContractTimeBound = 1 * time.Minute
+const simulateTransactionTimeBound = 1 * time.Minute
 
 // StellarTxManager is the subset of txm.StellarTxm used by SubmitTransaction.
 type StellarTxManager interface {
@@ -97,36 +98,43 @@ func (s *stellarService) GetLatestLedger(ctx context.Context) (stellartypes.GetL
 	}, nil
 }
 
-// ReadContract performs a read-only Soroban contract call by building an
-// InvokeHostFunction operation and simulating it against the network (the transaction is never submitted or signed).
+// SimulateTransaction performs a Soroban InvokeHostFunction simulation.
 //
-// A successful simulation that reports a contract/host-function failure is returned in ReadContractResponse.Error with a nil Go error.
-func (s *stellarService) ReadContract(ctx context.Context, req stellartypes.ReadContractRequest) (stellartypes.ReadContractResponse, error) {
+// It builds an unsigned InvokeHostFunction transaction, sends it to Stellar RPC's
+// simulateTransaction endpoint, and maps the simulation response into the domain
+// response. Host-function failures are represented in the response Error field
+// with a nil Go error.
+func (s *stellarService) SimulateTransaction(ctx context.Context, req stellartypes.SimulateTransactionRequest) (stellartypes.SimulateTransactionResponse, error) {
 	if req.ContractID == "" {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("contract id is required")
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("contract id is required")
 	}
 	if req.Function == "" {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("function is required")
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("function is required")
+	}
+
+	authMode, err := validateSimulateAuthMode(req.AuthMode)
+	if err != nil {
+		return stellartypes.SimulateTransactionResponse{}, err
 	}
 
 	rpc, err := s.chain.GetClient(ctx)
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to get chain client: %w", err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to get chain client: %w", err)
 	}
 
 	contractBytes, err := strkey.Decode(strkey.VersionByteContract, req.ContractID)
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to decode contract id %q: %w", req.ContractID, err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to decode contract id %q: %w", req.ContractID, err)
 	}
 
 	contractAddr := scval.BuildContractScAddress(contractBytes)
 	if contractAddr == nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to build contract address from contractID: %s", req.ContractID)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to build contract address from contractID: %s", req.ContractID)
 	}
 
-	args, err := convertDomainScVals(req.Args)
+	args, err := convertScValsToDomain(req.Args)
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to convert args: %w", err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to convert args: %w", err)
 	}
 
 	hostFn := xdr.HostFunction{
@@ -142,10 +150,10 @@ func (s *stellarService) ReadContract(ctx context.Context, req stellartypes.Read
 	if srcAddr == "" {
 		srcAddr, err = strkey.Encode(strkey.VersionByteAccountID, make([]byte, 32))
 		if err != nil {
-			return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to build placeholder source account: %w", err)
+			return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to build placeholder source account: %w", err)
 		}
 	} else if _, err = strkey.Decode(strkey.VersionByteAccountID, srcAddr); err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to decode source account %q: %w", srcAddr, err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to decode source account %q: %w", srcAddr, err)
 	}
 
 	sourceAccount := &txnbuild.SimpleAccount{AccountID: srcAddr, Sequence: 0}
@@ -159,43 +167,89 @@ func (s *stellarService) ReadContract(ctx context.Context, req stellartypes.Read
 				SourceAccount: srcAddr,
 			},
 		},
-		BaseFee:       txnbuild.MinBaseFee,
-		Preconditions: txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, time.Now().Add(readContractTimeBound).Unix())},
+		BaseFee: txnbuild.MinBaseFee,
+		Preconditions: txnbuild.Preconditions{
+			TimeBounds: txnbuild.NewTimebounds(0, time.Now().Add(simulateTransactionTimeBound).Unix()),
+		},
 	})
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to build transaction: %w", err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to build transaction: %w", err)
 	}
 
 	txXDR, err := tx.Base64()
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to encode transaction: %w", err)
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to encode transaction: %w", err)
 	}
 
-	simResult, err := rpc.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: txXDR})
+	simReq := protocol.SimulateTransactionRequest{
+		Transaction: txXDR,
+		AuthMode:    authMode,
+		Format:      protocol.FormatBase64,
+	}
+	if req.ResourceConfig != nil {
+		simReq.ResourceConfig = &protocol.ResourceConfig{
+			InstructionLeeway: req.ResourceConfig.InstructionLeeway,
+		}
+	}
+
+	simResult, err := rpc.SimulateTransaction(ctx, simReq)
 	if err != nil {
-		return stellartypes.ReadContractResponse{}, fmt.Errorf("failed to read contract: %w: %w", multinode.ErrNodeError, err)
-	}
-	resp := stellartypes.ReadContractResponse{LedgerSequence: simResult.LatestLedger}
-
-	if simResult.Error != "" {
-		// Contract-level failure: report via the response, not a transport error.
-		resp.Error = simResult.Error
-		return resp, nil
+		return stellartypes.SimulateTransactionResponse{}, fmt.Errorf("failed to simulate transaction: %w: %w", multinode.ErrNodeError, err)
 	}
 
-	// A successful InvokeHostFunction simulation always yields exactly one result
-	// whose return value is a (possibly void) XDR ScVal. Anything else indicates
-	// an unexpected RPC/SDK response shape rather than a valid empty result.
-	if len(simResult.Results) != 1 {
-		return resp, fmt.Errorf("unexpected simulation result count: got %d, want 1", len(simResult.Results))
-	}
-	rv := simResult.Results[0].ReturnValueXDR
-	if rv == nil || *rv == "" {
-		return resp, fmt.Errorf("simulation succeeded but return value XDR was empty")
+	resp := stellartypes.SimulateTransactionResponse{
+		LedgerSequence:     simResult.LatestLedger,
+		Success:            simResult.Error == "",
+		Error:              simResult.Error,
+		EventsXDR:          simResult.EventsXDR,
+		TransactionDataXDR: simResult.TransactionDataXDR,
+		MinResourceFee:     simResult.MinResourceFee,
 	}
 
-	resp.Result = *rv
+	switch len(simResult.Results) {
+	case 0:
+		if resp.Success {
+			return resp, fmt.Errorf("simulation succeeded but returned no host function results")
+		}
+	case 1:
+		result := simResult.Results[0]
+		if result.ReturnValueXDR != nil {
+			resp.ReturnValueXDR = *result.ReturnValueXDR
+		}
+		if result.AuthXDR != nil {
+			resp.RequiredAuthXDR = *result.AuthXDR
+		}
+	default:
+		return resp, fmt.Errorf("unexpected simulation result count: %d", len(simResult.Results))
+	}
+
+	if simResult.RestorePreamble != nil {
+		resp.RestorePreamble = &stellartypes.SimulateRestorePreamble{
+			TransactionDataXDR: simResult.RestorePreamble.TransactionDataXDR,
+			MinResourceFee:     simResult.RestorePreamble.MinResourceFee,
+		}
+	}
+
 	return resp, nil
+}
+
+func (s *stellarService) GetEvents(ctx context.Context, req stellartypes.GetEventsRequest) (stellartypes.GetEventsResponse, error) {
+	rpc, err := s.chain.GetClient(ctx)
+	if err != nil {
+		return stellartypes.GetEventsResponse{}, fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	protocolReq, err := convertGetEventsRequestsFromDomain(req)
+	if err != nil {
+		return stellartypes.GetEventsResponse{}, fmt.Errorf("invalid get events request: %w", err)
+	}
+
+	resp, err := rpc.GetEvents(ctx, protocolReq)
+	if err != nil {
+		return stellartypes.GetEventsResponse{}, fmt.Errorf("failed to get events: %w: %w", multinode.ErrNodeError, err)
+	}
+
+	return convertGetEventsResponseToDomain(resp)
 }
 
 // SubmitTransaction invokes a Soroban contract via the TXM pipeline.
@@ -212,7 +266,7 @@ func (s *stellarService) SubmitTransaction(ctx context.Context, req stellartypes
 		return nil, fmt.Errorf("submit transaction: function is required")
 	}
 
-	xdrArgs, err := convertDomainScVals(req.Args)
+	xdrArgs, err := convertScValsToDomain(req.Args)
 	if err != nil {
 		return nil, fmt.Errorf("submit transaction: convert args: %w", err)
 	}
