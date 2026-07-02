@@ -34,7 +34,18 @@ pub struct TransmissionInfo {
 #[derive(Clone)]
 pub struct Config {
     pub f: u32,
-    pub signers: Vec<BytesN<65>>,
+    /// ed25519 public keys (32 bytes) of the authorized signers.
+    pub signers: Vec<BytesN<32>>,
+}
+
+/// A single ed25519 signature over the report digest, paired with the signer's
+/// public key. ed25519 has no signer recovery, so the key must accompany the
+/// signature; the report path verifies the pair and checks set membership.
+#[contracttype]
+#[derive(Clone)]
+pub struct Ed25519Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
 }
 
 #[contracttype]

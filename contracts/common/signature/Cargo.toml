@@ -1,5 +1,5 @@
 [package]
-name = "common-verifier"
+name = "common-signature"
 version = "0.0.0"
 edition = "2021"
 publish = false

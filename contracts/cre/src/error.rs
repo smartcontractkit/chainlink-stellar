@@ -16,7 +16,7 @@ pub enum ForwarderError {
     InvalidSignatureCount = 9,
     DuplicateSigner = 10,
     InvalidSignature = 11,
-    InvalidRecoveryId = 12,
+    InvalidSignerOrder = 12,
     AlreadyProcessed = 13,
     NotOwner = 14,
     NotProposedOwner = 15,

@@ -259,7 +259,7 @@ dependencies = [
  "common-error",
  "common-guard",
  "common-helpers",
- "common-verifier",
+ "common-signature",
  "k256",
  "rmn_proxy",
  "rmn_remote",
@@ -369,7 +369,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "common-verifier"
+name = "common-signature"
 version = "0.0.0"
 dependencies = [
  "common-authorization",
@@ -972,8 +972,9 @@ dependencies = [
  "common-authorization",
  "common-error",
  "common-guard",
+ "common-signature",
+ "ed25519-dalek",
  "hex",
- "k256",
  "sha3",
  "soroban-sdk",
 ]

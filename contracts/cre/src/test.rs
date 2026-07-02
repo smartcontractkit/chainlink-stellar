@@ -3,14 +3,12 @@
 extern crate alloc;
 extern crate std;
 
-use soroban_sdk::assert_with_error;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
 use soroban_sdk::{Address, Env};
 
-use crate::error::ForwarderError;
 use crate::require_valid_forwarder;
-use crate::types::TransmissionState;
+use crate::types::{Ed25519Signature, TransmissionState};
 use crate::{KeystoneForwarder, KeystoneForwarderClient};
 
 // ============================================================================
@@ -30,32 +28,26 @@ pub(crate) const REPORT_CONTEXT_LENGTH: usize = 96;
 // ============================================================================
 
 pub(crate) mod crypto {
-    use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey};
+    use ed25519_dalek::{Signer, SigningKey};
     use sha3::{Digest, Keccak256};
     use soroban_sdk::{BytesN, Env};
 
-    /// Deterministic secp256k1 secret key from a seed byte (1..=255).
-    /// Seed 0 would produce the all-zero secret key which is invalid.
+    /// Deterministic ed25519 signing key from a seed byte. Any 32-byte seed is a
+    /// valid ed25519 secret key; distinct seeds give distinct keys.
     pub fn signing_key(seed: u8) -> SigningKey {
-        assert!(seed > 0, "secp256k1 secret key cannot be zero");
         let mut bytes = [0u8; 32];
         bytes[31] = seed;
-        SigningKey::from_slice(&bytes).expect("valid secp256k1 secret key")
+        SigningKey::from_bytes(&bytes)
     }
 
-    /// 65-byte uncompressed public key: `0x04 ‖ X (32) ‖ Y (32)`.
-    /// Matches the `BytesN<65>` shape the contract stores and compares against.
-    pub fn uncompressed_pubkey_65(sk: &SigningKey) -> [u8; 65] {
-        let vk = sk.verifying_key();
-        let encoded = vk.to_encoded_point(false); // false = uncompressed
-        let bytes = encoded.as_bytes();
-        assert_eq!(bytes.len(), 65, "uncompressed point must be 65 bytes");
-        let mut out = [0u8; 65];
-        out.copy_from_slice(bytes);
-        out
+    /// 32-byte ed25519 public key — the form `Config.signers` stores and the
+    /// report path verifies against.
+    pub fn pubkey_32(sk: &SigningKey) -> [u8; 32] {
+        sk.verifying_key().to_bytes()
     }
-    pub fn pubkey_bytesn(env: &Env, sk: &SigningKey) -> BytesN<65> {
-        BytesN::from_array(env, &uncompressed_pubkey_65(sk))
+
+    pub fn pubkey_bytesn(env: &Env, sk: &SigningKey) -> BytesN<32> {
+        BytesN::from_array(env, &pubkey_32(sk))
     }
 
     /// Compute the same digest the contract computes:
@@ -70,24 +62,11 @@ pub(crate) mod crypto {
         hasher.finalize().into()
     }
 
-    /// Produce a 65-byte recoverable signature: `r(32) ‖ s(32) ‖ v(1)` with
-    /// `v ∈ {0, 1}` (the contract's `normalize_recovery_id` also accepts 27/28).
-    pub fn sign_report(sk: &SigningKey, digest: &[u8; 32]) -> [u8; 65] {
-        let (sig, recid): (Signature, RecoveryId) =
-            sk.sign_prehash(digest).expect("signing must succeed");
-        let sig_bytes = sig.to_bytes();
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(&sig_bytes);
-        out[64] = recid.to_byte();
-        out
-    }
-
-    /// Same as `sign_report` but lets the caller inject an arbitrary recovery byte.
-    /// Used by tests that exercise `normalize_recovery_id`'s rejection paths.
-    pub fn sign_report_with_recid(sk: &SigningKey, digest: &[u8; 32], recid: u8) -> [u8; 65] {
-        let mut out = sign_report(sk, digest);
-        out[64] = recid;
-        out
+    /// Produce a 64-byte ed25519 signature over the 32-byte report digest
+    /// (the digest is signed directly as the message, matching the contract's
+    /// `ed25519_verify(pubkey, digest, sig)`).
+    pub fn sign_report(sk: &SigningKey, digest: &[u8; 32]) -> [u8; 64] {
+        sk.sign(digest).to_bytes()
     }
 }
 
@@ -210,26 +189,57 @@ pub(crate) struct Fixture<'a> {
     pub contract_addr: Address,
     pub owner: Address,
     pub transmitter: Address,
-    /// 31 deterministic signing keys (k256 SigningKey is not Soroban-typed).
-    pub signers: alloc::vec::Vec<k256::ecdsa::SigningKey>,
+    /// 31 deterministic ed25519 signing keys (not Soroban-typed).
+    pub signers: alloc::vec::Vec<ed25519_dalek::SigningKey>,
 }
 
 impl<'a> Fixture<'a> {
-    /// Returns the i-th signer's 65-byte uncompressed pubkey wrapped as
-    /// `BytesN<65>` — the form `Config.signers` stores.
-    pub fn signer_pubkey(&self, i: usize) -> soroban_sdk::BytesN<65> {
+    /// Returns the i-th signer's 32-byte ed25519 pubkey wrapped as `BytesN<32>` —
+    /// the form `Config.signers` stores.
+    pub fn signer_pubkey(&self, i: usize) -> soroban_sdk::BytesN<32> {
         crypto::pubkey_bytesn(self.env, &self.signers[i])
     }
 
-    /// Convenience: build a Soroban `Vec<BytesN<65>>` from the first `n` signers,
+    /// Convenience: build a Soroban `Vec<BytesN<32>>` from the first `n` signers,
     /// suitable as the `signers` arg to `set_config`.
-    pub fn signer_set(&self, n: usize) -> soroban_sdk::Vec<soroban_sdk::BytesN<65>> {
+    pub fn signer_set(&self, n: usize) -> soroban_sdk::Vec<soroban_sdk::BytesN<32>> {
         let mut v = soroban_sdk::Vec::new(self.env);
         for i in 0..n {
             v.push_back(self.signer_pubkey(i));
         }
         v
     }
+
+    /// Build an `Ed25519Signature` from signer `i` over `digest`.
+    pub fn signed(&self, i: usize, digest: &[u8; 32]) -> crate::types::Ed25519Signature {
+        crate::types::Ed25519Signature {
+            public_key: self.signer_pubkey(i),
+            signature: soroban_sdk::BytesN::from_array(
+                self.env,
+                &crypto::sign_report(&self.signers[i], digest),
+            ),
+        }
+    }
+}
+
+/// Order a set of `Ed25519Signature` entries by ascending public key, as the
+/// contract requires. Takes signer indices; returns a Soroban `Vec` ready for
+/// `report()`.
+pub(crate) fn ordered_sigs(
+    fx: &Fixture,
+    signer_indices: &[usize],
+    digest: &[u8; 32],
+) -> soroban_sdk::Vec<crate::types::Ed25519Signature> {
+    let mut entries: alloc::vec::Vec<crate::types::Ed25519Signature> = signer_indices
+        .iter()
+        .map(|&i| fx.signed(i, digest))
+        .collect();
+    entries.sort_by_key(|e| e.public_key.to_array());
+    let mut v = soroban_sdk::Vec::new(fx.env);
+    for e in entries {
+        v.push_back(e);
+    }
+    v
 }
 
 /// Deploy a fresh `KeystoneForwarder`, call `initialize`, and return a fixture
@@ -378,8 +388,18 @@ pub(crate) fn report_context_zeroes(env: &Env) -> soroban_sdk::Bytes {
     soroban_sdk::Bytes::from_slice(env, &[0u8; REPORT_CONTEXT_LENGTH])
 }
 
+/// A single zero-filled `Ed25519Signature`, used by tests whose failure fires
+/// before signature verification (length/context/init/config checks).
+pub(crate) fn dummy_sig(env: &Env) -> Ed25519Signature {
+    Ed25519Signature {
+        public_key: soroban_sdk::BytesN::from_array(env, &[0u8; 32]),
+        signature: soroban_sdk::BytesN::from_array(env, &[0u8; 64]),
+    }
+}
+
 /// Build a signed report: returns (raw_report bytes, report_context bytes, signatures).
-/// Signs with `fx.signers[0..n_sigs]` against the digest the contract computes.
+/// Signs with `fx.signers[0..n_sigs]` against the digest the contract computes,
+/// returning the signatures ordered ascending by public key (as the contract requires).
 pub(crate) fn build_signed_report<'a>(
     fx: &Fixture<'a>,
     report: &ReportBuilder,
@@ -387,7 +407,7 @@ pub(crate) fn build_signed_report<'a>(
 ) -> (
     soroban_sdk::Bytes,
     soroban_sdk::Bytes,
-    soroban_sdk::Vec<soroban_sdk::BytesN<65>>,
+    soroban_sdk::Vec<crate::types::Ed25519Signature>,
 ) {
     let raw_vec = report.build_bytes();
     let ctx_vec = [0u8; REPORT_CONTEXT_LENGTH];
@@ -397,11 +417,8 @@ pub(crate) fn build_signed_report<'a>(
 
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
-    let mut sigs = soroban_sdk::Vec::new(fx.env);
-    for i in 0..n_sigs {
-        let sig_bytes = crypto::sign_report(&fx.signers[i], &digest);
-        sigs.push_back(soroban_sdk::BytesN::from_array(fx.env, &sig_bytes));
-    }
+    let indices: alloc::vec::Vec<usize> = (0..n_sigs).collect();
+    let sigs = ordered_sigs(fx, &indices, &digest);
     (raw_bytes, ctx_bytes, sigs)
 }
 
@@ -432,12 +449,14 @@ fn infrastructure_setup_with_config_works() {
 }
 
 #[test]
-fn infrastructure_signing_key_produces_65_byte_uncompressed_pubkey() {
+fn infrastructure_signing_key_produces_32_byte_pubkey() {
     let sk = crypto::signing_key(1);
-    let pk = crypto::uncompressed_pubkey_65(&sk);
-    assert_eq!(pk[0], 0x04, "must start with uncompressed marker");
-    // X and Y are 32 bytes each; pubkey is non-trivial.
-    assert!(pk[1..].iter().any(|&b| b != 0));
+    let pk = crypto::pubkey_32(&sk);
+    // A valid ed25519 public key is 32 non-trivial bytes.
+    assert_eq!(pk.len(), 32);
+    assert!(pk.iter().any(|&b| b != 0));
+    // Distinct seeds yield distinct keys.
+    assert_ne!(pk, crypto::pubkey_32(&crypto::signing_key(2)));
 }
 
 #[test]
@@ -457,15 +476,12 @@ fn infrastructure_report_digest_matches_two_step_keccak() {
 }
 
 #[test]
-fn infrastructure_sign_report_produces_65_byte_signature_with_recoverable_recid() {
+fn infrastructure_sign_report_produces_64_byte_signature() {
     let sk = crypto::signing_key(7);
     let digest = [0x42u8; 32];
     let sig = crypto::sign_report(&sk, &digest);
-    assert_eq!(sig.len(), 65);
-    // Recovery byte is 0 or 1 from k256.
-    assert!(sig[64] == 0 || sig[64] == 1, "recid byte must be 0 or 1");
-    // The first 64 bytes (r || s) shouldn't be all zeros.
-    assert!(sig[..64].iter().any(|&b| b != 0));
+    assert_eq!(sig.len(), 64);
+    assert!(sig.iter().any(|&b| b != 0));
 }
 
 #[test]
@@ -689,14 +705,14 @@ fn test_set_config_duplicate_signer_fails() {
 #[test]
 #[should_panic(expected = "Error(Contract, #19)")]
 fn test_set_config_zero_pubkey_fails() {
-    // one slot is 65 zero bytes → InvalidSigner code 19.
+    // one slot is 32 zero bytes → InvalidSigner code 19.
     let env = Env::default();
     let fx = setup(&env);
     let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(fx.signer_pubkey(0));
     signers.push_back(fx.signer_pubkey(1));
     signers.push_back(fx.signer_pubkey(2));
-    signers.push_back(soroban_sdk::BytesN::from_array(&env, &[0u8; 65]));
+    signers.push_back(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
     fx.client
         .set_config(&DON_ID, &CONFIG_VERSION, &1u32, &signers);
 }
@@ -769,15 +785,7 @@ fn test_report_after_clear_config_fails() {
     // Need f+1 = 2 signatures, but the failure fires at config load before
     // sig validation. Pass any 2 sigs to satisfy the empty-check.
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
-    let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[1], &digest),
-    ));
+    let sigs = ordered_sigs(&fx, &[0, 1], &digest);
 
     let receiver = env.register(mocks::CooperativeReceiver, ());
     fx.client.report(
@@ -1197,10 +1205,10 @@ fn test_retry_after_failed_succeeds_when_state_changes() {
 //   4. parse_report version check              → InvalidReportVersion (4)
 //   5. load_config (missing don, version)      → InvalidConfig (8)
 //   6. signatures.len() != f+1                 → InvalidSignatureCount (9)
-//   7. validate_signature_scalars (r or s)     → InvalidSignature (11)
-//   8. normalize_recovery_id                   → InvalidRecoveryId (12)
-//   9. signer_index (unknown pubkey)           → InvalidSigner (19)
-//  10. bitmap dedup                            → DuplicateSigner (10)
+//   Then, per signature, in verify_signatures:
+//   7. ed25519_verify(pubkey, digest, sig)     → host trap on invalid signature
+//   8. strictly-ascending pubkey order         → InvalidSignerOrder (12)
+//   9. membership in configured signer set     → InvalidSigner (19)
 // ============================================================================
 
 #[test]
@@ -1215,7 +1223,7 @@ fn test_report_too_short_panics() {
     let short = soroban_sdk::Bytes::from_slice(&env, &[0u8; 10]);
     let ctx = report_context_zeroes(&env);
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &[0u8; 65]));
+    sigs.push_back(dummy_sig(&env));
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &short, &ctx, &sigs);
@@ -1233,7 +1241,7 @@ fn test_report_wrong_context_length_panics() {
     let raw = ReportBuilder::default().build(&env);
     let bad_ctx = soroban_sdk::Bytes::from_slice(&env, &[0u8; 64]);
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &[0u8; 65]));
+    sigs.push_back(dummy_sig(&env));
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &raw, &bad_ctx, &sigs);
@@ -1330,10 +1338,10 @@ fn test_report_too_many_signatures_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_report_garbage_signature_panics() {
-    // 65-byte sig with r,s both all-0xFF (above SECP256K1_ORDER)
-    // → validate_signature_scalar fires → InvalidSignature code 11.
+#[should_panic] // ed25519_verify traps (host panic) on an invalid signature
+fn test_report_bad_signature_panics() {
+    // A corrupted signature over a valid in-set pubkey → ed25519_verify fails,
+    // which traps at the host level (not a typed contract error).
     let env = Env::default();
     let fx = setup_with_config(&env, 1, 4);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1346,12 +1354,14 @@ fn test_report_garbage_signature_panics() {
     let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
+    // signer[0] with a garbage signature — processed first, so verify traps here.
+    let bad = Ed25519Signature {
+        public_key: fx.signer_pubkey(0),
+        signature: soroban_sdk::BytesN::from_array(&env, &[0xAAu8; 64]),
+    };
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &[0xFFu8; 65]));
+    sigs.push_back(bad);
+    sigs.push_back(fx.signed(1, &digest));
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
@@ -1360,8 +1370,9 @@ fn test_report_garbage_signature_panics() {
 #[test]
 #[should_panic(expected = "Error(Contract, #19)")]
 fn test_report_signer_not_in_set_panics() {
-    //  properly-signed sig from a key NOT in the configured set
-    // → secp256k1_recover succeeds but signer_index returns None → InvalidSigner code 19.
+    // A validly-signed sig from a key NOT in the configured set → ed25519_verify
+    // passes but the recovered pubkey isn't a member → InvalidSigner code 19.
+    // Both entries are ordered ascending so the ordering check passes first.
     let env = Env::default();
     let fx = setup_with_config(&env, 1, 4);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1375,41 +1386,21 @@ fn test_report_signer_not_in_set_panics() {
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
     let rogue = crypto::signing_key(99); // not in signers[0..4]
+    let rogue_entry = Ed25519Signature {
+        public_key: crypto::pubkey_bytesn(&env, &rogue),
+        signature: soroban_sdk::BytesN::from_array(&env, &crypto::sign_report(&rogue, &digest)),
+    };
 
+    // Order the good + rogue entries ascending by pubkey so the ordering check
+    // passes and membership is the failing step, regardless of key ordering.
+    let mut entries: alloc::vec::Vec<Ed25519Signature> = alloc::vec::Vec::new();
+    entries.push(fx.signed(0, &digest));
+    entries.push(rogue_entry);
+    entries.sort_by_key(|e| e.public_key.to_array());
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&rogue, &digest),
-    ));
-
-    fx.client
-        .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_report_duplicate_signer_panics() {
-    // two sig slots from the same signer → bitmap dedup → DuplicateSigner code 10.
-    let env = Env::default();
-    let fx = setup_with_config(&env, 1, 4);
-    fx.client.add_forwarder(&fx.transmitter);
-
-    let receiver_addr = env.register(mocks::CooperativeReceiver, ());
-    let report = ReportBuilder::default();
-    let raw_vec = report.build_bytes();
-    let ctx_vec = [0u8; REPORT_CONTEXT_LENGTH];
-    let raw = soroban_sdk::Bytes::from_slice(&env, &raw_vec);
-    let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
-    let digest = crypto::report_digest(&raw_vec, &ctx_vec);
-
-    let sig0 = crypto::sign_report(&fx.signers[0], &digest);
-    let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &sig0));
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &sig0));
+    for e in entries {
+        sigs.push_back(e);
+    }
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
@@ -1417,8 +1408,8 @@ fn test_report_duplicate_signer_panics() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #12)")]
-fn test_report_invalid_recovery_id_panics() {
-    // recovery byte = 5 (not in {0, 1, 27, 28}) → InvalidRecoveryId code 12.
+fn test_report_duplicate_signer_panics() {
+    // Same signer in two slots → not strictly ascending → InvalidSignerOrder code 12.
     let env = Env::default();
     let fx = setup_with_config(&env, 1, 4);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1431,24 +1422,20 @@ fn test_report_invalid_recovery_id_panics() {
     let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
+    let s0 = fx.signed(0, &digest);
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report_with_recid(&fx.signers[1], &digest, 5),
-    ));
+    sigs.push_back(s0.clone());
+    sigs.push_back(s0);
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_report_s_scalar_zero_panics() {
-    // signature with s == 0 → is_zero_32(s) → InvalidSignature code 11.
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_report_out_of_order_signatures_panics() {
+    // Two distinct in-set signers presented in descending pubkey order →
+    // InvalidSignerOrder code 12 (the ordering check fires before membership).
     let env = Env::default();
     let fx = setup_with_config(&env, 1, 4);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1461,53 +1448,16 @@ fn test_report_s_scalar_zero_panics() {
     let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
+    let mut entries: alloc::vec::Vec<Ed25519Signature> = alloc::vec::Vec::new();
+    entries.push(fx.signed(0, &digest));
+    entries.push(fx.signed(1, &digest));
+    // Sort ascending then reverse → strictly descending order.
+    entries.sort_by_key(|e| e.public_key.to_array());
+    entries.reverse();
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    let mut bad = crypto::sign_report(&fx.signers[1], &digest);
-    for b in bad[32..64].iter_mut() {
-        *b = 0;
+    for e in entries {
+        sigs.push_back(e);
     }
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &bad));
-
-    fx.client
-        .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_report_s_scalar_at_n_panics() {
-    // s == SECP256K1_ORDER (N) → is_greater_or_equal_32 returns true
-    // on equality → InvalidSignature code 11.
-    let env = Env::default();
-    let fx = setup_with_config(&env, 1, 4);
-    fx.client.add_forwarder(&fx.transmitter);
-
-    let receiver_addr = env.register(mocks::CooperativeReceiver, ());
-    let report = ReportBuilder::default();
-    let raw_vec = report.build_bytes();
-    let ctx_vec = [0u8; REPORT_CONTEXT_LENGTH];
-    let raw = soroban_sdk::Bytes::from_slice(&env, &raw_vec);
-    let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
-    let digest = crypto::report_digest(&raw_vec, &ctx_vec);
-
-    // Mirrors lib.rs SECP256K1_ORDER. Must stay in sync with the constant.
-    const SECP256K1_ORDER: [u8; 32] = [
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
-        0x41, 0x41,
-    ];
-
-    let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[0], &digest),
-    ));
-    let mut bad = crypto::sign_report(&fx.signers[1], &digest);
-    bad[32..64].copy_from_slice(&SECP256K1_ORDER);
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &bad));
 
     fx.client
         .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
@@ -1745,7 +1695,7 @@ fn test_report_uninitialized_panics() {
     let raw = ReportBuilder::default().build(&env);
     let ctx = report_context_zeroes(&env);
     let mut sigs = soroban_sdk::Vec::new(&env);
-    sigs.push_back(soroban_sdk::BytesN::from_array(&env, &[0u8; 65]));
+    sigs.push_back(dummy_sig(&env));
 
     client.report(&transmitter, &receiver, &raw, &ctx, &sigs);
 }
@@ -1953,8 +1903,9 @@ fn test_is_forwarder_returns_false_for_unknown() {
 // ============================================================================
 
 #[test]
-fn test_bitmap_at_position_zero_works() {
-    // signer 0 in the first signature slot — exercises bit 0 of the u64 dedup bitmap.
+fn test_quorum_single_pair_succeeds() {
+    // Minimal ordered quorum (f=1, 2 signatures) — the happy path through the
+    // ordered-signer dedup loop.
     let env = Env::default();
     let fx = setup_with_config(&env, 1, 4);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1966,11 +1917,9 @@ fn test_bitmap_at_position_zero_works() {
 }
 
 #[test]
-fn test_bitmap_at_max_position() {
-    // with f=10 / n=31, slot 11 of the sigs is signer index 10.
-    // build_signed_report uses signers[0..11] so the highest index reached is 10.
-    // To exercise position 30 (the highest valid bit for MAX_ORACLES=31), we
-    // need a sig from signer 30 — replace the last slot manually.
+fn test_quorum_includes_highest_index_signer() {
+    // f=10 / n=31: an 11-signature quorum drawn from signers 0..10 plus the
+    // highest-index signer (30), presented in ascending pubkey order.
     let env = Env::default();
     let fx = setup_with_config(&env, 10, 31);
     fx.client.add_forwarder(&fx.transmitter);
@@ -1983,18 +1932,8 @@ fn test_bitmap_at_max_position() {
     let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
     let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
-    // 11 sigs: 10 from low indices, 1 from index 30 (the highest valid slot).
-    let mut sigs = soroban_sdk::Vec::new(&env);
-    for i in 0..10 {
-        sigs.push_back(soroban_sdk::BytesN::from_array(
-            &env,
-            &crypto::sign_report(&fx.signers[i], &digest),
-        ));
-    }
-    sigs.push_back(soroban_sdk::BytesN::from_array(
-        &env,
-        &crypto::sign_report(&fx.signers[30], &digest),
-    ));
+    let indices: alloc::vec::Vec<usize> = (0..10).chain(core::iter::once(30)).collect();
+    let sigs = ordered_sigs(&fx, &indices, &digest);
 
     fx.client
         .report(&fx.transmitter, &receiver, &raw, &ctx, &sigs);
@@ -2041,8 +1980,8 @@ fn test_config_with_f_at_practical_max() {
 fn test_fuzz_random_pubkey_signers() {
     // 10 deterministic signing keys NOT in the configured signer set
     // (config has signers 1..=4; we use seeds 50..=59). Each must produce a
-    // panic with InvalidSigner (code 19) — never silent success, never a
-    // different error class.
+    // panic — either InvalidSignerOrder (12) or InvalidSigner (19) depending on
+    // where the rogue pubkey sorts — never a silent success.
     for rogue_seed in 50u8..=59u8 {
         let env = Env::default();
         let fx = setup_with_config(&env, 1, 4);
@@ -2057,15 +1996,13 @@ fn test_fuzz_random_pubkey_signers() {
         let digest = crypto::report_digest(&raw_vec, &ctx_vec);
 
         let rogue = crypto::signing_key(rogue_seed);
+        let rogue_entry = Ed25519Signature {
+            public_key: crypto::pubkey_bytesn(&env, &rogue),
+            signature: soroban_sdk::BytesN::from_array(&env, &crypto::sign_report(&rogue, &digest)),
+        };
         let mut sigs = soroban_sdk::Vec::new(&env);
-        sigs.push_back(soroban_sdk::BytesN::from_array(
-            &env,
-            &crypto::sign_report(&fx.signers[0], &digest),
-        ));
-        sigs.push_back(soroban_sdk::BytesN::from_array(
-            &env,
-            &crypto::sign_report(&rogue, &digest),
-        ));
+        sigs.push_back(fx.signed(0, &digest));
+        sigs.push_back(rogue_entry);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             fx.client
@@ -2075,65 +2012,6 @@ fn test_fuzz_random_pubkey_signers() {
             result.is_err(),
             "rogue seed {rogue_seed} must panic, not silently succeed"
         );
-    }
-}
-
-#[test]
-fn test_fuzz_signature_flip_byte_at_each_offset() {
-    // flip a single byte in the recovery-byte slot of a valid sig
-    // across the 256 possible byte values. Every result must be either a
-    // panic (one of: InvalidRecoveryId, InvalidSigner, DuplicateSigner) OR
-    // (for recid bytes 0/1/27/28 that happen to recover the same pubkey) a
-    // duplicate-signer panic. NEVER a silent success.
-    //
-    // Scope: just the recovery byte (idx 64). Full r/s/v bit-flips would be
-    // 520+ cases × full env setup — too expensive for CI. The validation-
-    // failure tests cover the r/s scalar paths
-    // exhaustively for the boundary values that matter.
-    for recid_byte in 0u8..=255u8 {
-        let env = Env::default();
-        let fx = setup_with_config(&env, 1, 4);
-        fx.client.add_forwarder(&fx.transmitter);
-        let receiver = env.register(mocks::CooperativeReceiver, ());
-
-        let report = ReportBuilder::default();
-        let raw_vec = report.build_bytes();
-        let ctx_vec = [0u8; REPORT_CONTEXT_LENGTH];
-        let raw = soroban_sdk::Bytes::from_slice(&env, &raw_vec);
-        let ctx = soroban_sdk::Bytes::from_slice(&env, &ctx_vec);
-        let digest = crypto::report_digest(&raw_vec, &ctx_vec);
-
-        let mut sigs = soroban_sdk::Vec::new(&env);
-        sigs.push_back(soroban_sdk::BytesN::from_array(
-            &env,
-            &crypto::sign_report(&fx.signers[0], &digest),
-        ));
-        sigs.push_back(soroban_sdk::BytesN::from_array(
-            &env,
-            &crypto::sign_report_with_recid(&fx.signers[1], &digest, recid_byte),
-        ));
-
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            fx.client
-                .report(&fx.transmitter, &receiver, &raw, &ctx, &sigs);
-        }));
-
-        // recid byte in {0, 1, 27, 28} → secp256k1_recover runs.
-        //   - {0, 28} or {1, 27} pair maps to the same effective recovery_id
-        //     so the recovered pubkey is signers[1] → success (or duplicate
-        //     if equal to slot 0). Other valid recids may recover a different
-        //     pubkey → InvalidSigner.
-        // All other bytes → InvalidRecoveryId panic.
-        let valid_recid = matches!(recid_byte, 0 | 1 | 27 | 28);
-        if !valid_recid {
-            assert!(
-                outcome.is_err(),
-                "recid byte {recid_byte} must panic (not in {{0,1,27,28}})"
-            );
-        }
-        // For valid_recid, either success or a typed-error panic is acceptable;
-        // the key property is that there is no UB / corruption — handled by
-        // catch_unwind returning either Ok(()) or Err(payload).
     }
 }
 
