@@ -4,7 +4,7 @@ extern crate alloc;
 
 use super::*;
 use alloc::vec::Vec as HostVec;
-use common_verifier::signatures::SignatureQuorumConfig;
+use common_signature::quorum::SignatureQuorumConfig;
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
 use soroban_sdk::{

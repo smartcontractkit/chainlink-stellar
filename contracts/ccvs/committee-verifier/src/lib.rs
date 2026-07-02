@@ -8,7 +8,7 @@ use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
-use common_verifier::signatures::{SignatureQuorum, SignatureQuorumConfig};
+use common_signature::quorum::{SignatureQuorum, SignatureQuorumConfig};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };

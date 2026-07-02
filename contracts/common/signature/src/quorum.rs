@@ -2,19 +2,14 @@ use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use soroban_sdk::{
-    contracttrait, contracttype, crypto::Hash, symbol_short, Bytes, BytesN, Env, Map, Symbol, Vec,
+    contracttrait, contracttype, symbol_short, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
+
+use crate::scheme::{Secp256k1EthAddress, SignatureScheme};
 
 /// EIP-2098 compact ECDSA signature: r(32) + yParityAndS(32) = 64 bytes.
 pub const ECDSA_COMPACT_SIG_BYTES: u32 = 64;
 pub const PER_SIGNATURE_BYTES: u32 = ECDSA_COMPACT_SIG_BYTES;
-
-/// Ethereum address length (last 20 bytes of keccak256(uncompressed_pubkey[1..])).
-pub const ETH_ADDRESS_BYTES: u32 = 20;
-
-/// Offset within a BytesN<32> where the 20-byte Ethereum address is stored
-/// (left-padded with 12 zero bytes to match Solidity's `abi.encode(address)` layout).
-pub const ETH_ADDRESS_OFFSET: u32 = 32 - ETH_ADDRESS_BYTES;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,34 +33,6 @@ fn read_compact_sig(_env: &Env, data: &Bytes, offset: u32) -> Result<([u8; 64], 
     let recovery_id = (raw[32] >> 7) as u32;
     raw[32] &= 0x7F; // clear parity bit to recover clean s
     Ok((raw, recovery_id))
-}
-
-/// Recover the left-zero-padded Ethereum address from an EIP-2098 compact
-/// ECDSA signature using `secp256k1_recover` + `keccak256`.
-fn recover_signer_address(
-    env: &Env,
-    msg_hash: &BytesN<32>,
-    sig_bytes: &[u8; 64],
-    recovery_id: u32,
-) -> Result<BytesN<32>, CCIPError> {
-    let sig = BytesN::<64>::from_array(env, sig_bytes);
-    // SAFETY: Hash<32> is #[repr(transparent)] over BytesN<32>, so the
-    // reference reinterpret is layout-compatible. The caller already
-    // guarantees `msg_hash` is a keccak-256 digest (produced in
-    // `verify_message`), satisfying the SDK's "secure hash" invariant.
-    let hash_ref: &Hash<32> = unsafe { &*(msg_hash as *const BytesN<32> as *const Hash<32>) };
-    let uncompressed_pubkey: BytesN<65> =
-        env.crypto().secp256k1_recover(hash_ref, &sig, recovery_id);
-
-    // keccak256(pubkey[1..65]) — skip the 0x04 prefix byte
-    let pubkey_body = Bytes::from_slice(env, &uncompressed_pubkey.to_array()[1..]);
-    let hash: BytesN<32> = env.crypto().keccak256(&pubkey_body).into();
-    let hash_arr = hash.to_array();
-
-    // The Ethereum address is the last 20 bytes, left-padded to 32 bytes.
-    let mut padded = [0u8; 32];
-    padded[ETH_ADDRESS_OFFSET as usize..].copy_from_slice(&hash_arr[ETH_ADDRESS_OFFSET as usize..]);
-    Ok(BytesN::from_array(env, &padded))
 }
 
 #[contracttrait]
@@ -148,8 +115,9 @@ pub trait SignatureQuorum: Initializable + Ownable {
         while i < sig_count {
             let offset = i * PER_SIGNATURE_BYTES;
             let (sig_bytes, recovery_id) = read_compact_sig(env, &signatures, offset)?;
+            let sig = BytesN::<64>::from_array(env, &sig_bytes);
             let recovered_address =
-                recover_signer_address(env, &signed_hash, &sig_bytes, recovery_id)?;
+                Secp256k1EthAddress::identify_signer(env, &signed_hash, &sig, recovery_id);
 
             if let Some(ref prev) = prev_address {
                 if *prev >= recovered_address {

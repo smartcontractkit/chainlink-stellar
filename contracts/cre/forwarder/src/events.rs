@@ -20,7 +20,7 @@ pub struct ConfigSetEvent {
     #[topic]
     pub config_version: u32,
     pub f: u32,
-    pub signers: Vec<BytesN<65>>,
+    pub signers: Vec<BytesN<32>>,
 }
 
 #[contractevent(topics = ["forwarder_ReportProcessed"], data_format = "single-value")]

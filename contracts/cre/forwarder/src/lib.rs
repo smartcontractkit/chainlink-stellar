@@ -14,8 +14,9 @@ use soroban_sdk::{
     TryFromVal, Vec,
 };
 
+use common_signature::{Ed25519, SignatureScheme};
 use events::{ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, ReportProcessedEvent};
-use types::{Config, DataKey, Transmission, TransmissionInfo, TransmissionState};
+use types::{Config, DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
 
 use crate::types::ParsedReport;
 
@@ -35,11 +36,6 @@ const MAX_ORACLES: u32 = 31;
 const METADATA_LENGTH: u32 = 109;
 const FORWARDER_METADATA_LENGTH: u32 = 45;
 const REPORT_CONTEXT_LENGTH: u32 = 96;
-const SIGNATURE_LENGTH: usize = 65;
-const SECP256K1_ORDER: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
-    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
-];
 
 // Storage TTL constants (ledger counts; 1 ledger ≈ 5 s on Mainnet).
 // TODO adjust
@@ -59,6 +55,11 @@ impl Ownable for KeystoneForwarder {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+// #[contractimpl]
+// impl SignatureVerifiable for KeystoneForwarder {
+//     const SIGNATURE_FORMAT: SignatureFormat = SignatureFormat::Secp256k1;
+// }
 
 #[contractimpl]
 impl KeystoneForwarder {
@@ -116,7 +117,7 @@ impl KeystoneForwarder {
         don_id: u32,
         config_version: u32,
         f: u32,
-        signers: Vec<BytesN<65>>,
+        signers: Vec<BytesN<32>>,
     ) -> Result<(), ForwarderError> {
         <KeystoneForwarder as Initializable>::require_initialized(&env)?;
         <KeystoneForwarder as Ownable>::require_owner(&env)?;
@@ -174,7 +175,7 @@ impl KeystoneForwarder {
         receiver: Address,
         raw_report: Bytes,
         report_context: Bytes,
-        signatures: Vec<BytesN<65>>,
+        signatures: Vec<Ed25519Signature>,
     ) -> Result<(), ForwarderError> {
         transmitter.require_auth();
         <KeystoneForwarder as Initializable>::require_initialized(&env)?;
@@ -335,8 +336,8 @@ fn load_config(env: &Env, id: u64) -> Config {
         .unwrap_or_else(|| panic_with_error!(env, ForwarderError::InvalidConfig))
 }
 
-fn ensure_unique_pubkeys(env: &Env, signers: &Vec<BytesN<65>>) {
-    let zero = BytesN::<65>::from_array(env, &[0u8; 65]);
+fn ensure_unique_pubkeys(env: &Env, signers: &Vec<BytesN<32>>) {
+    let zero = BytesN::<32>::from_array(env, &[0u8; 32]);
 
     let mut i = 0;
     while i < signers.len() {
@@ -368,95 +369,54 @@ fn report_digest(env: &Env, raw_report: &Bytes, report_context: &Bytes) -> Hash<
     env.crypto().keccak256(&data)
 }
 
-fn normalize_recovery_id(env: &Env, v: u8) -> u32 {
-    match v {
-        0 | 1 => v as u32,
-        27 | 28 => (v - 27) as u32,
-        _ => panic_with_error!(env, ForwarderError::InvalidRecoveryId),
-    }
-}
-
-fn is_zero_32(bytes: &[u8]) -> bool {
-    let mut i = 0;
-    while i < 32 {
-        if bytes[i] != 0 {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-fn is_greater_or_equal_32(lhs: &[u8], rhs: &[u8; 32]) -> bool {
-    let mut i = 0;
-    while i < 32 {
-        if lhs[i] > rhs[i] {
-            return true;
-        }
-        if lhs[i] < rhs[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-fn validate_signature_scalar(env: &Env, scalar: &[u8]) {
-    if is_zero_32(scalar) || is_greater_or_equal_32(scalar, &SECP256K1_ORDER) {
-        panic_with_error!(env, ForwarderError::InvalidSignature);
-    }
-}
-
-fn validate_signature_scalars(env: &Env, signature: &[u8; SIGNATURE_LENGTH]) {
-    validate_signature_scalar(env, &signature[..32]);
-    validate_signature_scalar(env, &signature[32..64]);
-}
-
-fn signer_index(signers: &Vec<BytesN<65>>, signer: &BytesN<65>) -> Option<u32> {
+fn signer_in_set(signers: &Vec<BytesN<32>>, signer: &BytesN<32>) -> bool {
     let mut i = 0;
     while i < signers.len() {
-        if signers.get(i).unwrap() == signer.clone() {
-            return Some(i);
+        if &signers.get(i).unwrap() == signer {
+            return true;
         }
         i += 1;
     }
-    None
+    false
 }
 
+/// Verify each ed25519 signature against its accompanying public key and confirm
+/// the signer belongs to the configured set. Signatures must be presented in
+/// strictly-ascending public-key order, which both deduplicates signers and makes
+/// the accepted ordering deterministic (ed25519 has no signer recovery, so the
+/// bitmask dedup used by the secp256k1 design is not applicable here).
 fn verify_signatures(
     env: &Env,
-    signers: &Vec<BytesN<65>>,
+    signers: &Vec<BytesN<32>>,
     raw_report: &Bytes,
     report_context: &Bytes,
-    signatures: &Vec<BytesN<65>>,
+    signatures: &Vec<Ed25519Signature>,
 ) {
-    let digest = report_digest(env, raw_report, report_context);
-    let mut seen: u64 = 0;
+    let digest: BytesN<32> = report_digest(env, raw_report, report_context).into();
+
+    let mut prev: Option<BytesN<32>> = None;
 
     let mut i = 0;
     while i < signatures.len() {
-        let sig = signatures.get(i).unwrap();
+        let entry = signatures.get(i).unwrap();
 
-        let mut full = [0u8; SIGNATURE_LENGTH];
-        sig.copy_into_slice(&mut full);
+        // Verify the signature against its claimed public key (traps if invalid),
+        // yielding the signer identity.
+        let signer =
+            Ed25519::identify_signer(env, &digest, &entry.signature, entry.public_key.clone());
 
-        validate_signature_scalars(env, &full);
-        let rec_id = normalize_recovery_id(env, full[64]);
-
-        let mut rs = [0u8; 64];
-        rs.copy_from_slice(&full[..64]);
-        let sig64 = BytesN::<64>::from_array(env, &rs);
-
-        let pubkey = env.crypto().secp256k1_recover(&digest, &sig64, rec_id);
-        let idx = signer_index(signers, &pubkey)
-            .unwrap_or_else(|| panic_with_error!(env, ForwarderError::InvalidSigner));
-
-        let bit = 1u64 << idx;
-        if seen & bit != 0 {
-            panic_with_error!(env, ForwarderError::DuplicateSigner);
+        // Strictly-ascending signer order → dedup + deterministic acceptance.
+        if let Some(ref p) = prev {
+            if *p >= signer {
+                panic_with_error!(env, ForwarderError::InvalidSignerOrder);
+            }
         }
-        seen |= bit;
 
+        if !signer_in_set(signers, &signer) {
+            panic_with_error!(env, ForwarderError::InvalidSigner);
+        }
+
+        prev = Some(signer);
         i += 1;
     }
 }
