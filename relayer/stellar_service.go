@@ -77,6 +77,21 @@ func (s *stellarService) GetLedgerEntries(ctx context.Context, req stellartypes.
 	}, nil
 }
 
+// GetSigningAccount returns the relayer's default TXM signing account (G... StrKey),
+// resolved from the keystore. This is the read-path init requirement for the chain
+// capability worker; it exposes the account address only and needs no funding. Mirrors
+// txm.defaultFromAddress (accounts[0]).
+func (s *stellarService) GetSigningAccount(ctx context.Context) (stellartypes.GetSigningAccountResponse, error) {
+	accounts, err := s.chain.KeyStore().Accounts(ctx)
+	if err != nil {
+		return stellartypes.GetSigningAccountResponse{}, fmt.Errorf("failed to get keystore accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return stellartypes.GetSigningAccountResponse{}, fmt.Errorf("keystore has no accounts")
+	}
+	return stellartypes.GetSigningAccountResponse{AccountAddress: accounts[0]}, nil
+}
+
 func (s *stellarService) GetLatestLedger(ctx context.Context) (stellartypes.GetLatestLedgerResponse, error) {
 	rpc, err := s.chain.GetClient(ctx)
 	if err != nil {
