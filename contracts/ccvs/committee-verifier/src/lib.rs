@@ -8,11 +8,14 @@ use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
-use common_signature::quorum::{SignatureQuorum, SignatureQuorumConfig};
+use common_signature::config::{
+    SignatureConfig, SignatureConfigManager, SignatureVerificationConfig,
+};
+use common_signature::quorum::{QuorumConfigKey, SignatureQuorum, PER_SIGNATURE_BYTES};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
-use types::{DynamicConfig, RemoteChainConfig};
+use types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
 
 use crate::types::FeeResponse;
 
@@ -90,24 +93,42 @@ impl AllowListable for CommitteeVerifierContract {
     }
 }
 
-#[contractimpl(contracttrait)]
-impl SignatureQuorum for CommitteeVerifierContract {
+impl SignatureConfigManager for CommitteeVerifierContract {
     const SIGNATURE_CONFIGS: Symbol = SIGNATURE_CONFIGS;
+    const IS_PERSISTENT: bool = true;
+    type Error = CCIPError;
+    type DataKey = QuorumConfigKey;
 
-    fn emit_signature_config_set(
-        env: &Env,
-        source_chain_selector: u64,
-        signers: &Vec<BytesN<32>>,
-        threshold: u32,
-    ) {
-        events::SignatureConfigSetEvent {
-            source_chain_selector,
-            signers: signers.clone(),
-            threshold,
+    fn validate_config(_env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
+        let threshold = config.verification.threshold();
+        if threshold == 0 || threshold > config.signers.len() {
+            return Err(CCIPError::InvalidSignatureThreshold);
         }
-        .publish(env);
+
+        // Signers must be strictly ascending: rejects duplicates and makes the
+        // set deterministic (mirrors the ordering enforced in verification).
+        let signers = &config.signers;
+        let mut j = 1u32;
+        while j < signers.len() {
+            let prev = signers
+                .get(j - 1)
+                .ok_or(CCIPError::InvalidSignaturePubkey)?;
+            let curr = signers.get(j).ok_or(CCIPError::InvalidSignaturePubkey)?;
+            if prev == curr {
+                return Err(CCIPError::DuplicateOnchainPublicKey);
+            }
+            if prev > curr {
+                return Err(CCIPError::InvalidSignerOrder);
+            }
+            j += 1;
+        }
+
+        Ok(())
     }
 }
+
+// Internal quorum-verification mixin; not exported as contract entrypoints.
+impl SignatureQuorum for CommitteeVerifierContract {}
 
 #[contractimpl]
 impl CommitteeVerifierContract {
@@ -155,11 +176,6 @@ impl CommitteeVerifierContract {
             .instance()
             .set(&DYNAMIC_CONFIG, &dynamic_config);
         env.storage().instance().set(&STORAGE_LOC_ADMIN, &owner);
-
-        let sig_cfgs: Map<u64, SignatureQuorumConfig> = Map::new(&env);
-        env.storage()
-            .persistent()
-            .set(&SIGNATURE_CONFIGS, &sig_cfgs);
 
         events::ConfigSetEvent {
             dynamic_config: dynamic_config.clone(),
@@ -221,13 +237,13 @@ impl CommitteeVerifierContract {
             return Err(CCIPError::InvalidVerifierResults);
         }
 
-        let version = <Self as SignatureQuorum>::extract_version_tag(&env, &verifier_results)?;
+        let version = extract_version_tag(&env, &verifier_results)?;
         let expected_tag = Self::load_verifier_version_tag(&env)?;
         if version != expected_tag {
             return Err(CCIPError::InvalidCCVVersion);
         }
 
-        let signature_len = <Self as SignatureQuorum>::extract_signature_len(&verifier_results)?;
+        let signature_len = extract_signature_len(&verifier_results)?;
         let expected = VERIFIER_VERSION_BYTES + SIGNATURE_LENGTH_BYTES + signature_len;
         if verifier_results.len() < expected {
             return Err(CCIPError::InvalidVerifierResults);
@@ -238,8 +254,27 @@ impl CommitteeVerifierContract {
         signed_payload.append(&Bytes::from_array(&env, &message_hash.to_array()));
         let signed_hash: BytesN<32> = env.crypto().keccak256(&signed_payload).into();
 
-        let signatures =
+        // Slice the raw signature blob into EIP-2098 compact 64-byte signatures.
+        let sig_blob =
             verifier_results.slice(VERIFIER_VERSION_BYTES + SIGNATURE_LENGTH_BYTES..expected);
+        if sig_blob.len() % PER_SIGNATURE_BYTES != 0 {
+            return Err(CCIPError::InvalidSignatureLength);
+        }
+        let mut signatures: Vec<BytesN<64>> = Vec::new(&env);
+        let mut offset = 0u32;
+        while offset < sig_blob.len() {
+            let mut raw = [0u8; PER_SIGNATURE_BYTES as usize];
+            let mut i = 0u32;
+            while i < PER_SIGNATURE_BYTES {
+                raw[i as usize] = sig_blob
+                    .get(offset + i)
+                    .ok_or(CCIPError::InvalidSignature)?;
+                i += 1;
+            }
+            signatures.push_back(BytesN::from_array(&env, &raw));
+            offset += PER_SIGNATURE_BYTES;
+        }
+
         <Self as SignatureQuorum>::validate_signatures(
             &env,
             source_chain_selector,
@@ -253,6 +288,71 @@ impl CommitteeVerifierContract {
         <Self as Initializable>::require_initialized(&env).unwrap();
         Self::load_verifier_version_tag(&env)
             .unwrap_or_else(|_| panic!("invariant: version tag is set during initialize"))
+    }
+
+    // ========================================
+    // Signature configs
+    // ========================================
+
+    /// Owner-only batch update of per-source-chain signer sets.
+    ///
+    /// Removals are applied first, then upserts. Each upsert is validated and
+    /// persisted through `SignatureConfigManager` (see `validate_config`).
+    pub fn apply_signature_configs(
+        env: Env,
+        source_chains_to_remove: Vec<u64>,
+        signature_configs: Vec<SignatureQuorumConfig>,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+
+        for source_chain_selector in source_chains_to_remove.iter() {
+            let key = QuorumConfigKey::SourceChainSelector(source_chain_selector);
+            <Self as SignatureConfigManager>::remove_config(&env, &key);
+
+            events::SignatureConfigSetEvent {
+                source_chain_selector,
+                signers: Vec::new(&env),
+                threshold: 0,
+            }
+            .publish(&env);
+        }
+
+        for update in signature_configs.iter() {
+            let cfg = SignatureConfig {
+                signers: update.signers.clone(),
+                verification: SignatureVerificationConfig::Threshold(update.threshold),
+            };
+            let key = QuorumConfigKey::SourceChainSelector(update.source_chain_selector);
+            <Self as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
+
+            events::SignatureConfigSetEvent {
+                source_chain_selector: update.source_chain_selector,
+                signers: update.signers.clone(),
+                threshold: update.threshold,
+            }
+            .publish(&env);
+        }
+
+        Ok(())
+    }
+
+    /// Returns the configured signer set for `source_chain_selector`.
+    pub fn get_signature_config(
+        env: Env,
+        source_chain_selector: u64,
+    ) -> Result<SignatureQuorumConfig, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+
+        let key = QuorumConfigKey::SourceChainSelector(source_chain_selector);
+        let cfg = <Self as SignatureConfigManager>::get_config(&env, &key)
+            .ok_or(CCIPError::SourceSignersNotConfigured)?;
+
+        Ok(SignatureQuorumConfig {
+            source_chain_selector,
+            threshold: cfg.verification.threshold(),
+            signers: cfg.signers,
+        })
     }
 
     // ========================================
@@ -468,6 +568,36 @@ impl CommitteeVerifierContract {
 
         Ok(())
     }
+}
+
+/// Reads the leading `bytes4` version tag from the verifier-results blob.
+fn extract_version_tag(env: &Env, verifier_results: &Bytes) -> Result<BytesN<4>, CCIPError> {
+    if verifier_results.len() < VERIFIER_VERSION_BYTES {
+        return Err(CCIPError::InvalidVerifierResults);
+    }
+    let mut out = [0u8; VERIFIER_VERSION_BYTES as usize];
+    let mut i = 0u32;
+    while i < VERIFIER_VERSION_BYTES {
+        out[i as usize] = verifier_results
+            .get(i)
+            .ok_or(CCIPError::InvalidVerifierResults)?;
+        i += 1;
+    }
+    Ok(BytesN::from_array(env, &out))
+}
+
+/// Reads the big-endian `u16` signature-payload length that follows the version tag.
+fn extract_signature_len(verifier_results: &Bytes) -> Result<u32, CCIPError> {
+    if verifier_results.len() < VERIFIER_VERSION_BYTES + SIGNATURE_LENGTH_BYTES {
+        return Err(CCIPError::InvalidVerifierResults);
+    }
+    let b0 = verifier_results
+        .get(VERIFIER_VERSION_BYTES)
+        .ok_or(CCIPError::InvalidVerifierResults)?;
+    let b1 = verifier_results
+        .get(VERIFIER_VERSION_BYTES + 1)
+        .ok_or(CCIPError::InvalidVerifierResults)?;
+    Ok(((b0 as u32) << 8) | (b1 as u32))
 }
 
 fn is_zero_fee_recipient(env: &Env, addr: &Address) -> bool {
