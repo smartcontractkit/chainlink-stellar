@@ -1,5 +1,5 @@
 use common_error::CCIPError;
-use soroban_sdk::{contracttype, BytesN, Env, Vec};
+use soroban_sdk::{BytesN, Env, Vec};
 
 use crate::{
     config::SignatureConfigManager,
@@ -9,12 +9,6 @@ use crate::{
 /// EIP-2098 compact ECDSA signature: r(32) + yParityAndS(32) = 64 bytes.
 pub const ECDSA_COMPACT_SIG_BYTES: u32 = 64;
 pub const PER_SIGNATURE_BYTES: u32 = ECDSA_COMPACT_SIG_BYTES;
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QuorumConfigKey {
-    SourceChainSelector(u64),
-}
 
 /// Decode an EIP-2098 compact signature into raw `r || s` bytes plus recovery id.
 ///
@@ -30,29 +24,27 @@ fn decode_compact_sig(sig: &BytesN<64>) -> ([u8; 64], u32) {
 /// Internal (non-`contracttrait`) mixin providing signature-quorum verification
 /// on top of [`SignatureConfigManager`]. Its methods are called by the concrete
 /// contract and are not exported as contract entrypoints.
-pub trait SignatureQuorum:
-    SignatureConfigManager<DataKey = QuorumConfigKey, Error = CCIPError>
-{
+pub trait SignatureQuorum: SignatureConfigManager<Error = CCIPError> {
     /// Verify that `signatures` contains at least the configured `threshold` of
     /// valid ECDSA (secp256k1) signatures over `signed_hash`, produced by
-    /// distinct signers from the set configured for `source_chain_selector`.
+    /// distinct signers from the set configured under `key`.
     ///
     /// Each entry is an EIP-2098 compact signature (`r(32) || yParityAndS(32)`).
     /// The caller is responsible for extracting these from its own wire format
-    /// (see `CommitteeVerifierContract::verify_message`); this method only
-    /// validates them and enforces quorum.
+    /// (see `CommitteeVerifierContract::verify_message`) and for supplying the
+    /// storage `key` identifying the signer set; this method only validates the
+    /// signatures and enforces quorum.
     ///
     /// Recovered signer addresses must appear in strictly ascending
     /// byte-lexicographic order. This prevents duplicates and makes the
     /// ordering deterministic.
     fn validate_signatures(
         env: &Env,
-        source_chain_selector: u64,
+        key: &Self::DataKey,
         signed_hash: BytesN<32>,
         signatures: Vec<BytesN<64>>,
     ) -> Result<(), CCIPError> {
-        let key = QuorumConfigKey::SourceChainSelector(source_chain_selector);
-        let cfg = <Self as SignatureConfigManager>::get_config(env, &key)
+        let cfg = <Self as SignatureConfigManager>::get_config(env, key)
             .ok_or(CCIPError::SourceSignersNotConfigured)?;
 
         let threshold = cfg.verification.threshold();

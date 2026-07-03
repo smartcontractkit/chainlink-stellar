@@ -11,11 +11,11 @@ use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
 use common_signature::config::{
     SignatureConfig, SignatureConfigManager, SignatureVerificationConfig,
 };
-use common_signature::quorum::{QuorumConfigKey, SignatureQuorum, PER_SIGNATURE_BYTES};
+use common_signature::quorum::{SignatureQuorum, PER_SIGNATURE_BYTES};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
-use types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
+use types::{DynamicConfig, QuorumConfigKey, RemoteChainConfig, SignatureQuorumConfig};
 
 use crate::types::FeeResponse;
 
@@ -275,12 +275,8 @@ impl CommitteeVerifierContract {
             offset += PER_SIGNATURE_BYTES;
         }
 
-        <Self as SignatureQuorum>::validate_signatures(
-            &env,
-            source_chain_selector,
-            signed_hash,
-            signatures,
-        )
+        let key = QuorumConfigKey::SourceChainSelector(source_chain_selector);
+        <Self as SignatureQuorum>::validate_signatures(&env, &key, signed_hash, signatures)
     }
 
     /// Returns the configured verifier version tag (`bytes4`), matching EVM `versionTag()`.
