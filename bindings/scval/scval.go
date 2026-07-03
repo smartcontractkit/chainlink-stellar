@@ -65,6 +65,15 @@ func BytesToScVal(b []byte) xdr.ScVal {
 	}
 }
 
+// Bytes2ToScVal converts a [2]byte to an xdr.ScVal.
+func Bytes2ToScVal(b [2]byte) xdr.ScVal {
+	bytes := xdr.ScBytes(b[:])
+	return xdr.ScVal{
+		Type:  xdr.ScValTypeScvBytes,
+		Bytes: &bytes,
+	}
+}
+
 // Bytes4ToScVal converts a [4]byte to an xdr.ScVal (for BytesN<4>).
 func Bytes4ToScVal(b [4]byte) xdr.ScVal {
 	bytes := xdr.ScBytes(b[:])
@@ -85,6 +94,15 @@ func Bytes16ToScVal(b [16]byte) xdr.ScVal {
 
 // Bytes32ToScVal converts a [32]byte to an xdr.ScVal.
 func Bytes32ToScVal(b [32]byte) xdr.ScVal {
+	bytes := xdr.ScBytes(b[:])
+	return xdr.ScVal{
+		Type:  xdr.ScValTypeScvBytes,
+		Bytes: &bytes,
+	}
+}
+
+// Bytes64ToScVal converts a [64]byte to an xdr.ScVal.
+func Bytes64ToScVal(b [64]byte) xdr.ScVal {
 	bytes := xdr.ScBytes(b[:])
 	return xdr.ScVal{
 		Type:  xdr.ScValTypeScvBytes,
@@ -305,6 +323,20 @@ func BytesFromScVal(val xdr.ScVal) ([]byte, error) {
 	return []byte(bytes), nil
 }
 
+// Bytes2FromScVal extracts a [2]byte from an xdr.ScVal containing BytesN<2>.
+func Bytes2FromScVal(val xdr.ScVal) ([2]byte, error) {
+	bytes, ok := val.GetBytes()
+	if !ok {
+		return [2]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
+	}
+	if len(bytes) != 2 {
+		return [2]byte{}, fmt.Errorf("expected 2 bytes, got %d", len(bytes))
+	}
+	var result [2]byte
+	copy(result[:], bytes)
+	return result, nil
+}
+
 // Bytes4FromScVal extracts a [4]byte from an xdr.ScVal containing BytesN<4>.
 func Bytes4FromScVal(val xdr.ScVal) ([4]byte, error) {
 	bytes, ok := val.GetBytes()
@@ -343,6 +375,20 @@ func Bytes32FromScVal(val xdr.ScVal) ([32]byte, error) {
 		return [32]byte{}, fmt.Errorf("expected 32 bytes, got %d", len(bytes))
 	}
 	var result [32]byte
+	copy(result[:], bytes)
+	return result, nil
+}
+
+// Bytes64FromScVal extracts a [64]byte from an xdr.ScVal containing BytesN<64>.
+func Bytes64FromScVal(val xdr.ScVal) ([64]byte, error) {
+	bytes, ok := val.GetBytes()
+	if !ok {
+		return [64]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
+	}
+	if len(bytes) != 64 {
+		return [64]byte{}, fmt.Errorf("expected 64 bytes, got %d", len(bytes))
+	}
+	var result [64]byte
 	copy(result[:], bytes)
 	return result, nil
 }
