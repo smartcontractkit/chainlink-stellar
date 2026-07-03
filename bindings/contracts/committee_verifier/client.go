@@ -318,28 +318,6 @@ func (c *CommitteeVerifierClient) TransferOwnership(ctx context.Context, newOwne
 	return nil
 }
 
-// ExtractVersionTag calls the extract_version_tag function on the contract.
-func (c *CommitteeVerifierClient) ExtractVersionTag(ctx context.Context, verifierResults []byte) ([4]byte, error) {
-	args := []xdr.ScVal{
-		scval.BytesToScVal(verifierResults),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "extract_version_tag", args)
-	if err != nil {
-		return [4]byte{}, fmt.Errorf("failed to call extract_version_tag: %w", err)
-	}
-
-	if result == nil {
-		return [4]byte{}, fmt.Errorf("no return value from extract_version_tag")
-	}
-
-	v, err := scval.Bytes4FromScVal(*result)
-	if err != nil {
-		return [4]byte{}, err
-	}
-	return v, nil
-}
-
 // ForwardToVerifier calls the forward_to_verifier function on the contract.
 func (c *CommitteeVerifierClient) ForwardToVerifier(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
 	args := []xdr.ScVal{
@@ -390,23 +368,6 @@ func (c *CommitteeVerifierClient) GetAllowlistEntry(ctx context.Context, key uin
 		return nil, err
 	}
 	return v, nil
-}
-
-// ValidateSignatures calls the validate_signatures function on the contract.
-func (c *CommitteeVerifierClient) ValidateSignatures(ctx context.Context, sourceChainSelector uint64, signedHash [32]byte, signatures []byte) error {
-	args := []xdr.ScVal{
-		scval.Uint64ToScVal(sourceChainSelector),
-		scval.Bytes32ToScVal(signedHash),
-		scval.BytesToScVal(signatures),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "validate_signatures", args)
-	if err != nil {
-		return fmt.Errorf("failed to call validate_signatures: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
@@ -478,28 +439,6 @@ func (c *CommitteeVerifierClient) RequireInAllowlist(ctx context.Context, key ui
 
 	_ = result // void return
 	return nil
-}
-
-// ExtractSignatureLen calls the extract_signature_len function on the contract.
-func (c *CommitteeVerifierClient) ExtractSignatureLen(ctx context.Context, verifierResults []byte) (uint32, error) {
-	args := []xdr.ScVal{
-		scval.BytesToScVal(verifierResults),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "extract_signature_len", args)
-	if err != nil {
-		return 0, fmt.Errorf("failed to call extract_signature_len: %w", err)
-	}
-
-	if result == nil {
-		return 0, fmt.Errorf("no return value from extract_signature_len")
-	}
-
-	v, ok := result.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 return type")
-	}
-	return uint32(v), nil
 }
 
 // GetStorageLocations calls the get_storage_locations function on the contract.
@@ -605,34 +544,6 @@ func (c *CommitteeVerifierClient) CancelOwnershipTransfer(ctx context.Context) e
 
 	_ = result // void return
 	return nil
-}
-
-// GetAllSignatureConfigs calls the get_all_signature_configs function on the contract.
-func (c *CommitteeVerifierClient) GetAllSignatureConfigs(ctx context.Context) ([]SignatureQuorumConfig, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_signature_configs", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_all_signature_configs: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_all_signature_configs")
-	}
-
-	vec, ok := result.GetVec()
-	if !ok || vec == nil {
-		return nil, fmt.Errorf("expected vec return type")
-	}
-	out := make([]SignatureQuorumConfig, len(*vec))
-	for i, item := range *vec {
-		v, err := SignatureQuorumConfigFromScVal(item)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = *v
-	}
-	return out, nil
 }
 
 // GetStorageLocationsAdmin calls the get_storage_locations_admin function on the contract.
