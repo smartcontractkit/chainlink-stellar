@@ -1,149 +1,71 @@
-#[soroban_sdk::contractargs(name = "CommitteeVerifierArgs")]
-#[soroban_sdk::contractclient(name = "CommitteeVerifierClient")]
-pub trait CommitteeVerifierInterface {
+#[soroban_sdk::contractargs(name = "creArgs")]
+#[soroban_sdk::contractclient(name = "creClient")]
+pub trait creInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_fee(
+    fn route(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        message: soroban_sdk::Bytes,
-        extra_args: soroban_sdk::Bytes,
-        block_confirmations: u32,
-    ) -> Result<FeeResponse, CCIPError>;
+        transmission_id: soroban_sdk::BytesN<32>,
+        transmitter: soroban_sdk::Address,
+        receiver: soroban_sdk::Address,
+        metadata: soroban_sdk::Bytes,
+        validated_report: soroban_sdk::Bytes,
+    ) -> Result<bool, ForwarderError>;
+    fn report(
+        env: soroban_sdk::Env,
+        transmitter: soroban_sdk::Address,
+        receiver: soroban_sdk::Address,
+        raw_report: soroban_sdk::Bytes,
+        report_context: soroban_sdk::Bytes,
+        signatures: soroban_sdk::Vec<Ed25519Signature>,
+    ) -> Result<(), ForwarderError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
-        dynamic_config: DynamicConfig,
-        storage_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
-        rmn_proxy: soroban_sdk::Address,
-        version_tag: soroban_sdk::BytesN<4>,
-    ) -> Result<(), CCIPError>;
-    fn version_tag(env: soroban_sdk::Env) -> soroban_sdk::BytesN<4>;
+    ) -> Result<(), ForwarderError>;
+    fn set_config(
+        env: soroban_sdk::Env,
+        don_id: u32,
+        config_version: u32,
+        f: u32,
+        signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> Result<(), ForwarderError>;
+    fn clear_config(
+        env: soroban_sdk::Env,
+        don_id: u32,
+        config_version: u32,
+    ) -> Result<(), ForwarderError>;
+    fn add_forwarder(
+        env: soroban_sdk::Env,
+        forwarder: soroban_sdk::Address,
+    ) -> Result<(), ForwarderError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn set_new_owner(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn init_allowlist(
-        env: soroban_sdk::Env,
-        initial_allowlist: soroban_sdk::Map<u64, soroban_sdk::Vec<soroban_sdk::Address>>,
-    );
-    fn verify_message(
-        env: soroban_sdk::Env,
-        source_chain_selector: u64,
-        message_hash: soroban_sdk::BytesN<32>,
-        verifier_results: soroban_sdk::Bytes,
-    ) -> Result<(), CCIPError>;
-    fn is_in_allowlist(env: soroban_sdk::Env, key: u64, addr: soroban_sdk::Address) -> bool;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn remove_forwarder(
+        env: soroban_sdk::Env,
+        forwarder: soroban_sdk::Address,
+    ) -> Result<(), ForwarderError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
-    fn set_dynamic_config(
-        env: soroban_sdk::Env,
-        dynamic_config: DynamicConfig,
-    ) -> Result<(), CCIPError>;
     fn transfer_ownership(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn forward_to_verifier(
+    fn get_transmission_info(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        sender: soroban_sdk::Address,
-        message_id: soroban_sdk::BytesN<32>,
-        fee_token: soroban_sdk::Address,
-        fee_token_amount: i128,
-        verifier_args: soroban_sdk::Bytes,
-    ) -> Result<soroban_sdk::Bytes, CCIPError>;
-    fn get_allowlist_entry(env: soroban_sdk::Env, key: u64) -> Option<AllowListEntry>;
-    fn withdraw_fee_tokens(
-        env: soroban_sdk::Env,
-        fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
-    ) -> Result<(), CCIPError>;
-    fn get_signature_config(
-        env: soroban_sdk::Env,
-        source_chain_selector: u64,
-    ) -> Result<SignatureQuorumConfig, CCIPError>;
-    fn is_allowlist_enabled(env: soroban_sdk::Env, key: u64) -> bool;
-    fn require_in_allowlist(
-        env: soroban_sdk::Env,
-        key: u64,
-        address: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
-    fn get_storage_locations(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Vec<soroban_sdk::Bytes>, CCIPError>;
-    fn apply_allowlist_updates(
-        env: soroban_sdk::Env,
-        updates: soroban_sdk::Vec<AllowListUpdate>,
-    ) -> Result<(), CCIPError>;
-    fn apply_signature_configs(
-        env: soroban_sdk::Env,
-        source_chains_to_remove: soroban_sdk::Vec<u64>,
-        signature_configs: soroban_sdk::Vec<SignatureQuorumConfig>,
-    ) -> Result<(), CCIPError>;
-    fn get_remote_chain_config(
-        env: soroban_sdk::Env,
-        remote_chain_selector: u64,
-    ) -> Result<RemoteChainConfig, CCIPError>;
-    fn update_storage_locations(
-        env: soroban_sdk::Env,
-        new_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
-    ) -> Result<(), CCIPError>;
+        receiver: soroban_sdk::Address,
+        workflow_execution_id: soroban_sdk::BytesN<32>,
+        report_id: soroban_sdk::BytesN<2>,
+    ) -> Result<TransmissionInfo, ForwarderError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn get_storage_locations_admin(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn emit_allowlist_updated_event(
-        env: soroban_sdk::Env,
-        key: u64,
-        added_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-        removed_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-    );
-    fn get_pending_storage_loc_admin(
-        env: soroban_sdk::Env,
-    ) -> Result<Option<soroban_sdk::Address>, CCIPError>;
-    fn accept_storage_locations_admin(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn apply_remote_chain_cfg_updates(
-        env: soroban_sdk::Env,
-        remote_chain_config_args: soroban_sdk::Vec<RemoteChainConfig>,
-    ) -> Result<(), CCIPError>;
-    fn transfer_storage_locations_admin(
-        env: soroban_sdk::Env,
-        to: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct FeeResponse {
-    pub dest_bytes_overhead: u32,
-    pub dest_gas_limit: u32,
-    pub fee: u32,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DynamicConfig {
-    pub allowlist_admin: Option<soroban_sdk::Address>,
-    pub fee_aggregator: Option<soroban_sdk::Address>,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RemoteChainConfig {
-    pub allowlist_enabled: bool,
-    pub fee_usd_cents: u32,
-    pub gas_for_verification: u32,
-    pub payload_size_bytes: u32,
-    pub remote_chain_selector: u64,
-    pub router: Option<soroban_sdk::Address>,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct SignatureQuorumConfig {
-    pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
-    pub source_chain_selector: u64,
-    pub threshold: u32,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -203,14 +125,48 @@ pub struct SignatureConfig {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum QuorumConfigKey {
-    SourceChainSelector(u64),
+pub struct Config {
+    pub f: u32,
+    pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Transmission {
+    pub state: TransmissionState,
+    pub transmitter: soroban_sdk::Address,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Ed25519Signature {
+    pub public_key: soroban_sdk::BytesN<32>,
+    pub signature: soroban_sdk::BytesN<64>,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TransmissionInfo {
+    pub state: TransmissionState,
+    pub transmitter: Option<soroban_sdk::Address>,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum SignatureVerificationConfig {
     Threshold(u32),
     Failure(u32),
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum DataKey {
+    Forwarder(soroban_sdk::Address),
+    Config(u64),
+    Transmission(soroban_sdk::BytesN<32>),
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TransmissionState {
+    NotAttempted = 0,
+    Succeeded = 1,
+    InvalidReceiver = 2,
+    Failed = 3,
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -332,60 +288,29 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_ConfigSet"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ConfigSetEvent {
-    pub dynamic_config: DynamicConfig,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_SignatureConfigSet"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct SignatureConfigSetEvent {
-    pub source_chain_selector: u64,
-    pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
-    pub threshold: u32,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_RemoteChainConfigSet"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RemoteChainConfigSetEvent {
-    pub remote_chain_selector: u64,
-    pub router: Option<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersAdded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListSendersAddedEvent {
-    pub dest_chain_selector: u64,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListStateChanged"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListStateChangedEvent {
-    pub dest_chain_selector: u64,
-    pub allowlist_enabled: bool,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersRemoved"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListSendersRemovedEvent {
-    pub dest_chain_selector: u64,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferred"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StorageAdminTransferredEvent {
-    pub from: soroban_sdk::Address,
-    pub to: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferReq"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StorageAdminTransferReqEvent {
-    pub from: soroban_sdk::Address,
-    pub to: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["ccv_StorageLocationsUpdated"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StorageLocationsUpdatedEvent {
-    pub old_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
-    pub new_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
+#[soroban_sdk::contracterror(export = false)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ForwarderError {
+    AlreadyInitialized = 1,
+    InvalidReport = 2,
+    InvalidReportContext = 3,
+    InvalidReportVersion = 4,
+    FaultToleranceMustBePositive = 5,
+    ExcessSigners = 6,
+    InsufficientSigners = 7,
+    InvalidConfig = 8,
+    InvalidSignatureCount = 9,
+    DuplicateSigner = 10,
+    InvalidSignature = 11,
+    InvalidSignerOrder = 12,
+    AlreadyProcessed = 13,
+    NotOwner = 14,
+    NotProposedOwner = 15,
+    Uninitialized = 16,
+    UnauthorizedForwarder = 17,
+    InvalidReceiver = 18,
+    InvalidSigner = 19,
+    CannotRemoveSelf = 20,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -416,4 +341,35 @@ pub struct AuthorizedCallerRemovedEvent {
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ConfigSetEvent {
+    #[topic]
+    pub don_id: u32,
+    #[topic]
+    pub config_version: u32,
+    pub f: u32,
+    pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ForwarderAddedEvent {
+    pub forwarder: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ReportProcessedEvent {
+    #[topic]
+    pub receiver: soroban_sdk::Address,
+    #[topic]
+    pub workflow_execution_id: soroban_sdk::BytesN<32>,
+    #[topic]
+    pub report_id: soroban_sdk::BytesN<2>,
+    pub success: bool,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ForwarderRemovedEvent {
+    pub forwarder: soroban_sdk::Address,
 }
