@@ -4,14 +4,13 @@ extern crate alloc;
 
 use super::*;
 use alloc::vec::Vec as HostVec;
-use common_signature::quorum::SignatureQuorumConfig;
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
 use soroban_sdk::{
     testutils::Address as _, token, vec, Address, Bytes, BytesN, Env, Vec as SorobanVec,
 };
 
-use crate::types::{DynamicConfig, RemoteChainConfig};
+use crate::types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
 use crate::{
     CommitteeVerifierContract, CommitteeVerifierContractClient, DEFAULT_VERIFIER_VERSION_TAG,
 };
@@ -543,55 +542,6 @@ fn test_apply_signature_configs_remove() {
     client.apply_signature_configs(&vec![&env, source_chain], &vec![&env]);
 
     client.get_signature_config(&source_chain);
-}
-
-#[test]
-fn test_get_all_signature_configs() {
-    let (env, client, _owner, ..) = setup();
-
-    let pairs_a = sorted_signers_from_seeds(&[2, 4, 6]);
-    let pairs_b = sorted_signers_from_seeds(&[8, 10, 12]);
-
-    let cfg_a = SignatureQuorumConfig {
-        source_chain_selector: 200,
-        threshold: 2,
-        signers: signers_to_soroban_vec(&env, &pairs_a),
-    };
-    let cfg_b = SignatureQuorumConfig {
-        source_chain_selector: 201,
-        threshold: 1,
-        signers: signers_to_soroban_vec(&env, &pairs_b),
-    };
-
-    client.apply_signature_configs(&vec![&env], &vec![&env, cfg_a, cfg_b]);
-
-    let all = client.get_all_signature_configs();
-    assert_eq!(all.len(), 2);
-
-    let c0 = all.get(0).unwrap();
-    let c1 = all.get(1).unwrap();
-    assert!(
-        (c0.source_chain_selector == 200 && c1.source_chain_selector == 201)
-            || (c0.source_chain_selector == 201 && c1.source_chain_selector == 200)
-    );
-
-    let mut saw_200 = false;
-    let mut saw_201 = false;
-    for i in 0..2 {
-        let c = all.get(i).unwrap();
-        match c.source_chain_selector {
-            200 => {
-                assert_eq!(c.threshold, 2);
-                saw_200 = true;
-            }
-            201 => {
-                assert_eq!(c.threshold, 1);
-                saw_201 = true;
-            }
-            _ => panic!("unexpected source_chain_selector"),
-        }
-    }
-    assert!(saw_200 && saw_201);
 }
 
 #[test]

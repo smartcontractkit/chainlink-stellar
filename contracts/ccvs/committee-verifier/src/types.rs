@@ -1,6 +1,22 @@
 use common_error::CCIPError;
 use common_helpers::validation::Validatable;
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
+
+/// Public signer-set configuration for a source chain, used by the
+/// `apply_signature_configs` / `get_signature_config` entrypoints.
+///
+/// Persisted internally via `SignatureConfigManager` as a `SignatureConfig`;
+/// this is the flat, caller-facing shape (threshold expressed directly).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignatureQuorumConfig {
+    pub source_chain_selector: u64,
+    pub threshold: u32,
+    /// Signer identifiers (32 bytes each), stored in ascending byte-lexicographic
+    /// order. Each entry is a left-zero-padded 20-byte Ethereum address derived
+    /// from the signer's secp256k1 public key: `keccak256(pubkey[1..])[12..32]`.
+    pub signers: Vec<BytesN<32>>,
+}
 
 /// Dynamic config mirrored from EVM CommitteeVerifier.DynamicConfig.
 #[contracttype]
