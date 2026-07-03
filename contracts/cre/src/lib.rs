@@ -14,7 +14,10 @@ use soroban_sdk::{
     TryFromVal, Vec,
 };
 
-use common_signature::{Ed25519, SignatureScheme};
+use common_signature::{
+    config::{SignatureConfigManager, SignatureVerificationConfig},
+    Ed25519, SignatureConfig, SignatureScheme,
+};
 use events::{ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, ReportProcessedEvent};
 use types::{Config, DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
 
@@ -27,6 +30,7 @@ use crate::types::ParsedReport;
 const INITIALIZED: Symbol = symbol_short!("INIT");
 const OWNER: Symbol = symbol_short!("OWNER");
 const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+const SIGNATURE_CONFIGS: Symbol = symbol_short!("SIGNCFG");
 
 // ============================================================
 // Protocol Constants
@@ -54,6 +58,36 @@ impl Initializable for KeystoneForwarder {
 impl Ownable for KeystoneForwarder {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
+
+// Internal helper for managing signature configurations storage
+impl SignatureConfigManager for KeystoneForwarder {
+    const SIGNATURE_CONFIGS: Symbol = SIGNATURE_CONFIGS;
+    const IS_PERSISTENT: bool = false;
+    type Error = ForwarderError;
+    type DataKey = DataKey;
+
+    fn validate_config(env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
+        let f = match config.verification {
+            SignatureVerificationConfig::Threshold(f) => f,
+            SignatureVerificationConfig::Failure(f) => 0,
+        };
+        let signers = &config.signers;
+
+        if f == 0 {
+            return Err(ForwarderError::FaultToleranceMustBePositive);
+        }
+        if signers.len() > MAX_ORACLES {
+            return Err(ForwarderError::ExcessSigners);
+        }
+        // BFT bound: need ≥ 3f + 1 signers configured to tolerate f faulty.
+        if signers.len() < f * 3 + 1 {
+            return Err(ForwarderError::InsufficientSigners);
+        }
+
+        ensure_unique_pubkeys(&env, &signers);
+        Ok(())
+    }
 }
 
 #[contractimpl]
@@ -117,26 +151,17 @@ impl KeystoneForwarder {
         <KeystoneForwarder as Initializable>::require_initialized(&env)?;
         <KeystoneForwarder as Ownable>::require_owner(&env)?;
 
-        if f == 0 {
-            panic_with_error!(&env, ForwarderError::FaultToleranceMustBePositive);
-        }
-        if signers.len() > MAX_ORACLES {
-            panic_with_error!(&env, ForwarderError::ExcessSigners);
-        }
-        // BFT bound: need ≥ 3f + 1 signers configured to tolerate f faulty.
-        if signers.len() < f * 3 + 1 {
-            panic_with_error!(&env, ForwarderError::InsufficientSigners);
-        }
-        ensure_unique_pubkeys(&env, &signers);
-
-        let cfg = Config { f, signers };
+        let cfg = SignatureConfig {
+            signers,
+            verification: SignatureVerificationConfig::Threshold(f),
+        };
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        env.storage().instance().set(&key, &cfg);
+        <KeystoneForwarder as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
 
         ConfigSetEvent {
             don_id,
             config_version,
-            f: cfg.f,
+            f: f,
             signers: cfg.signers,
         }
         .publish(&env);
@@ -149,11 +174,7 @@ impl KeystoneForwarder {
         <KeystoneForwarder as Ownable>::require_owner(&env)?;
 
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        if !env.storage().instance().has(&key) {
-            panic_with_error!(&env, ForwarderError::InvalidConfig);
-        }
-
-        env.storage().instance().remove(&key);
+        <KeystoneForwarder as SignatureConfigManager>::remove_config(&env, &key);
 
         ConfigSetEvent {
             don_id,
@@ -208,10 +229,12 @@ impl KeystoneForwarder {
             _ => {}
         }
 
-        let cfg = load_config(&env, parsed.config_id);
-        // Reports require exactly f + 1 signatures: minimal quorum that guarantees
-        // at least one honest signer (f faulty can produce at most f matching sigs).
-        if signatures.len() != cfg.f + 1 {
+        let datakey = DataKey::Config(parsed.config_id);
+        let cfg = <KeystoneForwarder as SignatureConfigManager>::get_config(&env, &datakey)
+            .ok_or(ForwarderError::InvalidConfig)?;
+
+        // Verify that the number of signatures matches the failed tolerance threshold
+        if signatures.len() != cfg.verification.threshold() {
             panic_with_error!(&env, ForwarderError::InvalidSignatureCount);
         }
 
