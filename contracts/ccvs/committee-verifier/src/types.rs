@@ -2,6 +2,14 @@ use common_error::CCIPError;
 use common_helpers::validation::Validatable;
 use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
+/// Storage key for this contract's signer-set configs (keyed by source chain).
+/// Used as `SignatureConfigManager::DataKey`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QuorumConfigKey {
+    SourceChainSelector(u64),
+}
+
 /// Public signer-set configuration for a source chain, used by the
 /// `apply_signature_configs` / `get_signature_config` entrypoints.
 ///
