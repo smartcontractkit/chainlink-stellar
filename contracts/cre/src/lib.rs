@@ -69,8 +69,8 @@ impl SignatureConfigManager for KeystoneForwarder {
 
     fn validate_config(env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
         let f = match config.verification {
-            SignatureVerificationConfig::Threshold(f) => f,
-            SignatureVerificationConfig::Failure(f) => 0,
+            SignatureVerificationConfig::Failure(f) => f,
+            SignatureVerificationConfig::Threshold(t) => t.saturating_sub(1),
         };
         let signers = &config.signers;
 
@@ -153,7 +153,8 @@ impl KeystoneForwarder {
 
         let cfg = SignatureConfig {
             signers,
-            verification: SignatureVerificationConfig::Threshold(f),
+            // `f` is fault tolerance; quorum requires `f + 1` valid signatures.
+            verification: SignatureVerificationConfig::Failure(f),
         };
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
         <KeystoneForwarder as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
