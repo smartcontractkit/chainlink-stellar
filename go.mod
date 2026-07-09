@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.34.0
-	github.com/smartcontractkit/chain-selectors v1.0.105-0.20260709093410-16d20e46e3af
+	github.com/smartcontractkit/chain-selectors v1.0.105
 	github.com/smartcontractkit/chainlink-ccip/chains/evm v0.0.0-20260520153611-8816dcee857b
 	github.com/smartcontractkit/chainlink-ccip/deployment v0.0.0-20260520153611-8816dcee857b
 	github.com/smartcontractkit/chainlink-ccv v0.0.2-0.20260518180919-4f70eba1dfd2
