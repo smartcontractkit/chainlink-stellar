@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	chain_selectors "github.com/smartcontractkit/chain-selectors"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -84,7 +85,7 @@ func New(
 ) (*StellarTxm, error) {
 	cfg.Resolve()
 
-	passphrase, err := NetworkPassphrase(chainID)
+	passphrase, err := chain_selectors.StellarPassphraseFromChainId(chainID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve network passphrase: %w", err)
 	}
