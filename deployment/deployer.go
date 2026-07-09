@@ -245,7 +245,14 @@ func (d *Deployer) DeployContract(ctx context.Context, wasmPath string, salt [32
 	if err != nil {
 		return "", fmt.Errorf("failed to read WASM file: %w", err)
 	}
+	return d.DeployContractBytes(ctx, wasmBytes, salt)
+}
 
+// DeployContractBytes uploads the given WASM bytes and instantiates a contract,
+// returning the contract ID. Use this when the WASM is embedded in the binary
+// (e.g. go:embed) rather than read from disk; DeployContract is the file-path
+// wrapper around it.
+func (d *Deployer) DeployContractBytes(ctx context.Context, wasmBytes []byte, salt [32]byte) (string, error) {
 	wasmHash, err := d.uploadWASM(ctx, wasmBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload WASM: %w", err)
