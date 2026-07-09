@@ -40,6 +40,21 @@ func newStellarService(ch chain.Chain) stellarService {
 	return stellarService{chain: ch, txMgr: ch.TxManager()}
 }
 
+func (s *stellarService) GetSigningAccount(ctx context.Context) (stellartypes.GetSigningAccountResponse, error) {
+	ks := s.chain.KeyStore()
+	if ks == nil {
+		return stellartypes.GetSigningAccountResponse{}, fmt.Errorf("keystore is not configured")
+	}
+	accounts, err := ks.Accounts(ctx)
+	if err != nil {
+		return stellartypes.GetSigningAccountResponse{}, fmt.Errorf("keystore accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return stellartypes.GetSigningAccountResponse{}, fmt.Errorf("keystore has no accounts")
+	}
+	return stellartypes.GetSigningAccountResponse{AccountAddress: accounts[0]}, nil
+}
+
 func (s *stellarService) GetLedgerEntries(ctx context.Context, req stellartypes.GetLedgerEntriesRequest) (stellartypes.GetLedgerEntriesResponse, error) {
 	rpc, err := s.chain.GetClient(ctx)
 	if err != nil {
@@ -208,7 +223,7 @@ func (s *stellarService) SimulateTransaction(ctx context.Context, req stellartyp
 
 	switch len(simResult.Results) {
 	case 0:
-		if resp.Success {
+		if resp.Success && simResult.RestorePreamble == nil {
 			return resp, fmt.Errorf("simulation succeeded but returned no host function results")
 		}
 	case 1:
@@ -250,6 +265,39 @@ func (s *stellarService) GetEvents(ctx context.Context, req stellartypes.GetEven
 	}
 
 	return convertGetEventsResponseToDomain(resp)
+}
+
+func (s *stellarService) GetTransaction(ctx context.Context, req stellartypes.GetTransactionRequest) (stellartypes.GetTransactionResponse, error) {
+	if req.TxHash == "" {
+		return stellartypes.GetTransactionResponse{}, fmt.Errorf("tx hash is required")
+	}
+
+	rpc, err := s.chain.GetClient(ctx)
+	if err != nil {
+		return stellartypes.GetTransactionResponse{}, fmt.Errorf("failed to get client: %w", err)
+	}
+
+	resp, err := rpc.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: req.TxHash})
+	if err != nil {
+		return stellartypes.GetTransactionResponse{}, fmt.Errorf("%w: %w", multinode.ErrNodeError, err)
+	}
+	if resp.Status == protocol.TransactionStatusNotFound {
+		return stellartypes.GetTransactionResponse{}, fmt.Errorf("transaction not found: %s", req.TxHash)
+	}
+
+	var feeStroops uint64
+	if resp.ResultXDR != "" {
+		var txResult xdr.TransactionResult
+		if decodeErr := xdr.SafeUnmarshalBase64(resp.ResultXDR, &txResult); decodeErr == nil {
+			feeStroops = uint64(txResult.FeeCharged)
+		}
+	}
+
+	return stellartypes.GetTransactionResponse{
+		FeeStroops:      feeStroops,
+		LedgerSequence:  resp.Ledger,
+		LedgerCloseTime: resp.LedgerCloseTime,
+	}, nil
 }
 
 // SubmitTransaction invokes a Soroban contract via the TXM pipeline.

@@ -9,10 +9,12 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
+	"github.com/smartcontractkit/chainlink-common/pkg/types/core"
 	"github.com/smartcontractkit/chainlink-framework/multinode"
 
 	stellartypes "github.com/smartcontractkit/chainlink-common/pkg/types/chains/stellar"
@@ -24,12 +26,34 @@ import (
 
 type stubChain struct {
 	chain.Chain
-	rpc   chain.RPCClient
-	txMgr *txm.StellarTxm
+	rpc      chain.RPCClient
+	txMgr    *txm.StellarTxm
+	keyStore core.Keystore
 }
 
 func (s *stubChain) GetClient(_ context.Context) (chain.RPCClient, error) { return s.rpc, nil }
 func (s *stubChain) TxManager() *txm.StellarTxm                           { return s.txMgr }
+func (s *stubChain) KeyStore() core.Keystore                              { return s.keyStore }
+
+type stubKeystore struct {
+	accounts []string
+	err      error
+}
+
+func (s *stubKeystore) Accounts(_ context.Context) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.accounts, nil
+}
+
+func (s *stubKeystore) Sign(_ context.Context, _ string, _ []byte) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *stubKeystore) Decrypt(_ context.Context, _ string, _ []byte) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
 
 // newTestStellarService builds a stellarService backed by the given mock RPC client.
 func newTestStellarService(t *testing.T, rpc chain.RPCClient) *stellarService {
@@ -361,7 +385,7 @@ func TestStellarService_SimulateTransaction(t *testing.T) {
 					return simulatedTxSource(t, req) == source
 				}),
 			).
-			Return(protocol.SimulateTransactionResponse{}, nil)
+			Return(minimalSimulateSuccess(), nil)
 
 		svc := newTestStellarService(t, rpc)
 
@@ -388,7 +412,7 @@ func TestStellarService_SimulateTransaction(t *testing.T) {
 					return simulatedTxSource(t, req) == placeholder
 				}),
 			).
-			Return(protocol.SimulateTransactionResponse{}, nil)
+			Return(minimalSimulateSuccess(), nil)
 
 		svc := newTestStellarService(t, rpc)
 
@@ -430,7 +454,7 @@ func TestStellarService_SimulateTransaction(t *testing.T) {
 					return req.AuthMode == protocol.AuthModeRecord
 				}),
 			).
-			Return(protocol.SimulateTransactionResponse{}, nil)
+			Return(minimalSimulateSuccess(), nil)
 
 		svc := newTestStellarService(t, rpc)
 
@@ -453,7 +477,7 @@ func TestStellarService_SimulateTransaction(t *testing.T) {
 					return req.AuthMode == protocol.AuthModeEnforce
 				}),
 			).
-			Return(protocol.SimulateTransactionResponse{}, nil)
+			Return(minimalSimulateSuccess(), nil)
 
 		svc := newTestStellarService(t, rpc)
 
@@ -478,7 +502,7 @@ func TestStellarService_SimulateTransaction(t *testing.T) {
 					return req.ResourceConfig.InstructionLeeway == 123
 				}),
 			).
-			Return(protocol.SimulateTransactionResponse{}, nil)
+			Return(minimalSimulateSuccess(), nil)
 
 		svc := newTestStellarService(t, rpc)
 
@@ -564,12 +588,14 @@ func TestStellarService_GetEvents(t *testing.T) {
 				Cursor:                "cursor123",
 				Events: []protocol.EventInfo{
 					{
+						EventType:       protocol.EventTypeContract,
 						ID:              "event-id",
 						ContractID:      testContractID(t),
 						TransactionHash: "txhash",
 						Ledger:          95,
 						OpIndex:         1,
 						TxIndex:         2,
+						ValueXDR:        voidScValXDR(t),
 					},
 				},
 			}, nil)
@@ -796,12 +822,112 @@ func TestStellarService_SubmitTransaction(t *testing.T) {
 	})
 }
 
+func TestStellarService_GetTransaction(t *testing.T) {
+	t.Parallel()
+
+	t.Run("EmptyTxHash", func(t *testing.T) {
+		svc := newTestStellarService(t, mocks.NewMockRPCClient(t))
+		_, err := svc.GetTransaction(t.Context(), stellartypes.GetTransactionRequest{})
+		require.ErrorContains(t, err, "tx hash is required")
+	})
+
+	t.Run("NotFound", func(t *testing.T) {
+		ctx := t.Context()
+		rpc := mocks.NewMockRPCClient(t)
+		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "missinghash"}).
+			Return(protocol.GetTransactionResponse{
+				TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusNotFound},
+			}, nil)
+
+		svc := newTestStellarService(t, rpc)
+		_, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "missinghash"})
+		require.ErrorContains(t, err, "transaction not found: missinghash")
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		ctx := t.Context()
+		rpc := mocks.NewMockRPCClient(t)
+		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "abc123hash"}).
+			Return(protocol.GetTransactionResponse{
+				TransactionDetails: protocol.TransactionDetails{
+					Status: protocol.TransactionStatusSuccess,
+					Ledger: 100,
+				},
+				LedgerCloseTime: 1_700_000_000,
+			}, nil)
+
+		svc := newTestStellarService(t, rpc)
+		resp, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "abc123hash"})
+		require.NoError(t, err)
+		require.Equal(t, uint32(100), resp.LedgerSequence)
+		require.Equal(t, int64(1_700_000_000), resp.LedgerCloseTime)
+	})
+
+	t.Run("RPCError", func(t *testing.T) {
+		ctx := t.Context()
+		rpc := mocks.NewMockRPCClient(t)
+		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "abc123hash"}).
+			Return(protocol.GetTransactionResponse{}, errors.New("rpc unavailable"))
+
+		svc := newTestStellarService(t, rpc)
+		_, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "abc123hash"})
+		require.ErrorContains(t, err, "rpc unavailable")
+		require.ErrorIs(t, err, multinode.ErrNodeError)
+	})
+}
+
+func TestStellarService_GetSigningAccount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("NoKeystore", func(t *testing.T) {
+		svc := newStellarService(&stubChain{})
+		_, err := svc.GetSigningAccount(t.Context())
+		require.ErrorContains(t, err, "keystore is not configured")
+	})
+
+	t.Run("EmptyAccounts", func(t *testing.T) {
+		svc := newStellarService(&stubChain{keyStore: &stubKeystore{accounts: nil}})
+		_, err := svc.GetSigningAccount(t.Context())
+		require.ErrorContains(t, err, "keystore has no accounts")
+	})
+
+	t.Run("KeystoreError", func(t *testing.T) {
+		svc := newStellarService(&stubChain{keyStore: &stubKeystore{err: errors.New("keystore down")}})
+		_, err := svc.GetSigningAccount(t.Context())
+		require.ErrorContains(t, err, "keystore accounts: keystore down")
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		account := testStellarAccount(t)
+		svc := newStellarService(&stubChain{keyStore: &stubKeystore{accounts: []string{account}}})
+		resp, err := svc.GetSigningAccount(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, account, resp.AccountAddress)
+	})
+}
+
 func testStellarAccount(t *testing.T) string {
 	t.Helper()
 	accountID := make([]byte, 32)
 	addr, err := strkey.Encode(strkey.VersionByteAccountID, accountID)
 	require.NoError(t, err)
 	return addr
+}
+
+func voidScValXDR(t *testing.T) string {
+	t.Helper()
+	b64, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	require.NoError(t, err)
+	return b64
+}
+
+func minimalSimulateSuccess() protocol.SimulateTransactionResponse {
+	empty := ""
+	return protocol.SimulateTransactionResponse{
+		Results: []protocol.SimulateHostFunctionResult{
+			{ReturnValueXDR: &empty},
+		},
+	}
 }
 
 // simulatedTxSource decodes the simulated transaction XDR and returns its source account address.

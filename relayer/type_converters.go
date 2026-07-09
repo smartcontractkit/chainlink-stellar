@@ -800,7 +800,7 @@ func convertEventInfoToDomain(event protocol.EventInfo) (stellartypes.EventInfo,
 func validateSimulateAuthMode(mode stellartypes.SimulateAuthMode) (string, error) {
 	switch mode {
 	case "":
-		return "", nil
+		return string(stellartypes.SimulateAuthModeRecord), nil
 	case stellartypes.SimulateAuthModeEnforce,
 		stellartypes.SimulateAuthModeRecord,
 		stellartypes.SimulateAuthModeRecordAllowNonroot:
