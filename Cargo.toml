@@ -5,6 +5,7 @@ members = [
   "contracts/timelock",
   "contracts/ccvs/*",
   "contracts/examples/ccip_receiver",
+  "contracts/examples/cre_receiver",
   "contracts/fee-quoter",
   "contracts/onramp",
   "contracts/offramp",
