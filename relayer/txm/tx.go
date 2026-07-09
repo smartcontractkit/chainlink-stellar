@@ -22,6 +22,7 @@ type StellarTx struct {
 
 	Attempt         uint64
 	Status          commontypes.TransactionStatus
+	TerminalTime    uint64    // unix seconds when status first became Finalized or Failed; 0 if not yet terminal
 	BroadcastAt     time.Time // set when SendTransaction accepts the tx
 	TxHash          string
 	Fee             *big.Int // total fee in stroops; updated to actual FeeCharged on confirmation

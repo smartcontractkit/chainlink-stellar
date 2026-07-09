@@ -79,7 +79,12 @@ type Config struct {
 	SimulationRetryableHints []string `toml:"SimulationRetryableHints"`
 
 	// Pruning
-	PruneInterval     *config.Duration `toml:"PruneInterval"`
+	// PruneInterval controls how often the background prune loop runs.
+	// Set to 0 to disable background pruning entirely (no goroutine is started).
+	PruneInterval *config.Duration `toml:"PruneInterval"`
+	// PruneTxExpiration is the minimum time a terminal tx (Finalized or Failed)
+	// is retained after reaching its terminal state before being eligible for pruning.
+	// Measured from TerminalTime, not from enqueue time.
 	PruneTxExpiration *config.Duration `toml:"PruneTxExpiration"`
 }
 

@@ -52,9 +52,8 @@ type StellarTxm struct {
 	// TODO: improve concurrency — e.g. reserve transactionsLock for map
 	// membership/prune only, and use per-StellarTx synchronization (or batched
 	// updates) for mutable fields so GetStatus / confirm / enqueue contend less.
-	transactions              map[string]*StellarTx
-	transactionsLock          sync.RWMutex
-	transactionsLastPruneTime uint64
+	transactions     map[string]*StellarTx
+	transactionsLock sync.RWMutex
 
 	broadcastChan chan *StellarTx
 	accountStore  *AccountStore
@@ -101,8 +100,7 @@ func New(
 
 		feeTracker: newFeeTracker(cfg.FeeStatsPollInterval.Duration()),
 
-		transactions:              make(map[string]*StellarTx),
-		transactionsLastPruneTime: getTimestampSecs(),
+		transactions: make(map[string]*StellarTx),
 
 		broadcastChan:     make(chan *StellarTx, *cfg.BroadcastChanSize),
 		accountStore:      NewAccountStore(),
@@ -128,9 +126,17 @@ func (s *StellarTxm) HealthReport() map[string]error {
 
 func (s *StellarTxm) Start(_ context.Context) error {
 	return s.starter.StartOnce(s.Name(), func() error {
-		s.done.Add(2)
+		pruneEnabled := s.config.PruneInterval.Duration() > 0
+		goroutines := 2
+		if pruneEnabled {
+			goroutines++
+		}
+		s.done.Add(goroutines)
 		go s.broadcastLoop()
 		go s.confirmLoop()
+		if pruneEnabled {
+			go s.pruneLoop()
+		}
 		return nil
 	})
 }
@@ -245,22 +251,6 @@ func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (str
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, nil)
 
 	s.transactionsLock.Lock()
-	now := tx.Timestamp
-	pruneIntervalSecs := uint64(s.config.PruneInterval.Duration().Seconds())
-	if (now - s.transactionsLastPruneTime) > pruneIntervalSecs {
-		pruneCutoff := uint64(s.config.PruneTxExpiration.Duration().Seconds())
-		for id, existing := range s.transactions {
-			if existing.Status != commontypes.Finalized && existing.Status != commontypes.Failed {
-				continue
-			}
-			if (now - existing.Timestamp) < pruneCutoff {
-				continue
-			}
-			ctxLogger.Debugw("Pruning transaction", "prunedTxID", id, "status", existing.Status)
-			delete(s.transactions, id)
-		}
-		s.transactionsLastPruneTime = now
-	}
 	if _, exists := s.transactions[tx.ID]; exists {
 		s.transactionsLock.Unlock()
 		ctxLogger.Debugw("enqueue idempotent: tx id already present, not re-enqueueing", "txID", tx.ID)
@@ -400,6 +390,9 @@ func (s *StellarTxm) updateTransactionStatus(tx *StellarTx, status commontypes.T
 	s.transactionsLock.Lock()
 	tx.Status = status
 	terminal := status == commontypes.Failed || status == commontypes.Finalized
+	if terminal && tx.TerminalTime == 0 {
+		tx.TerminalTime = getTimestampSecs()
+	}
 	s.transactionsLock.Unlock()
 	if terminal {
 		s.closeDone(tx)
@@ -907,10 +900,10 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					}
 					s.updateTransactionLedgerCloseTime(utx.Tx, resp.LedgerCloseTime)
 
-				ctxLogger.Infow("confirmed tx: successful", "hash", hash)
-				s.metrics.IncrementSuccessTxs(ctx)
-				s.recordTimeUntilConfirmed(ctx, utx.Tx)
-				s.updateTransactionStatus(utx.Tx, commontypes.Finalized)
+					ctxLogger.Infow("confirmed tx: successful", "hash", hash)
+					s.metrics.IncrementSuccessTxs(ctx)
+					s.recordTimeUntilConfirmed(ctx, utx.Tx)
+					s.updateTransactionStatus(utx.Tx, commontypes.Finalized)
 					continue
 
 				case protocolrpc.TransactionStatusFailed:
@@ -923,20 +916,20 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					s.updateTransactionResultCode(utx.Tx, classification.resultCode)
 					s.updateTransactionLedgerCloseTime(utx.Tx, resp.LedgerCloseTime)
 
-				ctxLogger.Infow("confirmed tx: failed on-chain", "hash", hash, "resultCode", classification.resultCode, "retryable", classification.retryable)
+					ctxLogger.Infow("confirmed tx: failed on-chain", "hash", hash, "resultCode", classification.resultCode, "retryable", classification.retryable)
 
-				if !classification.retryable {
-					// Terminal on-chain failure — count once at the point of no-return.
-					s.metrics.IncrementErrorTxs(ctx, classification.resultCode)
-					s.updateTransactionStatus(utx.Tx, commontypes.Failed)
-					continue
-				}
-				s.incrementTransactionAttempt(utx.Tx)
-				if !s.maybeRetry(ctx, utx, RetryReasonResourceExhaustion) {
-					// Retryable failure but max attempts exhausted — count once here.
-					s.metrics.IncrementErrorTxs(ctx, classification.resultCode)
-					s.updateTransactionStatus(utx.Tx, commontypes.Failed)
-				}
+					if !classification.retryable {
+						// Terminal on-chain failure — count once at the point of no-return.
+						s.metrics.IncrementErrorTxs(ctx, classification.resultCode)
+						s.updateTransactionStatus(utx.Tx, commontypes.Failed)
+						continue
+					}
+					s.incrementTransactionAttempt(utx.Tx)
+					if !s.maybeRetry(ctx, utx, RetryReasonResourceExhaustion) {
+						// Retryable failure but max attempts exhausted — count once here.
+						s.metrics.IncrementErrorTxs(ctx, classification.resultCode)
+						s.updateTransactionStatus(utx.Tx, commontypes.Failed)
+					}
 					continue
 				}
 			}
@@ -968,24 +961,74 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-		// Expired: confirm as failed, recycle the sequence.
-		if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
-			ctxLogger.Errorw("couldn't confirm expired tx", "error", confirmErr)
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonTimedOut)
-			s.updateTransactionStatus(utx.Tx, commontypes.Failed)
-			continue
-		}
+			// Expired: confirm as failed, recycle the sequence.
+			if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
+				ctxLogger.Errorw("couldn't confirm expired tx", "error", confirmErr)
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonTimedOut)
+				s.updateTransactionStatus(utx.Tx, commontypes.Failed)
+				continue
+			}
 
-		s.incrementTransactionAttempt(utx.Tx)
-		if !s.maybeRetry(ctx, utx, RetryReasonTimedOut) {
-			// Terminal timeout — count once when we know it won't retry.
-			s.metrics.IncrementErrorTxs(ctx, ErrorReasonTimedOut)
-			s.updateTransactionStatus(utx.Tx, commontypes.Failed)
-		}
+			s.incrementTransactionAttempt(utx.Tx)
+			if !s.maybeRetry(ctx, utx, RetryReasonTimedOut) {
+				// Terminal timeout — count once when we know it won't retry.
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonTimedOut)
+				s.updateTransactionStatus(utx.Tx, commontypes.Failed)
+			}
 		}
 	}
 
 	s.metrics.SetPendingTxs(ctx, totalPending)
+}
+
+// --- Prune loop ---
+
+// pruneLoop runs on a time.Ticker and evicts terminal transactions whose
+// retention window (measured from TerminalTime) has expired. It is started
+// only when PruneInterval > 0; setting PruneInterval to zero disables
+// background pruning entirely (useful in tests that control state directly).
+func (s *StellarTxm) pruneLoop() {
+	defer s.done.Done()
+
+	ticker := time.NewTicker(s.config.PruneInterval.Duration())
+	defer ticker.Stop()
+
+	s.baseLogger.Debugw("pruneLoop: started")
+	for {
+		select {
+		case <-ticker.C:
+			s.pruneTerminal()
+		case <-s.stop:
+			s.baseLogger.Debugw("pruneLoop: stopped")
+			return
+		}
+	}
+}
+
+// pruneTerminal scans the transaction map and deletes entries that are
+// terminal (Finalized or Failed) and whose TerminalTime is older than
+// PruneTxExpiration. In-flight transactions are never touched.
+func (s *StellarTxm) pruneTerminal() {
+	now := getTimestampSecs()
+	cutoff := uint64(s.config.PruneTxExpiration.Duration().Seconds())
+
+	s.transactionsLock.Lock()
+	defer s.transactionsLock.Unlock()
+
+	for id, tx := range s.transactions {
+		if tx.Status != commontypes.Finalized && tx.Status != commontypes.Failed {
+			continue
+		}
+		if tx.TerminalTime == 0 {
+			continue
+		}
+		if (now - tx.TerminalTime) < cutoff {
+			continue
+		}
+		s.baseLogger.Debugw("pruneTerminal: evicting expired terminal tx",
+			"txID", id, "status", tx.Status, "terminalAgeSecs", now-tx.TerminalTime)
+		delete(s.transactions, id)
+	}
 }
 
 // --- Retry ---
