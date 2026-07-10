@@ -241,7 +241,7 @@ func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 	return result
 }
 
-// enqueueTransaction handles pruning, stores the tx, and pushes it to broadcastChan.
+// enqueueTransaction stores the tx and pushes it to broadcastChan.
 // If tx.ID is already present (after prune), returns that id with a nil error and does not
 // enqueue again (idempotent, matching EVM TxMgr CreateTransaction with IdempotencyKey).
 // On backpressure it drops the oldest queued tx (not the new one): the oldest has

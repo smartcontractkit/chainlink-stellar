@@ -84,7 +84,7 @@ type Config struct {
 	PruneInterval *config.Duration `toml:"PruneInterval"`
 	// PruneTxExpiration is the minimum time a terminal tx (Finalized or Failed)
 	// is retained after reaching its terminal state before being eligible for pruning.
-	// Measured from TerminalTime, not from enqueue time.
+	// Measured from TerminalTime.
 	PruneTxExpiration *config.Duration `toml:"PruneTxExpiration"`
 }
 
