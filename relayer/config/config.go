@@ -12,8 +12,6 @@ import (
 
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	mncfg "github.com/smartcontractkit/chainlink-framework/multinode/config"
-
-	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 
 // ChainFamilyName is the canonical chain family identifier for Stellar.
@@ -57,8 +55,8 @@ type TOMLConfig struct {
 	Nodes Nodes `toml:"Nodes"`
 
 	// TxManager holds optional Stellar transaction manager settings. Omitted
-	// fields use defaults applied inside txm.New (see txm.DefaultConfigSet).
-	TxManager txm.Config `toml:"TxManager"`
+	// fields use defaults applied inside txm.New (see DefaultConfigSet).
+	TxManager Config `toml:"TxManager"`
 
 	// MultiNode configures RPC node selection, health checking, and failover. Omitted fields
 	// are filled by SetDefaults. See chainlink-framework/multinode.

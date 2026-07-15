@@ -20,6 +20,8 @@ import (
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	"github.com/smartcontractkit/chainlink-common/pkg/types/core"
 	commonutils "github.com/smartcontractkit/chainlink-common/pkg/utils"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 // RPCClient is the subset of the Stellar Soroban JSON-RPC client used by the TXM.
@@ -41,7 +43,7 @@ var _ services.Service = &StellarTxm{}
 type StellarTxm struct {
 	baseLogger logger.Logger
 	keystore   core.Keystore
-	config     Config
+	config     config.Config
 	chainID    string
 	metrics    TxmMetrics
 	feeStrat   FeeStrategy
@@ -78,7 +80,7 @@ type StellarTxm struct {
 func New(
 	lgr logger.Logger,
 	keystore core.Keystore,
-	cfg Config,
+	cfg config.Config,
 	getClient func(context.Context) (RPCClient, error),
 	chainID string,
 ) (*StellarTxm, error) {

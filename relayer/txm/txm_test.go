@@ -18,9 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	"github.com/smartcontractkit/chainlink-common/pkg/config"
+	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 // --- Mock keystore ---
@@ -162,7 +164,7 @@ const testAddress = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
 func TestNew_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NotNil(t, txm)
 	assert.Equal(t, "StellarTxm", txm.Name())
@@ -173,7 +175,7 @@ func TestNew_Success(t *testing.T) {
 func TestStellarTxm_StartStop(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	err = txm.Start(t.Context())
@@ -189,7 +191,7 @@ func TestStellarTxm_StartStop(t *testing.T) {
 func TestStellarTxm_DoubleStart(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
@@ -204,7 +206,7 @@ func TestStellarTxm_DoubleStart(t *testing.T) {
 func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	t.Run("missing Operations", func(t *testing.T) {
@@ -392,7 +394,7 @@ func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 func TestStellarTxm_Enqueue_AutoID(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
@@ -420,7 +422,7 @@ func TestStellarTxm_Enqueue_AutoID(t *testing.T) {
 func TestStellarTxm_Enqueue_ChannelFull_EvictsOldest(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	cfg := Config{BroadcastChanSize: ptr(uint(1))}
+	cfg := config.Config{BroadcastChanSize: ptr(uint(1))}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
@@ -471,7 +473,7 @@ func TestStellarTxm_Enqueue_ChannelFull_EvictsOldest(t *testing.T) {
 func TestStellarTxm_GetStatus(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -510,7 +512,7 @@ func TestStellarTxm_GetStatus(t *testing.T) {
 func TestStellarTxm_GetTransactionResult(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -599,7 +601,7 @@ func TestStellarTxm_GetTransactionResult(t *testing.T) {
 func TestStellarTxm_GetTransactionFee(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -669,7 +671,7 @@ func TestStellarTxm_CloseDone_ConcurrentSafe(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	tx := &StellarTx{ID: "concurrent-close", Done: make(chan struct{})}
@@ -704,7 +706,7 @@ func TestStellarTxm_CloseDone_ConcurrentSafe(t *testing.T) {
 func TestStellarTxm_InflightCount(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	chanLen, storeCount := txm.InflightCount()
@@ -729,7 +731,7 @@ func TestStellarTxm_BroadcastLoop_ProcessesTx(t *testing.T) {
 		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
@@ -780,7 +782,7 @@ func TestStellarTxm_ConfirmLoop_FinalizesSuccess(t *testing.T) {
 		},
 	}
 
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
@@ -830,8 +832,8 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 		},
 	}
 
-	cfg := Config{
-		ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond),
+	cfg := config.Config{
+		ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond),
 		MaxTxRetryAttempts:  ptr(uint64(0)),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
@@ -895,7 +897,7 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 		},
 	}
 
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
@@ -947,7 +949,7 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 		},
 	}
 
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
@@ -991,7 +993,7 @@ func TestStellarTxm_GetSequenceNumber(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	client := newTestClient(mock)
@@ -1009,7 +1011,7 @@ func TestStellarTxm_GetSequenceNumber_AccountNotFound(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	client := newTestClient(mock)
@@ -1021,7 +1023,7 @@ func TestStellarTxm_GetSequenceNumber_AccountNotFound(t *testing.T) {
 func TestStellarTxm_GetSequenceNumber_EmptyAddress(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	client := newTestClient(mock)
 	_, err = txm.getSequenceNumber(t.Context(), client, "")
@@ -1035,7 +1037,7 @@ func TestStellarTxm_GetSequenceNumber_EmptyAddress(t *testing.T) {
 func TestStellarTxm_GetSequenceNumber_InvalidAddress(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	client := newTestClient(mock)
 
@@ -1070,7 +1072,7 @@ func TestStellarTxm_GetSequenceNumber_NonAccountLedgerEntry(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	client := newTestClient(mock)
 
@@ -1097,7 +1099,7 @@ func testInvokeNoopOp() *txnbuild.InvokeHostFunction {
 
 func TestStellarTxm_Simulate_validation(t *testing.T) {
 	t.Parallel()
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	t.Run("no operations", func(t *testing.T) {
@@ -1111,7 +1113,7 @@ func TestStellarTxm_Simulate_validation(t *testing.T) {
 func TestStellarTxm_Simulate_getClientError(t *testing.T) {
 	t.Parallel()
 	bad := func(context.Context) (RPCClient, error) { return nil, fmt.Errorf("unreachable") }
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, bad, chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, bad, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	_, err = txm.Simulate(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -1126,7 +1128,7 @@ func TestStellarTxm_Simulate_LatestLedgerError(t *testing.T) {
 	inner := &mockRPCClient{getLatestLedgerErr: fmt.Errorf("ledger err")}
 	c := newTestClient(inner)
 	getClient := func(context.Context) (RPCClient, error) { return c, nil }
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, getClient, chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, getClient, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	_, err = txm.Simulate(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -1142,7 +1144,7 @@ func TestStellarTxm_Simulate_success(t *testing.T) {
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 9},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 5},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	res, err := txm.Simulate(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -1188,7 +1190,7 @@ func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing
 		unblock:       make(chan struct{}),
 	}
 	getClient := func(context.Context) (RPCClient, error) { return bmock, nil }
-	cfg := Config{
+	cfg := config.Config{
 		BroadcastChanSize:  ptr(uint(1)),
 		MaxTxRetryAttempts: ptr(uint64(3)),
 	}
@@ -1243,7 +1245,7 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 			},
 		},
 	}
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
@@ -1301,8 +1303,8 @@ const twoHours = 2 * time.Hour
 func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
-		PruneTxExpiration: config.MustNewDuration(twoHours),
+	cfg := config.Config{
+		PruneTxExpiration: clconfig.MustNewDuration(twoHours),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -1356,7 +1358,7 @@ func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 func TestStellarTxm_TerminalTime_SetOnFirstTerminalWrite(t *testing.T) {
 	t.Parallel()
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	tx := &StellarTx{ID: "tt-test", Done: make(chan struct{})}
@@ -1391,8 +1393,8 @@ func TestStellarTxm_TerminalTime_SetOnFirstTerminalWrite(t *testing.T) {
 func TestStellarTxm_PruneTerminal_LongInFlightNotPrunedUntilTerminalExpiry(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
-		PruneTxExpiration: config.MustNewDuration(2 * time.Hour),
+	cfg := config.Config{
+		PruneTxExpiration: clconfig.MustNewDuration(2 * time.Hour),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -1426,9 +1428,9 @@ func TestStellarTxm_PruneTerminal_LongInFlightNotPrunedUntilTerminalExpiry(t *te
 func TestStellarTxm_PruneLoop_RunsWhenIntervalPositive(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
-		PruneInterval:     config.MustNewDuration(50 * time.Millisecond),
-		PruneTxExpiration: config.MustNewDuration(0), // expire immediately — any terminal time qualifies
+	cfg := config.Config{
+		PruneInterval:     clconfig.MustNewDuration(50 * time.Millisecond),
+		PruneTxExpiration: clconfig.MustNewDuration(0), // expire immediately — any terminal time qualifies
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -1460,8 +1462,8 @@ func TestStellarTxm_PruneLoop_RunsWhenIntervalPositive(t *testing.T) {
 func TestStellarTxm_PruneImmediateWhenIntervalZero(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
-		PruneInterval: config.MustNewDuration(0),
+	cfg := config.Config{
+		PruneInterval: clconfig.MustNewDuration(0),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -1500,7 +1502,7 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 			},
 		},
 	}
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(20 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(20 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))

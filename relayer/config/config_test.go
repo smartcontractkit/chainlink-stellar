@@ -7,8 +7,6 @@ import (
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 
 func TestNewDecodedTOMLConfig_TxManagerOverrides(t *testing.T) {
@@ -31,7 +29,7 @@ BroadcastChanSize = 77
 	txmCfg := cfg.TxManager
 	txmCfg.Resolve()
 	require.Equal(t, uint(77), *txmCfg.BroadcastChanSize)
-	require.Equal(t, *txm.DefaultConfigSet.MaxInclusionFee, *txmCfg.MaxInclusionFee,
+	require.Equal(t, *DefaultConfigSet.MaxInclusionFee, *txmCfg.MaxInclusionFee,
 		"unset TxManager fields should still resolve to txm defaults")
 }
 

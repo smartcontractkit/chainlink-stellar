@@ -10,11 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	"github.com/smartcontractkit/chainlink-common/pkg/config"
+	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 const testChainID = "stellar:testnet"
@@ -59,7 +61,7 @@ func TestStellarTxm_Metrics_BroadcastIncrementsCounter(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainID)
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
@@ -102,7 +104,7 @@ func TestStellarTxm_Metrics_ConfirmIncrementsSuccess(t *testing.T) {
 		},
 	}
 
-	cfg := Config{ConfirmPollInterval: config.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainID)
 	require.NoError(t, err)
 

@@ -1,9 +1,9 @@
-package txm
+package config
 
 import (
 	"time"
 
-	"github.com/smartcontractkit/chainlink-common/pkg/config"
+	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -46,7 +46,7 @@ var (
 // slices are non-empty (built-in defaults when unset).
 type Config struct {
 	BroadcastChanSize   *uint            `toml:"BroadcastChanSize"`
-	ConfirmPollInterval *config.Duration `toml:"ConfirmPollInterval"`
+	ConfirmPollInterval *clconfig.Duration `toml:"ConfirmPollInterval"`
 
 	// Fee strategy: Stellar fees = InclusionFee + ResourceFee.
 	// Only the inclusion fee is bumped on retries; the resource fee is deterministic from simulation.
@@ -58,12 +58,12 @@ type Config struct {
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee P50/P90 in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
-	FeeStatsPollInterval *config.Duration `toml:"FeeStatsPollInterval"`
+	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
 
 	// Retry & timeout
 	MaxSimulateAttempts    *uint            `toml:"MaxSimulateAttempts"`
 	MaxSubmitRetryAttempts *uint            `toml:"MaxSubmitRetryAttempts"`
-	SubmitRetryDelay       *config.Duration `toml:"SubmitRetryDelay"`
+	SubmitRetryDelay       *clconfig.Duration `toml:"SubmitRetryDelay"`
 	TxTimeoutSecs          *int64           `toml:"TxTimeoutSecs"`
 	LedgerBoundsOffset     *uint32          `toml:"LedgerBoundsOffset"`
 	MaxTxRetryAttempts     *uint64          `toml:"MaxTxRetryAttempts"`
@@ -85,36 +85,36 @@ type Config struct {
 	// Set to 0 to disable the loop (no goroutine is started); terminal txs are
 	// then evicted synchronously when they reach a terminal state instead of
 	// being retained until the next periodic prune.
-	PruneInterval *config.Duration `toml:"PruneInterval"`
+	PruneInterval *clconfig.Duration `toml:"PruneInterval"`
 	// PruneTxExpiration is the minimum time a terminal tx (Finalized or Failed)
 	// is retained after reaching its terminal state before being eligible for pruning.
 	// Measured from TerminalTime. Ignored when PruneInterval is 0 (immediate eviction).
-	PruneTxExpiration *config.Duration `toml:"PruneTxExpiration"`
+	PruneTxExpiration *clconfig.Duration `toml:"PruneTxExpiration"`
 }
 
 // DefaultConfigSet is the default configuration for the Stellar Transaction Manager.
 var DefaultConfigSet = Config{
 	BroadcastChanSize:   ptr(uint(100)),
-	ConfirmPollInterval: config.MustNewDuration(3 * time.Second),
+	ConfirmPollInterval: clconfig.MustNewDuration(3 * time.Second),
 
 	BaseInclusionFee:     ptr(int64(100)),     // 100 stroops = MinBaseFee
 	MaxInclusionFee:      ptr(int64(100_000)), // 0.01 XLM cap
 	FeeBumpMultiplier:    ptr(1.5),
 	ResourceFeeBuffer:    ptr(int64(15_000)), // ~15% buffer over MinResourceFee for typical txs
 	RestoreFeeBuffer:     ptr(int64(10_000)),
-	FeeStatsPollInterval: config.MustNewDuration(5 * time.Second),
+	FeeStatsPollInterval: clconfig.MustNewDuration(5 * time.Second),
 
 	MaxSimulateAttempts:    ptr(uint(3)),
 	MaxSubmitRetryAttempts: ptr(uint(10)),
-	SubmitRetryDelay:       config.MustNewDuration(3 * time.Second),
+	SubmitRetryDelay:       clconfig.MustNewDuration(3 * time.Second),
 	TxTimeoutSecs:          ptr(int64(300)), // 5 minutes wall-clock fallback
 	LedgerBoundsOffset:     ptr(uint32(50)), // ~5 min at 6s/ledger
 	MaxTxRetryAttempts:     ptr(uint64(5)),
 	MaxGetClientRetryAttempts: ptr(uint64(10)),
 	MaxRestoreAttempts:     ptr(uint(3)),
 
-	PruneInterval:     config.MustNewDuration(10 * time.Minute),
-	PruneTxExpiration: config.MustNewDuration(2 * time.Hour),
+	PruneInterval:     clconfig.MustNewDuration(10 * time.Minute),
+	PruneTxExpiration: clconfig.MustNewDuration(2 * time.Hour),
 }
 
 // Resolve fills nil fields with defaults from DefaultConfigSet.

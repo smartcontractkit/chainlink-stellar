@@ -1,6 +1,10 @@
 package txm
 
-import "math"
+import (
+	"math"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
+)
 
 // FeeStrategy calculates Stellar transaction fees.
 //
@@ -17,7 +21,7 @@ type FeeStrategy struct {
 }
 
 // NewFeeStrategyFromConfig constructs a FeeStrategy from the resolved Config.
-func NewFeeStrategyFromConfig(cfg Config) FeeStrategy {
+func NewFeeStrategyFromConfig(cfg config.Config) FeeStrategy {
 	return FeeStrategy{
 		BaseInclusionFee:  *cfg.BaseInclusionFee,
 		MaxInclusionFee:   *cfg.MaxInclusionFee,

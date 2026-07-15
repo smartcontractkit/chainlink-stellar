@@ -1,4 +1,4 @@
-package txm
+package config
 
 import (
 	"testing"
