@@ -47,8 +47,6 @@ pub trait SignatureConfigManager {
         value: &SignatureConfig,
     ) -> Result<(), Self::Error> {
         Self::validate_config(env, value)?;
-        // TODO: sort the signers
-
         match Self::IS_PERSISTENT {
             true => env.storage().persistent().set(key, value),
             _ => env.storage().instance().set(key, value),
