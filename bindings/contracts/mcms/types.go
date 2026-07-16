@@ -1291,6 +1291,7 @@ const (
 	McmsErrorMissingRootMetadata                          = 52
 	McmsErrorValidUntilExceedsMaximum                     = 53
 	McmsErrorInvalidMinSecsPerLedger                      = 54
+	McmsErrorCallAborted                                  = 55
 )
 
 // McmsErrorMessage returns a human-readable message for error codes.
@@ -1332,6 +1333,7 @@ var McmsErrorMessage = map[int]string{
 	52: "missing root metadata",
 	53: "valid until exceeds maximum",
 	54: "invalid min secs per ledger",
+	55: "call aborted",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.

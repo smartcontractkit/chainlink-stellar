@@ -18,7 +18,12 @@ pub enum TimelockError {
     // Execution
     OperationNotReady = 30,
     MissingPredecessor = 31,
+    /// Downstream invoke failed: callee returned a contract error (`InvokeError::Contract`).
+    /// The callee's specific u32 code can't be carried through Soroban's fixed-enum error
+    /// model, so only the mode is distinguished — see [`Self::CallAborted`].
     CallReverted = 32,
+    /// Downstream invoke failed: callee trapped / panicked / host error (`InvokeError::Abort`).
+    CallAborted = 33,
     // Cancellation
     OperationCannotBeCancelled = 40,
     // Misc

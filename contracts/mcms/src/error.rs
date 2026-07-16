@@ -34,6 +34,10 @@ pub enum McmsError {
     WrongMultiSigOp = 42,
     RootExpired = 43,
     WrongNonce = 44,
+    /// Downstream invoke failed because the callee returned a contract error
+    /// (`InvokeError::Contract`). The callee's specific u32 code cannot be carried through
+    /// Soroban's fixed-enum error model (`#[contracterror]` variants are unit u32 codes with
+    /// no payload), so only the failure *mode* is distinguished — see [`Self::CallAborted`].
     CallReverted = 45,
     InvalidSignature = 46,
     InvalidSignatureEncoding = 47,
@@ -50,6 +54,9 @@ pub enum McmsError {
     /// [[`crate::constants::MIN_SECS_PER_LEDGER_LOWER_BOUND`],
     /// [`crate::constants::MIN_SECS_PER_LEDGER_UPPER_BOUND`]].
     InvalidMinSecsPerLedger = 54,
+    /// Downstream invoke failed because the callee trapped / panicked / hit a host error
+    /// (`InvokeError::Abort`), as opposed to returning a contract error ([`Self::CallReverted`]).
+    CallAborted = 55,
 }
 
 impl From<common_error::CCIPError> for McmsError {

@@ -360,7 +360,21 @@ impl McmsContract {
 
         match env.try_invoke_contract::<Val, InvokeError>(&target, &fn_sym, args) {
             Ok(Ok(_)) => {}
-            Ok(Err(_)) | Err(_) => return Err(McmsError::CallReverted),
+            // `Ok(Err(_))` is unreachable for T = Val (T::Error = Infallible); kept for exhaustiveness.
+            Ok(Err(_)) => return Err(McmsError::CallReverted),
+            // Surface the failure mode instead of collapsing both into CallReverted: a
+            // callee-returned contract error vs. a host trap/panic. The callee's specific u32
+            // code can't be carried through Soroban's fixed-enum error model, so only the mode
+            // is surfaced (CallReverted vs CallAborted).
+            Err(e) => {
+                let ie = match e {
+                    Ok(ie) | Err(ie) => ie,
+                };
+                return Err(match ie {
+                    InvokeError::Abort => McmsError::CallAborted,
+                    InvokeError::Contract(_) => McmsError::CallReverted,
+                });
+            }
         }
 
         OpExecutedEvent {

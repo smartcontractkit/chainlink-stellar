@@ -619,7 +619,18 @@ fn execute_call(env: &Env, call: &Call) -> Result<(), TimelockError> {
         decode_invoke_payload(env, &call.data).map_err(|_| TimelockError::InvalidInvokeData)?;
     match env.try_invoke_contract::<Val, InvokeError>(&target, &fn_sym, args) {
         Ok(Ok(_)) => Ok(()),
-        Ok(Err(_)) | Err(_) => Err(TimelockError::CallReverted),
+        // `Ok(Err(_))` is unreachable for T = Val (T::Error = Infallible); kept for exhaustiveness.
+        Ok(Err(_)) => Err(TimelockError::CallReverted),
+        // Surface the failure mode: callee-returned contract error vs. host trap/panic.
+        Err(e) => {
+            let ie = match e {
+                Ok(ie) | Err(ie) => ie,
+            };
+            Err(match ie {
+                InvokeError::Abort => TimelockError::CallAborted,
+                InvokeError::Contract(_) => TimelockError::CallReverted,
+            })
+        }
     }
 }
 
