@@ -78,6 +78,19 @@ impl ExecPingMock {
     pub fn ping(_env: Env) {}
 }
 
+/// Minimal callee whose `revert` entrypoint always traps, for MCMS `execute` `CallReverted`
+/// tests. `try_invoke_contract` catches the host trap into its `Err(_)` arm, which MCMS maps to
+/// `CallReverted`.
+#[contract]
+pub struct ExecRevertMock;
+
+#[contractimpl]
+impl ExecRevertMock {
+    pub fn revert(_env: Env) {
+        panic!("ExecRevertMock: deliberate revert");
+    }
+}
+
 mod test_support {
     use soroban_sdk::{address_payload::AddressPayload, Address, BytesN, Env};
 
@@ -381,6 +394,12 @@ fn encode_ping(env: &Env) -> Bytes {
     v.to_xdr(env)
 }
 
+fn encode_revert(env: &Env) -> Bytes {
+    let mut v: SorobanVec<Val> = SorobanVec::new(env);
+    v.push_back(Symbol::new(env, "revert").into_val(env));
+    v.to_xdr(env)
+}
+
 fn encode_extend_all_ttls(env: &Env) -> Bytes {
     let mut v: SorobanVec<Val> = SorobanVec::new(env);
     v.push_back(Symbol::new(env, "extend_all_ttls").into_val(env));
@@ -587,6 +606,127 @@ fn test_set_root_execute_and_post_op_count_reached() {
         client.try_execute(&op, &op_proof),
         Err(Ok(McmsError::PostOpCountReached))
     ));
+}
+
+/// A failed downstream invoke surfaces as `CallReverted` and does NOT consume the nonce.
+///
+/// `execute` persists the incremented op_count before the downstream invoke (reentrancy guard,
+/// matching ManyChainMultiSig's "increase the counter *before* execution"). The failed invocation
+/// rolls that write back, so the op remains executable. Regression for the op_count persist
+/// ordering change.
+#[test]
+fn test_execute_reverted_call_does_not_consume_nonce() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1_000;
+    });
+
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    client.initialize(&owner, &chain);
+
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    let signer_addr = padded_eth_address(&env, &sk);
+    client.set_config(
+        &SignerAddresses {
+            inner: SorobanVec::from_array(&env, [signer_addr]),
+        },
+        &SignerGroups {
+            inner: SorobanVec::from_array(&env, [0u32]),
+        },
+        &one_of_one_quorum(&env),
+        &all_zero_parents(&env),
+        &false,
+    );
+
+    let self_cid = test_support::addr_to_contract_id(&client.address, &env);
+    let revert_addr = env.register(ExecRevertMock, ());
+    let revert_cid = test_support::addr_to_contract_id(&revert_addr, &env);
+    let valid_until: u32 = 2_000_000;
+    let metadata = StellarRootMetadata {
+        chain_id: chain.clone(),
+        multisig: self_cid.clone(),
+        pre_op_count: 0,
+        post_op_count: 1,
+        override_previous_root: false,
+    };
+    let meta_leaf = hash_root_metadata(&env, &domain_meta(&env), &metadata).unwrap();
+    let op = StellarOp {
+        chain_id: chain.clone(),
+        multisig: self_cid.clone(),
+        nonce: 0,
+        to: revert_cid,
+        value: BytesN::from_array(&env, &[0u8; 32]),
+        data: encode_revert(&env),
+    };
+    let op_leaf = hash_stellar_op(&env, &crate::constants::domain_op(&env), &op).unwrap();
+    let leaves = Vec::from([meta_leaf, op_leaf]);
+    let root = merkle_root_native(&env, &leaves);
+    let metadata_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, leaves.clone(), 0),
+    };
+    let inner = hash_set_root_inner(&env, &root, valid_until);
+    let signed = eth_signed_message_hash_32(&env, &inner);
+    let sigs = signature_vec_single(&env, &sk, &signed);
+
+    client.set_root(&root, &valid_until, &metadata, &metadata_proof, &sigs);
+
+    let op_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, leaves, 1),
+    };
+    assert_eq!(client.get_op_count(), 0);
+    // Failed downstream invoke → CallReverted (caught via try_execute).
+    assert!(matches!(
+        client.try_execute(&op, &op_proof),
+        Err(Ok(McmsError::CallReverted))
+    ));
+    // Nonce not consumed: the write was rolled back, so the op is still executable.
+    assert_eq!(client.get_op_count(), 0);
+    // And re-executing against a succeeding target now advances the nonce from 0. The previous
+    // root still has a pending (unexecuted) op, so the new root must override it.
+    let ping_addr = env.register(ExecPingMock, ());
+    let ping_cid = test_support::addr_to_contract_id(&ping_addr, &env);
+    let ok_op = StellarOp {
+        chain_id: chain,
+        multisig: self_cid,
+        nonce: 0,
+        to: ping_cid,
+        value: BytesN::from_array(&env, &[0u8; 32]),
+        data: encode_ping(&env),
+    };
+    let ok_metadata = StellarRootMetadata {
+        chain_id: zero_chain_id(&env),
+        multisig: test_support::addr_to_contract_id(&client.address, &env),
+        pre_op_count: 0,
+        post_op_count: 1,
+        override_previous_root: true,
+    };
+    let ok_leaf = hash_stellar_op(&env, &crate::constants::domain_op(&env), &ok_op).unwrap();
+    let ok_leaves = Vec::from([
+        hash_root_metadata(&env, &domain_meta(&env), &ok_metadata).unwrap(),
+        ok_leaf,
+    ]);
+    let ok_root = merkle_root_native(&env, &ok_leaves);
+    let ok_meta_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, ok_leaves.clone(), 0),
+    };
+    let ok_inner = hash_set_root_inner(&env, &ok_root, valid_until);
+    let ok_signed = eth_signed_message_hash_32(&env, &ok_inner);
+    let ok_sigs = signature_vec_single(&env, &sk, &ok_signed);
+    client.set_root(
+        &ok_root,
+        &valid_until,
+        &ok_metadata,
+        &ok_meta_proof,
+        &ok_sigs,
+    );
+    let ok_op_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, ok_leaves, 1),
+    };
+    client.execute(&ok_op, &ok_op_proof);
+    assert_eq!(client.get_op_count(), 1);
 }
 
 #[test]

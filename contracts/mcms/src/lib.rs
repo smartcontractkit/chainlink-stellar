@@ -350,15 +350,18 @@ impl McmsContract {
         let (fn_sym, args) =
             decode_invoke_payload(&env, &op.data).map_err(|_| McmsError::InvalidInvokeData)?;
 
-        // try_invoke_contract lets us surface callee failures as CallReverted rather than trapping.
-        // Persist the incremented op_count only after a successful invoke so a failed call does
-        // not consume the nonce.
+        // Persist the incremented op_count BEFORE the downstream invoke, mirroring ManyChainMultiSig
+        // ("increase the counter *before* execution to prevent reentrancy issues"). A reentrant
+        // `execute` for the same nonce then reads the already-incremented op_count from storage and
+        // fails the nonce check. `try_invoke_contract` surfaces callee failures as `CallReverted`;
+        // as the top-level invocation that fails the transaction and rolls this write back, so a
+        // failed call still does not consume the nonce.
+        env.storage().persistent().set(&EXPIRING_ROOT, &exp);
+
         match env.try_invoke_contract::<Val, InvokeError>(&target, &fn_sym, args) {
             Ok(Ok(_)) => {}
             Ok(Err(_)) | Err(_) => return Err(McmsError::CallReverted),
         }
-
-        env.storage().persistent().set(&EXPIRING_ROOT, &exp);
 
         OpExecutedEvent {
             nonce: op.nonce,
