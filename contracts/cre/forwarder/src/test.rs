@@ -19,7 +19,6 @@ pub(crate) const DON_ID: u32 = 0x0102_0304;
 pub(crate) const CONFIG_VERSION: u32 = 1;
 
 // Layout offsets
-pub(crate) const FORWARDER_METADATA_LENGTH: usize = 45;
 pub(crate) const METADATA_LENGTH: usize = 109;
 pub(crate) const REPORT_CONTEXT_LENGTH: usize = 96;
 
@@ -343,16 +342,8 @@ impl ReportBuilder {
         self.config_version = v;
         self
     }
-    pub fn with_execution_id(mut self, id: [u8; 32]) -> Self {
-        self.workflow_execution_id = id;
-        self
-    }
     pub fn with_report_id(mut self, id: [u8; 2]) -> Self {
         self.report_id = id;
-        self
-    }
-    pub fn with_payload(mut self, payload: alloc::vec::Vec<u8>) -> Self {
-        self.payload = payload;
         self
     }
 

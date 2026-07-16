@@ -19,7 +19,7 @@ use common_signature::{
     Ed25519, SignatureConfig, SignatureScheme,
 };
 use events::{ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, ReportProcessedEvent};
-use types::{Config, DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
+use types::{DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
 
 use crate::types::ParsedReport;
 
@@ -42,7 +42,6 @@ const FORWARDER_METADATA_LENGTH: u32 = 45;
 const REPORT_CONTEXT_LENGTH: u32 = 96;
 
 // Storage TTL constants (ledger counts; 1 ledger ≈ 5 s on Mainnet).
-// TODO adjust
 const BUMP_FOR_60_DAYS: u32 = 1_036_800; // ~60 days
 const BUMP_AFTER_30_DAYS: u32 = 518_400; // ~30 days
 
@@ -68,9 +67,12 @@ impl SignatureConfigManager for KeystoneForwarder {
     type DataKey = DataKey;
 
     fn validate_config(env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
+        // CREForwarder only supports the fault-tolerance (`Failure`) mode, where
+        // `f` faulty signers are tolerated and `f + 1` valid signatures are
+        // required. An explicit `Threshold` count is not a valid config here.
         let f = match config.verification {
             SignatureVerificationConfig::Failure(f) => f,
-            SignatureVerificationConfig::Threshold(t) => t.saturating_sub(1),
+            SignatureVerificationConfig::Threshold(_) => return Err(ForwarderError::InvalidConfig),
         };
         let signers = &config.signers;
 
@@ -347,14 +349,6 @@ fn require_valid_forwarder(env: &Env, forwarder: &Address) -> Result<(), Forward
 // ─────────────────────────────────────────────────────────────────────────────
 // Config helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-fn load_config(env: &Env, id: u64) -> Config {
-    let key = DataKey::Config(id);
-    env.storage()
-        .instance()
-        .get::<_, Config>(&key)
-        .unwrap_or_else(|| panic_with_error!(env, ForwarderError::InvalidConfig))
-}
 
 fn ensure_unique_pubkeys(env: &Env, signers: &Vec<BytesN<32>>) {
     let zero = BytesN::<32>::from_array(env, &[0u8; 32]);
