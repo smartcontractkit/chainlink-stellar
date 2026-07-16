@@ -340,6 +340,7 @@ pub enum McmsError {
     MissingRootMetadata = 52,
     ValidUntilExceedsMaximum = 53,
     InvalidMinSecsPerLedger = 54,
+    CallAborted = 55,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

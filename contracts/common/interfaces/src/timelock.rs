@@ -285,6 +285,7 @@ pub enum TimelockError {
     OperationNotReady = 30,
     MissingPredecessor = 31,
     CallReverted = 32,
+    CallAborted = 33,
     OperationCannotBeCancelled = 40,
     InvalidInvokeData = 50,
     IndexOutOfBounds = 51,

@@ -12,7 +12,8 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec as SorobanVec,
+    contract, contracterror, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Symbol, Val,
+    Vec as SorobanVec,
 };
 
 use crate::abi_encoding::{
@@ -78,9 +79,9 @@ impl ExecPingMock {
     pub fn ping(_env: Env) {}
 }
 
-/// Minimal callee whose `revert` entrypoint always traps, for MCMS `execute` `CallReverted`
-/// tests. `try_invoke_contract` catches the host trap into its `Err(_)` arm, which MCMS maps to
-/// `CallReverted`.
+/// Minimal callee whose `revert` entrypoint always traps, for MCMS `execute` `CallAborted`
+/// tests. `try_invoke_contract` catches the host trap as `InvokeError::Abort`, which MCMS maps
+/// to `CallAborted` (distinct from a callee-returned contract error → `CallReverted`).
 #[contract]
 pub struct ExecRevertMock;
 
@@ -88,6 +89,26 @@ pub struct ExecRevertMock;
 impl ExecRevertMock {
     pub fn revert(_env: Env) {
         panic!("ExecRevertMock: deliberate revert");
+    }
+}
+
+/// Minimal callee whose `fail` entrypoint returns a contract error, for MCMS `execute`
+/// `CallReverted` tests. `try_invoke_contract` surfaces this as `InvokeError::Contract(_)`,
+/// which MCMS maps to `CallReverted`.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum MockCalleeError {
+    Reverted = 1,
+}
+
+#[contract]
+pub struct ExecContractErrorMock;
+
+#[contractimpl]
+impl ExecContractErrorMock {
+    pub fn fail(_env: Env) -> Result<(), MockCalleeError> {
+        Err(MockCalleeError::Reverted)
     }
 }
 
@@ -400,6 +421,12 @@ fn encode_revert(env: &Env) -> Bytes {
     v.to_xdr(env)
 }
 
+fn encode_fail(env: &Env) -> Bytes {
+    let mut v: SorobanVec<Val> = SorobanVec::new(env);
+    v.push_back(Symbol::new(env, "fail").into_val(env));
+    v.to_xdr(env)
+}
+
 fn encode_extend_all_ttls(env: &Env) -> Bytes {
     let mut v: SorobanVec<Val> = SorobanVec::new(env);
     v.push_back(Symbol::new(env, "extend_all_ttls").into_val(env));
@@ -677,10 +704,11 @@ fn test_execute_reverted_call_does_not_consume_nonce() {
         inner: compute_proof_for_leaf(&env, leaves, 1),
     };
     assert_eq!(client.get_op_count(), 0);
-    // Failed downstream invoke → CallReverted (caught via try_execute).
+    // Failed downstream invoke → CallAborted (the mock panics, i.e. InvokeError::Abort; a
+    // callee that returned a contract error would surface as CallReverted). Caught via try_execute.
     assert!(matches!(
         client.try_execute(&op, &op_proof),
-        Err(Ok(McmsError::CallReverted))
+        Err(Ok(McmsError::CallAborted))
     ));
     // Nonce not consumed: the write was rolled back, so the op is still executable.
     assert_eq!(client.get_op_count(), 0);
@@ -727,6 +755,81 @@ fn test_execute_reverted_call_does_not_consume_nonce() {
     };
     client.execute(&ok_op, &ok_op_proof);
     assert_eq!(client.get_op_count(), 1);
+}
+
+/// Companion to `test_execute_reverted_call_does_not_consume_nonce`: a callee that *returns a
+/// contract error* (not a panic) surfaces as `CallReverted` (InvokeError::Contract), distinct
+/// from the panic/abort path (`CallAborted`). Also confirms the nonce is not consumed.
+#[test]
+fn test_execute_contract_error_surfaces_call_reverted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1_000;
+    });
+
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    client.initialize(&owner, &chain);
+
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    let signer_addr = padded_eth_address(&env, &sk);
+    client.set_config(
+        &SignerAddresses {
+            inner: SorobanVec::from_array(&env, [signer_addr]),
+        },
+        &SignerGroups {
+            inner: SorobanVec::from_array(&env, [0u32]),
+        },
+        &one_of_one_quorum(&env),
+        &all_zero_parents(&env),
+        &false,
+    );
+
+    let self_cid = test_support::addr_to_contract_id(&client.address, &env);
+    let fail_addr = env.register(ExecContractErrorMock, ());
+    let fail_cid = test_support::addr_to_contract_id(&fail_addr, &env);
+    let valid_until: u32 = 2_000_000;
+    let metadata = StellarRootMetadata {
+        chain_id: chain.clone(),
+        multisig: self_cid.clone(),
+        pre_op_count: 0,
+        post_op_count: 1,
+        override_previous_root: false,
+    };
+    let meta_leaf = hash_root_metadata(&env, &domain_meta(&env), &metadata).unwrap();
+    let op = StellarOp {
+        chain_id: chain.clone(),
+        multisig: self_cid.clone(),
+        nonce: 0,
+        to: fail_cid,
+        value: BytesN::from_array(&env, &[0u8; 32]),
+        data: encode_fail(&env),
+    };
+    let op_leaf = hash_stellar_op(&env, &crate::constants::domain_op(&env), &op).unwrap();
+    let leaves = Vec::from([meta_leaf, op_leaf]);
+    let root = merkle_root_native(&env, &leaves);
+    let metadata_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, leaves.clone(), 0),
+    };
+    let inner = hash_set_root_inner(&env, &root, valid_until);
+    let signed = eth_signed_message_hash_32(&env, &inner);
+    let sigs = signature_vec_single(&env, &sk, &signed);
+
+    client.set_root(&root, &valid_until, &metadata, &metadata_proof, &sigs);
+    let op_proof = MerkleProof {
+        inner: compute_proof_for_leaf(&env, leaves, 1),
+    };
+
+    assert_eq!(client.get_op_count(), 0);
+    // Callee returned a contract error → InvokeError::Contract(_) → CallReverted.
+    assert!(matches!(
+        client.try_execute(&op, &op_proof),
+        Err(Ok(McmsError::CallReverted))
+    ));
+    // Nonce not consumed.
+    assert_eq!(client.get_op_count(), 0);
 }
 
 #[test]

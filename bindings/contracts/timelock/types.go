@@ -664,6 +664,7 @@ const (
 	TimelockErrorOperationNotReady          = 30
 	TimelockErrorMissingPredecessor         = 31
 	TimelockErrorCallReverted               = 32
+	TimelockErrorCallAborted                = 33
 	TimelockErrorOperationCannotBeCancelled = 40
 	TimelockErrorInvalidInvokeData          = 50
 	TimelockErrorIndexOutOfBounds           = 51
@@ -680,6 +681,7 @@ var TimelockErrorMessage = map[int]string{
 	30: "operation not ready",
 	31: "missing predecessor",
 	32: "call reverted",
+	33: "call aborted",
 	40: "operation cannot be cancelled",
 	50: "invalid invoke data",
 	51: "index out of bounds",
