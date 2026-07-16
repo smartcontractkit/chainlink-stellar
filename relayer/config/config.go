@@ -55,7 +55,7 @@ type TOMLConfig struct {
 	Nodes Nodes `toml:"Nodes"`
 
 	// TxManager holds optional Stellar transaction manager settings. Omitted
-	// fields use defaults applied inside txm.New (see DefaultConfigSet).
+	// fields use defaults applied by SetDefaults (see DefaultConfigSet).
 	TxManager Config `toml:"TxManager"`
 
 	// MultiNode configures RPC node selection, health checking, and failover. Omitted fields
@@ -70,18 +70,13 @@ type TOMLConfig struct {
 // DefaultRequestTimeout bounds each individual Soroban RPC call when RequestTimeout is unset.
 const DefaultRequestTimeout = 30 * time.Second
 
-// SetDefaults fills every unset field with its docs.toml default. It starts
-// from the full defaults, overlays the user's partial config via SetFrom, then
-// replaces c. TXM defaults are applied here too (not deferred to txm.New), so
-// NewDecodedTOMLConfig returns a fully-resolved config in one phase.
-//
-// The framework's MultiNode accessors dereference pointers directly, so every
-// field consumed by the node/multinode lifecycle must be non-nil after this call.
-// Tuned to Stellar's ~5-7s ledger close and single-finality model (a closed
-// ledger is final: no finality tag, no reorgs).
+// SetDefaults fills unset fields with docs.toml defaults via SetFrom, then
+// resolves TXM simulation hints. Returns a fully-resolved config in one phase.
 func (c *TOMLConfig) SetDefaults() {
 	d := Defaults()
 	d.SetFrom(c)
+	// docs.toml has empty hint arrays; Resolve fills the built-in defaults.
+	d.TxManager.Resolve()
 	*c = d
 }
 

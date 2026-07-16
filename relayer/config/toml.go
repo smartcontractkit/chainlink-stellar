@@ -9,7 +9,6 @@ import (
 )
 
 // defaults is the full default TOMLConfig decoded from docs.toml at init.
-// Defaults() returns a copy so callers can mutate it without touching this var.
 var defaults TOMLConfig
 
 func init() {
@@ -18,23 +17,18 @@ func init() {
 	}
 }
 
-// Defaults returns a TOMLConfig with every field set to its docs.toml default.
-// The returned value is a copy; mutating it does not affect the package-level defaults.
+// Defaults returns a copy of the docs.toml defaults.
 func Defaults() (c TOMLConfig) {
 	c.SetFrom(&defaults)
 	return
 }
 
-// SetFrom copies every non-nil field from f onto c, leaving c unchanged for
-// fields that are nil in f. It is the merge primitive used by SetDefaults:
-// start from Defaults(), then SetFrom the user's partial config so only the
-// fields they set override the defaults.
-//
-// ChainID is a plain string (not *string) because it is mandatory and validated
-// separately in ValidateConfig; a non-empty value in f wins.
+// SetFrom copies non-nil fields from f onto c (deep-copied, no pointer sharing).
+// ChainID is a plain string; a non-empty value in f wins.
 func (c *TOMLConfig) SetFrom(f *TOMLConfig) {
 	if f.Enabled != nil {
-		c.Enabled = f.Enabled
+		v := *f.Enabled
+		c.Enabled = &v
 	}
 	if f.ChainID != "" {
 		c.ChainID = f.ChainID
@@ -43,64 +37,77 @@ func (c *TOMLConfig) SetFrom(f *TOMLConfig) {
 	c.MultiNode.SetFrom(&f.MultiNode)
 	c.Nodes.SetFrom(&f.Nodes)
 	if f.RequestTimeout != nil {
-		c.RequestTimeout = f.RequestTimeout
+		v := *f.RequestTimeout
+		c.RequestTimeout = &v
 	}
 }
 
-// SetFrom copies every non-nil field from f onto c, leaving c unchanged for
-// fields that are nil in f.
-//
-// Simulation hints are the one exception to the copy-if-set rule: they are
-// additive. User-supplied hints are merged onto whatever c already has
-// (typically the built-in defaults), deduped, rather than replacing them.
+// SetFrom copies non-nil fields from f onto c (deep-copied). Simulation hints
+// are additive: user hints merge onto c's existing hints, deduped.
 func (c *Config) SetFrom(f *Config) {
 	if f.BroadcastChanSize != nil {
-		c.BroadcastChanSize = f.BroadcastChanSize
+		v := *f.BroadcastChanSize
+		c.BroadcastChanSize = &v
 	}
 	if f.ConfirmPollInterval != nil {
-		c.ConfirmPollInterval = f.ConfirmPollInterval
+		v := *f.ConfirmPollInterval
+		c.ConfirmPollInterval = &v
 	}
 	if f.BaseInclusionFee != nil {
-		c.BaseInclusionFee = f.BaseInclusionFee
+		v := *f.BaseInclusionFee
+		c.BaseInclusionFee = &v
 	}
 	if f.MaxInclusionFee != nil {
-		c.MaxInclusionFee = f.MaxInclusionFee
+		v := *f.MaxInclusionFee
+		c.MaxInclusionFee = &v
 	}
 	if f.FeeBumpMultiplier != nil {
-		c.FeeBumpMultiplier = f.FeeBumpMultiplier
+		v := *f.FeeBumpMultiplier
+		c.FeeBumpMultiplier = &v
 	}
 	if f.ResourceFeeBuffer != nil {
-		c.ResourceFeeBuffer = f.ResourceFeeBuffer
+		v := *f.ResourceFeeBuffer
+		c.ResourceFeeBuffer = &v
 	}
 	if f.RestoreFeeBuffer != nil {
-		c.RestoreFeeBuffer = f.RestoreFeeBuffer
+		v := *f.RestoreFeeBuffer
+		c.RestoreFeeBuffer = &v
 	}
 	if f.FeeStatsPollInterval != nil {
-		c.FeeStatsPollInterval = f.FeeStatsPollInterval
+		v := *f.FeeStatsPollInterval
+		c.FeeStatsPollInterval = &v
 	}
 	if f.MaxSimulateAttempts != nil {
-		c.MaxSimulateAttempts = f.MaxSimulateAttempts
+		v := *f.MaxSimulateAttempts
+		c.MaxSimulateAttempts = &v
 	}
 	if f.MaxSubmitRetryAttempts != nil {
-		c.MaxSubmitRetryAttempts = f.MaxSubmitRetryAttempts
+		v := *f.MaxSubmitRetryAttempts
+		c.MaxSubmitRetryAttempts = &v
 	}
 	if f.SubmitRetryDelay != nil {
-		c.SubmitRetryDelay = f.SubmitRetryDelay
+		v := *f.SubmitRetryDelay
+		c.SubmitRetryDelay = &v
 	}
 	if f.TxTimeoutSecs != nil {
-		c.TxTimeoutSecs = f.TxTimeoutSecs
+		v := *f.TxTimeoutSecs
+		c.TxTimeoutSecs = &v
 	}
 	if f.LedgerBoundsOffset != nil {
-		c.LedgerBoundsOffset = f.LedgerBoundsOffset
+		v := *f.LedgerBoundsOffset
+		c.LedgerBoundsOffset = &v
 	}
 	if f.MaxTxRetryAttempts != nil {
-		c.MaxTxRetryAttempts = f.MaxTxRetryAttempts
+		v := *f.MaxTxRetryAttempts
+		c.MaxTxRetryAttempts = &v
 	}
 	if f.MaxGetClientRetryAttempts != nil {
-		c.MaxGetClientRetryAttempts = f.MaxGetClientRetryAttempts
+		v := *f.MaxGetClientRetryAttempts
+		c.MaxGetClientRetryAttempts = &v
 	}
 	if f.MaxRestoreAttempts != nil {
-		c.MaxRestoreAttempts = f.MaxRestoreAttempts
+		v := *f.MaxRestoreAttempts
+		c.MaxRestoreAttempts = &v
 	}
 	// Simulation hints are additive: user extras merge onto built-in defaults.
 	if len(f.SimulationTerminalHints) > 0 {
@@ -110,15 +117,16 @@ func (c *Config) SetFrom(f *Config) {
 		c.SimulationRetryableHints = mergeSimulationHintLists(c.SimulationRetryableHints, f.SimulationRetryableHints)
 	}
 	if f.PruneInterval != nil {
-		c.PruneInterval = f.PruneInterval
+		v := *f.PruneInterval
+		c.PruneInterval = &v
 	}
 	if f.PruneTxExpiration != nil {
-		c.PruneTxExpiration = f.PruneTxExpiration
+		v := *f.PruneTxExpiration
+		c.PruneTxExpiration = &v
 	}
 }
 
-// SetFrom merges nodes from f into ns by Name. A node in f whose Name is not
-// already in ns is appended; a node with a matching Name has its fields overlaid.
+// SetFrom merges nodes from f into ns by Name: new names appended, matching names overlaid.
 func (ns *Nodes) SetFrom(fs *Nodes) {
 	for _, f := range *fs {
 		if f.Name == nil {
@@ -140,15 +148,17 @@ func (ns *Nodes) SetFrom(fs *Nodes) {
 	}
 }
 
-// SetFrom copies every non-nil field from f onto n.
+// SetFrom copies non-nil fields from f onto n (deep-copied).
 func (n *Node) SetFrom(f *Node) {
 	if f.Name != nil {
-		n.Name = f.Name
+		v := *f.Name
+		n.Name = &v
 	}
 	if f.URL != nil {
-		n.URL = f.URL
+		n.URL = f.URL // clconfig.URL is a value type wrapping url.URL; safe to copy
 	}
 	if f.Order != nil {
-		n.Order = f.Order
+		v := *f.Order
+		n.Order = &v
 	}
 }

@@ -90,7 +90,7 @@ func NewChain(cfg *config.TOMLConfig, opts Opts, chainInfo chainsel.StellarChain
 
 	lggr := logger.Named(opts.Logger, "StellarChain")
 
-	// cfg is expected to already be resolved + validated by NewDecodedTOMLConfig.
+	// cfg is expected to be already resolved + validated by NewDecodedTOMLConfig.
 	if err := cfg.ValidateConfig(); err != nil {
 		return nil, fmt.Errorf("invalid Stellar config: %w", err)
 	}

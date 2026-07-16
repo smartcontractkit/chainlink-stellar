@@ -26,8 +26,7 @@ BroadcastChanSize = 77
 	require.NotNil(t, cfg.TxManager.BroadcastChanSize)
 	require.Equal(t, uint(77), *cfg.TxManager.BroadcastChanSize)
 
-	// SetDefaults now merges TXM defaults via SetFrom, so NewDecodedTOMLConfig
-	// returns a fully-resolved config — no manual Resolve() needed.
+	// SetDefaults merges TXM defaults via SetFrom, so no manual Resolve() needed.
 	txmCfg := cfg.TxManager
 	require.Equal(t, uint(77), *txmCfg.BroadcastChanSize)
 	require.NotNil(t, txmCfg.MaxInclusionFee, "unset TXM fields should be resolved by SetDefaults")
@@ -92,11 +91,7 @@ NewHeadsPollInterval = "1s"
 	})
 }
 
-// TestSetDefaults_Idempotent ensures calling SetDefaults twice does not clobber
-// user overrides or introduce drift. SetDefaults is only called once in
-// production (by NewDecodedTOMLConfig), but the SetFrom-based merge should be
-// safe to repeat — merging an already-resolved config onto fresh defaults is a
-// no-op for set fields and stable for default fields.
+// TestSetDefaults_Idempotent ensures double SetDefaults doesn't clobber overrides.
 func TestSetDefaults_Idempotent(t *testing.T) {
 	t.Parallel()
 
@@ -126,4 +121,24 @@ SelectionMode = "RoundRobin"
 	require.Equal(t, firstBroadcast, *cfg.TxManager.BroadcastChanSize, "user override must survive double SetDefaults")
 	require.Equal(t, firstSelection, cfg.MultiNode.SelectionMode(), "user override must survive double SetDefaults")
 	require.Equal(t, firstMaxInclusion, *cfg.TxManager.MaxInclusionFee, "default must be stable across double SetDefaults")
+}
+
+// TestSetDefaults_FillsSimulationHints ensures SetDefaults fills built-in hints
+// (docs.toml has empty arrays; Resolve fills the built-ins).
+func TestSetDefaults_FillsSimulationHints(t *testing.T) {
+	t.Parallel()
+
+	raw := `
+ChainID = "` + chain_selectors.STELLAR_TESTNET.ChainID + `"
+[[Nodes]]
+Name = "primary"
+URL = "https://example.invalid"
+`
+	cfg, err := NewDecodedTOMLConfig(raw)
+	require.NoError(t, err)
+	require.NotEmpty(t, cfg.TxManager.SimulationTerminalHints,
+		"SetDefaults should fill built-in simulation hints")
+	require.Contains(t, cfg.TxManager.SimulationTerminalHints, "trapped")
+	require.NotEmpty(t, cfg.TxManager.SimulationRetryableHints)
+	require.Contains(t, cfg.TxManager.SimulationRetryableHints, "timeout")
 }
