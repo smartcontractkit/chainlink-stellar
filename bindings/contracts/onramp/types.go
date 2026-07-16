@@ -1153,3 +1153,127 @@ var CCIPErrorMessage = map[int]string{
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
 }
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// ConfigSetEvent represents the ConfigSetEvent event.
+// Topics: [onramp_1_7_ConfigSet]
+type ConfigSetEvent struct {
+	StaticConfig  StaticConfig
+	DynamicConfig DynamicConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ConfigSetEventTopic is the event topic identifier.
+const ConfigSetEventTopic = "onramp_1_7_ConfigSet"
+
+// CCIPMessageSentEvent represents the CCIPMessageSentEvent event.
+// Topics: [onramp_1_7_CCIPMessageSent]
+type CCIPMessageSentEvent struct {
+	DestChainSelector     uint64
+	SequenceNumber        uint64
+	Sender                string
+	MessageId             [32]byte
+	FeeToken              string
+	TokenAmountBeforeFees int64
+	EncodedMessage        []byte
+	Receipts              []Receipt
+	VerifierBlobs         [][]byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// CCIPMessageSentEventTopic is the event topic identifier.
+const CCIPMessageSentEventTopic = "onramp_1_7_CCIPMessageSent"
+
+// DestChainConfigSetEvent represents the DestChainConfigSetEvent event.
+// Topics: [onramp_1_7_DestChainConfigSet]
+type DestChainConfigSetEvent struct {
+	DestChainSelector uint64
+	MessageNumber     uint64
+	Config            DestChainConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// DestChainConfigSetEventTopic is the event topic identifier.
+const DestChainConfigSetEventTopic = "onramp_1_7_DestChainConfigSet"
+
+// OwnershipTransferredEvent represents the OwnershipTransferredEvent event.
+// Topics: [onramp_1_7_OwnershipTransferred]
+type OwnershipTransferredEvent struct {
+	NewOwner string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferredEventTopic is the event topic identifier.
+const OwnershipTransferredEventTopic = "onramp_1_7_OwnershipTransferred"

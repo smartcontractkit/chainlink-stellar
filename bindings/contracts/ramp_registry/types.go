@@ -250,3 +250,119 @@ func OffRampUpdateFromScVal(val xdr.ScVal) (*OffRampUpdate, error) {
 
 	return result, nil
 }
+
+// OnRampSetEvent represents the OnRampSetEvent event.
+// Topics: [ramp_reg_OnRampSet]
+type OnRampSetEvent struct {
+	DestChainSelector uint64
+	Onramp            string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OnRampSetEventTopic is the event topic identifier.
+const OnRampSetEventTopic = "ramp_reg_OnRampSet"
+
+// OffRampAddedEvent represents the OffRampAddedEvent event.
+// Topics: [ramp_reg_OffRampAdded]
+type OffRampAddedEvent struct {
+	SourceChainSelector uint64
+	Offramp             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OffRampAddedEventTopic is the event topic identifier.
+const OffRampAddedEventTopic = "ramp_reg_OffRampAdded"
+
+// OnRampRemovedEvent represents the OnRampRemovedEvent event.
+// Topics: [ramp_reg_OnRampRemoved]
+type OnRampRemovedEvent struct {
+	DestChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OnRampRemovedEventTopic is the event topic identifier.
+const OnRampRemovedEventTopic = "ramp_reg_OnRampRemoved"
+
+// OffRampRemovedEvent represents the OffRampRemovedEvent event.
+// Topics: [ramp_reg_OffRampRemoved]
+type OffRampRemovedEvent struct {
+	SourceChainSelector uint64
+	Offramp             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OffRampRemovedEventTopic is the event topic identifier.
+const OffRampRemovedEventTopic = "ramp_reg_OffRampRemoved"
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
