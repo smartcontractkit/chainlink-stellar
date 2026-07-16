@@ -130,7 +130,8 @@ func (c *Config) SetFrom(f *Config) {
 func (ns *Nodes) SetFrom(fs *Nodes) {
 	for _, f := range *fs {
 		if f.Name == nil {
-			*ns = append(*ns, f)
+			cp := *f
+			*ns = append(*ns, &cp)
 			continue
 		}
 		idx := -1
@@ -141,7 +142,8 @@ func (ns *Nodes) SetFrom(fs *Nodes) {
 			}
 		}
 		if idx == -1 {
-			*ns = append(*ns, f)
+			cp := *f
+			*ns = append(*ns, &cp)
 		} else {
 			(*ns)[idx].SetFrom(f)
 		}

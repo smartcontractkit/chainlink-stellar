@@ -45,7 +45,7 @@ var (
 // After calling Resolve(), scalar pointer fields are non-nil; simulation hint
 // slices are non-empty (built-in defaults when unset).
 type Config struct {
-	BroadcastChanSize   *uint            `toml:"BroadcastChanSize"`
+	BroadcastChanSize   *uint              `toml:"BroadcastChanSize"`
 	ConfirmPollInterval *clconfig.Duration `toml:"ConfirmPollInterval"`
 
 	// Fee strategy: Stellar fees = InclusionFee + ResourceFee.
@@ -61,14 +61,14 @@ type Config struct {
 	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
 
 	// Retry & timeout
-	MaxSimulateAttempts    *uint            `toml:"MaxSimulateAttempts"`
-	MaxSubmitRetryAttempts *uint            `toml:"MaxSubmitRetryAttempts"`
-	SubmitRetryDelay       *clconfig.Duration `toml:"SubmitRetryDelay"`
-	TxTimeoutSecs          *int64           `toml:"TxTimeoutSecs"`
-	LedgerBoundsOffset     *uint32          `toml:"LedgerBoundsOffset"`
-	MaxTxRetryAttempts     *uint64          `toml:"MaxTxRetryAttempts"`
-	MaxGetClientRetryAttempts *uint64 `toml:"MaxGetClientRetryAttempts"`
-	MaxRestoreAttempts     *uint            `toml:"MaxRestoreAttempts"`
+	MaxSimulateAttempts       *uint              `toml:"MaxSimulateAttempts"`
+	MaxSubmitRetryAttempts    *uint              `toml:"MaxSubmitRetryAttempts"`
+	SubmitRetryDelay          *clconfig.Duration `toml:"SubmitRetryDelay"`
+	TxTimeoutSecs             *int64             `toml:"TxTimeoutSecs"`
+	LedgerBoundsOffset        *uint32            `toml:"LedgerBoundsOffset"`
+	MaxTxRetryAttempts        *uint64            `toml:"MaxTxRetryAttempts"`
+	MaxGetClientRetryAttempts *uint64            `toml:"MaxGetClientRetryAttempts"`
+	MaxRestoreAttempts        *uint              `toml:"MaxRestoreAttempts"`
 
 	// SimulationTerminalHints are matched case-insensitively as substrings
 	// against failed SimulateTransaction errors; any match means the error is
@@ -104,22 +104,23 @@ var DefaultConfigSet = Config{
 	RestoreFeeBuffer:     ptr(int64(10_000)),
 	FeeStatsPollInterval: clconfig.MustNewDuration(5 * time.Second),
 
-	MaxSimulateAttempts:    ptr(uint(3)),
-	MaxSubmitRetryAttempts: ptr(uint(10)),
-	SubmitRetryDelay:       clconfig.MustNewDuration(3 * time.Second),
-	TxTimeoutSecs:          ptr(int64(300)), // 5 minutes wall-clock fallback
-	LedgerBoundsOffset:     ptr(uint32(50)), // ~5 min at 6s/ledger
-	MaxTxRetryAttempts:     ptr(uint64(5)),
+	MaxSimulateAttempts:       ptr(uint(3)),
+	MaxSubmitRetryAttempts:    ptr(uint(10)),
+	SubmitRetryDelay:          clconfig.MustNewDuration(3 * time.Second),
+	TxTimeoutSecs:             ptr(int64(300)), // 5 minutes wall-clock fallback
+	LedgerBoundsOffset:        ptr(uint32(50)), // ~5 min at 6s/ledger
+	MaxTxRetryAttempts:        ptr(uint64(5)),
 	MaxGetClientRetryAttempts: ptr(uint64(10)),
-	MaxRestoreAttempts:     ptr(uint(3)),
+	MaxRestoreAttempts:        ptr(uint(3)),
 
 	PruneInterval:     clconfig.MustNewDuration(10 * time.Minute),
 	PruneTxExpiration: clconfig.MustNewDuration(2 * time.Hour),
 }
 
-// Resolve fills nil fields with defaults from DefaultConfigSet.
+// Resolve fills nil scalar fields with defaults from DefaultConfigSet, and
+// always merges built-in simulation hints (additive with any user hints).
 // After calling Resolve, scalar pointer fields are non-nil; simulation hint
-// slices are non-empty when defaults apply.
+// slices are non-empty.
 func (c *Config) Resolve() {
 	if c.BroadcastChanSize == nil {
 		c.BroadcastChanSize = ptr(*DefaultConfigSet.BroadcastChanSize)
