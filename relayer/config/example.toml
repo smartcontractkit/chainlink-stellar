@@ -1,0 +1,6 @@
+[[Stellar]]
+ChainID = "stellar-testnet"
+
+[[Stellar.Nodes]]
+Name = "primary"
+URL = "https://soroban-rpc.example.invalid"

@@ -70,42 +70,19 @@ type TOMLConfig struct {
 // DefaultRequestTimeout bounds each individual Soroban RPC call when RequestTimeout is unset.
 const DefaultRequestTimeout = 30 * time.Second
 
-// SetDefaults fills any unset MultiNode field with a Stellar-appropriate default. The
-// framework's config accessors dereference these pointers directly, so every field consumed by
-// the node/multinode lifecycle must be non-nil. Tuned to Stellar's ~5-7s ledger close and its
-// single-finality model (a closed ledger is final: no finality tag, no reorgs).
+// SetDefaults fills every unset field with its docs.toml default. It starts
+// from the full defaults, overlays the user's partial config via SetFrom, then
+// replaces c. TXM defaults are applied here too (not deferred to txm.New), so
+// NewDecodedTOMLConfig returns a fully-resolved config in one phase.
+//
+// The framework's MultiNode accessors dereference pointers directly, so every
+// field consumed by the node/multinode lifecycle must be non-nil after this call.
+// Tuned to Stellar's ~5-7s ledger close and single-finality model (a closed
+// ledger is final: no finality tag, no reorgs).
 func (c *TOMLConfig) SetDefaults() {
-	m := &c.MultiNode.MultiNode
-	setDefault(&m.Enabled, true)
-	setDefault(&m.PollFailureThreshold, uint32(5))
-	setDefault(&m.PollInterval, *clconfig.MustNewDuration(10 * time.Second))
-	setDefault(&m.SelectionMode, "HighestHead")
-	setDefault(&m.SyncThreshold, uint32(5))
-	setDefault(&m.NodeIsSyncingEnabled, false)
-	setDefault(&m.LeaseDuration, *clconfig.MustNewDuration(0))
-	// Poll heads slightly faster than the ~5-7s ledger close so out-of-sync nodes are detected
-	setDefault(&m.NewHeadsPollInterval, *clconfig.MustNewDuration(3 * time.Second))
-	setDefault(&m.FinalizedBlockPollInterval, *clconfig.MustNewDuration(3 * time.Second))
-	setDefault(&m.EnforceRepeatableRead, false)
-	setDefault(&m.DeathDeclarationDelay, *clconfig.MustNewDuration(20 * time.Second))
-	setDefault(&m.VerifyChainID, true)
-	setDefault(&m.NodeNoNewHeadsThreshold, *clconfig.MustNewDuration(30 * time.Second))
-	// NoNewFinalizedHeadsThreshold is read unconditionally by the node lifecycle even though
-	// the finalized-head subscription is disabled (FinalityTagEnabled=false); keep it non-nil.
-	setDefault(&m.NoNewFinalizedHeadsThreshold, *clconfig.MustNewDuration(30 * time.Second))
-	// Stellar ledgers are final at close: derive "finalized" as latest (FinalityDepth=0) and
-	// never run the finalized-head subscription (FinalityTagEnabled=false).
-	setDefault(&m.FinalityDepth, uint32(0))
-	setDefault(&m.FinalityTagEnabled, false)
-	setDefault(&m.FinalizedBlockOffset, uint32(0))
-	setDefault(&c.RequestTimeout, *clconfig.MustNewDuration(DefaultRequestTimeout))
-}
-
-func setDefault[T any](p **T, val T) {
-	if *p == nil {
-		v := val
-		*p = &v
-	}
+	d := Defaults()
+	d.SetFrom(c)
+	*c = d
 }
 
 // IsEnabled returns true when the chain is not explicitly disabled.

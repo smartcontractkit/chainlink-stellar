@@ -1,0 +1,93 @@
+# ChainID is the Stellar chain ID. Must be one of: stellar-1 (mainnet), stellar-testnet, stellar-localnet. Mandatory.
+ChainID = 'stellar-testnet' # Example
+# Enabled enables this chain.
+Enabled = true # Default
+
+# RequestTimeout bounds each individual Soroban RPC call (and the underlying HTTP client timeout).
+RequestTimeout = '30s' # Default
+
+[TxManager]
+# BroadcastChanSize is the buffer size of the channel that feeds the serial broadcast loop.
+BroadcastChanSize = 100 # Default
+# ConfirmPollInterval is the rate to poll GetTransaction for confirmation of submitted txs.
+ConfirmPollInterval = '3s' # Default
+# BaseInclusionFee is the starting inclusion fee (in stroops) for the first broadcast attempt. 100 stroops = MinBaseFee.
+BaseInclusionFee = 100 # Default
+# MaxInclusionFee is the cap (in stroops) the inclusion fee can be bumped to. 100_000 stroops = 0.01 XLM.
+MaxInclusionFee = 100000 # Default
+# FeeBumpMultiplier is the geometric multiplier applied to the inclusion fee on each retry attempt.
+FeeBumpMultiplier = 1.5 # Default
+# ResourceFeeBuffer is the flat buffer (in stroops) added to the simulated MinResourceFee to compute the resource fee.
+ResourceFeeBuffer = 15000 # Default
+# RestoreFeeBuffer is the flat buffer (in stroops) added to the preamble MinResourceFee for RestoreFootprint transactions.
+RestoreFeeBuffer = 10000 # Default
+# FeeStatsPollInterval controls how often GetFeeStats is called to refresh Soroban inclusion fee P50/P90 in the feeTracker. Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
+FeeStatsPollInterval = '5s' # Default
+# MaxSimulateAttempts is the maximum number of SimulateTransaction attempts before treating the failure as terminal.
+MaxSimulateAttempts = 3 # Default
+# MaxSubmitRetryAttempts is the maximum number of SendTransaction retries within a single broadcast attempt.
+MaxSubmitRetryAttempts = 10 # Default
+# SubmitRetryDelay is the delay between SendTransaction retries.
+SubmitRetryDelay = '3s' # Default
+# TxTimeoutSecs is the wall-clock fallback timeout (in seconds) applied via Transaction TimeBounds. 300s = 5 minutes.
+TxTimeoutSecs = 300 # Default
+# LedgerBoundsOffset is the number of ledgers ahead of the latest ledger used for Transaction LedgerBounds. ~5 min at 6s/ledger.
+LedgerBoundsOffset = 50 # Default
+# MaxTxRetryAttempts is the maximum number of full tx lifecycle retries (re-simulate + re-broadcast) before marking the tx failed.
+MaxTxRetryAttempts = 5 # Default
+# MaxGetClientRetryAttempts is the maximum number of getClient (multi-node RPC selection) retries before failing the tx on infra unavailability.
+MaxGetClientRetryAttempts = 10 # Default
+# MaxRestoreAttempts is the maximum number of RestoreFootprint attempts before treating the failure as terminal.
+MaxRestoreAttempts = 3 # Default
+# SimulationTerminalHints are matched case-insensitively as substrings against failed SimulateTransaction errors; any match means the error is treated as terminal (do not retry). Additive to built-in defaults.
+SimulationTerminalHints = [] # Default
+# SimulationRetryableHints: any substring match means retry simulation when attempts remain. Additive to built-in defaults.
+SimulationRetryableHints = [] # Default
+# PruneInterval controls how often the background prune loop scans for expired terminal txs. Set to 0 to disable the loop (terminal txs evicted synchronously).
+PruneInterval = '10m' # Default
+# PruneTxExpiration is the minimum time a terminal tx is retained after reaching its terminal state before being eligible for pruning. Ignored when PruneInterval is 0.
+PruneTxExpiration = '2h' # Default
+
+[MultiNode]
+# Enabled enables the multinode feature. The Stellar relayer always uses the multinode pool; false is ignored.
+Enabled = true # Default
+# PollFailureThreshold is the number of consecutive poll failures before a node is considered unhealthy.
+PollFailureThreshold = 5 # Default
+# PollInterval is the rate to poll for node health.
+PollInterval = '10s' # Default
+# SelectionMode is the method used to select the next best node to use.
+SelectionMode = 'HighestHead' # Default
+# SyncThreshold is the number of ledgers behind the best node that a node can be before it is considered out of sync.
+SyncThreshold = 5 # Default
+# NodeIsSyncingEnabled enables the feature to avoid sending transactions to nodes that are syncing.
+NodeIsSyncingEnabled = false # Default
+# LeaseDuration is the max duration a node can be leased for.
+LeaseDuration = '0s' # Default
+# NewHeadsPollInterval is the rate to poll for new heads. Tuned slightly faster than the ~5-7s ledger close.
+NewHeadsPollInterval = '3s' # Default
+# FinalizedBlockPollInterval is the rate to poll for the finalized block.
+FinalizedBlockPollInterval = '3s' # Default
+# EnforceRepeatableRead enforces the repeatable read guarantee for multinode.
+EnforceRepeatableRead = false # Default
+# DeathDeclarationDelay is the duration to wait before declaring a node dead.
+DeathDeclarationDelay = '20s' # Default
+# VerifyChainID enforces RPC Client ChainIDs to match configured ChainID.
+VerifyChainID = true # Default
+# NodeNoNewHeadsThreshold is the duration to wait before declaring a node unhealthy due to no new heads.
+NodeNoNewHeadsThreshold = '30s' # Default
+# NoNewFinalizedHeadsThreshold is the duration to wait before declaring a node unhealthy due to no new finalized heads. Read unconditionally even though the finalized-head subscription is disabled.
+NoNewFinalizedHeadsThreshold = '30s' # Default
+# FinalityDepth is not used when finality tags are disabled. Stellar ledgers are final at close: 0 means finalized == latest.
+FinalityDepth = 0 # Default
+# FinalityTagEnabled enables the use of finality tags. Stellar has single-finality (no reorgs); disabled.
+FinalityTagEnabled = false # Default
+# FinalizedBlockOffset is the offset from the finalized block to use for finality tags.
+FinalizedBlockOffset = 0 # Default
+
+[[Nodes]]
+# Name is a unique (per-chain) identifier for this node.
+Name = 'primary' # Example
+# URL is the HTTP(S) Soroban RPC endpoint for this node.
+URL = 'https://soroban-rpc.example.invalid' # Example
+# Order specifies the node priority used as a tiebreak by the multinode selector (lower wins on equal head). Defaults to 0 when unset.
+Order = 0 # Default

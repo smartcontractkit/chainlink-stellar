@@ -74,9 +74,12 @@ type StellarTxm struct {
 // chain.Chain.GetClient to enable multi-node rotation; in normal wiring the
 // chain package constructs the TXM and passes its own GetClient method.
 // The network passphrase is resolved from chainID via NetworkPassphrase.
-// cfg is normalized with Resolve so pointer fields (e.g. TxTimeoutSecs) are
-// non-nil for the lifetime of the TXM; do not construct StellarTxm manually
-// with an unresolved Config.
+//
+// New calls cfg.Resolve() to guarantee every pointer field is non-nil. In
+// production the config arrives already resolved (NewDecodedTOMLConfig ->
+// SetDefaults merges TXM defaults via SetFrom), so Resolve is a no-op. Tests
+// that construct a config.Config directly (e.g. config.Config{}) rely on
+// Resolve to fill defaults before the TXM dereferences them.
 func New(
 	lgr logger.Logger,
 	keystore core.Keystore,
