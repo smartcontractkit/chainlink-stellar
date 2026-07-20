@@ -21,7 +21,7 @@ type FeeStrategy struct {
 }
 
 // NewFeeStrategyFromConfig constructs a FeeStrategy from the resolved Config.
-func NewFeeStrategyFromConfig(cfg config.Config) FeeStrategy {
+func NewFeeStrategyFromConfig(cfg config.TxManagerConfig) FeeStrategy {
 	return FeeStrategy{
 		BaseInclusionFee:  *cfg.BaseInclusionFee,
 		MaxInclusionFee:   *cfg.MaxInclusionFee,

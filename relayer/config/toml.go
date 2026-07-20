@@ -44,7 +44,7 @@ func (c *TOMLConfig) SetFrom(f *TOMLConfig) {
 
 // SetFrom copies non-nil fields from f onto c (deep-copied). Simulation hints
 // are additive: user hints merge onto c's existing hints, deduped.
-func (c *Config) SetFrom(f *Config) {
+func (c *TxManagerConfig) SetFrom(f *TxManagerConfig) {
 	if f.BroadcastChanSize != nil {
 		v := *f.BroadcastChanSize
 		c.BroadcastChanSize = &v

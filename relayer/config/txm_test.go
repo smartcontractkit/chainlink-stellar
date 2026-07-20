@@ -9,30 +9,31 @@ import (
 func TestResolve_AllDefaults(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{}
+	d := Defaults().TxManager
+	cfg := TxManagerConfig{}
 	cfg.Resolve()
 
 	// Shared fields
-	assert.Equal(t, DefaultConfigSet.BroadcastChanSize, cfg.BroadcastChanSize)
-	assert.Equal(t, DefaultConfigSet.ConfirmPollInterval, cfg.ConfirmPollInterval)
-	assert.Equal(t, DefaultConfigSet.MaxSimulateAttempts, cfg.MaxSimulateAttempts)
-	assert.Equal(t, DefaultConfigSet.MaxSubmitRetryAttempts, cfg.MaxSubmitRetryAttempts)
-	assert.Equal(t, DefaultConfigSet.SubmitRetryDelay, cfg.SubmitRetryDelay)
-	assert.Equal(t, DefaultConfigSet.MaxTxRetryAttempts, cfg.MaxTxRetryAttempts)
-	assert.Equal(t, DefaultConfigSet.MaxGetClientRetryAttempts, cfg.MaxGetClientRetryAttempts)
-	assert.Equal(t, DefaultConfigSet.PruneInterval, cfg.PruneInterval)
-	assert.Equal(t, DefaultConfigSet.PruneTxExpiration, cfg.PruneTxExpiration)
-	assert.Equal(t, DefaultConfigSet.FeeStatsPollInterval, cfg.FeeStatsPollInterval)
-	assert.Equal(t, DefaultConfigSet.BaseInclusionFee, cfg.BaseInclusionFee)
-	assert.Equal(t, DefaultConfigSet.MaxInclusionFee, cfg.MaxInclusionFee)
-	assert.Equal(t, DefaultConfigSet.FeeBumpMultiplier, cfg.FeeBumpMultiplier)
-	assert.Equal(t, DefaultConfigSet.ResourceFeeBuffer, cfg.ResourceFeeBuffer)
-	assert.Equal(t, DefaultConfigSet.RestoreFeeBuffer, cfg.RestoreFeeBuffer)
+	assert.Equal(t, d.BroadcastChanSize, cfg.BroadcastChanSize)
+	assert.Equal(t, d.ConfirmPollInterval, cfg.ConfirmPollInterval)
+	assert.Equal(t, d.MaxSimulateAttempts, cfg.MaxSimulateAttempts)
+	assert.Equal(t, d.MaxSubmitRetryAttempts, cfg.MaxSubmitRetryAttempts)
+	assert.Equal(t, d.SubmitRetryDelay, cfg.SubmitRetryDelay)
+	assert.Equal(t, d.MaxTxRetryAttempts, cfg.MaxTxRetryAttempts)
+	assert.Equal(t, d.MaxGetClientRetryAttempts, cfg.MaxGetClientRetryAttempts)
+	assert.Equal(t, d.PruneInterval, cfg.PruneInterval)
+	assert.Equal(t, d.PruneTxExpiration, cfg.PruneTxExpiration)
+	assert.Equal(t, d.FeeStatsPollInterval, cfg.FeeStatsPollInterval)
+	assert.Equal(t, d.BaseInclusionFee, cfg.BaseInclusionFee)
+	assert.Equal(t, d.MaxInclusionFee, cfg.MaxInclusionFee)
+	assert.Equal(t, d.FeeBumpMultiplier, cfg.FeeBumpMultiplier)
+	assert.Equal(t, d.ResourceFeeBuffer, cfg.ResourceFeeBuffer)
+	assert.Equal(t, d.RestoreFeeBuffer, cfg.RestoreFeeBuffer)
 
 	// Stellar-specific timeout fields
-	assert.Equal(t, DefaultConfigSet.TxTimeoutSecs, cfg.TxTimeoutSecs)
-	assert.Equal(t, DefaultConfigSet.LedgerBoundsOffset, cfg.LedgerBoundsOffset)
-	assert.Equal(t, DefaultConfigSet.MaxRestoreAttempts, cfg.MaxRestoreAttempts)
+	assert.Equal(t, d.TxTimeoutSecs, cfg.TxTimeoutSecs)
+	assert.Equal(t, d.LedgerBoundsOffset, cfg.LedgerBoundsOffset)
+	assert.Equal(t, d.MaxRestoreAttempts, cfg.MaxRestoreAttempts)
 
 	assert.Equal(t, builtinSimulationTerminalHints, cfg.SimulationTerminalHints)
 	assert.Equal(t, builtinSimulationRetryableHints, cfg.SimulationRetryableHints)
@@ -41,7 +42,8 @@ func TestResolve_AllDefaults(t *testing.T) {
 func TestResolve_PartialOverride(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
+	d := Defaults().TxManager
+	cfg := TxManagerConfig{
 		BroadcastChanSize: ptr(uint(50)),
 		BaseInclusionFee:  ptr(int64(200)),
 	}
@@ -51,11 +53,11 @@ func TestResolve_PartialOverride(t *testing.T) {
 	assert.Equal(t, int64(200), *cfg.BaseInclusionFee)
 
 	// Non-overridden fields still get defaults
-	assert.Equal(t, DefaultConfigSet.ConfirmPollInterval, cfg.ConfirmPollInterval)
-	assert.Equal(t, DefaultConfigSet.MaxInclusionFee, cfg.MaxInclusionFee)
-	assert.Equal(t, DefaultConfigSet.FeeBumpMultiplier, cfg.FeeBumpMultiplier)
-	assert.Equal(t, DefaultConfigSet.MaxSimulateAttempts, cfg.MaxSimulateAttempts)
-	assert.Equal(t, DefaultConfigSet.LedgerBoundsOffset, cfg.LedgerBoundsOffset)
+	assert.Equal(t, d.ConfirmPollInterval, cfg.ConfirmPollInterval)
+	assert.Equal(t, d.MaxInclusionFee, cfg.MaxInclusionFee)
+	assert.Equal(t, d.FeeBumpMultiplier, cfg.FeeBumpMultiplier)
+	assert.Equal(t, d.MaxSimulateAttempts, cfg.MaxSimulateAttempts)
+	assert.Equal(t, d.LedgerBoundsOffset, cfg.LedgerBoundsOffset)
 	assert.Equal(t, builtinSimulationTerminalHints, cfg.SimulationTerminalHints)
 	assert.Equal(t, builtinSimulationRetryableHints, cfg.SimulationRetryableHints)
 }
@@ -63,7 +65,7 @@ func TestResolve_PartialOverride(t *testing.T) {
 func TestResolve_CustomSimulationHintsAreAdditive(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
+	cfg := TxManagerConfig{
 		SimulationTerminalHints:  []string{"custom-terminal"},
 		SimulationRetryableHints: []string{"custom-retry"},
 	}
@@ -81,7 +83,7 @@ func TestResolve_CustomSimulationHintsAreAdditive(t *testing.T) {
 func TestResolve_SimulationHintsDedupesUserDuplicatesOfBuiltin(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
+	cfg := TxManagerConfig{
 		SimulationTerminalHints: []string{"trapped", "only-new-terminal"},
 	}
 	cfg.Resolve()
@@ -93,7 +95,7 @@ func TestResolve_SimulationHintsDedupesUserDuplicatesOfBuiltin(t *testing.T) {
 func TestResolve_ExplicitZero(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{
+	cfg := TxManagerConfig{
 		BaseInclusionFee:   ptr(int64(0)),
 		MaxRestoreAttempts: ptr(uint(0)),
 	}
@@ -105,14 +107,14 @@ func TestResolve_ExplicitZero(t *testing.T) {
 		"explicit 0 must not be overwritten by default of 3")
 
 	// Non-overridden fields still get defaults
-	assert.Equal(t, DefaultConfigSet.BroadcastChanSize, cfg.BroadcastChanSize)
-	assert.Equal(t, DefaultConfigSet.MaxInclusionFee, cfg.MaxInclusionFee)
+	assert.Equal(t, Defaults().TxManager.BroadcastChanSize, cfg.BroadcastChanSize)
+	assert.Equal(t, Defaults().TxManager.MaxInclusionFee, cfg.MaxInclusionFee)
 }
 
 func TestResolve_StellarFeeDefaults(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{}
+	cfg := TxManagerConfig{}
 	cfg.Resolve()
 
 	assert.Equal(t, int64(100), *cfg.BaseInclusionFee, "MinBaseFee = 100 stroops")
@@ -125,7 +127,7 @@ func TestResolve_StellarFeeDefaults(t *testing.T) {
 func TestResolve_StellarTimeoutDefaults(t *testing.T) {
 	t.Parallel()
 
-	cfg := Config{}
+	cfg := TxManagerConfig{}
 	cfg.Resolve()
 
 	assert.Equal(t, uint32(50), *cfg.LedgerBoundsOffset, "~5 min at 6s/ledger")

@@ -30,7 +30,7 @@ BroadcastChanSize = 77
 	txmCfg := cfg.TxManager
 	require.Equal(t, uint(77), *txmCfg.BroadcastChanSize)
 	require.NotNil(t, txmCfg.MaxInclusionFee, "unset TXM fields should be resolved by SetDefaults")
-	require.Equal(t, *DefaultConfigSet.MaxInclusionFee, *txmCfg.MaxInclusionFee,
+	require.Equal(t, *Defaults().TxManager.MaxInclusionFee, *txmCfg.MaxInclusionFee,
 		"unset TxManager fields should still resolve to txm defaults")
 }
 

@@ -55,8 +55,8 @@ type TOMLConfig struct {
 	Nodes Nodes `toml:"Nodes"`
 
 	// TxManager holds optional Stellar transaction manager settings. Omitted
-	// fields use defaults applied by SetDefaults (see DefaultConfigSet).
-	TxManager Config `toml:"TxManager"`
+	// fields use defaults applied by SetDefaults (from docs.toml).
+	TxManager TxManagerConfig `toml:"TxManager"`
 
 	// MultiNode configures RPC node selection, health checking, and failover. Omitted fields
 	// are filled by SetDefaults. See chainlink-framework/multinode.

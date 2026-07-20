@@ -26,29 +26,11 @@ func TestGenerateDocs(t *testing.T) {
 	require.NotEmpty(t, out)
 }
 
-// TestDefaultConfigSet_MatchesDocsTOML enforces that DefaultConfigSet (used by
-// Resolve) and docs.toml (used by Defaults/SetDefaults) stay in sync. Without
-// this, the two default sources can silently drift.
-func TestDefaultConfigSet_MatchesDocsTOML(t *testing.T) {
-	d := Defaults().TxManager
-	require.Equal(t, *DefaultConfigSet.BroadcastChanSize, *d.BroadcastChanSize)
-	require.Equal(t, *DefaultConfigSet.ConfirmPollInterval, *d.ConfirmPollInterval)
-	require.Equal(t, *DefaultConfigSet.BaseInclusionFee, *d.BaseInclusionFee)
-	require.Equal(t, *DefaultConfigSet.MaxInclusionFee, *d.MaxInclusionFee)
-	require.Equal(t, *DefaultConfigSet.FeeBumpMultiplier, *d.FeeBumpMultiplier)
-	require.Equal(t, *DefaultConfigSet.ResourceFeeBuffer, *d.ResourceFeeBuffer)
-	require.Equal(t, *DefaultConfigSet.RestoreFeeBuffer, *d.RestoreFeeBuffer)
-	require.Equal(t, *DefaultConfigSet.FeeStatsPollInterval, *d.FeeStatsPollInterval)
-	require.Equal(t, *DefaultConfigSet.MaxSimulateAttempts, *d.MaxSimulateAttempts)
-	require.Equal(t, *DefaultConfigSet.MaxSubmitRetryAttempts, *d.MaxSubmitRetryAttempts)
-	require.Equal(t, *DefaultConfigSet.SubmitRetryDelay, *d.SubmitRetryDelay)
-	require.Equal(t, *DefaultConfigSet.TxTimeoutSecs, *d.TxTimeoutSecs)
-	require.Equal(t, *DefaultConfigSet.LedgerBoundsOffset, *d.LedgerBoundsOffset)
-	require.Equal(t, *DefaultConfigSet.MaxTxRetryAttempts, *d.MaxTxRetryAttempts)
-	require.Equal(t, *DefaultConfigSet.MaxGetClientRetryAttempts, *d.MaxGetClientRetryAttempts)
-	require.Equal(t, *DefaultConfigSet.MaxRestoreAttempts, *d.MaxRestoreAttempts)
-	require.Equal(t, *DefaultConfigSet.PruneInterval, *d.PruneInterval)
-	require.Equal(t, *DefaultConfigSet.PruneTxExpiration, *d.PruneTxExpiration)
+// TestDefaults_RequestTimeout ensures the code-side DefaultRequestTimeout
+// constant matches the docs.toml default.
+func TestDefaults_RequestTimeout(t *testing.T) {
+	d := Defaults()
+	require.Equal(t, DefaultRequestTimeout, d.RequestTimeout.Duration())
 }
 
 // TestDefaults_CopyIsolation ensures SetFrom deep-copies pointer fields so

@@ -47,7 +47,7 @@ func Test_parseSubmitErrorResult(t *testing.T) {
 func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Parallel()
 	mock := &mockRPCClient{}
-	s, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	s, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	ctx := t.Context()
 
@@ -266,7 +266,7 @@ func TestStellarTxm_handleSendResult_UndecodableErrorXDRIsFatal(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	s, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	s, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	ctx := t.Context()
 	tx := &StellarTx{ID: "x", FromAddress: testAddress}
@@ -298,7 +298,7 @@ func TestStellarTxm_handleSendResult_InsufficientFeeMapsToFeeBumpReason(t *testi
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	s, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	s, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	ctx := t.Context()
 	tx := &StellarTx{ID: "x", FromAddress: testAddress}

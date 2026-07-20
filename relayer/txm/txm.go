@@ -43,7 +43,7 @@ var _ services.Service = &StellarTxm{}
 type StellarTxm struct {
 	baseLogger logger.Logger
 	keystore   core.Keystore
-	config     config.Config
+	config     config.TxManagerConfig
 	chainID    string
 	metrics    TxmMetrics
 	feeStrat   FeeStrategy
@@ -75,12 +75,12 @@ type StellarTxm struct {
 // chain package constructs the TXM and passes its own GetClient method.
 // The network passphrase is resolved from chainID via NetworkPassphrase.
 // New calls cfg.Resolve() to fill defaults; in production this is a no-op
-// (SetDefaults already resolved everything), but tests passing config.Config{}
+// (SetDefaults already resolved everything), but tests passing config.TxManagerConfig{}
 // rely on it.
 func New(
 	lgr logger.Logger,
 	keystore core.Keystore,
-	cfg config.Config,
+	cfg config.TxManagerConfig,
 	getClient func(context.Context) (RPCClient, error),
 	chainID string,
 ) (*StellarTxm, error) {

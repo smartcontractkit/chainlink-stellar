@@ -61,7 +61,7 @@ func TestStellarTxm_Metrics_BroadcastIncrementsCounter(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, config.Config{}, newTestGetClient(mock), chainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainID)
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
@@ -104,7 +104,7 @@ func TestStellarTxm_Metrics_ConfirmIncrementsSuccess(t *testing.T) {
 		},
 	}
 
-	cfg := config.Config{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
+	cfg := config.TxManagerConfig{ConfirmPollInterval: clconfig.MustNewDuration(100 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainID)
 	require.NoError(t, err)
 

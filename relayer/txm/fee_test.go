@@ -102,7 +102,7 @@ func TestFeeStrategy_CalculateRestoreFee_ZeroBuffer(t *testing.T) {
 func TestFeeStrategy_NewFromConfig(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.DefaultConfigSet
+	cfg := config.Defaults().TxManager
 	cfg.Resolve()
 	fs := NewFeeStrategyFromConfig(cfg)
 
