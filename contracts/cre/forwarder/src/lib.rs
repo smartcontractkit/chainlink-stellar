@@ -14,8 +14,12 @@ use soroban_sdk::{
     TryFromVal, Vec,
 };
 
+use common_signature::{
+    config::{SignatureConfigManager, SignatureVerificationConfig},
+    Ed25519, SignatureConfig, SignatureScheme,
+};
 use events::{ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, ReportProcessedEvent};
-use types::{Config, DataKey, Transmission, TransmissionInfo, TransmissionState};
+use types::{DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
 
 use crate::types::ParsedReport;
 
@@ -26,6 +30,7 @@ use crate::types::ParsedReport;
 const INITIALIZED: Symbol = symbol_short!("INIT");
 const OWNER: Symbol = symbol_short!("OWNER");
 const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+const SIGNATURE_CONFIGS: Symbol = symbol_short!("SIGNCFG");
 
 // ============================================================
 // Protocol Constants
@@ -35,16 +40,10 @@ const MAX_ORACLES: u32 = 31;
 const METADATA_LENGTH: u32 = 109;
 const FORWARDER_METADATA_LENGTH: u32 = 45;
 const REPORT_CONTEXT_LENGTH: u32 = 96;
-const SIGNATURE_LENGTH: usize = 65;
-const SECP256K1_ORDER: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
-    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
-];
 
 // Storage TTL constants (ledger counts; 1 ledger ≈ 5 s on Mainnet).
-// TODO adjust
-const BUMP_FOR_60_DAYS: u32 = 1_036_800; // ~60 days
-const BUMP_AFTER_30_DAYS: u32 = 518_400; // ~30 days
+const TTL_THRESHOLD: u32 = 17_280; // ~1 days
+const TTL_EXTENSION: u32 = 51_840; // ~3 days
 
 #[contract]
 pub struct KeystoneForwarder;
@@ -58,6 +57,39 @@ impl Initializable for KeystoneForwarder {
 impl Ownable for KeystoneForwarder {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
+
+// Internal helper for managing signature configurations storage
+impl SignatureConfigManager for KeystoneForwarder {
+    const SIGNATURE_CONFIGS: Symbol = SIGNATURE_CONFIGS;
+    const IS_PERSISTENT: bool = false;
+    type Error = ForwarderError;
+    type DataKey = DataKey;
+
+    fn validate_config(env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
+        // CREForwarder only supports the fault-tolerance (`Failure`) mode, where
+        // `f` faulty signers are tolerated and `f + 1` valid signatures are
+        // required. An explicit `Threshold` count is not a valid config here.
+        let f = match config.verification {
+            SignatureVerificationConfig::Failure(f) => f,
+            SignatureVerificationConfig::Threshold(_) => return Err(ForwarderError::InvalidConfig),
+        };
+        let signers = &config.signers;
+
+        if f == 0 {
+            return Err(ForwarderError::FaultToleranceMustBePositive);
+        }
+        if signers.len() > MAX_ORACLES {
+            return Err(ForwarderError::ExcessSigners);
+        }
+        // BFT bound: need ≥ 3f + 1 signers configured to tolerate f faulty.
+        if signers.len() < f * 3 + 1 {
+            return Err(ForwarderError::InsufficientSigners);
+        }
+
+        ensure_unique_pubkeys(&env, &signers);
+        Ok(())
+    }
 }
 
 #[contractimpl]
@@ -80,7 +112,7 @@ impl KeystoneForwarder {
         env.storage().instance().set(&INITIALIZED, &true);
         env.storage()
             .instance()
-            .extend_ttl(BUMP_AFTER_30_DAYS, BUMP_FOR_60_DAYS);
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTENSION);
         Ok(())
     }
 
@@ -116,34 +148,27 @@ impl KeystoneForwarder {
         don_id: u32,
         config_version: u32,
         f: u32,
-        signers: Vec<BytesN<65>>,
+        signers: Vec<BytesN<32>>,
     ) -> Result<(), ForwarderError> {
         <KeystoneForwarder as Initializable>::require_initialized(&env)?;
         <KeystoneForwarder as Ownable>::require_owner(&env)?;
 
-        if f == 0 {
-            panic_with_error!(&env, ForwarderError::FaultToleranceMustBePositive);
-        }
-        if signers.len() > MAX_ORACLES {
-            panic_with_error!(&env, ForwarderError::ExcessSigners);
-        }
-        // BFT bound: need ≥ 3f + 1 signers configured to tolerate f faulty.
-        if signers.len() < f * 3 + 1 {
-            panic_with_error!(&env, ForwarderError::InsufficientSigners);
-        }
-        ensure_unique_pubkeys(&env, &signers);
-
-        let cfg = Config { f, signers };
+        let cfg = SignatureConfig {
+            signers,
+            // `f` is fault tolerance; quorum requires `f + 1` valid signatures.
+            verification: SignatureVerificationConfig::Failure(f),
+        };
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        env.storage().instance().set(&key, &cfg);
+        <KeystoneForwarder as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
 
         ConfigSetEvent {
             don_id,
             config_version,
-            f: cfg.f,
+            f: f,
             signers: cfg.signers,
         }
         .publish(&env);
+
         Ok(())
     }
 
@@ -152,11 +177,7 @@ impl KeystoneForwarder {
         <KeystoneForwarder as Ownable>::require_owner(&env)?;
 
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        if !env.storage().instance().has(&key) {
-            panic_with_error!(&env, ForwarderError::InvalidConfig);
-        }
-
-        env.storage().instance().remove(&key);
+        <KeystoneForwarder as SignatureConfigManager>::remove_config(&env, &key);
 
         ConfigSetEvent {
             don_id,
@@ -174,7 +195,7 @@ impl KeystoneForwarder {
         receiver: Address,
         raw_report: Bytes,
         report_context: Bytes,
-        signatures: Vec<BytesN<65>>,
+        signatures: Vec<Ed25519Signature>,
     ) -> Result<(), ForwarderError> {
         transmitter.require_auth();
         <KeystoneForwarder as Initializable>::require_initialized(&env)?;
@@ -211,10 +232,12 @@ impl KeystoneForwarder {
             _ => {}
         }
 
-        let cfg = load_config(&env, parsed.config_id);
-        // Reports require exactly f + 1 signatures: minimal quorum that guarantees
-        // at least one honest signer (f faulty can produce at most f matching sigs).
-        if signatures.len() != cfg.f + 1 {
+        let datakey = DataKey::Config(parsed.config_id);
+        let cfg = <KeystoneForwarder as SignatureConfigManager>::get_config(&env, &datakey)
+            .ok_or(ForwarderError::InvalidConfig)?;
+
+        // Verify that the number of signatures matches the failed tolerance threshold
+        if signatures.len() != cfg.verification.threshold() {
             panic_with_error!(&env, ForwarderError::InvalidSignatureCount);
         }
 
@@ -327,16 +350,8 @@ fn require_valid_forwarder(env: &Env, forwarder: &Address) -> Result<(), Forward
 // Config helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn load_config(env: &Env, id: u64) -> Config {
-    let key = DataKey::Config(id);
-    env.storage()
-        .instance()
-        .get::<_, Config>(&key)
-        .unwrap_or_else(|| panic_with_error!(env, ForwarderError::InvalidConfig))
-}
-
-fn ensure_unique_pubkeys(env: &Env, signers: &Vec<BytesN<65>>) {
-    let zero = BytesN::<65>::from_array(env, &[0u8; 65]);
+fn ensure_unique_pubkeys(env: &Env, signers: &Vec<BytesN<32>>) {
+    let zero = BytesN::<32>::from_array(env, &[0u8; 32]);
 
     let mut i = 0;
     while i < signers.len() {
@@ -368,95 +383,54 @@ fn report_digest(env: &Env, raw_report: &Bytes, report_context: &Bytes) -> Hash<
     env.crypto().keccak256(&data)
 }
 
-fn normalize_recovery_id(env: &Env, v: u8) -> u32 {
-    match v {
-        0 | 1 => v as u32,
-        27 | 28 => (v - 27) as u32,
-        _ => panic_with_error!(env, ForwarderError::InvalidRecoveryId),
-    }
-}
-
-fn is_zero_32(bytes: &[u8]) -> bool {
-    let mut i = 0;
-    while i < 32 {
-        if bytes[i] != 0 {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-fn is_greater_or_equal_32(lhs: &[u8], rhs: &[u8; 32]) -> bool {
-    let mut i = 0;
-    while i < 32 {
-        if lhs[i] > rhs[i] {
-            return true;
-        }
-        if lhs[i] < rhs[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-fn validate_signature_scalar(env: &Env, scalar: &[u8]) {
-    if is_zero_32(scalar) || is_greater_or_equal_32(scalar, &SECP256K1_ORDER) {
-        panic_with_error!(env, ForwarderError::InvalidSignature);
-    }
-}
-
-fn validate_signature_scalars(env: &Env, signature: &[u8; SIGNATURE_LENGTH]) {
-    validate_signature_scalar(env, &signature[..32]);
-    validate_signature_scalar(env, &signature[32..64]);
-}
-
-fn signer_index(signers: &Vec<BytesN<65>>, signer: &BytesN<65>) -> Option<u32> {
+fn signer_in_set(signers: &Vec<BytesN<32>>, signer: &BytesN<32>) -> bool {
     let mut i = 0;
     while i < signers.len() {
-        if signers.get(i).unwrap() == signer.clone() {
-            return Some(i);
+        if &signers.get(i).unwrap() == signer {
+            return true;
         }
         i += 1;
     }
-    None
+    false
 }
 
+/// Verify each ed25519 signature against its accompanying public key and confirm
+/// the signer belongs to the configured set. Signatures must be presented in
+/// strictly-ascending public-key order, which both deduplicates signers and makes
+/// the accepted ordering deterministic (ed25519 has no signer recovery, so the
+/// bitmask dedup used by the secp256k1 design is not applicable here).
 fn verify_signatures(
     env: &Env,
-    signers: &Vec<BytesN<65>>,
+    signers: &Vec<BytesN<32>>,
     raw_report: &Bytes,
     report_context: &Bytes,
-    signatures: &Vec<BytesN<65>>,
+    signatures: &Vec<Ed25519Signature>,
 ) {
-    let digest = report_digest(env, raw_report, report_context);
-    let mut seen: u64 = 0;
+    let digest: BytesN<32> = report_digest(env, raw_report, report_context).into();
+
+    let mut prev: Option<BytesN<32>> = None;
 
     let mut i = 0;
     while i < signatures.len() {
-        let sig = signatures.get(i).unwrap();
+        let entry = signatures.get(i).unwrap();
 
-        let mut full = [0u8; SIGNATURE_LENGTH];
-        sig.copy_into_slice(&mut full);
+        // Verify the signature against its claimed public key (traps if invalid),
+        // yielding the signer identity.
+        let signer =
+            Ed25519::identify_signer(env, &digest, &entry.signature, entry.public_key.clone());
 
-        validate_signature_scalars(env, &full);
-        let rec_id = normalize_recovery_id(env, full[64]);
-
-        let mut rs = [0u8; 64];
-        rs.copy_from_slice(&full[..64]);
-        let sig64 = BytesN::<64>::from_array(env, &rs);
-
-        let pubkey = env.crypto().secp256k1_recover(&digest, &sig64, rec_id);
-        let idx = signer_index(signers, &pubkey)
-            .unwrap_or_else(|| panic_with_error!(env, ForwarderError::InvalidSigner));
-
-        let bit = 1u64 << idx;
-        if seen & bit != 0 {
-            panic_with_error!(env, ForwarderError::DuplicateSigner);
+        // Strictly-ascending signer order → dedup + deterministic acceptance.
+        if let Some(ref p) = prev {
+            if *p >= signer {
+                panic_with_error!(env, ForwarderError::InvalidSignerOrder);
+            }
         }
-        seen |= bit;
 
+        if !signer_in_set(signers, &signer) {
+            panic_with_error!(env, ForwarderError::InvalidSigner);
+        }
+
+        prev = Some(signer);
         i += 1;
     }
 }
@@ -517,12 +491,6 @@ fn dispatch_to_receiver(
         let args = (metadata.clone(), validated_report.clone()).into_val(env);
         let call =
             env.try_invoke_contract::<(), InvokeError>(receiver, &symbol_short!("on_report"), args);
-
-        // try_invoke_contract -> Result<Result<R, E>, InvokeError>:
-        //   Ok(Ok(()))                — receiver returned cleanly
-        //   Ok(Err(_))                — receiver returned Result::Err  ┐
-        //   Err(Ok(InvokeError::*))   — receiver panicked              ├─ retryable
-        //   Err(Err(_))               — host-level (missing on_report symbol, etc.) → terminal
         match call {
             Ok(Ok(())) => TransmissionState::Succeeded,
             Ok(Err(_)) | Err(Ok(_)) => TransmissionState::Failed,
@@ -534,7 +502,7 @@ fn dispatch_to_receiver(
     env.storage().persistent().set(&key, &tx);
     env.storage()
         .persistent()
-        .extend_ttl(&key, BUMP_AFTER_30_DAYS, BUMP_FOR_60_DAYS);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTENSION);
 
     Ok(state == TransmissionState::Succeeded)
 }

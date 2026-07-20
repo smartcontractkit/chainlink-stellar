@@ -1,24 +1,19 @@
 [package]
-name = "ccvs-committee-verifier"
+name = "common-signature"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["rlib"]
 doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true }
-common-signature = { workspace = true }
-common-authorization = { workspace = true }
 common-guard = { workspace = true }
+common-authorization = { workspace = true }
 common-error = { workspace = true }
 common-helpers = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-rmn_proxy = { workspace = true }
-rmn_remote = { workspace = true }
-k256 = { workspace = true }
-sha3 = { workspace = true }

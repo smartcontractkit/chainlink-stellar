@@ -33,7 +33,7 @@ common-guard = { path = "contracts/common/guard" }
 common-authorization = { path = "contracts/common/authorization" }
 common-error = { path = "contracts/common/error" }
 common-interfaces = { path = "contracts/common/interfaces" }
-common-verifier = { path = "contracts/common/verifier" }
+common-signature = { path = "contracts/common/signature" }
 common-helpers = { path = "contracts/common/helpers" }
 common-pool = { path = "contracts/common/pool" }
 fee-quoter = { path = "contracts/fee-quoter" }
