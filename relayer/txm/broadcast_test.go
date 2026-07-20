@@ -72,13 +72,15 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 		return status == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond, "tx should move to Unconfirmed")
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	tx := txm.transactions[txID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 
+	tx.mu.RLock()
 	assert.Equal(t, "test-hash", tx.TxHash)
 	assert.NotNil(t, tx.Fee)
 	assert.True(t, tx.Fee.Cmp(big.NewInt(0)) > 0)
+	tx.mu.RUnlock()
 }
 
 func TestStellarTxm_BroadcastPipeline_SimulateError(t *testing.T) {
@@ -659,12 +661,12 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 	assert.GreaterOrEqual(t, getClientCalls.Load(), int32(2))
 
 	// getClient failure must not consume the lifecycle Attempt budget.
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	tracked := txm.transactions[txID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 	require.NotNil(t, tracked)
-	assert.Equal(t, uint64(0), tracked.Attempt, "lifecycle Attempt must not be incremented by getClient failure")
-	assert.Equal(t, uint64(1), tracked.InfraAttempts, "InfraAttempts must be incremented once for the single getClient failure")
+	assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must not be incremented by getClient failure")
+	assert.Equal(t, uint64(1), tracked.InfraAttempts.Load(), "InfraAttempts must be incremented once for the single getClient failure")
 }
 
 func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t *testing.T) {
@@ -686,12 +688,12 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t 
 		return st == commontypes.Failed
 	}, 5*time.Second, 50*time.Millisecond)
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	tracked := txm.transactions[txID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 	require.NotNil(t, tracked)
-	assert.Equal(t, uint64(2), tracked.InfraAttempts, "InfraAttempts must reach the MaxGetClientRetryAttempts cap")
-	assert.Equal(t, uint64(0), tracked.Attempt, "lifecycle Attempt must remain untouched by getClient failures")
+	assert.Equal(t, uint64(2), tracked.InfraAttempts.Load(), "InfraAttempts must reach the MaxGetClientRetryAttempts cap")
+	assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must remain untouched by getClient failures")
 	assert.Equal(t, 0, txm.accountStore.GetTotalInflightCount(), "client failures happen before sequence allocation")
 }
 
@@ -896,10 +898,10 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailuresDoNotStealLifecycleBudget
         return st == commontypes.Unconfirmed
     }, 5*time.Second, 50*time.Millisecond)
 
-    txm.transactionsLock.RLock()
+    txm.transactionsMapLock.RLock()
     tracked := txm.transactions[txID]
-    txm.transactionsLock.RUnlock()
+    txm.transactionsMapLock.RUnlock()
     require.NotNil(t, tracked)
-    assert.Equal(t, uint64(3), tracked.InfraAttempts, "3 getClient failures must increment InfraAttempts to 3")
-    assert.Equal(t, uint64(0), tracked.Attempt, "lifecycle Attempt must be 0 — no post-submit retry happened yet")
+    assert.Equal(t, uint64(3), tracked.InfraAttempts.Load(), "3 getClient failures must increment InfraAttempts to 3")
+    assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must be 0 — no post-submit retry happened yet")
 }

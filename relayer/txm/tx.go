@@ -3,6 +3,7 @@ package txm
 import (
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -11,6 +12,8 @@ import (
 )
 
 // StellarTx represents a single transaction tracked by the TXM from enqueue to confirmation.
+// ID/Metadata/Timestamp/FromAddress/Operations/LedgerBoundsOffset are immutable after
+// enqueue (safe to read without a lock). mu guards the mutable fields below it.
 type StellarTx struct {
 	ID          string
 	Metadata    *commontypes.TxMeta
@@ -20,8 +23,10 @@ type StellarTx struct {
 	Operations         []txnbuild.Operation
 	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
 
-	Attempt         uint64
-	InfraAttempts   uint64 // getClient (RPC node selection) retries
+	Attempt       atomic.Uint64
+	InfraAttempts atomic.Uint64
+
+	mu              sync.RWMutex
 	Status          commontypes.TransactionStatus
 	TerminalTime    time.Time // when status first became Finalized or Failed; zero if not yet terminal
 	BroadcastAt     time.Time // set when SendTransaction accepts the tx
@@ -31,8 +36,8 @@ type StellarTx struct {
 	ResultXDR       string   // XDR-encoded transaction result from GetTransaction
 	ResultCode      string   // result code from GetTransaction (for diagnostics)
 	ResultMetaXDR   string   // XDR-encoded result meta from GetTransaction SUCCESS
-	MaxLedger       uint32   // ledger bounds set during broadcast
-	MinResourceFee  int64    // from simulation result
+	MaxLedger       uint32   // broadcast-loop-owned; ledger bounds set during broadcast
+	MinResourceFee  int64    // broadcast-loop-owned; from simulation result
 
 	// Done is closed when the transaction reaches a terminal state.
 	Done     chan struct{}

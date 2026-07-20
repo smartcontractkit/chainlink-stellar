@@ -329,9 +329,9 @@ func TestStellarTxm_Enqueue_Validation(t *testing.T) {
 			assert.Equal(t, id, r.id)
 		}
 
-		txm.transactionsLock.RLock()
+		txm.transactionsMapLock.RLock()
 		got, has := txm.transactions[id]
-		txm.transactionsLock.RUnlock()
+		txm.transactionsMapLock.RUnlock()
 		require.True(t, has)
 		assert.Equal(t, id, got.ID)
 		st, err := txm.GetStatus(id)
@@ -449,13 +449,15 @@ func TestStellarTxm_Enqueue_ChannelFull_EvictsOldest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, commontypes.Failed, oldStatus, "evicted tx should be Failed")
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	oldTx := txm.transactions[oldID]
 	newTx := txm.transactions[newID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 	require.NotNil(t, oldTx)
 	require.NotNil(t, newTx)
+	oldTx.mu.RLock()
 	assert.Equal(t, string(DropReasonChannelFullOldestEvicted), oldTx.ResultCode)
+	oldTx.mu.RUnlock()
 	select {
 	case <-oldTx.Done:
 		// expected — closeDone was called
@@ -463,7 +465,9 @@ func TestStellarTxm_Enqueue_ChannelFull_EvictsOldest(t *testing.T) {
 		t.Fatal("evicted tx's Done channel should be closed")
 	}
 	// New tx should still be in the channel, not terminated.
+	newTx.mu.RLock()
 	assert.Equal(t, commontypes.Pending, newTx.Status)
+	newTx.mu.RUnlock()
 }
 
 // --- GetStatus tests ---
@@ -548,14 +552,16 @@ func TestStellarTxm_GetTransactionResult(t *testing.T) {
 		require.NoError(t, err)
 
 		fee := big.NewInt(12345)
-		txm.transactionsLock.Lock()
+		txm.transactionsMapLock.RLock()
 		tx := txm.transactions[txID]
+		txm.transactionsMapLock.RUnlock()
+		tx.mu.Lock()
 		tx.Status = commontypes.Finalized
 		tx.TxHash = "hash-finalized"
 		tx.Fee = fee
 		tx.ResultXDR = "result-xdr"
 		tx.ResultMetaXDR = "meta-xdr"
-		txm.transactionsLock.Unlock()
+		tx.mu.Unlock()
 
 		result, err := txm.GetTransactionResult(txID)
 		require.NoError(t, err)
@@ -575,13 +581,15 @@ func TestStellarTxm_GetTransactionResult(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		txm.transactionsLock.Lock()
+		txm.transactionsMapLock.RLock()
 		tx := txm.transactions[txID]
+		txm.transactionsMapLock.RUnlock()
+		tx.mu.Lock()
 		tx.Status = commontypes.Failed
 		tx.TxHash = "hash-failed"
 		tx.ResultXDR = "failed-result-xdr"
 		tx.ResultCode = "contract_error"
-		txm.transactionsLock.Unlock()
+		tx.mu.Unlock()
 
 		result, err := txm.GetTransactionResult(txID)
 		require.NoError(t, err)
@@ -646,11 +654,13 @@ func TestStellarTxm_GetTransactionFee(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		txm.transactionsLock.Lock()
+		txm.transactionsMapLock.RLock()
 		tx := txm.transactions[txID]
+		txm.transactionsMapLock.RUnlock()
+		tx.mu.Lock()
 		tx.Status = commontypes.Finalized
 		tx.Fee = big.NewInt(12345)
-		txm.transactionsLock.Unlock()
+		tx.mu.Unlock()
 
 		fee, err := txm.GetTransactionFee(txID)
 		require.NoError(t, err)
@@ -1208,7 +1218,7 @@ func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing
 	require.NoError(t, err)
 
 	retried := txm.maybeRetry(t.Context(), &UnconfirmedTx{
-		Tx:   &StellarTx{ID: "retry", Attempt: 0},
+		Tx:   &StellarTx{ID: "retry"},
 		Hash: "h",
 	}, RetryReasonTimedOut)
 	assert.False(t, retried, "with a full broadcast buffer maybeRetry should not block or drop a retry")
@@ -1267,14 +1277,16 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 		return err == nil && st == commontypes.Finalized
 	}, 5*time.Second, 20*time.Millisecond)
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	tracked := txm.transactions[txID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 	require.NotNil(t, tracked)
+	tracked.mu.RLock()
 	assert.Equal(t, big.NewInt(40_200), tracked.Fee)
 	assert.Equal(t, int64(1_700_000_000), tracked.LedgerCloseTime)
 	assert.Equal(t, resultB64, tracked.ResultXDR)
 	assert.Equal(t, metaB64, tracked.ResultMetaXDR)
+	tracked.mu.RUnlock()
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
@@ -1311,17 +1323,19 @@ func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 
 	inject := func(id string, status commontypes.TransactionStatus, terminalTime time.Time) {
 		tx := &StellarTx{
-			ID:           id,
-			Status:       status,
-			TerminalTime: terminalTime,
-			Done:         make(chan struct{}),
+			ID:   id,
+			Done: make(chan struct{}),
 		}
+		tx.mu.Lock()
+		tx.Status = status
+		tx.TerminalTime = terminalTime
+		tx.mu.Unlock()
 		if isTerminalStatus(status) {
 			close(tx.Done)
 		}
-		txm.transactionsLock.Lock()
+		txm.transactionsMapLock.Lock()
 		txm.transactions[id] = tx
-		txm.transactionsLock.Unlock()
+		txm.transactionsMapLock.Unlock()
 	}
 
 	inject("inflight-pending", commontypes.Pending, time.Time{})
@@ -1333,14 +1347,14 @@ func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 
 	txm.pruneTerminal()
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	_, hasInflightPending := txm.transactions["inflight-pending"]
 	_, hasInflightUnconfirmed := txm.transactions["inflight-unconfirmed"]
 	_, hasTerminalNoTime := txm.transactions["terminal-no-time"]
 	_, hasTerminalFresh := txm.transactions["terminal-fresh"]
 	_, hasExpiredFinalized := txm.transactions["terminal-expired-finalized"]
 	_, hasExpiredFailed := txm.transactions["terminal-expired-failed"]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 
 	assert.True(t, hasInflightPending, "in-flight Pending tx must not be pruned")
 	assert.True(t, hasInflightUnconfirmed, "in-flight Unconfirmed tx must not be pruned")
@@ -1360,17 +1374,17 @@ func TestStellarTxm_TerminalTime_SetOnFirstTerminalWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	tx := &StellarTx{ID: "tt-test", Done: make(chan struct{})}
-	txm.transactionsLock.Lock()
+	txm.transactionsMapLock.Lock()
 	txm.transactions[tx.ID] = tx
-	txm.transactionsLock.Unlock()
+	txm.transactionsMapLock.Unlock()
 
 	before := time.Now()
 	txm.updateTransactionStatus(tx, commontypes.Failed)
 	after := time.Now()
 
-	txm.transactionsLock.RLock()
+	tx.mu.RLock()
 	first := tx.TerminalTime
-	txm.transactionsLock.RUnlock()
+	tx.mu.RUnlock()
 
 	assert.False(t, first.Before(before), "TerminalTime should be >= time before call")
 	assert.False(t, first.After(after), "TerminalTime should be <= time after call")
@@ -1378,9 +1392,9 @@ func TestStellarTxm_TerminalTime_SetOnFirstTerminalWrite(t *testing.T) {
 	// A second terminal write must not overwrite TerminalTime.
 	txm.updateTransactionStatus(tx, commontypes.Finalized)
 
-	txm.transactionsLock.RLock()
+	tx.mu.RLock()
 	second := tx.TerminalTime
-	txm.transactionsLock.RUnlock()
+	tx.mu.RUnlock()
 
 	assert.Equal(t, first, second, "TerminalTime must not be overwritten on subsequent terminal write")
 }
@@ -1400,22 +1414,24 @@ func TestStellarTxm_PruneTerminal_LongInFlightNotPrunedUntilTerminalExpiry(t *te
 	now := time.Now()
 
 	tx := &StellarTx{
-		ID:           "long-inflight",
-		Status:       commontypes.Finalized,
-		Timestamp:    now.Add(-twoHours + time.Minute), // enqueued nearly 2h ago
-		TerminalTime: now,                                            // just finalized
-		Done:         make(chan struct{}),
+		ID:        "long-inflight",
+		Timestamp: now.Add(-twoHours + time.Minute), // enqueued nearly 2h ago
+		Done:      make(chan struct{}),
 	}
+	tx.mu.Lock()
+	tx.Status = commontypes.Finalized
+	tx.TerminalTime = now // just finalized
+	tx.mu.Unlock()
 	close(tx.Done)
-	txm.transactionsLock.Lock()
+	txm.transactionsMapLock.Lock()
 	txm.transactions[tx.ID] = tx
-	txm.transactionsLock.Unlock()
+	txm.transactionsMapLock.Unlock()
 
 	txm.pruneTerminal()
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	_, stillPresent := txm.transactions["long-inflight"]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 
 	assert.True(t, stillPresent, "tx that just finalized must not be pruned even if enqueued long ago")
 }
@@ -1436,20 +1452,22 @@ func TestStellarTxm_PruneLoop_RunsWhenIntervalPositive(t *testing.T) {
 	defer txm.Close()
 
 	tx := &StellarTx{
-		ID:           "prune-loop-tx",
-		Status:       commontypes.Finalized,
-		TerminalTime: time.Now().Add(-time.Second), // expired: 1s ago, expiration window = 0
-		Done:         make(chan struct{}),
+		ID:   "prune-loop-tx",
+		Done: make(chan struct{}),
 	}
+	tx.mu.Lock()
+	tx.Status = commontypes.Finalized
+	tx.TerminalTime = time.Now().Add(-time.Second) // expired: 1s ago, expiration window = 0
+	tx.mu.Unlock()
 	close(tx.Done)
-	txm.transactionsLock.Lock()
+	txm.transactionsMapLock.Lock()
 	txm.transactions[tx.ID] = tx
-	txm.transactionsLock.Unlock()
+	txm.transactionsMapLock.Unlock()
 
 	require.Eventually(t, func() bool {
-		txm.transactionsLock.RLock()
+		txm.transactionsMapLock.RLock()
 		_, present := txm.transactions["prune-loop-tx"]
-		txm.transactionsLock.RUnlock()
+		txm.transactionsMapLock.RUnlock()
 		return !present
 	}, 2*time.Second, 25*time.Millisecond, "pruneLoop should have evicted the expired terminal tx")
 }
@@ -1470,15 +1488,15 @@ func TestStellarTxm_PruneImmediateWhenIntervalZero(t *testing.T) {
 		ID:   "immediate-prune-tx",
 		Done: make(chan struct{}),
 	}
-	txm.transactionsLock.Lock()
+	txm.transactionsMapLock.Lock()
 	txm.transactions[tx.ID] = tx
-	txm.transactionsLock.Unlock()
+	txm.transactionsMapLock.Unlock()
 
 	txm.updateTransactionStatus(tx, commontypes.Finalized)
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	_, stillPresent := txm.transactions["immediate-prune-tx"]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 
 	assert.False(t, stillPresent, "terminal tx must be evicted immediately when PruneInterval==0")
 }
@@ -1513,14 +1531,16 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 		return err == nil && st == commontypes.Failed
 	}, 5*time.Second, 20*time.Millisecond)
 
-	txm.transactionsLock.RLock()
+	txm.transactionsMapLock.RLock()
 	tracked := txm.transactions[txID]
-	txm.transactionsLock.RUnlock()
+	txm.transactionsMapLock.RUnlock()
 	require.NotNil(t, tracked)
-	assert.Equal(t, uint64(0), tracked.Attempt)
+	assert.Equal(t, uint64(0), tracked.Attempt.Load())
+	tracked.mu.RLock()
 	assert.Equal(t, int64(1_700_000_001), tracked.LedgerCloseTime)
 	assert.Equal(t, resultB64, tracked.ResultXDR)
 	assert.Equal(t, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped.String(), tracked.ResultCode)
+	tracked.mu.RUnlock()
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
@@ -1534,4 +1554,129 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 	store := txm.accountStore.GetTxStore(testAddress)
 	require.NotNil(t, store)
 	assert.Equal(t, int64(102), store.GetNextSequence(), "on-chain FAILED consumed sequence 101, so the next tx should use 102")
+}
+
+// --- Concurrency test ---
+//
+// TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs runs concurrent
+// GetTransactionResult/GetStatus readers and updateTransaction* writers on different
+// txs, plus a concurrent pruneTerminal, to verify no deadlock and no data races.
+func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{}
+	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+
+	const numTxs = 20
+
+	// Inject txs directly into the map (bypass Enqueue/broadcastChan so the
+	// broadcast loop never touches them).
+	txIDs := make([]string, numTxs)
+	txs := make([]*StellarTx, numTxs)
+	for i := 0; i < numTxs; i++ {
+		id := fmt.Sprintf("concurrency-tx-%d", i)
+		tx := &StellarTx{
+			ID:   id,
+			Done: make(chan struct{}),
+		}
+		tx.mu.Lock()
+		tx.Status = commontypes.Pending
+		tx.mu.Unlock()
+		txm.transactionsMapLock.Lock()
+		txm.transactions[id] = tx
+		txm.transactionsMapLock.Unlock()
+		txIDs[i] = id
+		txs[i] = tx
+	}
+
+	// Writers update non-terminal fields so txs stay in the map for the full test
+	// (a terminal status would evict via maybeEvictTerminalTx since PruneInterval==0).
+	const writerIterations = 200
+	const numWriters = numTxs // one writer per tx
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	wg.Add(numWriters)
+	for i := 0; i < numWriters; i++ {
+		tx := txs[i]
+		go func() {
+			defer wg.Done()
+			fee := big.NewInt(int64(i + 1))
+			for j := 0; j < writerIterations; j++ {
+				if ctx.Err() != nil {
+					return
+				}
+				txm.updateTransactionFee(tx, fee)
+				txm.updateTransactionHash(tx, fmt.Sprintf("hash-%d-%d", i, j))
+				txm.updateTransactionResultXDR(tx, fmt.Sprintf("xdr-%d-%d", i, j))
+				txm.incrementTransactionAttempt(tx)
+			}
+		}()
+	}
+
+	// Readers target a different tx than any single writer to maximize cross-tx contention.
+	const numReaders = 20
+	const readerIterations = 200
+	readerErrs := make(chan error, numReaders*readerIterations)
+	wg.Add(numReaders)
+	for r := 0; r < numReaders; r++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < readerIterations; j++ {
+				if ctx.Err() != nil {
+					return
+				}
+				// Read a tx owned by a different writer (r % numTxs, while writer r
+				// writes txs[r]). This guarantees cross-tx lock contention.
+				idx := (r + 1) % numTxs
+				_, err := txm.GetTransactionResult(txIDs[idx])
+				if err != nil {
+					readerErrs <- fmt.Errorf("GetTransactionResult(%s): %w", txIDs[idx], err)
+					return
+				}
+				// Also exercise GetStatus (per-tx RLock on Status).
+				if _, err := txm.GetStatus(txIDs[idx]); err != nil {
+					readerErrs <- fmt.Errorf("GetStatus(%s): %w", txIDs[idx], err)
+					return
+				}
+			}
+		}()
+	}
+
+	// Concurrent pruneTerminal stresses the map→per-tx nested path.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < readerIterations; j++ {
+			if ctx.Err() != nil {
+				return
+			}
+			txm.pruneTerminal()
+		}
+	}()
+
+	// Timeout detects deadlock (goroutines exit on ctx.Err()).
+	doneCh := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(doneCh)
+	}()
+	select {
+	case <-doneCh:
+	case <-ctx.Done():
+		t.Fatalf("concurrency test timed out — likely deadlock in lock ordering")
+	}
+
+	close(readerErrs)
+	for err := range readerErrs {
+		t.Fatalf("reader error: %v", err)
+	}
+
+	// Each writer incremented Attempt exactly writerIterations times.
+	for i, tx := range txs {
+		assert.Equal(t, uint64(writerIterations), tx.Attempt.Load(),
+			"tx %d Attempt should be exactly %d after concurrent increments", i, writerIterations)
+	}
 }
