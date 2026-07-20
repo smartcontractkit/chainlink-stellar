@@ -755,6 +755,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "forwarder"
+version = "0.0.0"
+dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
+ "common-signature",
+ "ed25519-dalek",
+ "hex",
+ "sha3",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -963,20 +977,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
 dependencies = [
  "cpufeatures",
-]
-
-[[package]]
-name = "forwarder"
-version = "0.0.0"
-dependencies = [
- "common-authorization",
- "common-error",
- "common-guard",
- "common-signature",
- "ed25519-dalek",
- "hex",
- "sha3",
- "soroban-sdk",
 ]
 
 [[package]]
@@ -1278,6 +1278,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "read-fixture"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]
