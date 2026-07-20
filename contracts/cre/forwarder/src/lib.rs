@@ -42,8 +42,8 @@ const FORWARDER_METADATA_LENGTH: u32 = 45;
 const REPORT_CONTEXT_LENGTH: u32 = 96;
 
 // Storage TTL constants (ledger counts; 1 ledger ≈ 5 s on Mainnet).
-const BUMP_FOR_60_DAYS: u32 = 1_036_800; // ~60 days
-const BUMP_AFTER_30_DAYS: u32 = 518_400; // ~30 days
+const BUMP_AFTER_3_DAYS: u32 = 51_840; // ~3 days
+const BUMP_FOR_1_DAY: u32 = 17_280;
 
 #[contract]
 pub struct KeystoneForwarder;
@@ -112,7 +112,7 @@ impl KeystoneForwarder {
         env.storage().instance().set(&INITIALIZED, &true);
         env.storage()
             .instance()
-            .extend_ttl(BUMP_AFTER_30_DAYS, BUMP_FOR_60_DAYS);
+            .extend_ttl(BUMP_AFTER_3_DAYS, BUMP_FOR_1_DAY);
         Ok(())
     }
 
@@ -491,12 +491,6 @@ fn dispatch_to_receiver(
         let args = (metadata.clone(), validated_report.clone()).into_val(env);
         let call =
             env.try_invoke_contract::<(), InvokeError>(receiver, &symbol_short!("on_report"), args);
-
-        // try_invoke_contract -> Result<Result<R, E>, InvokeError>:
-        //   Ok(Ok(()))                — receiver returned cleanly
-        //   Ok(Err(_))                — receiver returned Result::Err  ┐
-        //   Err(Ok(InvokeError::*))   — receiver panicked              ├─ retryable
-        //   Err(Err(_))               — host-level (missing on_report symbol, etc.) → terminal
         match call {
             Ok(Ok(())) => TransmissionState::Succeeded,
             Ok(Err(_)) | Err(Ok(_)) => TransmissionState::Failed,
@@ -508,7 +502,7 @@ fn dispatch_to_receiver(
     env.storage().persistent().set(&key, &tx);
     env.storage()
         .persistent()
-        .extend_ttl(&key, BUMP_AFTER_30_DAYS, BUMP_FOR_60_DAYS);
+        .extend_ttl(&key, BUMP_AFTER_3_DAYS, BUMP_FOR_1_DAY);
 
     Ok(state == TransmissionState::Succeeded)
 }
