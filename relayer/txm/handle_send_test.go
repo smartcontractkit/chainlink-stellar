@@ -105,19 +105,23 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
 		retriedTx := &StellarTx{
-			ID:            "retried",
-			FromAddress:   testAddress,
-			ResultXDR:     "old-result",
-			ResultMetaXDR: "old-meta",
-			ResultCode:    "old-code",
+			ID:          "retried",
+			FromAddress: testAddress,
 		}
+		retriedTx.mu.Lock()
+		retriedTx.ResultXDR = "old-result"
+		retriedTx.ResultMetaXDR = "old-meta"
+		retriedTx.ResultCode = "old-code"
+		retriedTx.mu.Unlock()
 		acc, fatal, reason := s.handleSendResult(ctx, retriedTx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "a1"}, 1, store, 9)
 		require.True(t, acc)
 		require.False(t, fatal)
 		require.Empty(t, reason)
+		retriedTx.mu.RLock()
 		assert.Empty(t, retriedTx.ResultXDR)
 		assert.Empty(t, retriedTx.ResultMetaXDR)
 		assert.Empty(t, retriedTx.ResultCode)
+		retriedTx.mu.RUnlock()
 	})
 
 	t.Run(stellarcore.TXStatusDuplicate, func(t *testing.T) {

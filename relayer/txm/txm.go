@@ -46,15 +46,13 @@ type StellarTxm struct {
 	metrics    TxmMetrics
 	feeStrat   FeeStrategy
 
-	// transactions + transactionsLock guard both the tx ID → *StellarTx map and
-	// many per-tx field updates (status, hash, fee, XDR, attempt). That makes
-	// this mutex a universal coarse lock for the TXM.
+	// transactionsMapLock guards the tx ID → *StellarTx map (insert/lookup/delete/prune).
+	// Per-tx mutable fields are guarded by StellarTx.mu; Attempt/InfraAttempts are atomic.
 	//
-	// TODO: improve concurrency — e.g. reserve transactionsLock for map
-	// membership/prune only, and use per-StellarTx synchronization (or batched
-	// updates) for mutable fields so GetStatus / confirm / enqueue contend less.
-	transactions     map[string]*StellarTx
-	transactionsLock sync.RWMutex
+	// Lock ordering: map→per-tx nesting is allowed ONLY in pruneTerminal. Every other
+	// path takes the two locks non-nested to avoid deadlock with prune.
+	transactions        map[string]*StellarTx
+	transactionsMapLock sync.RWMutex
 
 	broadcastChan chan *StellarTx
 	accountStore  *AccountStore
@@ -202,9 +200,9 @@ func (s *StellarTxm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResu
 		return nil, err
 	}
 
-	s.transactionsLock.RLock()
+	s.transactionsMapLock.RLock()
 	tx, ok := s.transactions[txID]
-	s.transactionsLock.RUnlock()
+	s.transactionsMapLock.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("transaction %s not found after enqueue", txID)
 	}
@@ -220,13 +218,12 @@ func (s *StellarTxm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResu
 }
 
 func (s *StellarTxm) txResult(tx *StellarTx) *TxResult {
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
-
 	return s.txResultLocked(tx)
 }
 
 func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
+	tx.mu.RLock()
+	defer tx.mu.RUnlock()
 	result := &TxResult{
 		ID:              tx.ID,
 		Hash:            tx.TxHash,
@@ -251,15 +248,15 @@ func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (string, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, nil)
 
-	s.transactionsLock.Lock()
+	s.transactionsMapLock.Lock()
 	if _, exists := s.transactions[tx.ID]; exists {
-		s.transactionsLock.Unlock()
+		s.transactionsMapLock.Unlock()
 		ctxLogger.Debugw("enqueue idempotent: tx id already present, not re-enqueueing", "txID", tx.ID)
 		s.closeDone(tx)
 		return tx.ID, nil
 	}
 	s.transactions[tx.ID] = tx
-	s.transactionsLock.Unlock()
+	s.transactionsMapLock.Unlock()
 
 	// Fast path: channel has space.
 	select {
@@ -292,9 +289,9 @@ func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (str
 		return tx.ID, nil
 	default:
 		// Concurrent enqueues refilled the slot. Fall back to dropping the new tx.
-		s.transactionsLock.Lock()
+		s.transactionsMapLock.Lock()
 		delete(s.transactions, tx.ID)
-		s.transactionsLock.Unlock()
+		s.transactionsMapLock.Unlock()
 		s.metrics.IncrementDroppedTxs(ctx, DropReasonChannelFullNewRejected)
 		ctxLogger.Errorw("broadcast channel still full after eviction, dropping new tx", "txID", tx.ID)
 		return "", fmt.Errorf("broadcast channel full, tx %s dropped", tx.ID)
@@ -309,16 +306,18 @@ func (s *StellarTxm) dropOldestForBackpressure(ctx context.Context, dropped *Ste
 	if dropped == nil {
 		return
 	}
-	s.transactionsLock.Lock()
+	s.transactionsMapLock.Lock()
 	ok := false
 	if cur, exists := s.transactions[dropped.ID]; exists && cur == dropped {
-		dropped.ResultCode = string(DropReasonChannelFullOldestEvicted)
 		ok = true
 	}
-	s.transactionsLock.Unlock()
+	s.transactionsMapLock.Unlock()
 	if !ok {
 		return
 	}
+	dropped.mu.Lock()
+	dropped.ResultCode = string(DropReasonChannelFullOldestEvicted)
+	dropped.mu.Unlock()
 
 	s.updateTransactionStatus(dropped, commontypes.Failed)
 	s.metrics.IncrementDroppedTxs(ctx, DropReasonChannelFullOldestEvicted)
@@ -336,12 +335,14 @@ func (s *StellarTxm) GetStatus(transactionID string) (commontypes.TransactionSta
 		return commontypes.Unknown, errors.New("empty transaction ID")
 	}
 
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
+	s.transactionsMapLock.RLock()
 	tx, ok := s.transactions[transactionID]
+	s.transactionsMapLock.RUnlock()
 	if !ok {
 		return commontypes.Unknown, errors.New("no such transaction")
 	}
+	tx.mu.RLock()
+	defer tx.mu.RUnlock()
 	return tx.Status, nil
 }
 
@@ -350,13 +351,12 @@ func (s *StellarTxm) GetTransactionResult(transactionID string) (*TxResult, erro
 		return nil, errors.New("empty transaction ID")
 	}
 
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
+	s.transactionsMapLock.RLock()
 	tx, ok := s.transactions[transactionID]
+	s.transactionsMapLock.RUnlock()
 	if !ok {
 		return nil, errors.New("no such transaction")
 	}
-
 	return s.txResultLocked(tx), nil
 }
 
@@ -365,12 +365,14 @@ func (s *StellarTxm) GetTransactionFee(transactionID string) (*big.Int, error) {
 		return nil, errors.New("empty transaction ID")
 	}
 
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
+	s.transactionsMapLock.RLock()
 	tx, ok := s.transactions[transactionID]
+	s.transactionsMapLock.RUnlock()
 	if !ok {
 		return nil, errors.New("no such transaction")
 	}
+	tx.mu.RLock()
+	defer tx.mu.RUnlock()
 	if tx.Status != commontypes.Finalized {
 		return nil, fmt.Errorf("transaction not finalized, current status: %v", tx.Status)
 	}
@@ -391,43 +393,38 @@ func isTerminalStatus(status commontypes.TransactionStatus) bool {
 	return status == commontypes.Finalized || status == commontypes.Failed
 }
 
-// terminalPastRetention reports whether a terminal tx has exceeded the retention
-// window. expiration may be 0 for immediate eviction (sync-prune mode).
-func terminalPastRetention(tx *StellarTx, expiration time.Duration) bool {
-	if !isTerminalStatus(tx.Status) {
-		return false
-	}
-	if tx.TerminalTime.IsZero() {
-		return false
-	}
-	return time.Since(tx.TerminalTime) >= expiration
-}
-
 func (s *StellarTxm) updateTransactionStatus(tx *StellarTx, status commontypes.TransactionStatus) {
-	s.transactionsLock.Lock()
+	tx.mu.Lock()
 	tx.Status = status
 	terminal := isTerminalStatus(status)
 	if terminal && tx.TerminalTime.IsZero() {
 		tx.TerminalTime = time.Now()
 	}
+	tx.mu.Unlock()
+
+	// Evict before closeDone. tx.mu is released first because maybeEvictTerminalTx
+	// takes transactionsMapLock — holding tx.mu across that would nest per-tx→map
+	// and deadlock with pruneTerminal (which nests map→per-tx). The Unlock also
+	// publishes terminal fields to waiters waking on closeDone.
 	if terminal {
 		s.maybeEvictTerminalTx(tx)
-	}
-	s.transactionsLock.Unlock()
-	if terminal {
 		s.closeDone(tx)
 	}
 }
 
 // maybeEvictTerminalTx removes a terminal tx when background pruning is disabled.
-// Must be called with transactionsLock held. The caller (updateTransactionStatus)
-// has already stamped TerminalTime before invoking this.
+// Must be called without transactionsMapLock or tx.mu held.
 func (s *StellarTxm) maybeEvictTerminalTx(tx *StellarTx) {
 	if s.config.PruneInterval.Duration() > 0 {
 		return
 	}
+	s.transactionsMapLock.Lock()
+	defer s.transactionsMapLock.Unlock()
+	if cur, exists := s.transactions[tx.ID]; !exists || cur != tx {
+		return
+	}
 	s.baseLogger.Debugw("maybeEvictTerminalTx: evicting terminal tx immediately",
-		"txID", tx.ID, "status", tx.Status)
+		"txID", tx.ID)
 	delete(s.transactions, tx.ID)
 }
 
@@ -447,15 +444,15 @@ func (s *StellarTxm) releaseSeqAndFailTx(ctx context.Context, txStore *TxStore, 
 }
 
 func (s *StellarTxm) markBroadcastAt(tx *StellarTx) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.BroadcastAt = time.Now()
 }
 
 func (s *StellarTxm) recordTimeUntilConfirmed(ctx context.Context, tx *StellarTx) {
-	s.transactionsLock.Lock()
+	tx.mu.RLock()
 	broadcastAt := tx.BroadcastAt
-	s.transactionsLock.Unlock()
+	tx.mu.RUnlock()
 	if broadcastAt.IsZero() {
 		return
 	}
@@ -463,14 +460,14 @@ func (s *StellarTxm) recordTimeUntilConfirmed(ctx context.Context, tx *StellarTx
 }
 
 func (s *StellarTxm) updateTransactionHash(tx *StellarTx, hash string) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.TxHash = hash
 }
 
 func (s *StellarTxm) updateTransactionFee(tx *StellarTx, fee *big.Int) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.Fee = fee
 }
 
@@ -478,51 +475,43 @@ func (s *StellarTxm) updateTransactionLedgerCloseTime(tx *StellarTx, ledgerClose
 	if ledgerCloseTime <= 0 {
 		return
 	}
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.LedgerCloseTime = ledgerCloseTime
 }
 
 func (s *StellarTxm) updateTransactionResultXDR(tx *StellarTx, resultXDR string) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.ResultXDR = resultXDR
 }
 
 func (s *StellarTxm) updateTransactionResultCode(tx *StellarTx, code string) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.ResultCode = code
 }
 
 func (s *StellarTxm) updateTransactionResultMeta(tx *StellarTx, resultMetaXDR string) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	tx.ResultMetaXDR = resultMetaXDR
 }
 
 func (s *StellarTxm) incrementTransactionAttempt(tx *StellarTx) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
-	tx.Attempt++
+	tx.Attempt.Add(1)
 }
 
 func (s *StellarTxm) getTransactionAttempt(tx *StellarTx) uint64 {
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
-	return tx.Attempt
+	return tx.Attempt.Load()
 }
 
 func (s *StellarTxm) incrementInfraAttempts(tx *StellarTx) {
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
-	tx.InfraAttempts++
+	tx.InfraAttempts.Add(1)
 }
 
 func (s *StellarTxm) getInfraAttempts(tx *StellarTx) uint64 {
-	s.transactionsLock.RLock()
-	defer s.transactionsLock.RUnlock()
-	return tx.InfraAttempts
+	return tx.InfraAttempts.Load()
 }
 
 // closeDone closes the transaction's Done channel to unblock EnqueueAndWait callers.
@@ -1050,16 +1039,25 @@ func (s *StellarTxm) pruneLoop() {
 func (s *StellarTxm) pruneTerminal() {
 	expiration := s.config.PruneTxExpiration.Duration()
 
-	s.transactionsLock.Lock()
-	defer s.transactionsLock.Unlock()
+	// The only map→per-tx nested path: safe because every other path takes the
+	// two locks non-nested, so no inverse per-tx→map ordering can deadlock with it.
+	s.transactionsMapLock.Lock()
+	defer s.transactionsMapLock.Unlock()
 
 	for id, tx := range s.transactions {
-		if !terminalPastRetention(tx, expiration) {
+		tx.mu.RLock()
+		status := tx.Status
+		terminalTime := tx.TerminalTime
+		tx.mu.RUnlock()
+		if !isTerminalStatus(status) || terminalTime.IsZero() {
 			continue
 		}
-		age := time.Since(tx.TerminalTime)
+		if time.Since(terminalTime) < expiration {
+			continue
+		}
+		age := time.Since(terminalTime)
 		s.baseLogger.Debugw("pruneTerminal: evicting expired terminal tx",
-			"txID", id, "status", tx.Status, "terminalAge", age)
+			"txID", id, "status", status, "terminalAge", age)
 		delete(s.transactions, id)
 	}
 }
