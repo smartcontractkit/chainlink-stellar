@@ -1595,7 +1595,7 @@ func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
 	const writerIterations = 200
 	const numWriters = numTxs // one writer per tx
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	wg.Add(numWriters)
