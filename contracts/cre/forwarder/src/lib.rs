@@ -42,8 +42,8 @@ const FORWARDER_METADATA_LENGTH: u32 = 45;
 const REPORT_CONTEXT_LENGTH: u32 = 96;
 
 // Storage TTL constants (ledger counts; 1 ledger ≈ 5 s on Mainnet).
-const BUMP_AFTER_3_DAYS: u32 = 51_840; // ~3 days
-const BUMP_FOR_1_DAY: u32 = 17_280;
+const TTL_THRESHOLD: u32 = 17_280; // ~1 days
+const TTL_EXTENSION: u32 = 51_840; // ~3 days
 
 #[contract]
 pub struct KeystoneForwarder;
@@ -112,7 +112,7 @@ impl KeystoneForwarder {
         env.storage().instance().set(&INITIALIZED, &true);
         env.storage()
             .instance()
-            .extend_ttl(BUMP_AFTER_3_DAYS, BUMP_FOR_1_DAY);
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTENSION);
         Ok(())
     }
 
@@ -502,7 +502,7 @@ fn dispatch_to_receiver(
     env.storage().persistent().set(&key, &tx);
     env.storage()
         .persistent()
-        .extend_ttl(&key, BUMP_AFTER_3_DAYS, BUMP_FOR_1_DAY);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTENSION);
 
     Ok(state == TransmissionState::Succeeded)
 }
