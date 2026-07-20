@@ -46,21 +46,21 @@ const TTL_THRESHOLD: u32 = 17_280; // ~1 days
 const TTL_EXTENSION: u32 = 51_840; // ~3 days
 
 #[contract]
-pub struct KeystoneForwarder;
+pub struct Forwarder;
 
 #[contractimpl]
-impl Initializable for KeystoneForwarder {
+impl Initializable for Forwarder {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
 #[contractimpl(contracttrait)]
-impl Ownable for KeystoneForwarder {
+impl Ownable for Forwarder {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
 
 // Internal helper for managing signature configurations storage
-impl SignatureConfigManager for KeystoneForwarder {
+impl SignatureConfigManager for Forwarder {
     const SIGNATURE_CONFIGS: Symbol = SIGNATURE_CONFIGS;
     const IS_PERSISTENT: bool = false;
     type Error = ForwarderError;
@@ -93,7 +93,7 @@ impl SignatureConfigManager for KeystoneForwarder {
 }
 
 #[contractimpl]
-impl KeystoneForwarder {
+impl Forwarder {
     pub fn initialize(env: Env, owner: Address) -> Result<(), ForwarderError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
@@ -117,8 +117,8 @@ impl KeystoneForwarder {
     }
 
     pub fn add_forwarder(env: Env, forwarder: Address) -> Result<(), ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
-        <KeystoneForwarder as Ownable>::require_owner(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
 
         let key = DataKey::Forwarder(forwarder.clone());
         env.storage().instance().set(&key, &true);
@@ -128,8 +128,8 @@ impl KeystoneForwarder {
     }
 
     pub fn remove_forwarder(env: Env, forwarder: Address) -> Result<(), ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
-        <KeystoneForwarder as Ownable>::require_owner(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
 
         if forwarder == env.current_contract_address() {
             panic_with_error!(&env, ForwarderError::CannotRemoveSelf);
@@ -150,8 +150,8 @@ impl KeystoneForwarder {
         f: u32,
         signers: Vec<BytesN<32>>,
     ) -> Result<(), ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
-        <KeystoneForwarder as Ownable>::require_owner(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
 
         let cfg = SignatureConfig {
             signers,
@@ -159,7 +159,7 @@ impl KeystoneForwarder {
             verification: SignatureVerificationConfig::Failure(f),
         };
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        <KeystoneForwarder as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
+        <Forwarder as SignatureConfigManager>::set_config(&env, &key, &cfg)?;
 
         ConfigSetEvent {
             don_id,
@@ -173,11 +173,11 @@ impl KeystoneForwarder {
     }
 
     pub fn clear_config(env: Env, don_id: u32, config_version: u32) -> Result<(), ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
-        <KeystoneForwarder as Ownable>::require_owner(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
 
         let key = DataKey::Config(ParsedReport::config_id(don_id, config_version));
-        <KeystoneForwarder as SignatureConfigManager>::remove_config(&env, &key);
+        <Forwarder as SignatureConfigManager>::remove_config(&env, &key);
 
         ConfigSetEvent {
             don_id,
@@ -198,7 +198,7 @@ impl KeystoneForwarder {
         signatures: Vec<Ed25519Signature>,
     ) -> Result<(), ForwarderError> {
         transmitter.require_auth();
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
 
         if raw_report.len() < METADATA_LENGTH {
             panic_with_error!(&env, ForwarderError::InvalidReport);
@@ -233,7 +233,7 @@ impl KeystoneForwarder {
         }
 
         let datakey = DataKey::Config(parsed.config_id);
-        let cfg = <KeystoneForwarder as SignatureConfigManager>::get_config(&env, &datakey)
+        let cfg = <Forwarder as SignatureConfigManager>::get_config(&env, &datakey)
             .ok_or(ForwarderError::InvalidConfig)?;
 
         // Verify that the number of signatures matches the failed tolerance threshold
@@ -282,7 +282,7 @@ impl KeystoneForwarder {
         metadata: Bytes,
         validated_report: Bytes,
     ) -> Result<bool, ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
         transmitter.require_auth();
         require_valid_forwarder(&env, &transmitter)?;
 
@@ -305,7 +305,7 @@ impl KeystoneForwarder {
     /// `ITypeAndVersion` pattern: off-chain agents can distinguish forwarder
     /// instances in a multi-version deployment without parsing the wasm.
     pub fn type_and_version(env: Env) -> String {
-        String::from_str(&env, "KeystoneForwarder 1.0.0")
+        String::from_str(&env, "Forwarder 1.0.0")
     }
 
     pub fn get_transmission_info(
@@ -314,7 +314,7 @@ impl KeystoneForwarder {
         workflow_execution_id: BytesN<32>,
         report_id: BytesN<2>,
     ) -> Result<TransmissionInfo, ForwarderError> {
-        <KeystoneForwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Initializable>::require_initialized(&env)?;
 
         let transmission_id =
             get_transmission_id(&env, &receiver, &workflow_execution_id, &report_id);

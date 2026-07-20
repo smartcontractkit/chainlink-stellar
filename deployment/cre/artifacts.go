@@ -13,6 +13,6 @@ const (
 	// ReadFixtureWasm is the CRE ReadContract test fixture (contracts/cre/test/read_fixture).
 	ReadFixtureWasm = "read_fixture.wasm"
 
-	// ForwarderWasm is the Keystone CRE forwarder (contracts/cre/forwarder).
-	ForwarderWasm = "keystone_forwarder.wasm"
+	// ForwarderWasm is the CRE forwarder (contracts/cre/forwarder).
+	ForwarderWasm = "forwarder.wasm"
 )

@@ -9,7 +9,7 @@ use soroban_sdk::{Address, Env};
 
 use crate::require_valid_forwarder;
 use crate::types::{Ed25519Signature, TransmissionState};
-use crate::{KeystoneForwarder, KeystoneForwarderClient};
+use crate::{Forwarder, ForwarderClient};
 
 // ============================================================================
 // Constants shared across test cases
@@ -184,7 +184,7 @@ pub(crate) mod mocks {
 
 pub(crate) struct Fixture<'a> {
     pub env: &'a Env,
-    pub client: KeystoneForwarderClient<'a>,
+    pub client: ForwarderClient<'a>,
     pub contract_addr: Address,
     pub owner: Address,
     pub transmitter: Address,
@@ -241,7 +241,7 @@ pub(crate) fn ordered_sigs(
     v
 }
 
-/// Deploy a fresh `KeystoneForwarder`, call `initialize`, and return a fixture
+/// Deploy a fresh `Forwarder`, call `initialize`, and return a fixture
 /// with 31 deterministic signing keys ready for config registration.
 ///
 /// Caller owns the `Env` and passes it in by reference so the returned
@@ -252,8 +252,8 @@ pub(crate) fn ordered_sigs(
 pub(crate) fn setup<'a>(env: &'a Env) -> Fixture<'a> {
     env.mock_all_auths();
 
-    let contract_addr = env.register(KeystoneForwarder, ());
-    let client = KeystoneForwarderClient::new(env, &contract_addr);
+    let contract_addr = env.register(Forwarder, ());
+    let client = ForwarderClient::new(env, &contract_addr);
 
     let owner = Address::generate(env);
     let transmitter = Address::generate(env);
@@ -549,8 +549,8 @@ fn test_call_setters_before_init_fails() {
     // (via assert_owner → ensure_initialized).
     let env = Env::default();
     env.mock_all_auths();
-    let contract_addr = env.register(KeystoneForwarder, ());
-    let client = KeystoneForwarderClient::new(&env, &contract_addr);
+    let contract_addr = env.register(Forwarder, ());
+    let client = ForwarderClient::new(&env, &contract_addr);
     // Skip initialize().
     let new_forwarder = Address::generate(&env);
     client.add_forwarder(&new_forwarder);
@@ -930,7 +930,7 @@ fn test_cannot_remove_self_panics() {
 fn test_self_is_in_registry_after_initialize() {
     // initialize() auto-registers the contract's own address so that
     // report() → route() self-call passes the is_forwarder check. Matches EVM's
-    // constructor at KeystoneForwarder.sol:90 (`s_forwarders[address(this)] = true`).
+    // constructor at Forwarder.sol:90 (`s_forwarders[address(this)] = true`).
     let env = Env::default();
     let fx = setup(&env);
     env.as_contract(&fx.contract_addr, || {
@@ -1678,8 +1678,8 @@ fn test_report_uninitialized_panics() {
     // (via the ensure_initialized check in report()).
     let env = Env::default();
     env.mock_all_auths();
-    let contract_addr = env.register(KeystoneForwarder, ());
-    let client = KeystoneForwarderClient::new(&env, &contract_addr);
+    let contract_addr = env.register(Forwarder, ());
+    let client = ForwarderClient::new(&env, &contract_addr);
 
     // Skip initialize(); call report directly.
     let transmitter = Address::generate(&env);
@@ -1782,11 +1782,11 @@ fn test_report_against_cleared_v1_fails() {
 
 #[test]
 fn test_type_and_version_returns_constant() {
-    // type_and_version() returns "KeystoneForwarder 1.0.0".
+    // type_and_version() returns "Forwarder 1.0.0".
     let env = Env::default();
     let fx = setup(&env);
     let v = fx.client.type_and_version();
-    let expected = soroban_sdk::String::from_str(&env, "KeystoneForwarder 1.0.0");
+    let expected = soroban_sdk::String::from_str(&env, "Forwarder 1.0.0");
     assert_eq!(v, expected);
 }
 
