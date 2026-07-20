@@ -13,13 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	"github.com/smartcontractkit/chainlink-common/pkg/config"
+	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
@@ -43,7 +45,7 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 		},
 	}
 
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
@@ -98,9 +100,9 @@ func TestStellarTxm_BroadcastPipeline_SimulateError(t *testing.T) {
 		simulateErr:         fmt.Errorf("RPC down"),
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSimulateAttempts: ptr(uint(2)),
-		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:    clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -157,9 +159,9 @@ func TestStellarTxm_BroadcastPipeline_SimulateRPCErrorRetriesThenSucceeds(t *tes
 		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSimulateAttempts: ptr(uint(2)),
-		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:    clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -198,9 +200,9 @@ func TestStellarTxm_BroadcastPipeline_TryAgainLater(t *testing.T) {
 		},
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSubmitRetryAttempts: ptr(uint(2)),
-		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:       clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -292,7 +294,7 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 
 	wrapper := &mockWrapper{mockRPCClient: mock, sendFn: mockSend}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSubmitRetryAttempts: ptr(uint(3)),
 	}
 
@@ -353,9 +355,9 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds
 		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSubmitRetryAttempts: ptr(uint(2)),
-		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:       clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -389,9 +391,9 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget
 		return protocolrpc.SendTransactionResponse{}, fmt.Errorf("rpc submit failed")
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSubmitRetryAttempts: ptr(uint(2)),
-		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:       clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -424,7 +426,7 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
 	defer txm.Close()
@@ -455,9 +457,9 @@ func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
 		simulateCalls.Add(1)
 		return protocolrpc.SimulateTransactionResponse{Error: "soroban simulation failed"}, nil
 	}
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSimulateAttempts: ptr(uint(3)),
-		SubmitRetryDelay:    config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:    clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -511,9 +513,9 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxSubmitRetryAttempts: ptr(uint(1)),
-		SubmitRetryDelay:       config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:       clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -548,7 +550,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleInvalidXDRFails(t *testing.
 			RestorePreamble: &preamble,
 		},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
 	defer txm.Close()
@@ -591,7 +593,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
 	}
 
-	cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
+	cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
@@ -616,7 +618,7 @@ func TestStellarTxm_BroadcastPipeline_SigningError(t *testing.T) {
 		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 	}
 	ks := &mockKeystore{signFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) { return nil, fmt.Errorf("sign failed") }}
-	txm, err := New(logger.Test(t), ks, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), ks, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
 	defer txm.Close()
@@ -646,7 +648,7 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 		}
 		return c, nil
 	}
-	cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
+	cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
@@ -672,9 +674,9 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t *testing.T) {
 	t.Parallel()
 	getClient := func(context.Context) (RPCClient, error) { return nil, fmt.Errorf("no rpc") }
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxGetClientRetryAttempts: ptr(uint64(2)),
-		SubmitRetryDelay:          config.MustNewDuration(10 * time.Millisecond),
+		SubmitRetryDelay:          clconfig.MustNewDuration(10 * time.Millisecond),
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -706,7 +708,7 @@ func TestStellarTxm_BroadcastPipeline_DUPLICATE(t *testing.T) {
 		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "dup-h"},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
 	defer txm.Close()
@@ -746,13 +748,13 @@ func TestStellarTxm_HandleRestore_RestoreTotalNotInflatedByRetry(t *testing.T) {
 		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "restore-h"}, nil
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxRestoreAttempts: ptr(uint(2)),
 		// 0 → PollTransaction's WithTimeout(ctx, 0) is already past
 		// deadline, so it returns "poll timed out" immediately and the
 		// loop falls into its `continue` path without wall-clock delay.
 		TxTimeoutSecs:    ptr(int64(0)),
-		SubmitRetryDelay: config.MustNewDuration(1 * time.Millisecond),
+		SubmitRetryDelay: clconfig.MustNewDuration(1 * time.Millisecond),
 	}
 
 	initiatedBefore := testutil.ToFloat64(promStellarTxmRestore.WithLabelValues(chainID, string(RestoreOutcomeInitiated)))
@@ -807,10 +809,10 @@ func TestStellarTxm_HandleRestore_RestoreTotalCountsOnceOnSuccess(t *testing.T) 
 		},
 	}
 
-	cfg := Config{
+	cfg := config.TxManagerConfig{
 		MaxRestoreAttempts: ptr(uint(2)),
 		TxTimeoutSecs:      ptr(int64(5)),
-		SubmitRetryDelay:   config.MustNewDuration(1 * time.Millisecond),
+		SubmitRetryDelay:   clconfig.MustNewDuration(1 * time.Millisecond),
 	}
 
 	initiatedBefore := testutil.ToFloat64(promStellarTxmRestore.WithLabelValues(chainID, string(RestoreOutcomeInitiated)))
@@ -841,7 +843,7 @@ func TestStellarTxm_BuildPreliminaryTx_SeqZero_DoesNotProduceNegativeSequence(t 
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	tx := &StellarTx{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}}
@@ -885,7 +887,7 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailuresDoNotStealLifecycleBudget
         }
         return c, nil
     }
-    cfg := Config{SubmitRetryDelay: config.MustNewDuration(10 * time.Millisecond)}
+    cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
     txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
     require.NoError(t, err)
     require.NoError(t, txm.Start(t.Context()))

@@ -14,6 +14,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 type fakeInvokerTxm struct {
@@ -162,7 +164,7 @@ func TestStellarTxm_SimulateDefaultsFromAddress(t *testing.T) {
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 9},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 5},
 	}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	res, err := txm.Simulate(t.Context(), TxRequest{

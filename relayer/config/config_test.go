@@ -7,8 +7,6 @@ import (
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 
 func TestNewDecodedTOMLConfig_TxManagerOverrides(t *testing.T) {
@@ -28,10 +26,11 @@ BroadcastChanSize = 77
 	require.NotNil(t, cfg.TxManager.BroadcastChanSize)
 	require.Equal(t, uint(77), *cfg.TxManager.BroadcastChanSize)
 
+	// SetDefaults merges TXM defaults via SetFrom, so no manual Resolve() needed.
 	txmCfg := cfg.TxManager
-	txmCfg.Resolve()
 	require.Equal(t, uint(77), *txmCfg.BroadcastChanSize)
-	require.Equal(t, *txm.DefaultConfigSet.MaxInclusionFee, *txmCfg.MaxInclusionFee,
+	require.NotNil(t, txmCfg.MaxInclusionFee, "unset TXM fields should be resolved by SetDefaults")
+	require.Equal(t, *Defaults().TxManager.MaxInclusionFee, *txmCfg.MaxInclusionFee,
 		"unset TxManager fields should still resolve to txm defaults")
 }
 
@@ -90,4 +89,56 @@ NewHeadsPollInterval = "1s"
 		require.Equal(t, "RoundRobin", cfg.MultiNode.SelectionMode())
 		require.Equal(t, 1*time.Second, cfg.MultiNode.NewHeadsPollInterval())
 	})
+}
+
+// TestSetDefaults_Idempotent ensures double SetDefaults doesn't clobber overrides.
+func TestSetDefaults_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	raw := `
+ChainID = "` + chain_selectors.STELLAR_TESTNET.ChainID + `"
+[[Nodes]]
+Name = "primary"
+URL = "https://example.invalid"
+
+[TxManager]
+BroadcastChanSize = 77
+[MultiNode]
+SelectionMode = "RoundRobin"
+`
+	cfg, err := NewDecodedTOMLConfig(raw)
+	require.NoError(t, err)
+
+	// Snapshot the resolved state after SetDefaults (inside NewDecodedTOMLConfig).
+	firstBroadcast := *cfg.TxManager.BroadcastChanSize
+	firstSelection := cfg.MultiNode.SelectionMode()
+	firstMaxInclusion := *cfg.TxManager.MaxInclusionFee
+
+	// Call SetDefaults again.
+	cfg.SetDefaults()
+
+	// User overrides survive; defaults are unchanged.
+	require.Equal(t, firstBroadcast, *cfg.TxManager.BroadcastChanSize, "user override must survive double SetDefaults")
+	require.Equal(t, firstSelection, cfg.MultiNode.SelectionMode(), "user override must survive double SetDefaults")
+	require.Equal(t, firstMaxInclusion, *cfg.TxManager.MaxInclusionFee, "default must be stable across double SetDefaults")
+}
+
+// TestSetDefaults_FillsSimulationHints ensures SetDefaults fills built-in hints
+// (docs.toml has empty arrays; Resolve fills the built-ins).
+func TestSetDefaults_FillsSimulationHints(t *testing.T) {
+	t.Parallel()
+
+	raw := `
+ChainID = "` + chain_selectors.STELLAR_TESTNET.ChainID + `"
+[[Nodes]]
+Name = "primary"
+URL = "https://example.invalid"
+`
+	cfg, err := NewDecodedTOMLConfig(raw)
+	require.NoError(t, err)
+	require.NotEmpty(t, cfg.TxManager.SimulationTerminalHints,
+		"SetDefaults should fill built-in simulation hints")
+	require.Contains(t, cfg.TxManager.SimulationTerminalHints, "trapped")
+	require.NotEmpty(t, cfg.TxManager.SimulationRetryableHints)
+	require.Contains(t, cfg.TxManager.SimulationRetryableHints, "timeout")
 }

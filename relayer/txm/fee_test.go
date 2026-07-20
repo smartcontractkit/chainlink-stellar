@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 func defaultFeeStrategy() FeeStrategy {
@@ -100,7 +102,7 @@ func TestFeeStrategy_CalculateRestoreFee_ZeroBuffer(t *testing.T) {
 func TestFeeStrategy_NewFromConfig(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfigSet
+	cfg := config.Defaults().TxManager
 	cfg.Resolve()
 	fs := NewFeeStrategyFromConfig(cfg)
 

@@ -1,15 +1,13 @@
-package txm
+package config
 
 import (
-	"time"
-
-	"github.com/smartcontractkit/chainlink-common/pkg/config"
+	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
 func ptr[T any](v T) *T { return &v }
 
 // builtinSimulationTerminalHints and builtinSimulationRetryableHints are the
-// defaults for Config.SimulationTerminalHints / SimulationRetryableHints (see
+// defaults for TxManagerConfig.SimulationTerminalHints / SimulationRetryableHints (see
 // isRetryableSimulationError in broadcast.go).
 var (
 	builtinSimulationTerminalHints = []string{
@@ -40,13 +38,13 @@ var (
 	}
 )
 
-// Config defines the Stellar transaction manager configuration.
+// TxManagerConfig defines the Stellar transaction manager configuration.
 // Pointer fields are used for TOML deserialization — nil means "not set by user".
 // After calling Resolve(), scalar pointer fields are non-nil; simulation hint
 // slices are non-empty (built-in defaults when unset).
-type Config struct {
-	BroadcastChanSize   *uint            `toml:"BroadcastChanSize"`
-	ConfirmPollInterval *config.Duration `toml:"ConfirmPollInterval"`
+type TxManagerConfig struct {
+	BroadcastChanSize   *uint              `toml:"BroadcastChanSize"`
+	ConfirmPollInterval *clconfig.Duration `toml:"ConfirmPollInterval"`
 
 	// Fee strategy: Stellar fees = InclusionFee + ResourceFee.
 	// Only the inclusion fee is bumped on retries; the resource fee is deterministic from simulation.
@@ -58,17 +56,17 @@ type Config struct {
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee P50/P90 in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
-	FeeStatsPollInterval *config.Duration `toml:"FeeStatsPollInterval"`
+	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
 
 	// Retry & timeout
-	MaxSimulateAttempts    *uint            `toml:"MaxSimulateAttempts"`
-	MaxSubmitRetryAttempts *uint            `toml:"MaxSubmitRetryAttempts"`
-	SubmitRetryDelay       *config.Duration `toml:"SubmitRetryDelay"`
-	TxTimeoutSecs          *int64           `toml:"TxTimeoutSecs"`
-	LedgerBoundsOffset     *uint32          `toml:"LedgerBoundsOffset"`
-	MaxTxRetryAttempts     *uint64          `toml:"MaxTxRetryAttempts"`
-	MaxGetClientRetryAttempts *uint64 `toml:"MaxGetClientRetryAttempts"`
-	MaxRestoreAttempts     *uint            `toml:"MaxRestoreAttempts"`
+	MaxSimulateAttempts       *uint              `toml:"MaxSimulateAttempts"`
+	MaxSubmitRetryAttempts    *uint              `toml:"MaxSubmitRetryAttempts"`
+	SubmitRetryDelay          *clconfig.Duration `toml:"SubmitRetryDelay"`
+	TxTimeoutSecs             *int64             `toml:"TxTimeoutSecs"`
+	LedgerBoundsOffset        *uint32            `toml:"LedgerBoundsOffset"`
+	MaxTxRetryAttempts        *uint64            `toml:"MaxTxRetryAttempts"`
+	MaxGetClientRetryAttempts *uint64            `toml:"MaxGetClientRetryAttempts"`
+	MaxRestoreAttempts        *uint              `toml:"MaxRestoreAttempts"`
 
 	// SimulationTerminalHints are matched case-insensitively as substrings
 	// against failed SimulateTransaction errors; any match means the error is
@@ -85,99 +83,76 @@ type Config struct {
 	// Set to 0 to disable the loop (no goroutine is started); terminal txs are
 	// then evicted synchronously when they reach a terminal state instead of
 	// being retained until the next periodic prune.
-	PruneInterval *config.Duration `toml:"PruneInterval"`
+	PruneInterval *clconfig.Duration `toml:"PruneInterval"`
 	// PruneTxExpiration is the minimum time a terminal tx (Finalized or Failed)
 	// is retained after reaching its terminal state before being eligible for pruning.
 	// Measured from TerminalTime. Ignored when PruneInterval is 0 (immediate eviction).
-	PruneTxExpiration *config.Duration `toml:"PruneTxExpiration"`
+	PruneTxExpiration *clconfig.Duration `toml:"PruneTxExpiration"`
 }
 
-// DefaultConfigSet is the default configuration for the Stellar Transaction Manager.
-var DefaultConfigSet = Config{
-	BroadcastChanSize:   ptr(uint(100)),
-	ConfirmPollInterval: config.MustNewDuration(3 * time.Second),
-
-	BaseInclusionFee:     ptr(int64(100)),     // 100 stroops = MinBaseFee
-	MaxInclusionFee:      ptr(int64(100_000)), // 0.01 XLM cap
-	FeeBumpMultiplier:    ptr(1.5),
-	ResourceFeeBuffer:    ptr(int64(15_000)), // ~15% buffer over MinResourceFee for typical txs
-	RestoreFeeBuffer:     ptr(int64(10_000)),
-	FeeStatsPollInterval: config.MustNewDuration(5 * time.Second),
-
-	MaxSimulateAttempts:    ptr(uint(3)),
-	MaxSubmitRetryAttempts: ptr(uint(10)),
-	SubmitRetryDelay:       config.MustNewDuration(3 * time.Second),
-	TxTimeoutSecs:          ptr(int64(300)), // 5 minutes wall-clock fallback
-	LedgerBoundsOffset:     ptr(uint32(50)), // ~5 min at 6s/ledger
-	MaxTxRetryAttempts:     ptr(uint64(5)),
-	MaxGetClientRetryAttempts: ptr(uint64(10)),
-	MaxRestoreAttempts:     ptr(uint(3)),
-
-	PruneInterval:     config.MustNewDuration(10 * time.Minute),
-	PruneTxExpiration: config.MustNewDuration(2 * time.Hour),
-}
-
-// Resolve fills nil fields with defaults from DefaultConfigSet.
+// Resolve fills nil scalar fields with defaults from docs.toml (via Defaults),
+// and always merges built-in simulation hints (additive with any user hints).
 // After calling Resolve, scalar pointer fields are non-nil; simulation hint
-// slices are non-empty when defaults apply.
-func (c *Config) Resolve() {
+// slices are non-empty.
+func (c *TxManagerConfig) Resolve() {
+	d := Defaults().TxManager
 	if c.BroadcastChanSize == nil {
-		c.BroadcastChanSize = ptr(*DefaultConfigSet.BroadcastChanSize)
+		c.BroadcastChanSize = ptr(*d.BroadcastChanSize)
 	}
 	if c.ConfirmPollInterval == nil {
-		v := *DefaultConfigSet.ConfirmPollInterval
+		v := *d.ConfirmPollInterval
 		c.ConfirmPollInterval = &v
 	}
 	if c.BaseInclusionFee == nil {
-		c.BaseInclusionFee = ptr(*DefaultConfigSet.BaseInclusionFee)
+		c.BaseInclusionFee = ptr(*d.BaseInclusionFee)
 	}
 	if c.MaxInclusionFee == nil {
-		c.MaxInclusionFee = ptr(*DefaultConfigSet.MaxInclusionFee)
+		c.MaxInclusionFee = ptr(*d.MaxInclusionFee)
 	}
 	if c.FeeBumpMultiplier == nil {
-		c.FeeBumpMultiplier = ptr(*DefaultConfigSet.FeeBumpMultiplier)
+		c.FeeBumpMultiplier = ptr(*d.FeeBumpMultiplier)
 	}
 	if c.ResourceFeeBuffer == nil {
-		c.ResourceFeeBuffer = ptr(*DefaultConfigSet.ResourceFeeBuffer)
+		c.ResourceFeeBuffer = ptr(*d.ResourceFeeBuffer)
 	}
 	if c.RestoreFeeBuffer == nil {
-		c.RestoreFeeBuffer = ptr(*DefaultConfigSet.RestoreFeeBuffer)
+		c.RestoreFeeBuffer = ptr(*d.RestoreFeeBuffer)
 	}
 	if c.FeeStatsPollInterval == nil {
-		v := *DefaultConfigSet.FeeStatsPollInterval
+		v := *d.FeeStatsPollInterval
 		c.FeeStatsPollInterval = &v
 	}
 	if c.MaxSimulateAttempts == nil {
-		c.MaxSimulateAttempts = ptr(*DefaultConfigSet.MaxSimulateAttempts)
+		c.MaxSimulateAttempts = ptr(*d.MaxSimulateAttempts)
 	}
 	if c.MaxSubmitRetryAttempts == nil {
-		c.MaxSubmitRetryAttempts = ptr(*DefaultConfigSet.MaxSubmitRetryAttempts)
+		c.MaxSubmitRetryAttempts = ptr(*d.MaxSubmitRetryAttempts)
 	}
 	if c.SubmitRetryDelay == nil {
-		v := *DefaultConfigSet.SubmitRetryDelay
+		v := *d.SubmitRetryDelay
 		c.SubmitRetryDelay = &v
 	}
 	if c.TxTimeoutSecs == nil {
-		c.TxTimeoutSecs = ptr(*DefaultConfigSet.TxTimeoutSecs)
+		c.TxTimeoutSecs = ptr(*d.TxTimeoutSecs)
 	}
 	if c.LedgerBoundsOffset == nil {
-		c.LedgerBoundsOffset = ptr(*DefaultConfigSet.LedgerBoundsOffset)
+		c.LedgerBoundsOffset = ptr(*d.LedgerBoundsOffset)
 	}
 	if c.MaxTxRetryAttempts == nil {
-		c.MaxTxRetryAttempts = ptr(*DefaultConfigSet.MaxTxRetryAttempts)
+		c.MaxTxRetryAttempts = ptr(*d.MaxTxRetryAttempts)
 	}
 	if c.MaxGetClientRetryAttempts == nil {
-		c.MaxGetClientRetryAttempts = ptr(*DefaultConfigSet.MaxGetClientRetryAttempts)
+		c.MaxGetClientRetryAttempts = ptr(*d.MaxGetClientRetryAttempts)
 	}
 	if c.MaxRestoreAttempts == nil {
-		c.MaxRestoreAttempts = ptr(*DefaultConfigSet.MaxRestoreAttempts)
+		c.MaxRestoreAttempts = ptr(*d.MaxRestoreAttempts)
 	}
 	if c.PruneInterval == nil {
-		v := *DefaultConfigSet.PruneInterval
+		v := *d.PruneInterval
 		c.PruneInterval = &v
 	}
 	if c.PruneTxExpiration == nil {
-		v := *DefaultConfigSet.PruneTxExpiration
+		v := *d.PruneTxExpiration
 		c.PruneTxExpiration = &v
 	}
 	c.SimulationTerminalHints = mergeSimulationHintLists(builtinSimulationTerminalHints, c.SimulationTerminalHints)
