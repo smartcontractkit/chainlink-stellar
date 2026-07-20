@@ -12,27 +12,27 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// KeystoneForwarderClient provides methods to interact with the KeystoneForwarder contract.
-type KeystoneForwarderClient struct {
+// ForwarderClient provides methods to interact with the Forwarder contract.
+type ForwarderClient struct {
 	invoker    bindings.Invoker
 	contractID string
 }
 
-// NewKeystoneForwarderClient creates a new KeystoneForwarderClient.
-func NewKeystoneForwarderClient(invoker bindings.Invoker, contractID string) *KeystoneForwarderClient {
-	return &KeystoneForwarderClient{
+// NewForwarderClient creates a new ForwarderClient.
+func NewForwarderClient(invoker bindings.Invoker, contractID string) *ForwarderClient {
+	return &ForwarderClient{
 		invoker:    invoker,
 		contractID: contractID,
 	}
 }
 
 // ContractID returns the contract ID.
-func (c *KeystoneForwarderClient) ContractID() string {
+func (c *ForwarderClient) ContractID() string {
 	return c.contractID
 }
 
 // Owner calls the owner function on the contract.
-func (c *KeystoneForwarderClient) Owner(ctx context.Context) (*string, error) {
+func (c *ForwarderClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "owner", args)
@@ -52,7 +52,7 @@ func (c *KeystoneForwarderClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // Route calls the route function on the contract.
-func (c *KeystoneForwarderClient) Route(ctx context.Context, transmissionId [32]byte, transmitter string, receiver string, metadata []byte, validatedReport []byte) (bool, error) {
+func (c *ForwarderClient) Route(ctx context.Context, transmissionId [32]byte, transmitter string, receiver string, metadata []byte, validatedReport []byte) (bool, error) {
 	args := []xdr.ScVal{
 		scval.Bytes32ToScVal(transmissionId),
 		scval.AddressToScVal(transmitter),
@@ -78,7 +78,7 @@ func (c *KeystoneForwarderClient) Route(ctx context.Context, transmissionId [32]
 }
 
 // Report calls the report function on the contract.
-func (c *KeystoneForwarderClient) Report(ctx context.Context, transmitter string, receiver string, rawReport []byte, reportContext []byte, signatures []Ed25519Signature) error {
+func (c *ForwarderClient) Report(ctx context.Context, transmitter string, receiver string, rawReport []byte, reportContext []byte, signatures []Ed25519Signature) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(transmitter),
 		scval.AddressToScVal(receiver),
@@ -97,7 +97,7 @@ func (c *KeystoneForwarderClient) Report(ctx context.Context, transmitter string
 }
 
 // IsOwner calls the is_owner function on the contract.
-func (c *KeystoneForwarderClient) IsOwner(ctx context.Context, addr string) (bool, error) {
+func (c *ForwarderClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(addr),
 	}
@@ -119,7 +119,7 @@ func (c *KeystoneForwarderClient) IsOwner(ctx context.Context, addr string) (boo
 }
 
 // InitOwner calls the init_owner function on the contract.
-func (c *KeystoneForwarderClient) InitOwner(ctx context.Context, owner string) error {
+func (c *ForwarderClient) InitOwner(ctx context.Context, owner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 	}
@@ -134,7 +134,7 @@ func (c *KeystoneForwarderClient) InitOwner(ctx context.Context, owner string) e
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *KeystoneForwarderClient) Initialize(ctx context.Context, owner string) error {
+func (c *ForwarderClient) Initialize(ctx context.Context, owner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 	}
@@ -149,7 +149,7 @@ func (c *KeystoneForwarderClient) Initialize(ctx context.Context, owner string) 
 }
 
 // SetConfig calls the set_config function on the contract.
-func (c *KeystoneForwarderClient) SetConfig(ctx context.Context, donId uint32, configVersion uint32, f uint32, signers [][32]byte) error {
+func (c *ForwarderClient) SetConfig(ctx context.Context, donId uint32, configVersion uint32, f uint32, signers [][32]byte) error {
 	args := []xdr.ScVal{
 		scval.Uint32ToScVal(donId),
 		scval.Uint32ToScVal(configVersion),
@@ -167,7 +167,7 @@ func (c *KeystoneForwarderClient) SetConfig(ctx context.Context, donId uint32, c
 }
 
 // ClearConfig calls the clear_config function on the contract.
-func (c *KeystoneForwarderClient) ClearConfig(ctx context.Context, donId uint32, configVersion uint32) error {
+func (c *ForwarderClient) ClearConfig(ctx context.Context, donId uint32, configVersion uint32) error {
 	args := []xdr.ScVal{
 		scval.Uint32ToScVal(donId),
 		scval.Uint32ToScVal(configVersion),
@@ -183,7 +183,7 @@ func (c *KeystoneForwarderClient) ClearConfig(ctx context.Context, donId uint32,
 }
 
 // AddForwarder calls the add_forwarder function on the contract.
-func (c *KeystoneForwarderClient) AddForwarder(ctx context.Context, forwarder string) error {
+func (c *ForwarderClient) AddForwarder(ctx context.Context, forwarder string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(forwarder),
 	}
@@ -198,7 +198,7 @@ func (c *KeystoneForwarderClient) AddForwarder(ctx context.Context, forwarder st
 }
 
 // RequireOwner calls the require_owner function on the contract.
-func (c *KeystoneForwarderClient) RequireOwner(ctx context.Context) (string, error) {
+func (c *ForwarderClient) RequireOwner(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
@@ -218,7 +218,7 @@ func (c *KeystoneForwarderClient) RequireOwner(ctx context.Context) (string, err
 }
 
 // SetNewOwner calls the set_new_owner function on the contract.
-func (c *KeystoneForwarderClient) SetNewOwner(ctx context.Context, newOwner string) error {
+func (c *ForwarderClient) SetNewOwner(ctx context.Context, newOwner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 	}
@@ -233,7 +233,7 @@ func (c *KeystoneForwarderClient) SetNewOwner(ctx context.Context, newOwner stri
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.
-func (c *KeystoneForwarderClient) AcceptOwnership(ctx context.Context) error {
+func (c *ForwarderClient) AcceptOwnership(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
@@ -246,7 +246,7 @@ func (c *KeystoneForwarderClient) AcceptOwnership(ctx context.Context) error {
 }
 
 // RemoveForwarder calls the remove_forwarder function on the contract.
-func (c *KeystoneForwarderClient) RemoveForwarder(ctx context.Context, forwarder string) error {
+func (c *ForwarderClient) RemoveForwarder(ctx context.Context, forwarder string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(forwarder),
 	}
@@ -261,7 +261,7 @@ func (c *KeystoneForwarderClient) RemoveForwarder(ctx context.Context, forwarder
 }
 
 // TypeAndVersion calls the type_and_version function on the contract.
-func (c *KeystoneForwarderClient) TypeAndVersion(ctx context.Context) (string, error) {
+func (c *ForwarderClient) TypeAndVersion(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "type_and_version", args)
@@ -277,7 +277,7 @@ func (c *KeystoneForwarderClient) TypeAndVersion(ctx context.Context) (string, e
 }
 
 // GetPendingOwner calls the get_pending_owner function on the contract.
-func (c *KeystoneForwarderClient) GetPendingOwner(ctx context.Context) (*string, error) {
+func (c *ForwarderClient) GetPendingOwner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
@@ -297,7 +297,7 @@ func (c *KeystoneForwarderClient) GetPendingOwner(ctx context.Context) (*string,
 }
 
 // TransferOwnership calls the transfer_ownership function on the contract.
-func (c *KeystoneForwarderClient) TransferOwnership(ctx context.Context, newOwner string) error {
+func (c *ForwarderClient) TransferOwnership(ctx context.Context, newOwner string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 	}
@@ -312,7 +312,7 @@ func (c *KeystoneForwarderClient) TransferOwnership(ctx context.Context, newOwne
 }
 
 // GetTransmissionInfo calls the get_transmission_info function on the contract.
-func (c *KeystoneForwarderClient) GetTransmissionInfo(ctx context.Context, receiver string, workflowExecutionId [32]byte, reportId [2]byte) (*TransmissionInfo, error) {
+func (c *ForwarderClient) GetTransmissionInfo(ctx context.Context, receiver string, workflowExecutionId [32]byte, reportId [2]byte) (*TransmissionInfo, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(receiver),
 		scval.Bytes32ToScVal(workflowExecutionId),
@@ -332,7 +332,7 @@ func (c *KeystoneForwarderClient) GetTransmissionInfo(ctx context.Context, recei
 }
 
 // CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
-func (c *KeystoneForwarderClient) CancelOwnershipTransfer(ctx context.Context) error {
+func (c *ForwarderClient) CancelOwnershipTransfer(ctx context.Context) error {
 	args := []xdr.ScVal{}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
@@ -345,7 +345,7 @@ func (c *KeystoneForwarderClient) CancelOwnershipTransfer(ctx context.Context) e
 }
 
 // WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
-func (c *KeystoneForwarderClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
+func (c *ForwarderClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -422,7 +422,7 @@ func ParseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
 }
 
 // WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
-func (c *KeystoneForwarderClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
+func (c *ForwarderClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -499,7 +499,7 @@ func ParseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
 }
 
 // WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
-func (c *KeystoneForwarderClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
+func (c *ForwarderClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -566,7 +566,7 @@ func ParseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCaller
 }
 
 // WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
-func (c *KeystoneForwarderClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
+func (c *ForwarderClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -633,7 +633,7 @@ func ParseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCall
 }
 
 // WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
-func (c *KeystoneForwarderClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
+func (c *ForwarderClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -705,7 +705,7 @@ func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 }
 
 // WaitForConfigSetEvent waits for a ConfigSetEvent event.
-func (c *KeystoneForwarderClient) WaitForConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ConfigSetEvent) bool) (*ConfigSetEvent, error) {
+func (c *ForwarderClient) WaitForConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ConfigSetEvent) bool) (*ConfigSetEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -794,7 +794,7 @@ func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 }
 
 // WaitForForwarderAddedEvent waits for a ForwarderAddedEvent event.
-func (c *KeystoneForwarderClient) WaitForForwarderAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ForwarderAddedEvent) bool) (*ForwarderAddedEvent, error) {
+func (c *ForwarderClient) WaitForForwarderAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ForwarderAddedEvent) bool) (*ForwarderAddedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -861,7 +861,7 @@ func ParseForwarderAddedEvent(e protocolrpc.EventInfo) (*ForwarderAddedEvent, er
 }
 
 // WaitForReportProcessedEvent waits for a ReportProcessedEvent event.
-func (c *KeystoneForwarderClient) WaitForReportProcessedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReportProcessedEvent) bool) (*ReportProcessedEvent, error) {
+func (c *ForwarderClient) WaitForReportProcessedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReportProcessedEvent) bool) (*ReportProcessedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -943,7 +943,7 @@ func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, 
 }
 
 // WaitForForwarderRemovedEvent waits for a ForwarderRemovedEvent event.
-func (c *KeystoneForwarderClient) WaitForForwarderRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ForwarderRemovedEvent) bool) (*ForwarderRemovedEvent, error) {
+func (c *ForwarderClient) WaitForForwarderRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ForwarderRemovedEvent) bool) (*ForwarderRemovedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
