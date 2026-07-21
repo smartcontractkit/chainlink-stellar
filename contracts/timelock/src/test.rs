@@ -778,3 +778,55 @@ fn test_extend_all_ttls() {
     client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
     client.extend_all_ttls(); // permissionless — must not error
 }
+
+// -------------------------------------------------------------------------
+// A1 (not a vulnerability under protocol 23): archived DONE ops can't be replayed
+// -------------------------------------------------------------------------
+
+/// Protocol 23 (CAP-0066) auto-restores an archived persistent entry on access, so an archived
+/// DONE op still reads as `DONE_TIMESTAMP` — the `schedule_batch` replay guard
+/// (`existing_ts > 0`) blocks re-scheduling without any bloom filter or pre-read TTL bump.
+///
+/// This archives a DONE entry by bumping the ledger past its persistent TTL and confirms it
+/// still reads as DONE (not 0), which is what blocks replay. See
+/// `mcms-timelock-audit-findings.md` §A1 for the full analysis.
+#[test]
+fn test_archived_done_entry_reads_as_done_via_auto_restore() {
+    use crate::types::{TimelockDataKey, DONE_TIMESTAMP};
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let admin = Address::generate(&env);
+    let empty: SorobanVec<Address> = SorobanVec::new(&env);
+    let client = register_timelock(&env);
+    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
+
+    let calls = Calls {
+        inner: SorobanVec::new(&env),
+    };
+    let predecessor = zero_bytes32(&env);
+    let s = salt(&env, 1);
+    client.schedule_batch(&admin, &calls, &predecessor, &s, &0u64);
+    client.execute_batch(&admin, &calls, &predecessor, &s);
+    let id = client.hash_operation_batch(&calls, &predecessor, &s);
+    assert!(client.is_operation_done(&id));
+
+    // Archive the DONE entry: bump the ledger past its persistent TTL.
+    let ttl = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&TimelockDataKey::OpTime(id.clone()))
+    });
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ttl + 1);
+
+    // Auto-restoration: the archived entry is restored on access and reads as DONE (not 0),
+    // so `schedule_batch`'s `existing_ts > 0` guard would reject a re-schedule.
+    let read_back = env.as_contract(&client.address, || {
+        crate::storage::get_op_timestamp(&env, &id)
+    });
+    assert_eq!(read_back, DONE_TIMESTAMP);
+}

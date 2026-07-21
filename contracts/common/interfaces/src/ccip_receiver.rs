@@ -258,7 +258,7 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(topics = ["example_CcvCfg"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["example_CcvCfg"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipCcvConfigSetEvent {
     pub source_chain_selector: u64,
@@ -266,7 +266,7 @@ pub struct CcipCcvConfigSetEvent {
     pub optional_len: u32,
     pub optional_threshold: u32,
 }
-#[soroban_sdk::contractevent(topics = ["example_CcipMessageReceived"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["example_CcipMessageReceived"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipMessageReceivedEvent {
     pub message_id: soroban_sdk::BytesN<32>,
@@ -275,10 +275,40 @@ pub struct CcipMessageReceivedEvent {
     pub sender_len: u32,
     pub dest_token_transfers: u32,
 }
-#[soroban_sdk::contractevent(topics = ["example_RemChCfg"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["example_RemChCfg"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipRemoteChainConfiguredEvent {
     pub dest_chain_selector: u64,
     pub extra_args_len: u32,
     pub allowed_finality_config: u32,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RoleGrantedEvent {
+    pub role: soroban_sdk::Symbol,
+    pub account: soroban_sdk::Address,
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RoleRevokedEvent {
+    pub role: soroban_sdk::Symbol,
+    pub account: soroban_sdk::Address,
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OwnershipTransferStartedEvent {
+    pub previous_owner: soroban_sdk::Address,
+    pub new_owner: soroban_sdk::Address,
 }
