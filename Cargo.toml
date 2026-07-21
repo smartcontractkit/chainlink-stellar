@@ -20,6 +20,7 @@ members = [
   "contracts/router",
   "contracts/cre/forwarder",
   "contracts/cre/test/read_fixture",
+  "contracts/cre/test/receiver",
   "contracts/common/*",
 ]
 
