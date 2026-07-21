@@ -15,4 +15,7 @@ const (
 
 	// ForwarderWasm is the CRE forwarder (contracts/cre/forwarder).
 	ForwarderWasm = "forwarder.wasm"
+
+	// ReceiverWasm is the CRE test receiver (contracts/cre/test/receiver).
+	ReceiverWasm = "receiver.wasm"
 )

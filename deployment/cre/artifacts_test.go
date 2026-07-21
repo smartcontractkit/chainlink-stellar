@@ -35,6 +35,7 @@ func TestArtifactNamesMatchCargoPackages(t *testing.T) {
 	cases := map[string]string{
 		ReadFixtureWasm: filepath.Join("..", "..", "contracts", "cre", "test", "read_fixture", "Cargo.toml"),
 		ForwarderWasm:   filepath.Join("..", "..", "contracts", "cre", "forwarder", "Cargo.toml"),
+		ReceiverWasm:    filepath.Join("..", "..", "contracts", "cre", "test", "receiver", "Cargo.toml"),
 	}
 	for want, cargoPath := range cases {
 		require.Equalf(t, want, wasmNameFromCargo(t, cargoPath),
