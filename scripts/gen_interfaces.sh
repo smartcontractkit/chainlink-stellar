@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-MIN_STELLAR="27.0.0"
+MIN_STELLAR="25.1.0"
 ACTUAL_STELLAR=$(stellar --version 2>/dev/null | head -1 | awk '{print $2}')
 if [[ -z "$ACTUAL_STELLAR" ]]; then
   echo "ERROR: stellar CLI not found. Install: cargo install stellar-cli --version $MIN_STELLAR"
