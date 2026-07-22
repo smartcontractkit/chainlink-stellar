@@ -1,8 +1,10 @@
 // Package cre exposes metadata about the CRE contract WASM artifacts produced by
-// `stellar contract build` (into target/wasm32v1-none/release/).
+// `stellar contract build` (into the owning workspace's target/wasm32v1-none/release/;
+// most contracts live in the root cargo workspace, the data-feeds contracts in the
+// contracts/data-feeds nested workspace).
 //
 // These filenames are the source of truth for callers that must select a specific
-// artifact out of the shared cargo workspace target dir — e.g. the chainlink CRE test
+// artifact out of a workspace target dir — e.g. the chainlink CRE test
 // harness, which builds the workspace and then reads one wasm by name. Each constant
 // must match the corresponding Cargo package name with '-' replaced by '_'; that
 // invariant is enforced by artifacts_test.go so a Rust package rename can't silently

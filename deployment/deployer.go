@@ -365,7 +365,6 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 		return "", err
 	}
 
-	fmt.Printf("createContractInstance result: %+v\n", resultMeta)
 
 	// Extract contract ID from result
 	contractID, err := extractContractID(resultMeta)
