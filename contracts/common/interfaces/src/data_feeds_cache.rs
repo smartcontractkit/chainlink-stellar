@@ -1,13 +1,18 @@
+pub type DataId = soroban_sdk::BytesN<16>;
+pub type WorkflowOwner = soroban_sdk::BytesN<20>;
+pub type WorkflowName = soroban_sdk::BytesN<10>;
+pub type WasmHash = soroban_sdk::BytesN<32>;
+
 #[soroban_sdk::contractargs(name = "DataFeedsCacheArgs")]
 #[soroban_sdk::contractclient(name = "DataFeedsCacheClient")]
 pub trait DataFeedsCacheInterface {
-    fn upgrade(env: soroban_sdk::Env, new_wasm_hash: soroban_sdk::BytesN<32>);
+    fn upgrade(env: soroban_sdk::Env, new_wasm_hash: WasmHash);
     fn version(env: soroban_sdk::Env) -> u32;
-    fn decimals(env: soroban_sdk::Env, data_id: soroban_sdk::BytesN<16>) -> Result<u32, CacheError>;
+    fn decimals(env: soroban_sdk::Env, data_id: DataId) -> Result<u32, CacheError>;
     fn get_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError>;
     fn on_report(
@@ -18,23 +23,23 @@ pub trait DataFeedsCacheInterface {
     ) -> Result<(), CacheError>;
     fn find_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
         timestamp: u64,
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError>;
     fn description(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
     ) -> Result<soroban_sdk::String, CacheError>;
     fn round_range(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
         from: u64,
         to: u64,
     ) -> Result<soroban_sdk::Vec<RoundData>, CacheError>;
     fn latest_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
     ) -> Result<Option<RoundData>, CacheError>;
     fn __constructor(env: soroban_sdk::Env, owner: soroban_sdk::Address);
     fn is_feed_admin(env: soroban_sdk::Env, admin: soroban_sdk::Address) -> bool;
@@ -44,10 +49,10 @@ pub trait DataFeedsCacheInterface {
     ) -> Result<(), CacheError>;
     fn has_permission(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
         sender: soroban_sdk::Address,
-        workflow_owner: soroban_sdk::BytesN<20>,
-        workflow_name: soroban_sdk::BytesN<10>,
+        workflow_owner: WorkflowOwner,
+        workflow_name: WorkflowName,
     ) -> bool;
     fn recover_tokens(
         env: soroban_sdk::Env,
@@ -75,11 +80,11 @@ pub trait DataFeedsCacheInterface {
     fn remove_feed_configs(
         env: soroban_sdk::Env,
         admin: soroban_sdk::Address,
-        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
+        data_ids: soroban_sdk::Vec<DataId>,
     ) -> Result<(), CacheError>;
     fn get_feed_permissions(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: DataId,
     ) -> soroban_sdk::Vec<WorkflowPermission>;
 }
 #[soroban_sdk::contracttype(export = false)]
@@ -101,14 +106,14 @@ pub struct FeedConfig {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigEntry {
     pub config: FeedConfig,
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct WorkflowPermission {
     pub allowed_sender: soroban_sdk::Address,
-    pub allowed_workflow_name: soroban_sdk::BytesN<10>,
-    pub allowed_workflow_owner: soroban_sdk::BytesN<20>,
+    pub allowed_workflow_name: WorkflowName,
+    pub allowed_workflow_owner: WorkflowOwner,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -148,7 +153,7 @@ pub enum OwnableError {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedUpdated {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
     pub round_id: u64,
     pub timestamp: u64,
     pub answer: soroban_sdk::I256,
@@ -159,7 +164,7 @@ pub struct FeedUpdated {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaleReport {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
     pub report_ts: u64,
     pub stored_ts: u64,
 }
@@ -167,7 +172,7 @@ pub struct StaleReport {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigSet {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
     pub decimals: u32,
     pub description: soroban_sdk::String,
     pub workflow_permissions: soroban_sdk::Vec<WorkflowPermission>,
@@ -188,21 +193,21 @@ pub struct FeedAdminRemoved {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigRemoved {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["InvalidUpdatePermission"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InvalidUpdatePermission {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: DataId,
     pub sender: soroban_sdk::Address,
-    pub workflow_owner: soroban_sdk::BytesN<20>,
-    pub workflow_name: soroban_sdk::BytesN<10>,
+    pub workflow_owner: WorkflowOwner,
+    pub workflow_name: WorkflowName,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["Upgraded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
-    pub new_wasm_hash: soroban_sdk::BytesN<32>,
+    pub new_wasm_hash: WasmHash,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["TokenRecovered"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

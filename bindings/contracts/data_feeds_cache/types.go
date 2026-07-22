@@ -3,6 +3,7 @@ package data_feeds_cache
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -10,7 +11,7 @@ import (
 
 // RoundData represents the RoundData struct from the contract.
 type RoundData struct {
-	Answer    scval.I256
+	Answer    *big.Int
 	LedgerSeq uint32
 	Primary   bool
 	RoundId   uint64
@@ -20,7 +21,7 @@ type RoundData struct {
 // ToScVal converts RoundData to an xdr.ScVal for contract calls.
 func (s RoundData) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"answer":     scval.MustToScVal((s.Answer).ToScVal()),
+		"answer":     scval.MustToScVal(scval.I256ToScVal(s.Answer)),
 		"ledger_seq": scval.Uint32ToScVal(s.LedgerSeq),
 		"primary":    scval.BoolToScVal(s.Primary),
 		"round_id":   scval.Uint64ToScVal(s.RoundId),
@@ -136,14 +137,14 @@ func FeedConfigFromScVal(val xdr.ScVal) (*FeedConfig, error) {
 // FeedConfigEntry represents the FeedConfigEntry struct from the contract.
 type FeedConfigEntry struct {
 	Config FeedConfig
-	DataId [16]byte
+	DataId DataId
 }
 
 // ToScVal converts FeedConfigEntry to an xdr.ScVal for contract calls.
 func (s FeedConfigEntry) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"config":  scval.MustToScVal((s.Config).ToScVal()),
-		"data_id": scval.Bytes16ToScVal(s.DataId),
+		"data_id": scval.MustToScVal((s.DataId).ToScVal()),
 	})
 }
 
@@ -169,11 +170,11 @@ func FeedConfigEntryFromScVal(val xdr.ScVal) (*FeedConfigEntry, error) {
 			}
 			result.Config = *v
 		case "data_id":
-			v, err := scval.Bytes16FromScVal(entry.Val)
+			v, err := DataIdFromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("data_id: %w", err)
 			}
-			result.DataId = v
+			result.DataId = *v
 		}
 	}
 
@@ -183,16 +184,16 @@ func FeedConfigEntryFromScVal(val xdr.ScVal) (*FeedConfigEntry, error) {
 // WorkflowPermission represents the WorkflowPermission struct from the contract.
 type WorkflowPermission struct {
 	AllowedSender        string
-	AllowedWorkflowName  [10]byte
-	AllowedWorkflowOwner [20]byte
+	AllowedWorkflowName  WorkflowName
+	AllowedWorkflowOwner WorkflowOwner
 }
 
 // ToScVal converts WorkflowPermission to an xdr.ScVal for contract calls.
 func (s WorkflowPermission) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"allowed_sender":         scval.AddressToScVal(s.AllowedSender),
-		"allowed_workflow_name":  scval.Bytes10ToScVal(s.AllowedWorkflowName),
-		"allowed_workflow_owner": scval.Bytes20ToScVal(s.AllowedWorkflowOwner),
+		"allowed_workflow_name":  scval.MustToScVal((s.AllowedWorkflowName).ToScVal()),
+		"allowed_workflow_owner": scval.MustToScVal((s.AllowedWorkflowOwner).ToScVal()),
 	})
 }
 
@@ -218,17 +219,17 @@ func WorkflowPermissionFromScVal(val xdr.ScVal) (*WorkflowPermission, error) {
 			}
 			result.AllowedSender = v
 		case "allowed_workflow_name":
-			v, err := scval.Bytes10FromScVal(entry.Val)
+			v, err := WorkflowNameFromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("allowed_workflow_name: %w", err)
 			}
-			result.AllowedWorkflowName = v
+			result.AllowedWorkflowName = *v
 		case "allowed_workflow_owner":
-			v, err := scval.Bytes20FromScVal(entry.Val)
+			v, err := WorkflowOwnerFromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("allowed_workflow_owner: %w", err)
 			}
-			result.AllowedWorkflowOwner = v
+			result.AllowedWorkflowOwner = *v
 		}
 	}
 
@@ -291,24 +292,299 @@ var OwnableErrorMessage = map[int]string{
 	2102: "owner already set",
 }
 
-// Bound represents the Bound enum (unit-only Soroban contracttype, encoded as ScVal::U32).
-type Bound uint32
+// FeedUpdated represents the FeedUpdated event.
+// Topics: [FeedUpdated]
+type FeedUpdated struct {
+	DataId    DataId
+	RoundId   uint64
+	Timestamp uint64
+	Answer    *big.Int
+	LedgerSeq uint32
+	Primary   bool
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
 
-const (
-	BoundAtOrBefore Bound = 0
-	BoundAtOrAfter  Bound = 1
-)
+// FeedUpdatedTopic is the event topic identifier.
+const FeedUpdatedTopic = "FeedUpdated"
 
-// ToScVal converts Bound to an xdr.ScVal.
+// StaleReport represents the StaleReport event.
+// Topics: [StaleReport]
+type StaleReport struct {
+	DataId   DataId
+	ReportTs uint64
+	StoredTs uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// StaleReportTopic is the event topic identifier.
+const StaleReportTopic = "StaleReport"
+
+// FeedConfigSet represents the FeedConfigSet event.
+// Topics: [FeedConfigSet]
+type FeedConfigSet struct {
+	DataId              DataId
+	Decimals            uint32
+	Description         string
+	WorkflowPermissions []WorkflowPermission
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeedConfigSetTopic is the event topic identifier.
+const FeedConfigSetTopic = "FeedConfigSet"
+
+// FeedAdminAdded represents the FeedAdminAdded event.
+// Topics: [FeedAdminAdded]
+type FeedAdminAdded struct {
+	Admin string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeedAdminAddedTopic is the event topic identifier.
+const FeedAdminAddedTopic = "FeedAdminAdded"
+
+// FeedAdminRemoved represents the FeedAdminRemoved event.
+// Topics: [FeedAdminRemoved]
+type FeedAdminRemoved struct {
+	Admin string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeedAdminRemovedTopic is the event topic identifier.
+const FeedAdminRemovedTopic = "FeedAdminRemoved"
+
+// FeedConfigRemoved represents the FeedConfigRemoved event.
+// Topics: [FeedConfigRemoved]
+type FeedConfigRemoved struct {
+	DataId DataId
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeedConfigRemovedTopic is the event topic identifier.
+const FeedConfigRemovedTopic = "FeedConfigRemoved"
+
+// InvalidUpdatePermission represents the InvalidUpdatePermission event.
+// Topics: [InvalidUpdatePermission]
+type InvalidUpdatePermission struct {
+	DataId        DataId
+	Sender        string
+	WorkflowOwner WorkflowOwner
+	WorkflowName  WorkflowName
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// InvalidUpdatePermissionTopic is the event topic identifier.
+const InvalidUpdatePermissionTopic = "InvalidUpdatePermission"
+
+// Upgraded represents the Upgraded event.
+// Topics: [Upgraded]
+type Upgraded struct {
+	NewWasmHash WasmHash
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UpgradedTopic is the event topic identifier.
+const UpgradedTopic = "Upgraded"
+
+// TokenRecovered represents the TokenRecovered event.
+// Topics: [TokenRecovered]
+type TokenRecovered struct {
+	Token  string
+	To     string
+	Amount int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenRecoveredTopic is the event topic identifier.
+const TokenRecoveredTopic = "TokenRecovered"
+
+// OwnershipTransfer represents the OwnershipTransfer event.
+// Topics: [ownership_transfer]
+type OwnershipTransfer struct {
+	OldOwner        string
+	NewOwner        string
+	LiveUntilLedger uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferTopic is the event topic identifier.
+const OwnershipTransferTopic = "ownership_transfer"
+
+// OwnershipRenounced represents the OwnershipRenounced event.
+// Topics: [ownership_renounced]
+type OwnershipRenounced struct {
+	OldOwner string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipRenouncedTopic is the event topic identifier.
+const OwnershipRenouncedTopic = "ownership_renounced"
+
+// OwnershipTransferCompleted represents the OwnershipTransferCompleted event.
+// Topics: [ownership_transfer_completed]
+type OwnershipTransferCompleted struct {
+	NewOwner string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferCompletedTopic is the event topic identifier.
+const OwnershipTransferCompletedTopic = "ownership_transfer_completed"
+
+// Bound is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
+// Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
+// Construct by setting exactly one variant pointer to a non-nil value.
+type Bound struct {
+	AtOrBefore *BoundAtOrBefore
+	AtOrAfter  *BoundAtOrAfter
+}
+
+// BoundAtOrBefore is the unit variant Bound::AtOrBefore.
+type BoundAtOrBefore struct{}
+
+// BoundAtOrAfter is the unit variant Bound::AtOrAfter.
+type BoundAtOrAfter struct{}
+
+// ToScVal converts Bound to its Soroban discriminated-union encoding.
+// Returns an error if zero or multiple variant pointers are set.
 func (e Bound) ToScVal() (xdr.ScVal, error) {
-	return scval.Uint32ToScVal(uint32(e)), nil
+	set := 0
+	if e.AtOrBefore != nil {
+		set++
+	}
+	if e.AtOrAfter != nil {
+		set++
+	}
+	if set != 1 {
+		return xdr.ScVal{}, fmt.Errorf("Bound: expected exactly one variant set, got %d", set)
+	}
+	if e.AtOrBefore != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("AtOrBefore"),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.AtOrAfter != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("AtOrAfter"),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	return xdr.ScVal{}, fmt.Errorf("Bound: unreachable")
 }
 
 // BoundFromScVal parses an xdr.ScVal into Bound.
 func BoundFromScVal(val xdr.ScVal) (Bound, error) {
-	v, ok := val.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 for Bound enum")
+	vecPtr, ok := val.GetVec()
+	if !ok || vecPtr == nil || *vecPtr == nil {
+		return Bound{}, fmt.Errorf("expected vec for Bound enum")
 	}
-	return Bound(v), nil
+	vec := *vecPtr
+	if len(vec) < 1 {
+		return Bound{}, fmt.Errorf("Bound: empty vec")
+	}
+	tag, err := scval.SymbolFromScVal(vec[0])
+	if err != nil {
+		return Bound{}, fmt.Errorf("Bound: variant tag: %w", err)
+	}
+	switch tag {
+	case "AtOrBefore":
+		if len(vec) != 1 {
+			return Bound{}, fmt.Errorf("Bound::AtOrBefore: expected 1 elements, got %d", len(vec))
+		}
+		return Bound{AtOrBefore: &BoundAtOrBefore{}}, nil
+	case "AtOrAfter":
+		if len(vec) != 1 {
+			return Bound{}, fmt.Errorf("Bound::AtOrAfter: expected 1 elements, got %d", len(vec))
+		}
+		return Bound{AtOrAfter: &BoundAtOrAfter{}}, nil
+	default:
+		return Bound{}, fmt.Errorf("Bound: unknown variant %q", tag)
+	}
+}
+
+// DataId is an alias for BytesN<16> in the contract interface.
+type DataId [16]byte
+
+func (v DataId) ToScVal() (xdr.ScVal, error) {
+	return scval.Bytes16ToScVal([16]byte(v)), nil
+}
+
+func DataIdFromScVal(val xdr.ScVal) (*DataId, error) {
+	b, err := scval.Bytes16FromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	v := DataId(b)
+	return &v, nil
+}
+
+// WorkflowOwner is an alias for BytesN<20> in the contract interface.
+type WorkflowOwner [20]byte
+
+func (v WorkflowOwner) ToScVal() (xdr.ScVal, error) {
+	return scval.Bytes20ToScVal([20]byte(v)), nil
+}
+
+func WorkflowOwnerFromScVal(val xdr.ScVal) (*WorkflowOwner, error) {
+	b, err := scval.Bytes20FromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	v := WorkflowOwner(b)
+	return &v, nil
+}
+
+// WorkflowName is an alias for BytesN<10> in the contract interface.
+type WorkflowName [10]byte
+
+func (v WorkflowName) ToScVal() (xdr.ScVal, error) {
+	return scval.Bytes10ToScVal([10]byte(v)), nil
+}
+
+func WorkflowNameFromScVal(val xdr.ScVal) (*WorkflowName, error) {
+	b, err := scval.Bytes10FromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	v := WorkflowName(b)
+	return &v, nil
+}
+
+// WasmHash is an alias for BytesN<32> in the contract interface.
+type WasmHash [32]byte
+
+func (v WasmHash) ToScVal() (xdr.ScVal, error) {
+	return scval.Bytes32ToScVal([32]byte(v)), nil
+}
+
+func WasmHashFromScVal(val xdr.ScVal) (*WasmHash, error) {
+	b, err := scval.Bytes32FromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	v := WasmHash(b)
+	return &v, nil
 }

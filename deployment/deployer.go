@@ -240,26 +240,40 @@ func NewDeployerFromChain(ch cldfstellar.Chain, opts ...DeployerOption) (*Deploy
 // This performs two operations:
 // 1. Upload the WASM code (installContractCode)
 // 2. Deploy a contract instance (createContract)
+// It delegates to [DeployContractWithArgs] with nil constructor args.
 func (d *Deployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
+	return d.DeployContractWithArgs(ctx, wasmPath, salt, nil)
+}
+
+// DeployContractWithArgs deploys a Soroban contract whose __constructor takes
+// arguments. Upload + CreateContractV2 in two transactions, like DeployContract.
+func (d *Deployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read WASM file: %w", err)
 	}
-	return d.DeployContractBytes(ctx, wasmBytes, salt)
+	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, ctorArgs)
 }
 
 // DeployContractBytes uploads the given WASM bytes and instantiates a contract,
 // returning the contract ID. Use this when the WASM is embedded in the binary
 // (e.g. go:embed) rather than read from disk; DeployContract is the file-path
-// wrapper around it.
+// wrapper around it. It delegates to [DeployContractBytesWithArgs] with nil
+// constructor args.
 func (d *Deployer) DeployContractBytes(ctx context.Context, wasmBytes []byte, salt [32]byte) (string, error) {
+	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, nil)
+}
+
+// DeployContractBytesWithArgs uploads the given WASM bytes and instantiates a
+// contract, passing ctorArgs to its __constructor when non-empty
+// (create-contract-v2 host function).
+func (d *Deployer) DeployContractBytesWithArgs(ctx context.Context, wasmBytes []byte, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	wasmHash, err := d.uploadWASM(ctx, wasmBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload WASM: %w", err)
 	}
 
-	// Create contract instance
-	contractID, err := d.createContractInstance(ctx, wasmHash, salt)
+	contractID, err := d.createContractInstance(ctx, wasmHash, salt, ctorArgs)
 	if err != nil {
 		return "", fmt.Errorf("failed to create contract instance: %w", err)
 	}
@@ -267,21 +281,14 @@ func (d *Deployer) DeployContractBytes(ctx context.Context, wasmBytes []byte, sa
 	return contractID, nil
 }
 
-// DeployContractBytesWithConstructor uploads the given WASM bytes and instantiates
-// a contract whose __constructor takes arguments, passing constructorArgs at
-// creation time (create-contract-v2 host function).
-func (d *Deployer) DeployContractBytesWithConstructor(ctx context.Context, wasmBytes []byte, salt [32]byte, constructorArgs []xdr.ScVal) (string, error) {
-	wasmHash, err := d.uploadWASM(ctx, wasmBytes)
+// UploadContractWASM uploads a WASM file and returns its code hash. Used by
+// upgrade tooling that needs the hash of a new implementation without deploying.
+func (d *Deployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error) {
+	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to upload WASM: %w", err)
+		return xdr.Hash{}, fmt.Errorf("failed to read WASM file: %w", err)
 	}
-
-	contractID, err := d.createContractInstanceV2(ctx, wasmHash, salt, constructorArgs)
-	if err != nil {
-		return "", fmt.Errorf("failed to create contract instance: %w", err)
-	}
-
-	return contractID, nil
+	return d.uploadWASM(ctx, wasmBytes)
 }
 
 // uploadWASM uploads WASM code to the network and returns the code hash.
@@ -316,8 +323,46 @@ func (d *Deployer) uploadWASM(ctx context.Context, wasmBytes []byte) (xdr.Hash, 
 	return wasmHash, nil
 }
 
+// buildCreateContractHostFunction builds the CreateContract host function for a
+// deployer-address preimage. With ctorArgs it uses CreateContractV2 (protocol 22+),
+// which passes the args to the contract's __constructor; without, the legacy V1 form.
+func buildCreateContractHostFunction(pubKey256 xdr.Uint256, wasmHash xdr.Hash, salt [32]byte, ctorArgs []xdr.ScVal) xdr.HostFunction {
+	preimage := xdr.ContractIdPreimage{
+		Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+		FromAddress: &xdr.ContractIdPreimageFromAddress{
+			Address: xdr.ScAddress{
+				Type: xdr.ScAddressTypeScAddressTypeAccount,
+				AccountId: &xdr.AccountId{
+					Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+					Ed25519: &pubKey256,
+				},
+			},
+			Salt: xdr.Uint256(salt),
+		},
+	}
+	executable := xdr.ContractExecutable{
+		Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+		WasmHash: &wasmHash,
+	}
+	if len(ctorArgs) == 0 {
+		return xdr.HostFunction{
+			Type:           xdr.HostFunctionTypeHostFunctionTypeCreateContract,
+			CreateContract: &xdr.CreateContractArgs{ContractIdPreimage: preimage, Executable: executable},
+		}
+	}
+	return xdr.HostFunction{
+		Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+		CreateContractV2: &xdr.CreateContractArgsV2{
+			ContractIdPreimage: preimage,
+			Executable:         executable,
+			ConstructorArgs:    ctorArgs,
+		},
+	}
+}
+
 // createContractInstance creates a new contract instance from uploaded WASM code.
-func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash, salt [32]byte) (string, error) {
+// With ctorArgs it deploys via CreateContractV2, passing the args to __constructor.
+func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	// Get source account
 	sourceAccount, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -334,28 +379,7 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 
 	// Build create contract operation
 	createOp := &txnbuild.InvokeHostFunction{
-		HostFunction: xdr.HostFunction{
-			Type: xdr.HostFunctionTypeHostFunctionTypeCreateContract,
-			CreateContract: &xdr.CreateContractArgs{
-				ContractIdPreimage: xdr.ContractIdPreimage{
-					Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
-					FromAddress: &xdr.ContractIdPreimageFromAddress{
-						Address: xdr.ScAddress{
-							Type: xdr.ScAddressTypeScAddressTypeAccount,
-							AccountId: &xdr.AccountId{
-								Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-								Ed25519: &pubKey256,
-							},
-						},
-						Salt: xdr.Uint256(salt),
-					},
-				},
-				Executable: xdr.ContractExecutable{
-					Type:     xdr.ContractExecutableTypeContractExecutableWasm,
-					WasmHash: &wasmHash,
-				},
-			},
-		},
+		HostFunction:  buildCreateContractHostFunction(pubKey256, wasmHash, salt, ctorArgs),
 		SourceAccount: d.signer.Address(),
 	}
 
@@ -365,63 +389,7 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 		return "", err
 	}
 
-
 	// Extract contract ID from result
-	contractID, err := extractContractID(resultMeta)
-	if err != nil {
-		return "", fmt.Errorf("failed to extract contract ID: %w", err)
-	}
-
-	return contractID, nil
-}
-
-// createContractInstanceV2 creates a new contract instance from uploaded WASM
-// code, passing constructor arguments (create-contract-v2).
-func (d *Deployer) createContractInstanceV2(ctx context.Context, wasmHash xdr.Hash, salt [32]byte, constructorArgs []xdr.ScVal) (string, error) {
-	sourceAccount, err := d.getSourceAccount(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get source account: %w", err)
-	}
-
-	pubKeyBytes, err := strkey.Decode(strkey.VersionByteAccountID, d.signer.Address())
-	if err != nil {
-		return "", fmt.Errorf("failed to decode public key: %w", err)
-	}
-	var pubKey256 xdr.Uint256
-	copy(pubKey256[:], pubKeyBytes)
-
-	createOp := &txnbuild.InvokeHostFunction{
-		HostFunction: xdr.HostFunction{
-			Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
-			CreateContractV2: &xdr.CreateContractArgsV2{
-				ContractIdPreimage: xdr.ContractIdPreimage{
-					Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
-					FromAddress: &xdr.ContractIdPreimageFromAddress{
-						Address: xdr.ScAddress{
-							Type: xdr.ScAddressTypeScAddressTypeAccount,
-							AccountId: &xdr.AccountId{
-								Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-								Ed25519: &pubKey256,
-							},
-						},
-						Salt: xdr.Uint256(salt),
-					},
-				},
-				Executable: xdr.ContractExecutable{
-					Type:     xdr.ContractExecutableTypeContractExecutableWasm,
-					WasmHash: &wasmHash,
-				},
-				ConstructorArgs: constructorArgs,
-			},
-		},
-		SourceAccount: d.signer.Address(),
-	}
-
-	resultMeta, err := d.buildAndSubmitTransaction(ctx, sourceAccount, createOp)
-	if err != nil {
-		return "", err
-	}
-
 	contractID, err := extractContractID(resultMeta)
 	if err != nil {
 		return "", fmt.Errorf("failed to extract contract ID: %w", err)

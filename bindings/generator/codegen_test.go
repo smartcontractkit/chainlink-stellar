@@ -21,42 +21,44 @@ func TestGenerateTypes_eventsOnlyNoImports(t *testing.T) {
 	mustContain(t, out, "type CursedEvent struct")
 }
 
-// TestGenerateEnum_UnitOnly is a regression guard: pre-existing unit-only
-// enums (CCIPError, MessageDirection, ...) must keep emitting the legacy
+// TestGenerateEnum_UnitOnly is a regression guard: genuine C-style int enums
+// (every variant unit-shaped AND at least one explicit `= N` discriminant,
+// e.g. CCIPError, MessageExecutionState) must keep emitting the legacy
 // `type X uint32` newtype shape so existing call sites continue to compile.
 func TestGenerateEnum_UnitOnly(t *testing.T) {
 	c := &Contract{Enums: []Enum{
-		{Name: "MessageDirection", Variants: []EnumVariant{
-			{Name: "Outbound", Kind: EnumVariantUnit, Value: 0},
-			{Name: "Inbound", Kind: EnumVariantUnit, Value: 1},
+		{Name: "MessageExecutionState", Variants: []EnumVariant{
+			{Name: "Untouched", Kind: EnumVariantUnit, Value: 0, Explicit: true},
+			{Name: "InProgress", Kind: EnumVariantUnit, Value: 1, Explicit: true},
 		}},
 	}}
 	out := GenerateTypes("test", c)
 	mustContain(t, out,
-		"type MessageDirection uint32",
-		"MessageDirectionOutbound MessageDirection = 0",
-		"MessageDirectionInbound MessageDirection = 1",
+		"type MessageExecutionState uint32",
+		"MessageExecutionStateUntouched MessageExecutionState = 0",
+		"MessageExecutionStateInProgress MessageExecutionState = 1",
 		"return scval.Uint32ToScVal(uint32(e)), nil",
 	)
-	mustNotContain(t, out, "type MessageDirection struct")
+	mustNotContain(t, out, "type MessageExecutionState struct")
 }
 
-// TestGenerateEnum_BareUnitsHaveDistinctDiscriminants is the end-to-end
-// regression test for the MessageDirection bug:
+// TestGenerateEnum_BareUnitOnlyEmitsSymbolicUnion is the end-to-end
+// regression test for the symbolic-union bug proven on a live devnet A/B
+// test against contracts/common/interfaces/src/data_feeds_cache.rs's
+// `Bound` enum (consumed by find_round): sending ScVal::U32 produces
+// `Error(WasmVm, InvalidAction) — UnreachableCodeReached` on-chain; the
+// correct wire value is ScVal::Vec([Symbol(<VariantName>)]).
 //
-//	const (
-//	    MessageDirectionOutbound MessageDirection = 0
-//	    MessageDirectionInbound  MessageDirection = 0  // <- BUG
-//	)
-//
-// The bug was that bare-identifier unit variants (no explicit `= N`) all
-// got Go's zero value 0, so MessageDirectionInbound serialised as the
-// same on-chain ScVal::U32 as MessageDirectionOutbound. The fix tracks an
-// auto-incrementing counter in parseEnumVariants. This test runs the
-// real parser then runs codegen, so a future regression in either step
-// would be caught here even if the unit test of codegen above still
-// passes (because that one bypasses the parser).
-func TestGenerateEnum_BareUnitsHaveDistinctDiscriminants(t *testing.T) {
+// The bug was that the generator classified ANY unit-only enum (IsUnit) as
+// a C-style int enum and emitted `type X uint32`, regardless of whether any
+// variant actually had an explicit `= N` discriminant. Soroban itself only
+// uses ScVal::U32 when a discriminant is explicit; a unit-only enum with no
+// discriminant anywhere (a "symbolic union", e.g. MessageDirection here, or
+// Bound in the real contract) is encoded as a discriminated union just like
+// a payload-bearing enum. This test runs the real parser then runs codegen,
+// exercising the same MessageDirection shape that was silently broken in
+// production (contracts/common/pool/src/types.rs).
+func TestGenerateEnum_BareUnitOnlyEmitsSymbolicUnion(t *testing.T) {
 	src := `
 #[soroban_sdk::contracttype]
 pub enum MessageDirection {
@@ -67,12 +69,48 @@ pub enum MessageDirection {
 	c := &Contract{Enums: parseEnums(src)}
 	out := GenerateTypes("test", c)
 	mustContain(t, out,
+		"type MessageDirection struct {",
+		"Outbound *MessageDirectionOutbound",
+		"Inbound *MessageDirectionInbound",
+		"type MessageDirectionOutbound struct{}",
+		"type MessageDirectionInbound struct{}",
+		"scval.SymbolToScVal(\"Outbound\")",
+		"scval.SymbolToScVal(\"Inbound\")",
+	)
+	// Critical: the broken behaviour must be gone — no U32 shape anywhere.
+	mustNotContain(t, out,
+		"type MessageDirection uint32",
 		"MessageDirectionOutbound MessageDirection = 0",
 		"MessageDirectionInbound MessageDirection = 1",
+		"scval.Uint32ToScVal",
 	)
-	// The exact symptom of the bug: Inbound = 0. Refuse to accept it.
+}
+
+// TestGenerateEnum_Bound mirrors the exact enum that was proven broken
+// on-chain (contracts/common/interfaces/src/data_feeds_cache.rs's Bound,
+// consumed by find_round): a unit-only enum with no explicit discriminant.
+// Must emit the Vec[Symbol] discriminated-union shape, never U32.
+func TestGenerateEnum_Bound(t *testing.T) {
+	src := `
+#[soroban_sdk::contracttype(export = false)]
+pub enum Bound {
+    AtOrBefore,
+    AtOrAfter,
+}
+`
+	c := &Contract{Enums: parseEnums(src)}
+	out := GenerateTypes("test", c)
+	mustContain(t, out,
+		"type Bound struct {",
+		"AtOrBefore *BoundAtOrBefore",
+		"AtOrAfter *BoundAtOrAfter",
+		"scval.SymbolToScVal(\"AtOrBefore\")",
+		"scval.SymbolToScVal(\"AtOrAfter\")",
+		"scval.VecToScVal(items)",
+	)
 	mustNotContain(t, out,
-		"MessageDirectionInbound MessageDirection = 0",
+		"type Bound uint32",
+		"scval.Uint32ToScVal",
 	)
 }
 
@@ -183,15 +221,101 @@ func TestGenerateEnum_StructVariant(t *testing.T) {
 // union would emit `return 0, ...` and fail to compile.
 func TestGenerateEnum_ZeroValue(t *testing.T) {
 	knownEnumNames = map[string]bool{
-		"MessageDirection": true,  // unit-only
-		"ReplayKey":        false, // union
+		"MessageExecutionState": true,  // int enum (explicit discriminants)
+		"ReplayKey":             false, // union
 	}
-	if got := zeroValue("MessageDirection"); got != "0" {
-		t.Errorf("unit enum zero: got %q want \"0\"", got)
+	if got := zeroValue("MessageExecutionState"); got != "0" {
+		t.Errorf("int enum zero: got %q want \"0\"", got)
 	}
 	if got := zeroValue("ReplayKey"); got != "ReplayKey{}" {
 		t.Errorf("union enum zero: got %q want \"ReplayKey{}\"", got)
 	}
+}
+
+// TestGenerateAliasTypes covers `pub type X = soroban_sdk::BytesN<N>;`
+// aliases: each must emit a defined `[N]byte` Go type with ToScVal/FromScVal
+// converters, matching the shape existing default struct-field cases expect.
+func TestGenerateAliasTypes(t *testing.T) {
+	c := &Contract{Aliases: []TypeAlias{
+		{Name: "DataId", Target: "soroban_sdk::BytesN<16>"},
+		{Name: "WorkflowName", Target: "soroban_sdk::BytesN<10>"},
+	}}
+	out := GenerateTypes("data_feeds_cache", c)
+	mustContain(t, out,
+		"type DataId [16]byte",
+		"func (v DataId) ToScVal() (xdr.ScVal, error)",
+		"scval.Bytes16ToScVal([16]byte(v))",
+		"func DataIdFromScVal(val xdr.ScVal) (*DataId, error)",
+		"type WorkflowName [10]byte",
+		"scval.Bytes10ToScVal([10]byte(v))",
+	)
+}
+
+// TestGenerateI256Field covers `soroban_sdk::I256` struct fields: they must
+// map to Go `*big.Int` and encode/decode via the scval.I256ToScVal /
+// scval.I256FromScVal helpers, with "math/big" imported.
+func TestGenerateI256Field(t *testing.T) {
+	c := &Contract{Structs: []Struct{{
+		Name:   "RoundData",
+		Fields: []Field{{Name: "answer", Type: "soroban_sdk::I256"}, {Name: "round_id", Type: "u64"}},
+	}}}
+	out := GenerateTypes("data_feeds_cache", c)
+	mustContain(t, out,
+		"Answer *big.Int",
+		"scval.MustToScVal(scval.I256ToScVal(s.Answer))",
+		"scval.I256FromScVal(entry.Val)",
+		`"math/big"`,
+	)
+}
+
+// TestGenerateEventI256Field covers `soroban_sdk::I256` event fields (e.g.
+// ReportUpdated.answer in the real contract inventory): the generated event
+// parser must decode via the qualified scval.I256FromScVal helper and assign
+// the already-*big.Int result directly, not deref a struct pointer.
+func TestGenerateEventI256Field(t *testing.T) {
+	c := &Contract{Events: []Event{
+		{
+			Name:   "ReportUpdated",
+			Topics: []string{"report_updated"},
+			Fields: []Field{
+				{Name: "data_id", Type: "DataId"},
+				{Name: "round_id", Type: "u64"},
+				{Name: "timestamp", Type: "u64"},
+				{Name: "answer", Type: "soroban_sdk::I256"},
+				{Name: "ledger_seq", Type: "u32"},
+				{Name: "primary", Type: "bool"},
+			},
+		},
+	}}
+	out := GenerateClient("data_feeds_cache", c, nil)
+	mustContain(t, out,
+		"v, err := scval.I256FromScVal(entry.Val)",
+		"result.Answer = v\n",
+	)
+	mustNotContain(t, out,
+		"v, err := I256FromScVal(entry.Val)",
+		"result.Answer = *v\n",
+	)
+}
+
+// TestGenerateAliasU256Panics covers `pub type X = soroban_sdk::U256;`
+// aliases: U256 has no mapping anywhere else in the pipeline
+// (rustTypeToGo/getToScValConverter/generateFromScValField), so
+// generateAlias must panic loudly instead of silently emitting a
+// type with no encode/decode support.
+func TestGenerateAliasU256Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for unsupported U256 alias target, got none")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "U256") {
+			t.Fatalf("panic message %v does not mention U256", r)
+		}
+	}()
+	c := &Contract{Aliases: []TypeAlias{{Name: "BigThing", Target: "soroban_sdk::U256"}}}
+	GenerateTypes("data_feeds_cache", c)
 }
 
 // helpers

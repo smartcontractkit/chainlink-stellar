@@ -3,6 +3,8 @@ package stellardeps
 import (
 	"context"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
 )
@@ -11,6 +13,8 @@ import (
 // and create a contract instance (contract ID string).
 type SorobanContractDeployer interface {
 	DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error)
+	DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error)
+	UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error)
 }
 
 // StellarDeps bundles deploy-time and runtime chain I/O used by Soroban

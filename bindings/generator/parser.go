@@ -14,6 +14,13 @@ type Contract struct {
 	Errors    []ErrorEnum
 	Events    []Event
 	Enums     []Enum
+	Aliases   []TypeAlias
+}
+
+// TypeAlias represents `pub type Name = Target;` in the contract interface.
+type TypeAlias struct {
+	Name   string
+	Target string
 }
 
 // Struct represents a Soroban struct type.
@@ -43,11 +50,25 @@ type ErrorEnum struct {
 
 // EnumVariantKind describes the shape of a Soroban #[contracttype] enum variant.
 //
-// Soroban encodes a unit-only ("C-style") enum as ScVal::U32. Any enum that
-// contains at least one tuple or struct variant is encoded as
-// ScVal::Vec([ ScVal::Symbol(<VariantName>), <payload-fields...> ]) — the
-// variant identifier is used verbatim (no case conversion) as the discriminant
-// symbol. We track per-variant kind so codegen can branch correctly.
+// Soroban's wire encoding for an enum depends on whether ANY variant carries
+// an explicit `= N` discriminant, not merely on whether all variants are
+// unit-shaped:
+//
+//   - Int enum (UDT_ENUM_V0): every variant is unit-shaped AND at least one
+//     variant has an explicit `= N` discriminant (e.g. `Foo = 0, Bar = 1`).
+//     Encoded as ScVal::U32.
+//   - Symbolic union (UDT_UNION_V0): every variant is unit-shaped but NONE
+//     has an explicit discriminant (e.g. `Foo, Bar` with no `= N` anywhere).
+//     Despite being structurally "unit-only", Soroban still encodes this as
+//     a discriminated union: ScVal::Vec([ ScVal::Symbol(<VariantName>) ]).
+//   - Mixed/payload union (UDT_UNION_V0): any variant is tuple or struct
+//     shaped. Encoded as
+//     ScVal::Vec([ ScVal::Symbol(<VariantName>), <payload-fields...> ]).
+//
+// In both union cases the variant identifier is used verbatim (no case
+// conversion) as the discriminant symbol. We track per-variant kind and
+// whether the discriminant was written explicitly so codegen can branch
+// correctly (see Enum.IsIntEnum).
 type EnumVariantKind int
 
 const (
@@ -61,8 +82,12 @@ type Enum struct {
 	Variants []EnumVariant
 }
 
-// IsUnit reports whether every variant is a unit (C-style) variant.
-// Mixed enums (any tuple/struct variant) require the discriminated-union encoding.
+// IsUnit reports whether every variant is a unit (C-style) variant, purely
+// structurally. This does NOT by itself determine the wire encoding: a
+// unit-only enum with no explicit discriminant anywhere ("symbolic union",
+// e.g. `enum Bound { AtOrBefore, AtOrAfter }`) is still encoded on-chain as
+// ScVal::Vec([Symbol]), not ScVal::U32. Use IsIntEnum for the wire-encoding
+// decision.
 func (e Enum) IsUnit() bool {
 	for _, v := range e.Variants {
 		if v.Kind != EnumVariantUnit {
@@ -72,11 +97,37 @@ func (e Enum) IsUnit() bool {
 	return true
 }
 
+// HasExplicitDiscriminant reports whether any variant was written with an
+// explicit `= N` discriminant in the Rust source.
+func (e Enum) HasExplicitDiscriminant() bool {
+	for _, v := range e.Variants {
+		if v.Explicit {
+			return true
+		}
+	}
+	return false
+}
+
+// IsIntEnum reports whether this enum is a genuine C-style int enum that
+// Soroban encodes as ScVal::U32: every variant must be unit-shaped AND at
+// least one variant must carry an explicit `= N` discriminant. A unit-only
+// enum with no explicit discriminant anywhere (a "symbolic union") returns
+// false here even though IsUnit() is true — it must route through the
+// discriminated-union (Vec[Symbol]) codegen path instead.
+func (e Enum) IsIntEnum() bool {
+	return e.IsUnit() && e.HasExplicitDiscriminant()
+}
+
 type EnumVariant struct {
 	Name string
 	Kind EnumVariantKind
 	// Value is the C-style discriminant (only meaningful for EnumVariantUnit).
 	Value int
+	// Explicit reports whether Value was written as an explicit `= N` in the
+	// Rust source (true) or auto-assigned by the implicit-increment counter
+	// (false). Only meaningful for EnumVariantUnit. This drives the
+	// int-enum-vs-symbolic-union classification: see Enum.IsIntEnum.
+	Explicit bool
 	// Payload holds positional fields for tuple variants (Field.Name == "")
 	// and named fields for struct variants. Empty for unit variants.
 	Payload []Field
@@ -114,7 +165,23 @@ func ParseRustBindings(input string) (*Contract, error) {
 	// Parse enums
 	contract.Enums = parseEnums(input)
 
+	// Parse type aliases
+	contract.Aliases = parseTypeAliases(input)
+
 	return contract, nil
+}
+
+// parseTypeAliases parses `pub type Name = Target;` declarations.
+func parseTypeAliases(input string) []TypeAlias {
+	aliasRe := regexp.MustCompile(`(?m)^\s*pub type (\w+)\s*=\s*([^;]+);`)
+	var aliases []TypeAlias
+	for _, m := range aliasRe.FindAllStringSubmatch(input, -1) {
+		aliases = append(aliases, TypeAlias{
+			Name:   m[1],
+			Target: qualifySorobanType(strings.TrimSpace(m[2])),
+		})
+	}
+	return aliases
 }
 
 func parseEnums(input string) []Enum {
@@ -246,9 +313,10 @@ func parseEnumVariants(body string) []EnumVariant {
 			val := 0
 			fmt.Sscanf(um[2], "%d", &val)
 			variants = append(variants, EnumVariant{
-				Name:  um[1],
-				Kind:  EnumVariantUnit,
-				Value: val,
+				Name:     um[1],
+				Kind:     EnumVariantUnit,
+				Value:    val,
+				Explicit: true,
 			})
 			nextImplicit = val + 1
 		case unitBareRe.MatchString(v):
@@ -346,13 +414,18 @@ func parseFunctions(input string) []Function {
 
 	// Match individual functions
 	// fn name(env: Env, param: Type, ...) -> Result<RetType, Error>;
-	funcRe := regexp.MustCompile(`fn (\w+)\s*\(\s*env:\s*soroban_sdk::Env\s*(?:,\s*([^)]*))?\)\s*->\s*([^;]+);`)
+	// The return type is optional: void functions like `fn upgrade(env, h: WasmHash);`
+	// have no `-> ...` clause at all.
+	funcRe := regexp.MustCompile(`fn (\w+)\s*\(\s*env:\s*soroban_sdk::Env\s*(?:,\s*([^)]*))?\)\s*(?:->\s*([^;]+))?;`)
 
 	var functions []Function
 	matches := funcRe.FindAllStringSubmatch(traitBody, -1)
 
 	for _, match := range matches {
 		name := match[1]
+		if name == "__constructor" {
+			continue // constructors are invoked via CreateContractV2 at deploy time, not callable
+		}
 		paramsStr := strings.TrimSpace(match[2])
 		returnStr := strings.TrimSpace(match[3])
 
@@ -457,6 +530,10 @@ func qualifySorobanType(t string) string {
 		return "soroban_sdk::Bytes"
 	case "Symbol":
 		return "soroban_sdk::Symbol"
+	case "I256":
+		return "soroban_sdk::I256"
+	case "U256":
+		return "soroban_sdk::U256"
 	}
 	if strings.HasPrefix(t, "BytesN<") {
 		return "soroban_sdk::" + t
@@ -468,8 +545,15 @@ func qualifySorobanType(t string) string {
 }
 
 func parseEvents(input string) []Event {
-	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)]
-	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(\s*topics\s*=\s*\[([^\]]+)\][^)]*\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
+	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)].
+	// `topics = [...]` may appear anywhere among the attribute's comma-separated
+	// key = value args (e.g. `contractevent(export = false, topics = [...])` as
+	// emitted raw by `stellar contract bindings rust`, vs.
+	// `contractevent(topics = [...], export = false)` in hand-patched interfaces) —
+	// so the whole arg blob is captured first and `topics = [...]` is located
+	// within it independently, rather than anchoring the regex to it being first.
+	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(([^)]*)\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
+	topicsArgRe := regexp.MustCompile(`topics\s*=\s*\[([^\]]*)\]`)
 	fieldRe := regexp.MustCompile(`pub (\w+):\s*([^,]+),`)
 	topicRe := regexp.MustCompile(`"([^"]+)"`)
 
@@ -477,9 +561,16 @@ func parseEvents(input string) []Event {
 	matches := eventRe.FindAllStringSubmatch(input, -1)
 
 	for _, match := range matches {
-		topicsStr := match[1]
+		attrArgs := match[1]
 		name := match[2]
 		body := match[3]
+
+		topicsArgMatch := topicsArgRe.FindStringSubmatch(attrArgs)
+		if topicsArgMatch == nil {
+			// Not a contractevent with a `topics = [...]` arg; skip.
+			continue
+		}
+		topicsStr := topicsArgMatch[1]
 
 		var topics []string
 		topicMatches := topicRe.FindAllStringSubmatch(topicsStr, -1)

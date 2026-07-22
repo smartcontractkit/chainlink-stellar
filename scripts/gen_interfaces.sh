@@ -56,6 +56,7 @@ CONTRACTS=(
   "timelock|timelock|Timelock|0"
   "forwarder|forwarder|cre|0"
   "data_feeds_cache|data_feeds_cache|DataFeedsCache|0|contracts/data-feeds/target/wasm32v1-none/release"
+  "data_feeds_proxy|data_feeds_proxy|DataFeedsProxy|0|contracts/data-feeds/target/wasm32v1-none/release"
 )
 
 # Remove the WASM const block from generated output (interfaces don't need it)
@@ -239,17 +240,25 @@ patch_ramp_registry_interfaces() {
   ' "$f"
 }
 
-# Data feeds cache interfaces reference BytesN type aliases (DataId, WorkflowName, …)
-# whose definitions stellar-cli omits from the generated output. Substitute the
-# underlying BytesN types so neither the module nor the Go generator needs alias defs.
-patch_data_feeds_cache_interfaces() {
+# `stellar contract bindings rust` erases `pub type` aliases (they have no
+# identity in the WASM XDR spec), so the generated data-feeds interfaces
+# reference DataId / WorkflowName / WorkflowOwner / WasmHash without defining
+# them. Re-add the alias definitions from the contract crates' source so the
+# module compiles and the Go generator resolves them (bindings/generator parses
+# `pub type X = Y;`).
+prepend_type_aliases() {
   local f="$1"
-  sed -i \
-    -e 's/\bDataId\b/soroban_sdk::BytesN<16>/g' \
-    -e 's/\bWorkflowName\b/soroban_sdk::BytesN<10>/g' \
-    -e 's/\bWorkflowOwner\b/soroban_sdk::BytesN<20>/g' \
-    -e 's/\bWasmHash\b/soroban_sdk::BytesN<32>/g' \
-    "$f"
+  shift
+  local tmp
+  tmp="$(mktemp)"
+  {
+    for alias in "$@"; do
+      echo "pub type ${alias};"
+    done
+    echo ""
+    cat "$f"
+  } > "$tmp"
+  mv "$tmp" "$f"
 }
 
 do_build=true
@@ -304,7 +313,16 @@ for entry in "${CONTRACTS[@]}"; do
     patch_rmn_remote_interfaces "$out_path"
   fi
   if [[ "$output_module" == "data_feeds_cache" ]]; then
-    patch_data_feeds_cache_interfaces "$out_path"
+    prepend_type_aliases "$out_path" \
+      "DataId = soroban_sdk::BytesN<16>" \
+      "WorkflowOwner = soroban_sdk::BytesN<20>" \
+      "WorkflowName = soroban_sdk::BytesN<10>" \
+      "WasmHash = soroban_sdk::BytesN<32>"
+  fi
+  if [[ "$output_module" == "data_feeds_proxy" ]]; then
+    prepend_type_aliases "$out_path" \
+      "DataId = soroban_sdk::BytesN<16>" \
+      "WasmHash = soroban_sdk::BytesN<32>"
   fi
 done
 

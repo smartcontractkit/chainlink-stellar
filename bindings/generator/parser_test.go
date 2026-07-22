@@ -3,16 +3,21 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// TestParseEnums_PureUnit covers the historical (pre-fix) C-style enum case
-// that we must keep emitting as a Go `uint32` newtype.
+// TestParseEnums_PureUnit covers the real-world MessageDirection shape: a
+// unit-only enum with NO explicit discriminant on any variant. Structurally
+// IsUnit() is true, but Soroban does not encode this as ScVal::U32 — with no
+// `= N` anywhere, it's a "symbolic union" that Soroban encodes as
+// ScVal::Vec([Symbol(<VariantName>)]). IsIntEnum() must report false here;
+// only HasExplicitDiscriminant()==true would flip it to the U32 encoding.
 //
-// It also pins the Rust auto-numbering rule: bare unit variants get
-// sequential values starting at 0 in declaration order, matching the
-// on-chain ScVal::U32 Soroban emits. The previous implementation left
-// every bare-variant value at 0, which collapsed Outbound and Inbound to
-// the same wire value.
+// This also pins the Rust auto-numbering rule: bare unit variants get
+// sequential Value starting at 0 in declaration order (used only for
+// internal bookkeeping / IsUnit-derived consistency now that this shape
+// no longer emits a Go const block keyed on Value).
 func TestParseEnums_PureUnit(t *testing.T) {
 	src := `
 #[soroban_sdk::contracttype]
@@ -33,12 +38,84 @@ pub enum MessageDirection {
 	if !got.IsUnit() {
 		t.Fatalf("expected IsUnit=true")
 	}
+	if got.HasExplicitDiscriminant() {
+		t.Fatalf("expected HasExplicitDiscriminant=false: no variant has `= N`")
+	}
+	if got.IsIntEnum() {
+		t.Fatalf("expected IsIntEnum=false: symbolic union with no explicit discriminant must not encode as U32")
+	}
 	want := []EnumVariant{
 		{Name: "Outbound", Kind: EnumVariantUnit, Value: 0},
 		{Name: "Inbound", Kind: EnumVariantUnit, Value: 1},
 	}
 	if !reflect.DeepEqual(got.Variants, want) {
 		t.Fatalf("variants: got %+v want %+v", got.Variants, want)
+	}
+}
+
+// TestParseEnums_ExplicitDiscriminantIsIntEnum covers the genuine C-style
+// int enum case (e.g. MessageExecutionState on offramp): every variant is
+// unit-shaped AND at least one carries an explicit `= N`. This is the only
+// shape that should encode as ScVal::U32; IsIntEnum() must report true.
+func TestParseEnums_ExplicitDiscriminantIsIntEnum(t *testing.T) {
+	src := `
+#[soroban_sdk::contracttype]
+pub enum MessageExecutionState {
+    Untouched = 0,
+    InProgress = 1,
+    Success = 2,
+    Failure = 3,
+}
+`
+	enums := parseEnums(src)
+	if len(enums) != 1 {
+		t.Fatalf("expected 1 enum, got %d", len(enums))
+	}
+	got := enums[0]
+	if !got.IsUnit() {
+		t.Fatalf("expected IsUnit=true")
+	}
+	if !got.HasExplicitDiscriminant() {
+		t.Fatalf("expected HasExplicitDiscriminant=true: every variant has `= N`")
+	}
+	if !got.IsIntEnum() {
+		t.Fatalf("expected IsIntEnum=true: explicit-discriminant unit-only enum must encode as U32")
+	}
+	for _, v := range got.Variants {
+		if !v.Explicit {
+			t.Fatalf("variant %q: expected Explicit=true", v.Name)
+		}
+	}
+}
+
+// TestParseEnums_Bound covers the exact enum shape that was proven broken
+// on-chain: contracts/common/interfaces/src/data_feeds_cache.rs's `Bound`,
+// consumed by find_round. No variant has an explicit discriminant, so this
+// must classify as a symbolic union (IsIntEnum=false), not an int enum.
+// Sending ScVal::U32 for this enum produces
+// `Error(WasmVm, InvalidAction) — UnreachableCodeReached` on a live devnet;
+// the correct wire value is ScVal::Vec([Symbol("AtOrBefore")]) etc.
+func TestParseEnums_Bound(t *testing.T) {
+	src := `
+#[soroban_sdk::contracttype(export = false)]
+pub enum Bound {
+    AtOrBefore,
+    AtOrAfter,
+}
+`
+	enums := parseEnums(src)
+	if len(enums) != 1 {
+		t.Fatalf("expected 1 enum, got %d", len(enums))
+	}
+	got := enums[0]
+	if got.Name != "Bound" {
+		t.Fatalf("name: %q", got.Name)
+	}
+	if !got.IsUnit() {
+		t.Fatalf("expected IsUnit=true")
+	}
+	if got.IsIntEnum() {
+		t.Fatalf("expected IsIntEnum=false: Bound has no explicit discriminant and must encode as Vec[Symbol], not U32")
 	}
 }
 
@@ -69,13 +146,16 @@ pub enum E {
 	want := []EnumVariant{
 		{Name: "A", Kind: EnumVariantUnit, Value: 0},
 		{Name: "B", Kind: EnumVariantUnit, Value: 1},
-		{Name: "C", Kind: EnumVariantUnit, Value: 10},
+		{Name: "C", Kind: EnumVariantUnit, Value: 10, Explicit: true},
 		{Name: "D", Kind: EnumVariantUnit, Value: 11},
-		{Name: "Reset", Kind: EnumVariantUnit, Value: 0},
+		{Name: "Reset", Kind: EnumVariantUnit, Value: 0, Explicit: true},
 		{Name: "F", Kind: EnumVariantUnit, Value: 1},
 	}
 	if !reflect.DeepEqual(enums[0].Variants, want) {
 		t.Fatalf("variants:\n  got %+v\n  want %+v", enums[0].Variants, want)
+	}
+	if !enums[0].IsIntEnum() {
+		t.Fatalf("expected IsIntEnum=true: E has explicit discriminants (C, Reset)")
 	}
 }
 
@@ -261,4 +341,93 @@ func TestSplitTopLevel(t *testing.T) {
 			t.Errorf("splitTopLevel(%q):\n  got  %#v\n  want %#v", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestParseTypeAliases(t *testing.T) {
+	input := `
+pub type DataId = soroban_sdk::BytesN<16>;
+pub type WorkflowOwner = BytesN<20>;
+pub type Answer = I256;
+pub trait Contract {
+    fn decimals(env: soroban_sdk::Env, data_id: DataId) -> Result<u32, CacheError>;
+}
+`
+	c, err := ParseRustBindings(input)
+	require.NoError(t, err)
+	require.Len(t, c.Aliases, 3)
+	require.Equal(t, TypeAlias{Name: "DataId", Target: "soroban_sdk::BytesN<16>"}, c.Aliases[0])
+	require.Equal(t, TypeAlias{Name: "WorkflowOwner", Target: "soroban_sdk::BytesN<20>"}, c.Aliases[1])
+	require.Equal(t, TypeAlias{Name: "Answer", Target: "soroban_sdk::I256"}, c.Aliases[2])
+}
+
+func TestParseVoidAndConstructorFunctions(t *testing.T) {
+	input := `
+pub trait Contract {
+    fn upgrade(env: soroban_sdk::Env, new_wasm_hash: WasmHash);
+    fn accept_ownership(env: soroban_sdk::Env);
+    fn __constructor(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+        retention_ttl_ledgers: u32,
+    );
+    fn version(env: soroban_sdk::Env) -> u32;
+}
+`
+	c, err := ParseRustBindings(input)
+	require.NoError(t, err)
+	names := map[string]Function{}
+	for _, f := range c.Functions {
+		names[f.Name] = f
+	}
+	require.Contains(t, names, "upgrade")
+	require.Equal(t, "", names["upgrade"].Returns)
+	require.Len(t, names["upgrade"].Inputs, 1)
+	require.Contains(t, names, "accept_ownership")
+	require.Contains(t, names, "version")
+	require.NotContains(t, names, "__constructor")
+}
+
+// TestParseEvents_AttrArgOrderIndependent pins that #[contractevent(...)]
+// parses regardless of where `topics = [...]` falls among the attribute's
+// key = value args. Real vendored interface files disagree on order:
+// data_feeds_cache.rs (raw `stellar contract bindings rust` output) writes
+// `export = false` before `topics`, while committee_verifier.rs (hand-patched
+// CCIP interface) writes `topics` first. Both must parse identically.
+func TestParseEvents_AttrArgOrderIndependent(t *testing.T) {
+	input := `
+#[soroban_sdk::contractevent(export = false, topics = ["StaleReport"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct StaleReport {
+    pub data_id: DataId,
+    pub report_ts: u64,
+    pub stored_ts: u64,
+}
+#[soroban_sdk::contractevent(topics = ["ccv_ConfigSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ConfigSetEvent {
+    pub dynamic_config: DynamicConfig,
+}
+`
+	events := parseEvents(input)
+	byName := map[string]Event{}
+	for _, e := range events {
+		byName[e.Name] = e
+	}
+	require.Len(t, events, 2, "expected both events to parse regardless of attribute arg order")
+
+	staleReport, ok := byName["StaleReport"]
+	require.True(t, ok, "topics-after-export order (data_feeds_cache.rs shape) must parse")
+	require.Equal(t, []string{"StaleReport"}, staleReport.Topics)
+	require.Equal(t, []Field{
+		{Name: "data_id", Type: "DataId"},
+		{Name: "report_ts", Type: "u64"},
+		{Name: "stored_ts", Type: "u64"},
+	}, staleReport.Fields)
+
+	configSet, ok := byName["ConfigSetEvent"]
+	require.True(t, ok, "topics-before-export order (committee_verifier.rs shape) must parse")
+	require.Equal(t, []string{"ccv_ConfigSet"}, configSet.Topics)
+	require.Equal(t, []Field{
+		{Name: "dynamic_config", Type: "DynamicConfig"},
+	}, configSet.Fields)
 }

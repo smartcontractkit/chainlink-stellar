@@ -41,6 +41,20 @@ func (stubDeployer) DeployContract(ctx context.Context, wasmPath string, salt [3
 	return "", nil
 }
 
+func (stubDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
+	_ = ctx
+	_ = wasmPath
+	_ = salt
+	_ = ctorArgs
+	return "", nil
+}
+
+func (stubDeployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error) {
+	_ = ctx
+	_ = wasmPath
+	return xdr.Hash{}, nil
+}
+
 type stubInvoker struct{}
 
 func (stubInvoker) InvokeContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {

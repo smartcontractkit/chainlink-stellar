@@ -1,10 +1,12 @@
 package scval
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRawBytesFromAddressScVal_Contract(t *testing.T) {
@@ -181,4 +183,59 @@ func TestHexToContractStrkey_InvalidHex(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid hex")
 	}
+}
+
+func TestBytesNSmallHelpers(t *testing.T) {
+	b2 := [2]byte{0xAA, 0xBB}
+	v := Bytes2ToScVal(b2)
+	got2, err := Bytes2FromScVal(v)
+	require.NoError(t, err)
+	require.Equal(t, b2, got2)
+
+	b10 := [10]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	got10, err := Bytes10FromScVal(Bytes10ToScVal(b10))
+	require.NoError(t, err)
+	require.Equal(t, b10, got10)
+
+	b20 := [20]byte{0xDE, 0xAD}
+	got20, err := Bytes20FromScVal(Bytes20ToScVal(b20))
+	require.NoError(t, err)
+	require.Equal(t, b20, got20)
+
+	// wrong length must error
+	_, err = Bytes2FromScVal(Bytes10ToScVal(b10))
+	require.Error(t, err)
+}
+
+func TestI256RoundTrip(t *testing.T) {
+	cases := []*big.Int{
+		big.NewInt(0),
+		big.NewInt(1),
+		big.NewInt(-1),
+		new(big.Int).Lsh(big.NewInt(1), 200), // large positive
+		new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 200)),                // large negative
+		new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1)), // max i256
+		new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 255)),                // min i256
+	}
+	for _, c := range cases {
+		v, err := I256ToScVal(c)
+		require.NoError(t, err, c.String())
+		got, err := I256FromScVal(v)
+		require.NoError(t, err, c.String())
+		require.Zero(t, c.Cmp(got), "round-trip mismatch for %s: got %s", c, got)
+	}
+	// out of range must error
+	_, err := I256ToScVal(new(big.Int).Lsh(big.NewInt(1), 255)) // 2^255 > max i256
+	require.Error(t, err)
+	// negative out of range must also error: -(2^255 + 1) is one below min i256 (-(2^255))
+	minI256 := new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 255))
+	belowMin := new(big.Int).Sub(minI256, big.NewInt(1))
+	_, err = I256ToScVal(belowMin)
+	require.Error(t, err)
+	// nil treated as zero
+	v, err := I256ToScVal(nil)
+	require.NoError(t, err)
+	got, err := I256FromScVal(v)
+	require.NoError(t, err)
+	require.Zero(t, got.Sign())
 }

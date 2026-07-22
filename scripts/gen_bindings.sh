@@ -19,11 +19,14 @@ INTERFACES_DIR="$REPO_ROOT/contracts/common/interfaces/src"
 BINDINGS_DIR="$REPO_ROOT/bindings"
 CONTRACTS_DIR="$BINDINGS_DIR/contracts"
 
-# Contract config: "interface_module|PascalCaseName|go_package|use_common_message|events_file"
+# Contract config: "interface_module|PascalCaseName|go_package|use_common_message|events_file|readonly_fns"
 # use_common_message=1 when the interface uses StellarToAnyMessage/TokenAmount from common_message
 # (fee_quoter, onramp have these structs removed by gen_interfaces; we prepend them from committee_verifier)
 # committee_verifier must come before fee_quoter and onramp (they need its TokenAmount/StellarToAnyMessage)
 # events_file: optional path (relative to REPO_ROOT) to a Rust events source file for -events flag
+# readonly_fns: optional comma-separated read-only functions for -readonly. When set it is
+# authoritative (listed fns simulate, everything else submits a transaction); when empty the
+# generator falls back to its name heuristic (get_*/is_*/owner/balance).
 CONTRACTS=(
   "committee_verifier|CommitteeVerifier|committee_verifier|0|"
   "fee_quoter|FeeQuoter|fee_quoter|1|"
@@ -44,7 +47,8 @@ CONTRACTS=(
   "mcms|Mcms|mcms|0"
   "timelock|Timelock|timelock|0|"
   "forwarder|Forwarder|cre|0|"
-  "data_feeds_cache|DataFeedsCache|data_feeds_cache|0|"
+  "data_feeds_cache|DataFeedsCache|data_feeds_cache|0||latest_round,get_round,round_range,find_round,decimals,description,get_feed_permissions,has_permission,is_feed_admin,version,type_and_version,get_owner"
+  "data_feeds_proxy|DataFeedsProxy|data_feeds_proxy|0||latest_round,get_round,decimals,description,version,type_and_version,get_owner"
 )
 
 # Extract TokenAmount and StellarToAnyMessage structs from committee_verifier for contracts that use common_message
@@ -93,7 +97,7 @@ fi
 mkdir -p "$CONTRACTS_DIR"
 
 for entry in "${CONTRACTS[@]}"; do
-  IFS='|' read -r iface_module pascal_name pkg use_common_msg events_file <<< "$entry"
+  IFS='|' read -r iface_module pascal_name pkg use_common_msg events_file readonly_fns <<< "$entry"
   iface_path="$INTERFACES_DIR/${iface_module}.rs"
   out_dir="$CONTRACTS_DIR/$pkg"
 
@@ -107,8 +111,13 @@ for entry in "${CONTRACTS[@]}"; do
     events_flag="-events $REPO_ROOT/$events_file"
   fi
 
+  readonly_flag=""
+  if [[ -n "${readonly_fns:-}" ]]; then
+    readonly_flag="-readonly $readonly_fns"
+  fi
+
   echo "Generating Go bindings for $pascal_name..."
-  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir" $events_flag)
+  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir" $events_flag $readonly_flag)
 done
 
 echo ""

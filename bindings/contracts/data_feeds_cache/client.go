@@ -4,9 +4,11 @@ package data_feeds_cache
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -29,11 +31,26 @@ func (c *DataFeedsCacheClient) ContractID() string {
 	return c.contractID
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *DataFeedsCacheClient) Upgrade(ctx context.Context, newWasmHash WasmHash) error {
+	args := []xdr.ScVal{
+		scval.MustToScVal(newWasmHash.ToScVal()),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // Version calls the version function on the contract.
 func (c *DataFeedsCacheClient) Version(ctx context.Context) (uint32, error) {
 	args := []xdr.ScVal{}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "version", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "version", args)
 	if err != nil {
 		return 0, fmt.Errorf("failed to call version: %w", err)
 	}
@@ -50,12 +67,12 @@ func (c *DataFeedsCacheClient) Version(ctx context.Context) (uint32, error) {
 }
 
 // Decimals calls the decimals function on the contract.
-func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataId [16]byte) (uint32, error) {
+func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataId DataId) (uint32, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "decimals", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "decimals", args)
 	if err != nil {
 		return 0, fmt.Errorf("failed to call decimals: %w", err)
 	}
@@ -92,9 +109,9 @@ func (c *DataFeedsCacheClient) GetOwner(ctx context.Context) (*string, error) {
 }
 
 // GetRound calls the get_round function on the contract.
-func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId [16]byte, roundId uint64) (*RoundData, error) {
+func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId DataId, roundId uint64) (*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(roundId),
 	}
 
@@ -135,14 +152,14 @@ func (c *DataFeedsCacheClient) OnReport(ctx context.Context, sender string, meta
 }
 
 // FindRound calls the find_round function on the contract.
-func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId [16]byte, timestamp uint64, bound Bound) (*RoundData, error) {
+func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId DataId, timestamp uint64, bound Bound) (*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(timestamp),
 		scval.MustToScVal(bound.ToScVal()),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "find_round", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "find_round", args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call find_round: %w", err)
 	}
@@ -162,12 +179,12 @@ func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId [16]byte, t
 }
 
 // Description calls the description function on the contract.
-func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId [16]byte) (string, error) {
+func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId DataId) (string, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "description", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "description", args)
 	if err != nil {
 		return "", fmt.Errorf("failed to call description: %w", err)
 	}
@@ -180,14 +197,14 @@ func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId [16]byte)
 }
 
 // RoundRange calls the round_range function on the contract.
-func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId [16]byte, from uint64, to uint64) ([]RoundData, error) {
+func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId DataId, from uint64, to uint64) ([]RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(from),
 		scval.Uint64ToScVal(to),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "round_range", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "round_range", args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call round_range: %w", err)
 	}
@@ -212,12 +229,12 @@ func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId [16]byte, 
 }
 
 // LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataId [16]byte) (*RoundData, error) {
+func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataId DataId) (*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "latest_round", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call latest_round: %w", err)
 	}
@@ -274,15 +291,15 @@ func (c *DataFeedsCacheClient) AddFeedAdmin(ctx context.Context, newAdmin string
 }
 
 // HasPermission calls the has_permission function on the contract.
-func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId [16]byte, sender string, workflowOwner [20]byte, workflowName [10]byte) (bool, error) {
+func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId DataId, sender string, workflowOwner WorkflowOwner, workflowName WorkflowName) (bool, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 		scval.AddressToScVal(sender),
-		scval.Bytes20ToScVal(workflowOwner),
-		scval.Bytes10ToScVal(workflowName),
+		scval.MustToScVal(workflowOwner.ToScVal()),
+		scval.MustToScVal(workflowName.ToScVal()),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "has_permission", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "has_permission", args)
 	if err != nil {
 		return false, fmt.Errorf("failed to call has_permission: %w", err)
 	}
@@ -296,6 +313,36 @@ func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId [16]byt
 		return false, fmt.Errorf("expected bool return type")
 	}
 	return v, nil
+}
+
+// RecoverTokens calls the recover_tokens function on the contract.
+func (c *DataFeedsCacheClient) RecoverTokens(ctx context.Context, token string, to string, amount int64) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(token),
+		scval.AddressToScVal(to),
+		scval.I128ToScVal(amount),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "recover_tokens", args)
+	if err != nil {
+		return fmt.Errorf("failed to call recover_tokens: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// AcceptOwnership calls the accept_ownership function on the contract.
+func (c *DataFeedsCacheClient) AcceptOwnership(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call accept_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // SetFeedConfigs calls the set_feed_configs function on the contract.
@@ -318,7 +365,7 @@ func (c *DataFeedsCacheClient) SetFeedConfigs(ctx context.Context, admin string,
 func (c *DataFeedsCacheClient) TypeAndVersion(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "type_and_version", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "type_and_version", args)
 	if err != nil {
 		return "", fmt.Errorf("failed to call type_and_version: %w", err)
 	}
@@ -345,11 +392,40 @@ func (c *DataFeedsCacheClient) RemoveFeedAdmin(ctx context.Context, admin string
 	return nil
 }
 
+// RenounceOwnership calls the renounce_ownership function on the contract.
+func (c *DataFeedsCacheClient) RenounceOwnership(ctx context.Context) error {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "renounce_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call renounce_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// TransferOwnership calls the transfer_ownership function on the contract.
+func (c *DataFeedsCacheClient) TransferOwnership(ctx context.Context, newOwner string, liveUntilLedger uint32) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+		scval.Uint32ToScVal(liveUntilLedger),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
+	if err != nil {
+		return fmt.Errorf("failed to call transfer_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // RemoveFeedConfigs calls the remove_feed_configs function on the contract.
-func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin string, dataIds [][16]byte) error {
+func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin string, dataIds []DataId) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
-		scval.Bytes16SliceToScVal(dataIds),
+		scval.StructSliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_feed_configs", args)
@@ -362,9 +438,9 @@ func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin stri
 }
 
 // GetFeedPermissions calls the get_feed_permissions function on the contract.
-func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId [16]byte) ([]WorkflowPermission, error) {
+func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId DataId) ([]WorkflowPermission, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.MustToScVal(dataId.ToScVal()),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_feed_permissions", args)
@@ -389,4 +465,900 @@ func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId [1
 		out[i] = *v
 	}
 	return out, nil
+}
+
+// WaitForFeedUpdated waits for a FeedUpdated event.
+func (c *DataFeedsCacheClient) WaitForFeedUpdated(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FeedUpdated) bool) (*FeedUpdated, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FeedUpdatedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFeedUpdated(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFeedUpdated(e protocolrpc.EventInfo) (*FeedUpdated, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FeedUpdated{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "data_id":
+			v, err := DataIdFromScVal(entry.Val)
+			if err == nil {
+				result.DataId = *v
+			}
+		case "round_id":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RoundId = v
+			}
+		case "timestamp":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.Timestamp = v
+			}
+		case "answer":
+			v, err := scval.I256FromScVal(entry.Val)
+			if err == nil {
+				result.Answer = v
+			}
+		case "ledger_seq":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.LedgerSeq = uint32(v)
+			}
+		case "primary":
+			v, ok := entry.Val.GetB()
+			if ok {
+				result.Primary = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForStaleReport waits for a StaleReport event.
+func (c *DataFeedsCacheClient) WaitForStaleReport(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*StaleReport) bool) (*StaleReport, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{StaleReportTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseStaleReport(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseStaleReport(e protocolrpc.EventInfo) (*StaleReport, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &StaleReport{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "data_id":
+			v, err := DataIdFromScVal(entry.Val)
+			if err == nil {
+				result.DataId = *v
+			}
+		case "report_ts":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.ReportTs = v
+			}
+		case "stored_ts":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.StoredTs = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFeedConfigSet waits for a FeedConfigSet event.
+func (c *DataFeedsCacheClient) WaitForFeedConfigSet(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FeedConfigSet) bool) (*FeedConfigSet, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FeedConfigSetTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFeedConfigSet(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFeedConfigSet(e protocolrpc.EventInfo) (*FeedConfigSet, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FeedConfigSet{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "data_id":
+			v, err := DataIdFromScVal(entry.Val)
+			if err == nil {
+				result.DataId = *v
+			}
+		case "decimals":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.Decimals = uint32(v)
+			}
+		case "description":
+			v, err := scval.StringFromScVal(entry.Val)
+			if err == nil {
+				result.Description = v
+			}
+		case "workflow_permissions":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([]WorkflowPermission, 0, len(*vec))
+				for _, item := range *vec {
+					v, err := WorkflowPermissionFromScVal(item)
+					if err == nil {
+						parsed = append(parsed, *v)
+					}
+				}
+				result.WorkflowPermissions = parsed
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFeedAdminAdded waits for a FeedAdminAdded event.
+func (c *DataFeedsCacheClient) WaitForFeedAdminAdded(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FeedAdminAdded) bool) (*FeedAdminAdded, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FeedAdminAddedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFeedAdminAdded(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFeedAdminAdded(e protocolrpc.EventInfo) (*FeedAdminAdded, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FeedAdminAdded{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "admin":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Admin = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFeedAdminRemoved waits for a FeedAdminRemoved event.
+func (c *DataFeedsCacheClient) WaitForFeedAdminRemoved(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FeedAdminRemoved) bool) (*FeedAdminRemoved, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FeedAdminRemovedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFeedAdminRemoved(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFeedAdminRemoved(e protocolrpc.EventInfo) (*FeedAdminRemoved, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FeedAdminRemoved{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "admin":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Admin = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFeedConfigRemoved waits for a FeedConfigRemoved event.
+func (c *DataFeedsCacheClient) WaitForFeedConfigRemoved(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FeedConfigRemoved) bool) (*FeedConfigRemoved, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FeedConfigRemovedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFeedConfigRemoved(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFeedConfigRemoved(e protocolrpc.EventInfo) (*FeedConfigRemoved, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FeedConfigRemoved{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "data_id":
+			v, err := DataIdFromScVal(entry.Val)
+			if err == nil {
+				result.DataId = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForInvalidUpdatePermission waits for a InvalidUpdatePermission event.
+func (c *DataFeedsCacheClient) WaitForInvalidUpdatePermission(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*InvalidUpdatePermission) bool) (*InvalidUpdatePermission, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{InvalidUpdatePermissionTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseInvalidUpdatePermission(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseInvalidUpdatePermission(e protocolrpc.EventInfo) (*InvalidUpdatePermission, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &InvalidUpdatePermission{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "data_id":
+			v, err := DataIdFromScVal(entry.Val)
+			if err == nil {
+				result.DataId = *v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		case "workflow_owner":
+			v, err := WorkflowOwnerFromScVal(entry.Val)
+			if err == nil {
+				result.WorkflowOwner = *v
+			}
+		case "workflow_name":
+			v, err := WorkflowNameFromScVal(entry.Val)
+			if err == nil {
+				result.WorkflowName = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForUpgraded waits for a Upgraded event.
+func (c *DataFeedsCacheClient) WaitForUpgraded(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*Upgraded) bool) (*Upgraded, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{UpgradedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseUpgraded(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseUpgraded(e protocolrpc.EventInfo) (*Upgraded, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &Upgraded{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "new_wasm_hash":
+			v, err := WasmHashFromScVal(entry.Val)
+			if err == nil {
+				result.NewWasmHash = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForTokenRecovered waits for a TokenRecovered event.
+func (c *DataFeedsCacheClient) WaitForTokenRecovered(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenRecovered) bool) (*TokenRecovered, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenRecoveredTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseTokenRecovered(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseTokenRecovered(e protocolrpc.EventInfo) (*TokenRecovered, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &TokenRecovered{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Token = v
+			}
+		case "to":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.To = v
+			}
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.Amount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipTransfer waits for a OwnershipTransfer event.
+func (c *DataFeedsCacheClient) WaitForOwnershipTransfer(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransfer) bool) (*OwnershipTransfer, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOwnershipTransfer(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOwnershipTransfer(e protocolrpc.EventInfo) (*OwnershipTransfer, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipTransfer{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "old_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.OldOwner = v
+			}
+		case "new_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewOwner = v
+			}
+		case "live_until_ledger":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.LiveUntilLedger = uint32(v)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipRenounced waits for a OwnershipRenounced event.
+func (c *DataFeedsCacheClient) WaitForOwnershipRenounced(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipRenounced) bool) (*OwnershipRenounced, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipRenouncedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOwnershipRenounced(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOwnershipRenounced(e protocolrpc.EventInfo) (*OwnershipRenounced, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipRenounced{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "old_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.OldOwner = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipTransferCompleted waits for a OwnershipTransferCompleted event.
+func (c *DataFeedsCacheClient) WaitForOwnershipTransferCompleted(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferCompleted) bool) (*OwnershipTransferCompleted, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferCompletedTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOwnershipTransferCompleted(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOwnershipTransferCompleted(e protocolrpc.EventInfo) (*OwnershipTransferCompleted, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipTransferCompleted{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "new_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewOwner = v
+			}
+		}
+	}
+
+	return result, nil
 }

@@ -2,14 +2,18 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
 // GenerateClient generates the client.go file content.
-func GenerateClient(pkg string, contract *Contract) string {
+// GenerateClient renders the contract client. readOnly, when non-nil, is the
+// authoritative set of read-only functions (generated as simulations); when nil
+// the legacy name heuristic in isReadOnlyFunction applies.
+func GenerateClient(pkg string, contract *Contract, readOnly map[string]bool) string {
 	knownEnumNames = map[string]bool{}
 	for _, e := range contract.Enums {
-		knownEnumNames[e.Name] = e.IsUnit()
+		knownEnumNames[e.Name] = e.IsIntEnum()
 	}
 
 	var b strings.Builder
@@ -41,7 +45,12 @@ func GenerateClient(pkg string, contract *Contract) string {
 
 	// Generate methods for each function
 	for _, fn := range contract.Functions {
-		generateMethod(&b, contract, fn)
+		if bad, ok := functionTypesMappable(fn); !ok {
+			fmt.Fprintf(os.Stderr, "warning: %s: skipping %s: no Go mapping for type %q (add generator support to include it)\n",
+				contract.Name, fn.Name, bad)
+			continue
+		}
+		generateMethod(&b, contract, fn, readOnly)
 	}
 
 	// Generate event helpers
@@ -74,11 +83,11 @@ func generateConstructor(b *strings.Builder, contract *Contract) {
 	b.WriteString("}\n\n")
 }
 
-func generateMethod(b *strings.Builder, contract *Contract, fn Function) {
+func generateMethod(b *strings.Builder, contract *Contract, fn Function, readOnly map[string]bool) {
 	methodName := snakeToPascal(fn.Name)
 
 	// Determine if this is a read-only method (getter) or a state-changing method
-	isReadOnly := isReadOnlyFunction(fn)
+	isReadOnly := isReadOnlyFunction(fn, readOnly)
 
 	// Parse return type
 	returnType, returnsValue := parseReturnType(fn.Returns)
@@ -229,12 +238,6 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\tv, err := scval.U128FromScVal(*result)\n")
 		b.WriteString("\tif err != nil {\n")
 		b.WriteString("\t\treturn scval.U128{}, err\n")
-		b.WriteString("\t}\n")
-		b.WriteString("\treturn v, nil\n")
-	case returnType == "soroban_sdk::I256":
-		b.WriteString("\tv, err := scval.I256FromScVal(*result)\n")
-		b.WriteString("\tif err != nil {\n")
-		b.WriteString("\t\treturn scval.I256{}, err\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
 	case strings.HasPrefix(returnType, "soroban_sdk::BytesN<"):
@@ -468,13 +471,13 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
-	case f.Type == "soroban_sdk::I256":
-		b.WriteString("\t\t\tv, err := scval.I256FromScVal(entry.Val)\n")
+	case f.Type == "i128":
+		b.WriteString("\t\t\tv, err := scval.I128FromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
-	case f.Type == "i128":
-		b.WriteString("\t\t\tv, err := scval.I128FromScVal(entry.Val)\n")
+	case resolveAlias(f.Type) == "soroban_sdk::I256":
+		b.WriteString("\t\t\tv, err := scval.I256FromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
@@ -495,6 +498,11 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\t}\n")
 	case f.Type == "soroban_sdk::Symbol":
 		b.WriteString("\t\t\tv, err := scval.SymbolFromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
+	case f.Type == "soroban_sdk::String":
+		b.WriteString("\t\t\tv, err := scval.StringFromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
@@ -586,7 +594,51 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 
 // Helper functions
 
-func isReadOnlyFunction(fn Function) bool {
+// functionTypesMappable reports whether every input and return type of fn has a
+// Go mapping in this generator, returning the first type that does not.
+// soroban_sdk::Map currently has none: the pre-void-function parser dropped the
+// functions using it silently (they all lacked a `->` clause); we skip them
+// loudly instead so the gap is visible in generation output.
+func functionTypesMappable(fn Function) (string, bool) {
+	for _, in := range fn.Inputs {
+		if bad, ok := mappableType(in.Type); !ok {
+			return bad, false
+		}
+	}
+	if returnType, returnsValue := parseReturnType(fn.Returns); returnsValue {
+		if bad, ok := mappableType(returnType); !ok {
+			return bad, false
+		}
+	}
+	return "", true
+}
+
+// mappableType reports whether rustType (after alias resolution) can be mapped
+// to Go, recursing through Vec/Option containers. Only soroban_sdk::Map is
+// known-unmappable today.
+func mappableType(rustType string) (string, bool) {
+	t := strings.TrimSpace(resolveAlias(rustType))
+	switch {
+	case strings.HasPrefix(t, "soroban_sdk::Map<"):
+		return t, false
+	case strings.HasPrefix(t, "soroban_sdk::Vec<"):
+		return mappableType(strings.TrimSuffix(strings.TrimPrefix(t, "soroban_sdk::Vec<"), ">"))
+	case strings.HasPrefix(t, "Option<"):
+		return mappableType(strings.TrimSuffix(strings.TrimPrefix(t, "Option<"), ">"))
+	}
+	return "", true
+}
+
+// isReadOnlyFunction decides whether a contract function is generated as a
+// simulation (read-only) or a submitted transaction. When an explicit readOnly
+// set was provided (non-nil) it is authoritative: listed functions simulate,
+// everything else invokes. Soroban's contract spec carries no view/pure marker,
+// so contracts that need correct classification must pass the explicit list
+// (-readonly); the name heuristic below is a legacy fallback only.
+func isReadOnlyFunction(fn Function, readOnly map[string]bool) bool {
+	if readOnly != nil {
+		return readOnly[fn.Name]
+	}
 	name := strings.ToLower(fn.Name)
 	return strings.HasPrefix(name, "get_") ||
 		strings.HasPrefix(name, "is_") ||
@@ -686,8 +738,6 @@ func getArgConverter(rustType, varName string) string {
 		return fmt.Sprintf("scval.Uint32ToScVal(%s)", varName)
 	case "u128":
 		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", varName)
-	case "soroban_sdk::I256":
-		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", varName)
 	case "i128":
 		return fmt.Sprintf("scval.I128ToScVal(%s)", varName)
 	case "bool":
@@ -747,8 +797,6 @@ func zeroValue(rustType string) string {
 		return "0"
 	case "u128":
 		return "scval.U128{}"
-	case "soroban_sdk::I256":
-		return "scval.I256{}"
 	case "bool":
 		return "false"
 	case "soroban_sdk::Address", "soroban_sdk::String", "soroban_sdk::Symbol":
