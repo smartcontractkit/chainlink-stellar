@@ -33,9 +33,10 @@ func wasmNameFromCargo(t *testing.T, cargoPath string) string {
 // so the repo root is two levels up.
 func TestArtifactNamesMatchCargoPackages(t *testing.T) {
 	cases := map[string]string{
-		ReadFixtureWasm: filepath.Join("..", "..", "contracts", "cre", "test", "read_fixture", "Cargo.toml"),
-		ForwarderWasm:   filepath.Join("..", "..", "contracts", "cre", "forwarder", "Cargo.toml"),
-		ReceiverWasm:    filepath.Join("..", "..", "contracts", "cre", "test", "receiver", "Cargo.toml"),
+		ReadFixtureWasm:    filepath.Join("..", "..", "contracts", "cre", "test", "read_fixture", "Cargo.toml"),
+		ForwarderWasm:      filepath.Join("..", "..", "contracts", "cre", "forwarder", "Cargo.toml"),
+		ReceiverWasm:       filepath.Join("..", "..", "contracts", "cre", "test", "receiver", "Cargo.toml"),
+		DataFeedsCacheWasm: filepath.Join("..", "..", "contracts", "data-feeds", "data-feeds-cache", "Cargo.toml"),
 	}
 	for want, cargoPath := range cases {
 		require.Equalf(t, want, wasmNameFromCargo(t, cargoPath),
