@@ -73,26 +73,56 @@ pub struct OffRampUpdate {
     pub offramp: soroban_sdk::Address,
     pub source_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["ramp_reg_OnRampSet"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["ramp_reg_OnRampSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OnRampSetEvent {
     pub dest_chain_selector: u64,
     pub onramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ramp_reg_OffRampAdded"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["ramp_reg_OffRampAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OffRampAddedEvent {
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ramp_reg_OnRampRemoved"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["ramp_reg_OnRampRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OnRampRemovedEvent {
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["ramp_reg_OffRampRemoved"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["ramp_reg_OffRampRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OffRampRemovedEvent {
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RoleGrantedEvent {
+    pub role: soroban_sdk::Symbol,
+    pub account: soroban_sdk::Address,
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RoleRevokedEvent {
+    pub role: soroban_sdk::Symbol,
+    pub account: soroban_sdk::Address,
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OwnershipTransferStartedEvent {
+    pub previous_owner: soroban_sdk::Address,
+    pub new_owner: soroban_sdk::Address,
 }

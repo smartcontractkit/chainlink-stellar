@@ -2,7 +2,7 @@ module github.com/smartcontractkit/chainlink-stellar/bindings
 
 go 1.26.2
 
-require github.com/stellar/go-stellar-sdk v0.5.0
+require github.com/stellar/go-stellar-sdk v0.6.0
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
