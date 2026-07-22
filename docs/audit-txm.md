@@ -12,77 +12,6 @@ The Stellar TXM (`StellarTxm`) orchestrates the full lifecycle of Soroban transa
 Enqueue → broadcastLoop → simulate → (restore) → assemble → sign → send → confirmLoop → terminal
 ```
 
-### Transaction Lifecycle
-
-```mermaid
-flowchart TD
-    Enqueue["Enqueue(tx)"] --> Idempotent{"ID exists?"}
-    Idempotent -->|yes| CloseDone["closeDone (idempotent)"]
-    Idempotent -->|no| Insert["Insert into map"]
-    Insert --> Channel{"broadcastChan full?"}
-    Channel -->|no| BroadcastChan["Push to broadcastChan"]
-    Channel -->|yes| Evict["Evict oldest, push new"]
-    BroadcastChan --> BroadcastLoop["broadcastLoop (serial)"]
-    Evict --> BroadcastLoop
-    BroadcastLoop --> GetClient["getClient (multinode)"]
-    GetClient -->|fail| RetryClient["retryGetClientOrFail"]
-    GetClient -->|ok| Simulate["simulate (with retry)"]
-    Simulate --> Restore{"RestorePreamble?"}
-    Restore -->|yes| HandleRestore["handleRestore → re-simulate"]
-    Restore -->|no| Assemble["assemble (fee + soroban data)"]
-    HandleRestore --> Assemble
-    Assemble --> Sign["sign (keystore)"]
-    Sign --> Send["SendTransaction"]
-    Send --> SendResult{"handleSendResult"}
-    SendResult -->|PENDING/DUP| Unconfirmed["Mark Unconfirmed"]
-    SendResult -->|TRY_AGAIN| Retry["Retry with backoff"]
-    SendResult -->|BAD_SEQ| Resync["Resync sequence, retry"]
-    SendResult -->|INSUFFICIENT_FEE| BumpFee["Bump fee, retry"]
-    SendResult -->|fatal| Fail["Mark Failed"]
-    Unconfirmed --> ConfirmLoop["confirmLoop (poll GetTransaction)"]
-    ConfirmLoop -->|SUCCESS| Finalized["Mark Finalized"]
-    ConfirmLoop -->|FAILED non-retryable| Fail
-    ConfirmLoop -->|FAILED retryable| MaybeRetry{"maybeRetry (budget?)"}
-    ConfirmLoop -->|NOT_FOUND + expired| MaybeRetry
-    MaybeRetry -->|yes| BroadcastChan
-    MaybeRetry -->|no| Fail
-    Finalized --> Terminal["Terminal (Done closed)"]
-    Fail --> Terminal
-```
-
-### Goroutine & Lock Model
-
-```mermaid
-flowchart LR
-    subgraph Goroutines
-        BL["broadcastLoop\n(1 goroutine)"]
-        CL["confirmLoop\n(1 goroutine)"]
-        PL["pruneLoop\n(0-1 goroutine)"]
-    end
-
-    subgraph "Lock: transactionsMapLock"
-        Map["map[string]*StellarTx"]
-    end
-
-    subgraph "Lock: StellarTx.mu (per-tx)"
-        Fields["Status, Fee, Hash,\nXDR, TerminalTime, ..."]
-    end
-
-    subgraph "Atomic"
-        Attempt["Attempt (Uint64)"]
-        Infra["InfraAttempts (Uint64)"]
-    end
-
-    BL -->|insert/lookup/delete| Map
-    BL -->|read/write fields| Fields
-    BL -->|increment| Attempt
-    BL -->|increment| Infra
-    CL -->|read/write fields| Fields
-    CL -->|increment| Attempt
-    PL -->|scan + delete| Map
-    PL -->|read Status/TerminalTime| Fields
-```
-
 ### Components
 
 | Component | File | Responsibility |
@@ -290,30 +219,7 @@ Two separate retry budgets prevent infra outages from stealing lifecycle retries
 
 ---
 
-## 8. Security Review
-
-### Input Validation
-- `Enqueue` validates `FromAddress` via `xdr.AddressToAccountId` before any downstream use. Invalid addresses rejected at entry point (defense regression test: `TestStellarTxm_Enqueue_Validation`).
-- `len(req.Operations) != 1` enforced - only single-operation txs supported.
-- `getSequenceNumber` validates address and decodes ledger entries defensively (no `MustAddress` panics; uses `AddressToAccountId` + `GetAccount` with error returns).
-
-### No Sensitive Data in Logs
-- Logs include txID, hash, fromAddress, error strings, fee amounts, attempt counts. No private keys, signatures, or secrets are logged.
-- `GetContextedTxLogger` attaches txID + metadata to all log lines for traceability without exposing sensitive data.
-
-### Error Handling
-- All RPC errors are wrapped with `%w` for error chain preservation.
-- `classifySubmitErrorCode` maps Stellar result codes to bounded `ErrorReason` labels - no unbounded user-controlled strings in metrics.
-- `classifyFailedTransactionResult` decodes on-chain failure XDR safely via `xdr.SafeUnmarshalBase64` (no panic on malformed XDR).
-
-### No Panic Surfaces
-- `xdr.MustAddress` is not used anywhere in the TXM (replaced with `xdr.AddressToAccountId` which returns errors).
-- `xdr.SafeUnmarshalBase64` used for all XDR decoding (returns error, not panic).
-- `doneOnce.Do` structurally prevents double-close panic on `Done` channel.
-
----
-
-## 9. Test Coverage
+## 8. Test Coverage
 
 **Coverage:** 80.9% of statements (`go test -cover ./relayer/txm/...`)
 
@@ -337,7 +243,7 @@ All tests pass under `go test -race`. The concurrency stress test (`TestStellarT
 ---
 
 
-## 10. File Inventory
+## 9. File Inventory
 
 | File | Lines | Purpose |
 |---|---|---|
@@ -356,7 +262,7 @@ All tests pass under `go test -race`. The concurrency stress test (`TestStellarT
 
 ---
 
-## 11. Verification
+## 10. Verification
 
 ```
 go build ./...              # clean
