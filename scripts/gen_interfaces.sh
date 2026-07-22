@@ -32,8 +32,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WASM_DIR="$REPO_ROOT/target/wasm32v1-none/release"
 INTERFACES_DIR="$REPO_ROOT/contracts/common/interfaces/src"
 
-# Contract config: "wasm_basename|output_module|PascalCaseName|use_common_message"
+# Contract config: "wasm_basename|output_module|PascalCaseName|use_common_message[|wasm_dir]"
 # use_common_message=1 when the trait uses StellarToAnyMessage (avoids type conflicts)
+# wasm_dir (optional, relative to repo root) overrides WASM_DIR for contracts built
+# from a nested cargo workspace (e.g. contracts/data-feeds)
 CONTRACTS=(
   "fee_quoter|fee_quoter|FeeQuoter|1"
   "ccvs_committee_verifier|committee_verifier|CommitteeVerifier|0"
@@ -53,6 +55,7 @@ CONTRACTS=(
   "mcms|mcms|Mcms|0"
   "timelock|timelock|Timelock|0"
   "forwarder|forwarder|cre|0"
+  "data_feeds_cache|data_feeds_cache|DataFeedsCache|0|contracts/data-feeds/target/wasm32v1-none/release"
 )
 
 # Remove the WASM const block from generated output (interfaces don't need it)
@@ -236,6 +239,19 @@ patch_ramp_registry_interfaces() {
   ' "$f"
 }
 
+# Data feeds cache interfaces reference BytesN type aliases (DataId, WorkflowName, …)
+# whose definitions stellar-cli omits from the generated output. Substitute the
+# underlying BytesN types so neither the module nor the Go generator needs alias defs.
+patch_data_feeds_cache_interfaces() {
+  local f="$1"
+  sed -i \
+    -e 's/\bDataId\b/soroban_sdk::BytesN<16>/g' \
+    -e 's/\bWorkflowName\b/soroban_sdk::BytesN<10>/g' \
+    -e 's/\bWorkflowOwner\b/soroban_sdk::BytesN<20>/g' \
+    -e 's/\bWasmHash\b/soroban_sdk::BytesN<32>/g' \
+    "$f"
+}
+
 do_build=true
 for arg in "$@"; do
   case "$arg" in
@@ -253,11 +269,15 @@ cd "$REPO_ROOT"
 if [[ "$do_build" == true ]]; then
   echo "Building contracts..."
   stellar contract build
+  (cd "$REPO_ROOT/contracts/data-feeds" && stellar contract build)
 fi
 
 for entry in "${CONTRACTS[@]}"; do
-  IFS='|' read -r wasm_basename output_module pascal_name use_common_msg <<< "$entry"
+  IFS='|' read -r wasm_basename output_module pascal_name use_common_msg wasm_dir <<< "$entry"
   wasm_path="$WASM_DIR/${wasm_basename}.wasm"
+  if [[ -n "${wasm_dir:-}" ]]; then
+    wasm_path="$REPO_ROOT/$wasm_dir/${wasm_basename}.wasm"
+  fi
   out_path="$INTERFACES_DIR/${output_module}.rs"
 
   if [[ ! -f "$wasm_path" ]]; then
@@ -282,6 +302,9 @@ for entry in "${CONTRACTS[@]}"; do
   fi
   if [[ "$output_module" == "rmn_remote" ]]; then
     patch_rmn_remote_interfaces "$out_path"
+  fi
+  if [[ "$output_module" == "data_feeds_cache" ]]; then
+    patch_data_feeds_cache_interfaces "$out_path"
   fi
 done
 

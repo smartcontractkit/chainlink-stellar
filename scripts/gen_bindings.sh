@@ -44,6 +44,7 @@ CONTRACTS=(
   "mcms|Mcms|mcms|0"
   "timelock|Timelock|timelock|0|"
   "forwarder|Forwarder|cre|0|"
+  "data_feeds_cache|DataFeedsCache|data_feeds_cache|0|"
 )
 
 # Extract TokenAmount and StellarToAnyMessage structs from committee_verifier for contracts that use common_message

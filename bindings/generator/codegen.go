@@ -200,6 +200,12 @@ func generateFromScValField(b *strings.Builder, f Field, target string) {
 		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", f.Name))
 		b.WriteString("\t\t\t}\n")
 		b.WriteString(fmt.Sprintf("\t\t\t%s = v\n", target))
+	case f.Type == "soroban_sdk::I256":
+		b.WriteString("\t\t\tv, err := scval.I256FromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", f.Name))
+		b.WriteString("\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t%s = v\n", target))
 	case strings.HasPrefix(f.Type, "Option<") && strings.Contains(f.Type, "soroban_sdk::Address"):
 		b.WriteString("\t\t\tv, err := scval.OptionalAddressFromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err != nil {\n")
@@ -275,6 +281,12 @@ func generateVecItemParse(b *strings.Builder, innerType, target string) {
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 	case "u128":
 		b.WriteString("\t\t\t\tv, err := scval.U128FromScVal(item)\n")
+		b.WriteString("\t\t\t\tif err != nil {\n")
+		b.WriteString("\t\t\t\t\treturn nil, err\n")
+		b.WriteString("\t\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+	case "soroban_sdk::I256":
+		b.WriteString("\t\t\t\tv, err := scval.I256FromScVal(item)\n")
 		b.WriteString("\t\t\t\tif err != nil {\n")
 		b.WriteString("\t\t\t\t\treturn nil, err\n")
 		b.WriteString("\t\t\t\t}\n")
@@ -539,6 +551,8 @@ func generatePayloadFromScVal(b *strings.Builder, rustType, src, assign, errCtx,
 		b.WriteString(fmt.Sprintf("\t\tif v, err := scval.I128FromScVal(%s); err != nil { return %s, fmt.Errorf(\"%s: %%w\", err) } else { %s = v }\n", src, zero, errCtx, assign))
 	case "u128":
 		b.WriteString(fmt.Sprintf("\t\tif v, err := scval.U128FromScVal(%s); err != nil { return %s, fmt.Errorf(\"%s: %%w\", err) } else { %s = v }\n", src, zero, errCtx, assign))
+	case "soroban_sdk::I256":
+		b.WriteString(fmt.Sprintf("\t\tif v, err := scval.I256FromScVal(%s); err != nil { return %s, fmt.Errorf(\"%s: %%w\", err) } else { %s = v }\n", src, zero, errCtx, assign))
 	case "bool":
 		b.WriteString(fmt.Sprintf("\t\tif v, ok := %s.GetB(); ok { %s = v } else { return %s, fmt.Errorf(\"%s: expected bool\") }\n", src, assign, zero, errCtx))
 	case "soroban_sdk::Address":
@@ -596,6 +610,8 @@ func rustTypeToGo(rustType string) string {
 		return "uint32"
 	case "u128":
 		return "scval.U128"
+	case "soroban_sdk::I256":
+		return "scval.I256"
 	case "i128":
 		return "int64"
 	case "bool":
@@ -669,6 +685,8 @@ func getToScValConverter(rustType, expr string) string {
 	case "u32":
 		return fmt.Sprintf("scval.Uint32ToScVal(%s)", expr)
 	case "u128":
+		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", expr)
+	case "soroban_sdk::I256":
 		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", expr)
 	case "i128":
 		return fmt.Sprintf("scval.I128ToScVal(%s)", expr)

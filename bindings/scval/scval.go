@@ -4,8 +4,10 @@
 package scval
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 
@@ -365,6 +367,52 @@ func Bytes16FromScVal(val xdr.ScVal) ([16]byte, error) {
 	return result, nil
 }
 
+// Bytes10ToScVal converts a [10]byte to an xdr.ScVal.
+func Bytes10ToScVal(b [10]byte) xdr.ScVal {
+	bytes := xdr.ScBytes(b[:])
+	return xdr.ScVal{
+		Type:  xdr.ScValTypeScvBytes,
+		Bytes: &bytes,
+	}
+}
+
+// Bytes10FromScVal extracts a [10]byte from an xdr.ScVal containing BytesN<10>.
+func Bytes10FromScVal(val xdr.ScVal) ([10]byte, error) {
+	bytes, ok := val.GetBytes()
+	if !ok {
+		return [10]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
+	}
+	if len(bytes) != 10 {
+		return [10]byte{}, fmt.Errorf("expected 10 bytes, got %d", len(bytes))
+	}
+	var result [10]byte
+	copy(result[:], bytes)
+	return result, nil
+}
+
+// Bytes20ToScVal converts a [20]byte to an xdr.ScVal.
+func Bytes20ToScVal(b [20]byte) xdr.ScVal {
+	bytes := xdr.ScBytes(b[:])
+	return xdr.ScVal{
+		Type:  xdr.ScValTypeScvBytes,
+		Bytes: &bytes,
+	}
+}
+
+// Bytes20FromScVal extracts a [20]byte from an xdr.ScVal containing BytesN<20>.
+func Bytes20FromScVal(val xdr.ScVal) ([20]byte, error) {
+	bytes, ok := val.GetBytes()
+	if !ok {
+		return [20]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
+	}
+	if len(bytes) != 20 {
+		return [20]byte{}, fmt.Errorf("expected 20 bytes, got %d", len(bytes))
+	}
+	var result [20]byte
+	copy(result[:], bytes)
+	return result, nil
+}
+
 // Bytes32FromScVal extracts a [32]byte from an xdr.ScVal containing BytesN<32>.
 func Bytes32FromScVal(val xdr.ScVal) ([32]byte, error) {
 	bytes, ok := val.GetBytes()
@@ -428,6 +476,67 @@ func U128FromScVal(val xdr.ScVal) (U128, error) {
 		return U128{}, fmt.Errorf("not a u128 type: %v", val.Type)
 	}
 	return U128(u128), nil
+}
+
+// I256 represents a Soroban i256 value. It wraps xdr.Int256Parts and implements ToScVal
+// for use in generated struct serialization.
+type I256 xdr.Int256Parts
+
+// ToScVal converts I256 to an xdr.ScVal for contract calls.
+func (i I256) ToScVal() (xdr.ScVal, error) {
+	parts := xdr.Int256Parts(i)
+	return I256PartsToScVal(parts), nil
+}
+
+// I256PartsToScVal converts xdr.Int256Parts to an xdr.ScVal representing i256.
+func I256PartsToScVal(parts xdr.Int256Parts) xdr.ScVal {
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvI256,
+		I256: &parts,
+	}
+}
+
+// I256FromScVal extracts I256 from an xdr.ScVal containing i256.
+func I256FromScVal(val xdr.ScVal) (I256, error) {
+	i256, ok := val.GetI256()
+	if !ok {
+		return I256{}, fmt.Errorf("not an i256 type: %v", val.Type)
+	}
+	return I256(i256), nil
+}
+
+// I256FromBigInt converts v (two's-complement range [-2^255, 2^255)) to I256.
+func I256FromBigInt(v *big.Int) (I256, error) {
+	if v == nil {
+		return I256{}, fmt.Errorf("nil big.Int")
+	}
+	limit := new(big.Int).Lsh(big.NewInt(1), 255)
+	if v.Cmp(limit) >= 0 || v.Cmp(new(big.Int).Neg(limit)) < 0 {
+		return I256{}, fmt.Errorf("value %s out of i256 range", v)
+	}
+	twos := new(big.Int).Set(v)
+	if twos.Sign() < 0 {
+		twos.Add(twos, new(big.Int).Lsh(big.NewInt(1), 256))
+	}
+	var be [32]byte
+	twos.FillBytes(be[:])
+	limb := func(o int) uint64 { return binary.BigEndian.Uint64(be[o : o+8]) }
+	return I256{
+		HiHi: xdr.Int64(limb(0)),
+		HiLo: xdr.Uint64(limb(8)),
+		LoHi: xdr.Uint64(limb(16)),
+		LoLo: xdr.Uint64(limb(24)),
+	}, nil
+}
+
+// BigInt converts I256 to a big.Int.
+func (i I256) BigInt() *big.Int {
+	v := new(big.Int).SetInt64(int64(i.HiHi))
+	for _, limb := range []uint64{uint64(i.HiLo), uint64(i.LoHi), uint64(i.LoLo)} {
+		v.Lsh(v, 64)
+		v.Or(v, new(big.Int).SetUint64(limb))
+	}
+	return v
 }
 
 // MustToScVal panics if ToScVal returns an error.

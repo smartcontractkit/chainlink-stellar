@@ -231,6 +231,12 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\t\treturn scval.U128{}, err\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
+	case returnType == "soroban_sdk::I256":
+		b.WriteString("\tv, err := scval.I256FromScVal(*result)\n")
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn scval.I256{}, err\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn v, nil\n")
 	case strings.HasPrefix(returnType, "soroban_sdk::BytesN<"):
 		n := extractBytesNSize(returnType)
 		b.WriteString(fmt.Sprintf("\tv, err := scval.Bytes%dFromScVal(*result)\n", n))
@@ -462,6 +468,11 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
+	case f.Type == "soroban_sdk::I256":
+		b.WriteString("\t\t\tv, err := scval.I256FromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
 	case f.Type == "i128":
 		b.WriteString("\t\t\tv, err := scval.I128FromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
@@ -675,6 +686,8 @@ func getArgConverter(rustType, varName string) string {
 		return fmt.Sprintf("scval.Uint32ToScVal(%s)", varName)
 	case "u128":
 		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", varName)
+	case "soroban_sdk::I256":
+		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", varName)
 	case "i128":
 		return fmt.Sprintf("scval.I128ToScVal(%s)", varName)
 	case "bool":
@@ -734,6 +747,8 @@ func zeroValue(rustType string) string {
 		return "0"
 	case "u128":
 		return "scval.U128{}"
+	case "soroban_sdk::I256":
+		return "scval.I256{}"
 	case "bool":
 		return "false"
 	case "soroban_sdk::Address", "soroban_sdk::String", "soroban_sdk::Symbol":
