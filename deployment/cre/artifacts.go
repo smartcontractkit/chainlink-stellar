@@ -18,4 +18,8 @@ const (
 
 	// ReceiverWasm is the CRE test receiver (contracts/cre/test/receiver).
 	ReceiverWasm = "receiver.wasm"
+
+	// DataFeedsCacheWasm is the Data Feeds cache (contracts/data-feeds/data-feeds-cache).
+	// Built from the contracts/data-feeds nested cargo workspace, not the root one.
+	DataFeedsCacheWasm = "data_feeds_cache.wasm"
 )
