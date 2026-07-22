@@ -468,8 +468,11 @@ func qualifySorobanType(t string) string {
 }
 
 func parseEvents(input string) []Event {
-	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)]
-	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(\s*topics\s*=\s*\[([^\]]+)\][^)]*\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
+	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)].
+	// `[^)]*?` before `topics` tolerates leading attr args (e.g. the CLI-27 interface format
+	// `contractevent(export = false, topics = [...])`), so events aren't dropped when `export`
+	// precedes `topics`. `\btopics` anchors on the token to avoid spurious partial matches.
+	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\([^)]*?\btopics\s*=\s*\[([^\]]+)\][^)]*\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
 	fieldRe := regexp.MustCompile(`pub (\w+):\s*([^,]+),`)
 	topicRe := regexp.MustCompile(`"([^"]+)"`)
 

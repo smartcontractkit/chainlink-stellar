@@ -1342,10 +1342,10 @@ func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 
 	inject("inflight-pending", commontypes.Pending, time.Time{})
 	inject("inflight-unconfirmed", commontypes.Unconfirmed, time.Time{})
-	inject("terminal-no-time", commontypes.Finalized, time.Time{})                      // TerminalTime unset — must not be pruned
-	inject("terminal-fresh", commontypes.Finalized, now.Add(-twoHours/2))               // within window
+	inject("terminal-no-time", commontypes.Finalized, time.Time{})                              // TerminalTime unset — must not be pruned
+	inject("terminal-fresh", commontypes.Finalized, now.Add(-twoHours/2))                       // within window
 	inject("terminal-expired-finalized", commontypes.Finalized, now.Add(-twoHours-time.Second)) // past window
-	inject("terminal-expired-failed", commontypes.Failed, now.Add(-twoHours-time.Second))     // past window
+	inject("terminal-expired-failed", commontypes.Failed, now.Add(-twoHours-time.Second))       // past window
 
 	txm.pruneTerminal()
 
@@ -1567,7 +1567,7 @@ func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	const numTxs = 20
