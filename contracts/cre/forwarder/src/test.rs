@@ -74,7 +74,9 @@ pub(crate) mod crypto {
 // ============================================================================
 
 pub(crate) mod mocks {
-    use soroban_sdk::{contract, contracterror, contractimpl, panic_with_error, Bytes, Env};
+    use soroban_sdk::{
+        contract, contracterror, contractimpl, panic_with_error, Address, Bytes, Env,
+    };
 
     #[contracterror]
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -90,7 +92,7 @@ pub(crate) mod mocks {
 
     #[contractimpl]
     impl CooperativeReceiver {
-        pub fn on_report(_env: Env, _metadata: Bytes, _payload: Bytes) {}
+        pub fn on_report(_env: Env, _sender: Address, _metadata: Bytes, _payload: Bytes) {}
     }
 
     /// `Ok(Err(_))` arm — receiver returns a typed `Result::Err`.
@@ -102,6 +104,7 @@ pub(crate) mod mocks {
     impl RejectingReceiver {
         pub fn on_report(
             _env: Env,
+            _sender: Address,
             _metadata: Bytes,
             _payload: Bytes,
         ) -> Result<(), ReceiverError> {
@@ -116,7 +119,7 @@ pub(crate) mod mocks {
 
     #[contractimpl]
     impl PanickingReceiver {
-        pub fn on_report(env: Env, _metadata: Bytes, _payload: Bytes) {
+        pub fn on_report(env: Env, _sender: Address, _metadata: Bytes, _payload: Bytes) {
             panic_with_error!(&env, ReceiverError::Boom);
         }
     }
@@ -150,7 +153,12 @@ pub(crate) mod mocks {
                 .instance()
                 .set(&soroban_sdk::symbol_short!("REJ"), &reject);
         }
-        pub fn on_report(env: Env, _metadata: Bytes, _payload: Bytes) -> Result<(), ReceiverError> {
+        pub fn on_report(
+            env: Env,
+            _sender: Address,
+            _metadata: Bytes,
+            _payload: Bytes,
+        ) -> Result<(), ReceiverError> {
             let reject: bool = env
                 .storage()
                 .instance()
@@ -172,8 +180,27 @@ pub(crate) mod mocks {
 
     #[contractimpl]
     impl PlainPanicReceiver {
-        pub fn on_report(_env: Env, _metadata: Bytes, _payload: Bytes) {
+        pub fn on_report(_env: Env, _sender: Address, _metadata: Bytes, _payload: Bytes) {
             panic!("plain abort");
+        }
+    }
+
+    #[contract]
+    pub struct SenderRecordingReceiver;
+
+    #[contractimpl]
+    impl SenderRecordingReceiver {
+        pub fn on_report(env: Env, sender: Address, _metadata: Bytes, _payload: Bytes) {
+            sender.require_auth();
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("sender"), &sender);
+        }
+
+        pub fn last_sender(env: Env) -> Option<Address> {
+            env.storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("sender"))
         }
     }
 }
@@ -1699,6 +1726,21 @@ fn test_report_uninitialized_panics() {
 // makes this non-trivial without rewriting setup(). The host-level auth path
 // is exercised by the not_owner tests
 // which use the same `set_auths(&[])` pattern that would fire here.
+
+#[test]
+fn test_report_passes_forwarder_address_as_sender() {
+    let env = Env::default();
+    let fx = setup_with_config(&env, 1, 4);
+    fx.client.add_forwarder(&fx.transmitter);
+
+    let receiver = env.register(mocks::SenderRecordingReceiver, ());
+    let (raw, ctx, sigs) = build_signed_report(&fx, &ReportBuilder::default(), 2);
+    fx.client
+        .report(&fx.transmitter, &receiver, &raw, &ctx, &sigs);
+
+    let recorded = mocks::SenderRecordingReceiverClient::new(&env, &receiver).last_sender();
+    assert_eq!(recorded, Some(fx.contract_addr.clone()));
+}
 
 // ============================================================================
 // Config-version lifecycle

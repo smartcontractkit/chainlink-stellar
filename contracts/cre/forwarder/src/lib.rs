@@ -488,7 +488,12 @@ fn dispatch_to_receiver(
         // Not a Wasm contract — terminal; AlreadyProcessed above blocks retries.
         TransmissionState::InvalidReceiver
     } else {
-        let args = (metadata.clone(), validated_report.clone()).into_val(env);
+        let args = (
+            env.current_contract_address(),
+            metadata.clone(),
+            validated_report.clone(),
+        )
+            .into_val(env);
         let call =
             env.try_invoke_contract::<(), InvokeError>(receiver, &symbol_short!("on_report"), args);
         match call {
