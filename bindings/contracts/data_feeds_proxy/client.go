@@ -31,226 +31,193 @@ func (c *DataFeedsProxyClient) ContractID() string {
 	return c.contractID
 }
 
-// Upgrade calls the upgrade function on the contract.
-func (c *DataFeedsProxyClient) Upgrade(ctx context.Context, newWasmHash WasmHash) error {
+// Upgrade builds a call to the upgrade contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) Upgrade(newWasmHash WasmHash) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(newWasmHash.ToScVal()),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
-	if err != nil {
-		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "upgrade", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// Version calls the version function on the contract.
-func (c *DataFeedsProxyClient) Version(ctx context.Context) (uint32, error) {
+// Version builds a call to the version contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) Version() *bindings.Call[uint32] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "version", args)
-	if err != nil {
-		return 0, fmt.Errorf("failed to call version: %w", err)
-	}
-
-	if result == nil {
-		return 0, fmt.Errorf("no return value from version")
-	}
-
-	v, ok := result.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 return type")
-	}
-	return uint32(v), nil
+	return bindings.NewCall(c.invoker, c.contractID, "version", args, func(result *xdr.ScVal) (uint32, error) {
+		if result == nil {
+			return 0, fmt.Errorf("no return value from version")
+		}
+		v, ok := result.GetU32()
+		if !ok {
+			return 0, fmt.Errorf("expected u32 return type")
+		}
+		return uint32(v), nil
+	})
 }
 
-// Decimals calls the decimals function on the contract.
-func (c *DataFeedsProxyClient) Decimals(ctx context.Context, dataId DataId) (uint32, error) {
+// Decimals builds a call to the decimals contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) Decimals(dataId DataId) *bindings.Call[uint32] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "decimals", args)
-	if err != nil {
-		return 0, fmt.Errorf("failed to call decimals: %w", err)
-	}
-
-	if result == nil {
-		return 0, fmt.Errorf("no return value from decimals")
-	}
-
-	v, ok := result.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 return type")
-	}
-	return uint32(v), nil
+	return bindings.NewCall(c.invoker, c.contractID, "decimals", args, func(result *xdr.ScVal) (uint32, error) {
+		if result == nil {
+			return 0, fmt.Errorf("no return value from decimals")
+		}
+		v, ok := result.GetU32()
+		if !ok {
+			return 0, fmt.Errorf("expected u32 return type")
+		}
+		return uint32(v), nil
+	})
 }
 
-// GetOwner calls the get_owner function on the contract.
-func (c *DataFeedsProxyClient) GetOwner(ctx context.Context) (*string, error) {
+// GetOwner builds a call to the get_owner contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) GetOwner() *bindings.Call[*string] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_owner", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_owner: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_owner")
-	}
-
-	v, err := scval.OptionalAddressFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "get_owner", args, func(result *xdr.ScVal) (*string, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from get_owner")
+		}
+		v, err := scval.OptionalAddressFromScVal(*result)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	})
 }
 
-// GetRound calls the get_round function on the contract.
-func (c *DataFeedsProxyClient) GetRound(ctx context.Context, dataId DataId, roundId uint64) (*Round, error) {
+// GetRound builds a call to the get_round contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) GetRound(dataId DataId, roundId uint64) *bindings.Call[*Round] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(roundId),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_round", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_round: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_round")
-	}
-
-	return RoundFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "get_round", args, func(result *xdr.ScVal) (*Round, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from get_round")
+		}
+		return RoundFromScVal(*result)
+	})
 }
 
-// SetCache calls the set_cache function on the contract.
-func (c *DataFeedsProxyClient) SetCache(ctx context.Context, cache string) error {
+// SetCache builds a call to the set_cache contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) SetCache(cache string) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(cache),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_cache", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_cache: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "set_cache", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// Description calls the description function on the contract.
-func (c *DataFeedsProxyClient) Description(ctx context.Context, dataId DataId) (string, error) {
+// Description builds a call to the description contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) Description(dataId DataId) *bindings.Call[string] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "description", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call description: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from description")
-	}
-
-	return scval.StringFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "description", args, func(result *xdr.ScVal) (string, error) {
+		if result == nil {
+			return "", fmt.Errorf("no return value from description")
+		}
+		return scval.StringFromScVal(*result)
+	})
 }
 
-// LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId DataId) (*Round, error) {
+// LatestRound builds a call to the latest_round contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) LatestRound(dataId DataId) *bindings.Call[*Round] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call latest_round: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from latest_round")
-	}
-
-	return RoundFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "latest_round", args, func(result *xdr.ScVal) (*Round, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from latest_round")
+		}
+		return RoundFromScVal(*result)
+	})
 }
 
-// RecoverTokens calls the recover_tokens function on the contract.
-func (c *DataFeedsProxyClient) RecoverTokens(ctx context.Context, token string, to string, amount int64) error {
+// RecoverTokens builds a call to the recover_tokens contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) RecoverTokens(token string, to string, amount int64) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(token),
 		scval.AddressToScVal(to),
 		scval.I128ToScVal(amount),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "recover_tokens", args)
-	if err != nil {
-		return fmt.Errorf("failed to call recover_tokens: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "recover_tokens", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// AcceptOwnership calls the accept_ownership function on the contract.
-func (c *DataFeedsProxyClient) AcceptOwnership(ctx context.Context) error {
+// AcceptOwnership builds a call to the accept_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) AcceptOwnership() *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call accept_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "accept_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// TypeAndVersion calls the type_and_version function on the contract.
-func (c *DataFeedsProxyClient) TypeAndVersion(ctx context.Context) (string, error) {
+// TypeAndVersion builds a call to the type_and_version contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) TypeAndVersion() *bindings.Call[string] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "type_and_version", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call type_and_version: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from type_and_version")
-	}
-
-	return scval.StringFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "type_and_version", args, func(result *xdr.ScVal) (string, error) {
+		if result == nil {
+			return "", fmt.Errorf("no return value from type_and_version")
+		}
+		return scval.StringFromScVal(*result)
+	})
 }
 
-// RenounceOwnership calls the renounce_ownership function on the contract.
-func (c *DataFeedsProxyClient) RenounceOwnership(ctx context.Context) error {
+// RenounceOwnership builds a call to the renounce_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) RenounceOwnership() *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "renounce_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call renounce_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "renounce_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// TransferOwnership calls the transfer_ownership function on the contract.
-func (c *DataFeedsProxyClient) TransferOwnership(ctx context.Context, newOwner string, liveUntilLedger uint32) error {
+// TransferOwnership builds a call to the transfer_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsProxyClient) TransferOwnership(newOwner string, liveUntilLedger uint32) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 		scval.Uint32ToScVal(liveUntilLedger),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call transfer_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "transfer_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
 // WaitForCacheSet waits for a CacheSet event.

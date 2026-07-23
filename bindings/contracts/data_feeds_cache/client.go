@@ -31,440 +31,384 @@ func (c *DataFeedsCacheClient) ContractID() string {
 	return c.contractID
 }
 
-// Upgrade calls the upgrade function on the contract.
-func (c *DataFeedsCacheClient) Upgrade(ctx context.Context, newWasmHash WasmHash) error {
+// Upgrade builds a call to the upgrade contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) Upgrade(newWasmHash WasmHash) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(newWasmHash.ToScVal()),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
-	if err != nil {
-		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "upgrade", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// Version calls the version function on the contract.
-func (c *DataFeedsCacheClient) Version(ctx context.Context) (uint32, error) {
+// Version builds a call to the version contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) Version() *bindings.Call[uint32] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "version", args)
-	if err != nil {
-		return 0, fmt.Errorf("failed to call version: %w", err)
-	}
-
-	if result == nil {
-		return 0, fmt.Errorf("no return value from version")
-	}
-
-	v, ok := result.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 return type")
-	}
-	return uint32(v), nil
+	return bindings.NewCall(c.invoker, c.contractID, "version", args, func(result *xdr.ScVal) (uint32, error) {
+		if result == nil {
+			return 0, fmt.Errorf("no return value from version")
+		}
+		v, ok := result.GetU32()
+		if !ok {
+			return 0, fmt.Errorf("expected u32 return type")
+		}
+		return uint32(v), nil
+	})
 }
 
-// Decimals calls the decimals function on the contract.
-func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataId DataId) (uint32, error) {
+// Decimals builds a call to the decimals contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) Decimals(dataId DataId) *bindings.Call[uint32] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "decimals", args)
-	if err != nil {
-		return 0, fmt.Errorf("failed to call decimals: %w", err)
-	}
-
-	if result == nil {
-		return 0, fmt.Errorf("no return value from decimals")
-	}
-
-	v, ok := result.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("expected u32 return type")
-	}
-	return uint32(v), nil
+	return bindings.NewCall(c.invoker, c.contractID, "decimals", args, func(result *xdr.ScVal) (uint32, error) {
+		if result == nil {
+			return 0, fmt.Errorf("no return value from decimals")
+		}
+		v, ok := result.GetU32()
+		if !ok {
+			return 0, fmt.Errorf("expected u32 return type")
+		}
+		return uint32(v), nil
+	})
 }
 
-// GetOwner calls the get_owner function on the contract.
-func (c *DataFeedsCacheClient) GetOwner(ctx context.Context) (*string, error) {
+// GetOwner builds a call to the get_owner contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) GetOwner() *bindings.Call[*string] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_owner", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_owner: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_owner")
-	}
-
-	v, err := scval.OptionalAddressFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "get_owner", args, func(result *xdr.ScVal) (*string, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from get_owner")
+		}
+		v, err := scval.OptionalAddressFromScVal(*result)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	})
 }
 
-// GetRound calls the get_round function on the contract.
-func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId DataId, roundId uint64) (*RoundData, error) {
+// GetRound builds a call to the get_round contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) GetRound(dataId DataId, roundId uint64) *bindings.Call[*RoundData] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(roundId),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_round", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_round: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_round")
-	}
-
-	if result.Type == xdr.ScValTypeScvVoid {
-		return nil, nil
-	}
-	v, err := RoundDataFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "get_round", args, func(result *xdr.ScVal) (*RoundData, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from get_round")
+		}
+		if result.Type == xdr.ScValTypeScvVoid {
+			return nil, nil
+		}
+		v, err := RoundDataFromScVal(*result)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	})
 }
 
-// OnReport calls the on_report function on the contract.
-func (c *DataFeedsCacheClient) OnReport(ctx context.Context, sender string, metadata []byte, report []byte) error {
+// OnReport builds a call to the on_report contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) OnReport(sender string, metadata []byte, report []byte) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(sender),
 		scval.BytesToScVal(metadata),
 		scval.BytesToScVal(report),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "on_report", args)
-	if err != nil {
-		return fmt.Errorf("failed to call on_report: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "on_report", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// FindRound calls the find_round function on the contract.
-func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId DataId, timestamp uint64, bound Bound) (*RoundData, error) {
+// FindRound builds a call to the find_round contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) FindRound(dataId DataId, timestamp uint64, bound Bound) *bindings.Call[*RoundData] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(timestamp),
 		scval.MustToScVal(bound.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "find_round", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call find_round: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from find_round")
-	}
-
-	if result.Type == xdr.ScValTypeScvVoid {
-		return nil, nil
-	}
-	v, err := RoundDataFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "find_round", args, func(result *xdr.ScVal) (*RoundData, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from find_round")
+		}
+		if result.Type == xdr.ScValTypeScvVoid {
+			return nil, nil
+		}
+		v, err := RoundDataFromScVal(*result)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	})
 }
 
-// Description calls the description function on the contract.
-func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId DataId) (string, error) {
+// Description builds a call to the description contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) Description(dataId DataId) *bindings.Call[string] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "description", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call description: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from description")
-	}
-
-	return scval.StringFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "description", args, func(result *xdr.ScVal) (string, error) {
+		if result == nil {
+			return "", fmt.Errorf("no return value from description")
+		}
+		return scval.StringFromScVal(*result)
+	})
 }
 
-// RoundRange calls the round_range function on the contract.
-func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId DataId, from uint64, to uint64) ([]RoundData, error) {
+// RoundRange builds a call to the round_range contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) RoundRange(dataId DataId, from uint64, to uint64) *bindings.Call[[]RoundData] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 		scval.Uint64ToScVal(from),
 		scval.Uint64ToScVal(to),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "round_range", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call round_range: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from round_range")
-	}
-
-	vec, ok := result.GetVec()
-	if !ok || vec == nil {
-		return nil, fmt.Errorf("expected vec return type")
-	}
-	out := make([]RoundData, len(*vec))
-	for i, item := range *vec {
-		v, err := RoundDataFromScVal(item)
-		if err != nil {
-			return nil, err
+	return bindings.NewCall(c.invoker, c.contractID, "round_range", args, func(result *xdr.ScVal) ([]RoundData, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from round_range")
 		}
-		out[i] = *v
-	}
-	return out, nil
+		vec, ok := result.GetVec()
+		if !ok || vec == nil {
+			return nil, fmt.Errorf("expected vec return type")
+		}
+		out := make([]RoundData, len(*vec))
+		for i, item := range *vec {
+			v, err := RoundDataFromScVal(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = *v
+		}
+		return out, nil
+	})
 }
 
-// LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataId DataId) (*RoundData, error) {
+// LatestRound builds a call to the latest_round contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) LatestRound(dataId DataId) *bindings.Call[*RoundData] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call latest_round: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from latest_round")
-	}
-
-	if result.Type == xdr.ScValTypeScvVoid {
-		return nil, nil
-	}
-	v, err := RoundDataFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "latest_round", args, func(result *xdr.ScVal) (*RoundData, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from latest_round")
+		}
+		if result.Type == xdr.ScValTypeScvVoid {
+			return nil, nil
+		}
+		v, err := RoundDataFromScVal(*result)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	})
 }
 
-// IsFeedAdmin calls the is_feed_admin function on the contract.
-func (c *DataFeedsCacheClient) IsFeedAdmin(ctx context.Context, admin string) (bool, error) {
+// IsFeedAdmin builds a call to the is_feed_admin contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) IsFeedAdmin(admin string) *bindings.Call[bool] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_feed_admin", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_feed_admin: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_feed_admin")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "is_feed_admin", args, func(result *xdr.ScVal) (bool, error) {
+		if result == nil {
+			return false, fmt.Errorf("no return value from is_feed_admin")
+		}
+		v, ok := result.GetB()
+		if !ok {
+			return false, fmt.Errorf("expected bool return type")
+		}
+		return v, nil
+	})
 }
 
-// AddFeedAdmin calls the add_feed_admin function on the contract.
-func (c *DataFeedsCacheClient) AddFeedAdmin(ctx context.Context, newAdmin string) error {
+// AddFeedAdmin builds a call to the add_feed_admin contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) AddFeedAdmin(newAdmin string) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newAdmin),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_feed_admin", args)
-	if err != nil {
-		return fmt.Errorf("failed to call add_feed_admin: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "add_feed_admin", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// HasPermission calls the has_permission function on the contract.
-func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId DataId, sender string, workflowOwner WorkflowOwner, workflowName WorkflowName) (bool, error) {
+// HasPermission builds a call to the has_permission contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) HasPermission(dataId DataId, sender string, workflowOwner WorkflowOwner, workflowName WorkflowName) *bindings.Call[bool] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 		scval.AddressToScVal(sender),
 		scval.MustToScVal(workflowOwner.ToScVal()),
 		scval.MustToScVal(workflowName.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "has_permission", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call has_permission: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from has_permission")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
+	return bindings.NewCall(c.invoker, c.contractID, "has_permission", args, func(result *xdr.ScVal) (bool, error) {
+		if result == nil {
+			return false, fmt.Errorf("no return value from has_permission")
+		}
+		v, ok := result.GetB()
+		if !ok {
+			return false, fmt.Errorf("expected bool return type")
+		}
+		return v, nil
+	})
 }
 
-// RecoverTokens calls the recover_tokens function on the contract.
-func (c *DataFeedsCacheClient) RecoverTokens(ctx context.Context, token string, to string, amount int64) error {
+// RecoverTokens builds a call to the recover_tokens contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) RecoverTokens(token string, to string, amount int64) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(token),
 		scval.AddressToScVal(to),
 		scval.I128ToScVal(amount),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "recover_tokens", args)
-	if err != nil {
-		return fmt.Errorf("failed to call recover_tokens: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "recover_tokens", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// AcceptOwnership calls the accept_ownership function on the contract.
-func (c *DataFeedsCacheClient) AcceptOwnership(ctx context.Context) error {
+// AcceptOwnership builds a call to the accept_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) AcceptOwnership() *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call accept_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "accept_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// SetFeedConfigs calls the set_feed_configs function on the contract.
-func (c *DataFeedsCacheClient) SetFeedConfigs(ctx context.Context, admin string, entries []FeedConfigEntry) error {
+// SetFeedConfigs builds a call to the set_feed_configs contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) SetFeedConfigs(admin string, entries []FeedConfigEntry) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
 		scval.StructSliceToScVal(entries),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_feed_configs", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_feed_configs: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "set_feed_configs", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// TypeAndVersion calls the type_and_version function on the contract.
-func (c *DataFeedsCacheClient) TypeAndVersion(ctx context.Context) (string, error) {
+// TypeAndVersion builds a call to the type_and_version contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) TypeAndVersion() *bindings.Call[string] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "type_and_version", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call type_and_version: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from type_and_version")
-	}
-
-	return scval.StringFromScVal(*result)
+	return bindings.NewCall(c.invoker, c.contractID, "type_and_version", args, func(result *xdr.ScVal) (string, error) {
+		if result == nil {
+			return "", fmt.Errorf("no return value from type_and_version")
+		}
+		return scval.StringFromScVal(*result)
+	})
 }
 
-// RemoveFeedAdmin calls the remove_feed_admin function on the contract.
-func (c *DataFeedsCacheClient) RemoveFeedAdmin(ctx context.Context, admin string) error {
+// RemoveFeedAdmin builds a call to the remove_feed_admin contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) RemoveFeedAdmin(admin string) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_feed_admin", args)
-	if err != nil {
-		return fmt.Errorf("failed to call remove_feed_admin: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "remove_feed_admin", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// RenounceOwnership calls the renounce_ownership function on the contract.
-func (c *DataFeedsCacheClient) RenounceOwnership(ctx context.Context) error {
+// RenounceOwnership builds a call to the renounce_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) RenounceOwnership() *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "renounce_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call renounce_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "renounce_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// TransferOwnership calls the transfer_ownership function on the contract.
-func (c *DataFeedsCacheClient) TransferOwnership(ctx context.Context, newOwner string, liveUntilLedger uint32) error {
+// TransferOwnership builds a call to the transfer_ownership contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) TransferOwnership(newOwner string, liveUntilLedger uint32) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(newOwner),
 		scval.Uint32ToScVal(liveUntilLedger),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call transfer_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "transfer_ownership", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// RemoveFeedConfigs calls the remove_feed_configs function on the contract.
-func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin string, dataIds []DataId) error {
+// RemoveFeedConfigs builds a call to the remove_feed_configs contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) RemoveFeedConfigs(admin string, dataIds []DataId) *bindings.Call[bindings.Void] {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
 		scval.StructSliceToScVal(dataIds),
 	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_feed_configs", args)
-	if err != nil {
-		return fmt.Errorf("failed to call remove_feed_configs: %w", err)
-	}
-
-	_ = result // void return
-	return nil
+	return bindings.NewCall(c.invoker, c.contractID, "remove_feed_configs", args, func(result *xdr.ScVal) (bindings.Void, error) {
+		_ = result // void return
+		return bindings.Void{}, nil
+	})
 }
 
-// GetFeedPermissions calls the get_feed_permissions function on the contract.
-func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId DataId) ([]WorkflowPermission, error) {
+// GetFeedPermissions builds a call to the get_feed_permissions contract function.
+// Execute it with Result (free simulation, state changes discarded) or
+// SignAndSend (fee-paying transaction).
+func (c *DataFeedsCacheClient) GetFeedPermissions(dataId DataId) *bindings.Call[[]WorkflowPermission] {
 	args := []xdr.ScVal{
 		scval.MustToScVal(dataId.ToScVal()),
 	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_feed_permissions", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_feed_permissions: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_feed_permissions")
-	}
-
-	vec, ok := result.GetVec()
-	if !ok || vec == nil {
-		return nil, fmt.Errorf("expected vec return type")
-	}
-	out := make([]WorkflowPermission, len(*vec))
-	for i, item := range *vec {
-		v, err := WorkflowPermissionFromScVal(item)
-		if err != nil {
-			return nil, err
+	return bindings.NewCall(c.invoker, c.contractID, "get_feed_permissions", args, func(result *xdr.ScVal) ([]WorkflowPermission, error) {
+		if result == nil {
+			return nil, fmt.Errorf("no return value from get_feed_permissions")
 		}
-		out[i] = *v
-	}
-	return out, nil
+		vec, ok := result.GetVec()
+		if !ok || vec == nil {
+			return nil, fmt.Errorf("expected vec return type")
+		}
+		out := make([]WorkflowPermission, len(*vec))
+		for i, item := range *vec {
+			v, err := WorkflowPermissionFromScVal(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = *v
+		}
+		return out, nil
+	})
 }
 
 // WaitForFeedUpdated waits for a FeedUpdated event.

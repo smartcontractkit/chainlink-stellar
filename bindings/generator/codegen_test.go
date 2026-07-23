@@ -287,7 +287,7 @@ func TestGenerateEventI256Field(t *testing.T) {
 			},
 		},
 	}}
-	out := GenerateClient("data_feeds_cache", c, nil)
+	out := GenerateClient("data_feeds_cache", c, nil, "direct")
 	mustContain(t, out,
 		"v, err := scval.I256FromScVal(entry.Val)",
 		"result.Answer = v\n",
@@ -336,4 +336,25 @@ func mustNotContain(t *testing.T, s string, needles ...string) {
 			t.Errorf("output unexpectedly contains:\n  %q", n)
 		}
 	}
+}
+
+func TestGenerateClientTwoStepStyle(t *testing.T) {
+	c := &Contract{Name: "DataFeedsCache", Functions: []Function{
+		{Name: "version", Inputs: nil, Returns: "u32"},
+		{Name: "upgrade", Inputs: []Field{{Name: "new_wasm_hash", Type: "soroban_sdk::BytesN<32>"}}},
+	}}
+	out := GenerateClient("data_feeds_cache", c, nil, "twostep")
+	mustContain(t, out,
+		"func (c *DataFeedsCacheClient) Version() *bindings.Call[uint32] {",
+		"func (c *DataFeedsCacheClient) Upgrade(newWasmHash [32]byte) *bindings.Call[bindings.Void] {",
+		"return bindings.NewCall(c.invoker, c.contractID, \"version\", args,",
+		"return bindings.Void{}, nil",
+	)
+	// The client must not execute anything itself: no direct invoker calls,
+	// no context parameter on methods, no read-only classification.
+	mustNotContain(t, out,
+		"c.invoker.SimulateContract",
+		"c.invoker.InvokeContract",
+		"ctx context.Context, ",
+	)
 }

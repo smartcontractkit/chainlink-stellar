@@ -39,7 +39,8 @@ func main() {
 	pkg := flag.String("pkg", "", "Go package name for generated code")
 	out := flag.String("out", "", "Output directory for generated files")
 	events := flag.String("events", "", "Optional path to Rust events source file (e.g., contracts/onramp/src/events.rs)")
-	readonly := flag.String("readonly", "", "Optional comma-separated list of read-only contract functions (generated as simulations, not transactions). When provided it is authoritative and replaces the name-based heuristic; every listed function must exist in the contract.")
+	readonly := flag.String("readonly", "", "Optional comma-separated list of read-only contract functions (generated as simulations, not transactions). When provided it is authoritative and replaces the name-based heuristic; every listed function must exist in the contract. Incompatible with -style=twostep.")
+	style := flag.String("style", "direct", "Client style: 'direct' (methods execute immediately; read/write chosen at generation time via -readonly or the name heuristic) or 'twostep' (methods return a *bindings.Call; the caller executes with Result — free simulation — or SignAndSend — fee-paying transaction; no read-only classification needed)")
 	flag.Parse()
 
 	if *name == "" || *pkg == "" || *out == "" {
@@ -62,6 +63,15 @@ func main() {
 		os.Exit(1)
 	}
 	contract.Name = *name
+
+	if *style != "direct" && *style != "twostep" {
+		fmt.Fprintf(os.Stderr, "unknown -style %q (want direct or twostep)\n", *style)
+		os.Exit(1)
+	}
+	if *style == "twostep" && *readonly != "" {
+		fmt.Fprintln(os.Stderr, "-readonly is meaningless with -style=twostep: the caller chooses Result vs SignAndSend per call")
+		os.Exit(1)
+	}
 
 	// Optionally build the explicit read-only function set. A nil map means "not
 	// provided" and GenerateClient falls back to the legacy name heuristic.
@@ -113,7 +123,7 @@ func main() {
 	fmt.Printf("Generated %s\n", typesPath)
 
 	// Generate client file
-	clientCode := GenerateClient(*pkg, contract, readOnlyFns)
+	clientCode := GenerateClient(*pkg, contract, readOnlyFns, *style)
 	clientPath := filepath.Join(*out, "client.go")
 	formattedClient := formatOrDie("client.go", clientPath, []byte(clientCode))
 	if err := os.WriteFile(clientPath, formattedClient, 0644); err != nil {
