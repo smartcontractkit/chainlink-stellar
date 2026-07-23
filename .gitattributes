@@ -2,3 +2,11 @@
 # Mark as generated and suppress line-by-line diffs so PRs stay reviewable
 # when auth trees or call graphs change (snapshots still run in CI unchanged).
 **/test_snapshots/** linguist-generated=true -diff merge=binary
+
+# Generated Go bindings and vendored generated Rust interfaces
+# (`make generate-bindings`; check-generated CI enforces they match the
+# generator). Collapsed in PR review — review the generator and the
+# hand-written completeness tests instead.
+bindings/contracts/** linguist-generated=true
+bindings/contracts/**/client_completeness_test.go linguist-generated=false
+contracts/common/interfaces/src/*.rs linguist-generated=true
