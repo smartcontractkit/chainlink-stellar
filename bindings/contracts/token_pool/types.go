@@ -823,74 +823,24 @@ var CCIPErrorMessage = map[int]string{
 	802: "invalid fee token conversion",
 }
 
-// MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
-// Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
-// Construct by setting exactly one variant pointer to a non-nil value.
-type MessageDirection struct {
-	Outbound *MessageDirectionOutbound
-	Inbound  *MessageDirectionInbound
-}
+// MessageDirection represents the MessageDirection enum (unit-only Soroban contracttype, encoded as ScVal::U32).
+type MessageDirection uint32
 
-// MessageDirectionOutbound is the unit variant MessageDirection::Outbound.
-type MessageDirectionOutbound struct{}
+const (
+	MessageDirectionOutbound MessageDirection = 0
+	MessageDirectionInbound  MessageDirection = 1
+)
 
-// MessageDirectionInbound is the unit variant MessageDirection::Inbound.
-type MessageDirectionInbound struct{}
-
-// ToScVal converts MessageDirection to its Soroban discriminated-union encoding.
-// Returns an error if zero or multiple variant pointers are set.
+// ToScVal converts MessageDirection to an xdr.ScVal.
 func (e MessageDirection) ToScVal() (xdr.ScVal, error) {
-	set := 0
-	if e.Outbound != nil {
-		set++
-	}
-	if e.Inbound != nil {
-		set++
-	}
-	if set != 1 {
-		return xdr.ScVal{}, fmt.Errorf("MessageDirection: expected exactly one variant set, got %d", set)
-	}
-	if e.Outbound != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("Outbound"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.Inbound != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("Inbound"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	return xdr.ScVal{}, fmt.Errorf("MessageDirection: unreachable")
+	return scval.Uint32ToScVal(uint32(e)), nil
 }
 
 // MessageDirectionFromScVal parses an xdr.ScVal into MessageDirection.
 func MessageDirectionFromScVal(val xdr.ScVal) (MessageDirection, error) {
-	vecPtr, ok := val.GetVec()
-	if !ok || vecPtr == nil || *vecPtr == nil {
-		return MessageDirection{}, fmt.Errorf("expected vec for MessageDirection enum")
+	v, ok := val.GetU32()
+	if !ok {
+		return 0, fmt.Errorf("expected u32 for MessageDirection enum")
 	}
-	vec := *vecPtr
-	if len(vec) < 1 {
-		return MessageDirection{}, fmt.Errorf("MessageDirection: empty vec")
-	}
-	tag, err := scval.SymbolFromScVal(vec[0])
-	if err != nil {
-		return MessageDirection{}, fmt.Errorf("MessageDirection: variant tag: %w", err)
-	}
-	switch tag {
-	case "Outbound":
-		if len(vec) != 1 {
-			return MessageDirection{}, fmt.Errorf("MessageDirection::Outbound: expected 1 elements, got %d", len(vec))
-		}
-		return MessageDirection{Outbound: &MessageDirectionOutbound{}}, nil
-	case "Inbound":
-		if len(vec) != 1 {
-			return MessageDirection{}, fmt.Errorf("MessageDirection::Inbound: expected 1 elements, got %d", len(vec))
-		}
-		return MessageDirection{Inbound: &MessageDirectionInbound{}}, nil
-	default:
-		return MessageDirection{}, fmt.Errorf("MessageDirection: unknown variant %q", tag)
-	}
+	return MessageDirection(v), nil
 }

@@ -566,23 +566,6 @@ func (c *CommitteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) 
 	return v, nil
 }
 
-// EmitAllowlistUpdatedEvent calls the emit_allowlist_updated_event function on the contract.
-func (c *CommitteeVerifierClient) EmitAllowlistUpdatedEvent(ctx context.Context, key uint64, addedAddresses []string, removedAddresses []string) error {
-	args := []xdr.ScVal{
-		scval.Uint64ToScVal(key),
-		scval.AddressSliceToScVal(addedAddresses),
-		scval.AddressSliceToScVal(removedAddresses),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "emit_allowlist_updated_event", args)
-	if err != nil {
-		return fmt.Errorf("failed to call emit_allowlist_updated_event: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // GetPendingStorageLocAdmin calls the get_pending_storage_loc_admin function on the contract.
 func (c *CommitteeVerifierClient) GetPendingStorageLocAdmin(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}

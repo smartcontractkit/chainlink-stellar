@@ -49,42 +49,28 @@ pub trait RmnRemoteInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["rmn_Cursed"])]
+#[soroban_sdk::contractevent(topics = ["rmn_Cursed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CursedEvent {
     pub subjects: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["rmn_Uncursed"])]
+#[soroban_sdk::contractevent(topics = ["rmn_Uncursed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct UncursedEvent {
     pub subjects: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
