@@ -185,7 +185,7 @@ patch_ccip_receiver_interfaces() {
     s/\n#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct AllowListEntry \{[^}]+\}//s;
     s/\n#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct AllowListUpdate \{[^}]+\}//s;
     # Drop auth events re-exported from Ownable (same names exist in authorization helpers).
-    s/\n#\[soroban_sdk::contractevent\(topics = \["auth_[^]]+"\], export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct [^{]+\{[^}]+\}//sg;
+    s/\n#\[soroban_sdk::contractevent\([^)]*"auth_[^"]+"[^)]*\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct [^{]+\{[^}]+\}//sg;
     # stellar-cli omits contract-owned struct defs; insert before first remaining contracttype after the trait.
     if ($_ !~ /pub struct CcvChainConfig/s) {
       s/(\n\}\n)(#\[soroban_sdk::contracttype\(export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct TokenAmount)/$1\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvConfigUpdate {\n    pub source_chain_selector: u64,\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvChainConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct RemoteChainConfig {\n    pub extra_args: soroban_sdk::Bytes,\n    pub allowed_finality_config: u32,\n}\n#\[soroban_sdk::contracttype(export = false)\]\n#\[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)\]\npub struct CcvsAndFinalityConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n    pub allowed_finality_config: u32,\n}\n$2/s;
@@ -210,8 +210,7 @@ patch_rmn_remote_interfaces() {
 
     s/\n#\[soroban_sdk::contracterror\(export = false\)\]\n#\[derive\(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub enum CCIPError \{[\s\S]*?\n\}//s;
 
-    s/\n#\[soroban_sdk::contractevent\(topics = \["auth_RoleGranted"\], export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct RoleGrantedEvent \{[\s\S]*?\n\}//s;
-    s/\n#\[soroban_sdk::contractevent\(topics = \["auth_RoleRevoked"\], export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct RoleRevokedEvent \{[\s\S]*?\n\}//s;
+    s/\n#\[soroban_sdk::contractevent\([^)]*"auth_[^"]+"[^)]*\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct \w+ \{[\s\S]*?\n\}//g;
   ' "$f"
 }
 
@@ -236,25 +235,34 @@ patch_ramp_registry_interfaces() {
     s/\n#\[soroban_sdk::contracterror\(export = false\)\]\n#\[derive\(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub enum CCIPError \{[\s\S]*?\n\}//s;
 
     # Auth events duplicate definitions used elsewhere (Ownable / RBAC helpers).
-    s/\n#\[soroban_sdk::contractevent\(topics = \["auth_[^]]+"\], export = false\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct \w+ \{[\s\S]*?\n\}//g;
+    s/\n#\[soroban_sdk::contractevent\([^)]*"auth_[^"]+"[^)]*\)\]\n#\[derive\(Debug, Clone, Eq, PartialEq, Ord, PartialOrd\)\]\npub struct \w+ \{[\s\S]*?\n\}//g;
   ' "$f"
 }
 
 # `stellar contract bindings rust` erases `pub type` aliases (they have no
 # identity in the WASM XDR spec), so the generated data-feeds interfaces
 # reference DataId / WorkflowName / WorkflowOwner / WasmHash without defining
-# them. Re-add the alias definitions from the contract crates' source so the
-# module compiles and the Go generator resolves them (bindings/generator parses
-# `pub type X = Y;`).
+# them. Re-add the alias definitions so the module compiles and the Go
+# generator resolves them (bindings/generator parses `pub type X = Y;`).
+# The definitions are harvested from the contract crates' own source files
+# (passed as arguments after the interface file) and filtered to the alias
+# names the generated interface actually references, so a size change or new
+# alias in the contract can never drift from what gets prepended here.
 prepend_type_aliases() {
   local f="$1"
   shift
-  local tmp
+  local tmp name line
   tmp="$(mktemp)"
   {
-    for alias in "$@"; do
-      echo "pub type ${alias};"
-    done
+    grep -hE '^pub type [A-Za-z_][A-Za-z0-9_]* = BytesN<[0-9]+>;' "$@" \
+      | sed 's/= BytesN</= soroban_sdk::BytesN</' \
+      | while IFS= read -r line; do
+          name="${line#pub type }"
+          name="${name%% *}"
+          if grep -qw "$name" "$f"; then
+            echo "$line"
+          fi
+        done
     echo ""
     cat "$f"
   } > "$tmp"
@@ -312,17 +320,10 @@ for entry in "${CONTRACTS[@]}"; do
   if [[ "$output_module" == "rmn_remote" ]]; then
     patch_rmn_remote_interfaces "$out_path"
   fi
-  if [[ "$output_module" == "data_feeds_cache" ]]; then
+  if [[ "$output_module" == "data_feeds_cache" || "$output_module" == "data_feeds_proxy" ]]; then
     prepend_type_aliases "$out_path" \
-      "DataId = soroban_sdk::BytesN<16>" \
-      "WorkflowOwner = soroban_sdk::BytesN<20>" \
-      "WorkflowName = soroban_sdk::BytesN<10>" \
-      "WasmHash = soroban_sdk::BytesN<32>"
-  fi
-  if [[ "$output_module" == "data_feeds_proxy" ]]; then
-    prepend_type_aliases "$out_path" \
-      "DataId = soroban_sdk::BytesN<16>" \
-      "WasmHash = soroban_sdk::BytesN<32>"
+      "$REPO_ROOT/contracts/data-feeds/data-feeds-cache/src/interface/types.rs" \
+      "$REPO_ROOT/contracts/data-feeds/data-feeds-common/src/upgradeable/mod.rs"
   fi
 done
 

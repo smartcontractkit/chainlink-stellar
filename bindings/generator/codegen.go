@@ -27,9 +27,10 @@ func isUnitEnumType(rustType string) bool {
 }
 
 // knownAliases maps alias name -> soroban-qualified target (e.g. DataId ->
-// soroban_sdk::BytesN<16>). Populated per GenerateTypes call from
-// contract.Aliases so stale aliases from a previous contract can't leak into
-// this one.
+// soroban_sdk::BytesN<16>). Repopulated at the top of both GenerateTypes and
+// GenerateClient from contract.Aliases so stale aliases from a previous
+// contract can't leak into this one and neither entry point depends on the
+// other having run first.
 var knownAliases = map[string]string{}
 
 // resolveAlias returns the underlying soroban type for alias names, else the
@@ -44,8 +45,8 @@ func resolveAlias(rustType string) string {
 // typesFileNeedsImports reports which standard imports types.go needs for the
 // parsed contract. Event-only modules (e.g. rmn_remote after config removal)
 // emit plain Go structs and need no fmt/scval/xdr imports. needBig is true
-// when any struct/event field, or any BytesN alias's target, resolves to
-// soroban_sdk::I256 (mapped to Go *big.Int).
+// when any struct/event field resolves to soroban_sdk::I256 (mapped to Go
+// *big.Int).
 func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, needBig bool) {
 	if len(contract.Aliases) > 0 {
 		needFmt, needScval, needXdr = true, true, true
@@ -53,30 +54,18 @@ func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, nee
 	if len(contract.Structs) > 0 || len(contract.Errors) > 0 || len(contract.Enums) > 0 {
 		needFmt, needScval, needXdr = true, true, true
 	}
-	for _, e := range contract.Events {
-		for _, f := range e.Fields {
-			goType := rustTypeToGo(f.Type)
-			if strings.Contains(goType, "scval.") {
-				needScval = true
-			}
-		}
-	}
+	var fields []Field
 	for _, s := range contract.Structs {
-		for _, f := range s.Fields {
-			if resolveAlias(f.Type) == "soroban_sdk::I256" {
-				needBig = true
-			}
-		}
+		fields = append(fields, s.Fields...)
 	}
 	for _, e := range contract.Events {
-		for _, f := range e.Fields {
-			if resolveAlias(f.Type) == "soroban_sdk::I256" {
-				needBig = true
-			}
-		}
+		fields = append(fields, e.Fields...)
 	}
-	for _, a := range contract.Aliases {
-		if a.Target == "soroban_sdk::I256" {
+	for _, f := range fields {
+		if strings.Contains(rustTypeToGo(f.Type), "scval.") {
+			needScval = true
+		}
+		if resolveAlias(f.Type) == "soroban_sdk::I256" {
 			needBig = true
 		}
 	}
@@ -328,6 +317,14 @@ func generateFromScValField(b *strings.Builder, f Field, target string) {
 }
 
 func generateVecItemParse(b *strings.Builder, innerType, target string) {
+	if resolveAlias(innerType) == "soroban_sdk::I256" {
+		b.WriteString("\t\t\t\tv, err := scval.I256FromScVal(item)\n")
+		b.WriteString("\t\t\t\tif err != nil {\n")
+		b.WriteString("\t\t\t\t\treturn nil, err\n")
+		b.WriteString("\t\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		return
+	}
 	switch innerType {
 	case "u64":
 		b.WriteString("\t\t\t\tv, err := scval.Uint64FromScVal(item)\n")
@@ -365,20 +362,8 @@ func generateVecItemParse(b *strings.Builder, innerType, target string) {
 		b.WriteString("\t\t\t\t\treturn nil, err\n")
 		b.WriteString("\t\t\t\t}\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
-	case "soroban_sdk::I256":
-		b.WriteString("\t\t\t\tv, err := scval.I256FromScVal(item)\n")
-		b.WriteString("\t\t\t\tif err != nil {\n")
-		b.WriteString("\t\t\t\t\treturn nil, err\n")
-		b.WriteString("\t\t\t\t}\n")
-		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 	default:
-		if resolveAlias(innerType) == "soroban_sdk::I256" {
-			b.WriteString("\t\t\t\tv, err := scval.I256FromScVal(item)\n")
-			b.WriteString("\t\t\t\tif err != nil {\n")
-			b.WriteString("\t\t\t\t\treturn nil, err\n")
-			b.WriteString("\t\t\t\t}\n")
-			b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
-		} else if strings.HasPrefix(innerType, "Option<") && strings.Contains(innerType, "soroban_sdk::Address") {
+		if strings.HasPrefix(innerType, "Option<") && strings.Contains(innerType, "soroban_sdk::Address") {
 			b.WriteString("\t\t\t\tv, err := scval.OptionalAddressFromScVal(item)\n")
 			b.WriteString("\t\t\t\tif err != nil {\n")
 			b.WriteString("\t\t\t\t\treturn nil, err\n")
@@ -695,19 +680,17 @@ func generateEventStruct(b *strings.Builder, e Event) {
 // Type conversion helpers
 
 func rustTypeToGo(rustType string) string {
+	if resolveAlias(rustType) == "soroban_sdk::I256" {
+		return "*big.Int"
+	}
 	if t := resolveAlias(rustType); t != rustType {
-		if t == "soroban_sdk::I256" {
-			return "*big.Int"
-		}
-		// Otherwise the alias resolves to a BytesN<N> target: keep the
-		// alias name, since generateAlias emits a defined [N]byte type
-		// under that name with matching converters.
+		// The alias resolves to a BytesN<N> target: keep the alias name,
+		// since generateAlias emits a defined [N]byte type under that
+		// name with matching converters.
 		return extractStructName(rustType)
 	}
 
 	switch rustType {
-	case "soroban_sdk::I256":
-		return "*big.Int"
 	case "u64":
 		return "uint64"
 	case "u32":
@@ -786,8 +769,6 @@ func getToScValConverter(rustType, expr string) string {
 	}
 
 	switch rustType {
-	case "soroban_sdk::I256":
-		return fmt.Sprintf("scval.MustToScVal(scval.I256ToScVal(%s))", expr)
 	case "u64":
 		return fmt.Sprintf("scval.Uint64ToScVal(%s)", expr)
 	case "u32":

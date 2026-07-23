@@ -26,7 +26,7 @@ generate-interfaces:
 # This can be run with `--no-interfaces` to skip the 
 # generation of the Rust interface files.
 generate-bindings:
-	./scripts/gen_bindings.sh && gofmt -w ./bindings/contracts/
+	./scripts/gen_bindings.sh
 
 test:
 	cargo test --workspace

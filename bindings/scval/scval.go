@@ -478,20 +478,25 @@ func U128FromScVal(val xdr.ScVal) (U128, error) {
 	return U128(u128), nil
 }
 
+// Signed 256-bit two's-complement range and modulus.
+var (
+	maxI256   = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1))
+	minI256   = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 255))
+	twoPow256 = new(big.Int).Lsh(big.NewInt(1), 256)
+)
+
 // I256ToScVal converts a *big.Int to an ScvI256 ScVal. nil is treated as zero.
 // Errors if v does not fit in a signed 256-bit two's-complement integer.
 func I256ToScVal(v *big.Int) (xdr.ScVal, error) {
 	if v == nil {
 		v = new(big.Int)
 	}
-	maxI256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1))
-	minI256 := new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 255))
 	if v.Cmp(maxI256) > 0 || v.Cmp(minI256) < 0 {
 		return xdr.ScVal{}, fmt.Errorf("value %s out of i256 range", v)
 	}
 	tc := new(big.Int).Set(v)
 	if tc.Sign() < 0 {
-		tc.Add(tc, new(big.Int).Lsh(big.NewInt(1), 256)) // two's complement
+		tc.Add(tc, twoPow256) // two's complement
 	}
 	var buf [32]byte
 	tc.FillBytes(buf[:])
@@ -517,7 +522,7 @@ func I256FromScVal(val xdr.ScVal) (*big.Int, error) {
 	binary.BigEndian.PutUint64(buf[24:32], uint64(parts.LoLo))
 	v := new(big.Int).SetBytes(buf[:])
 	if buf[0]&0x80 != 0 { // sign bit set → negative
-		v.Sub(v, new(big.Int).Lsh(big.NewInt(1), 256))
+		v.Sub(v, twoPow256)
 	}
 	return v, nil
 }

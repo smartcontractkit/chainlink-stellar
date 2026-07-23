@@ -32,27 +32,17 @@ func newTestBundle(t *testing.T) cldf_ops.Bundle {
 	)
 }
 
-type stubDeployer struct{}
+type stubDeployer struct {
+	// Embedding satisfies the interface methods this stub doesn't exercise;
+	// calling one of them nil-panics, which is the desired loud failure.
+	stellardeps.SorobanContractDeployer
+}
 
 func (stubDeployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
 	_ = ctx
 	_ = wasmPath
 	_ = salt
 	return "", nil
-}
-
-func (stubDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
-	_ = ctx
-	_ = wasmPath
-	_ = salt
-	_ = ctorArgs
-	return "", nil
-}
-
-func (stubDeployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error) {
-	_ = ctx
-	_ = wasmPath
-	return xdr.Hash{}, nil
 }
 
 type stubInvoker struct{}

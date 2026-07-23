@@ -17,6 +17,9 @@ import (
 )
 
 type fakeDeployer struct {
+	// Embedding satisfies the interface methods this fake doesn't exercise;
+	// calling one of them nil-panics, which is the desired loud failure.
+	stellardeps.SorobanContractDeployer
 	lastWasm string
 	lastSalt [32]byte
 }
@@ -26,20 +29,6 @@ func (f *fakeDeployer) DeployContract(ctx context.Context, wasmPath string, salt
 	f.lastWasm = wasmPath
 	f.lastSalt = salt
 	return "CDEPLOYFAKE000000000000000000000000000000000000000000000", nil
-}
-
-func (f *fakeDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
-	_ = ctx
-	_ = ctorArgs
-	f.lastWasm = wasmPath
-	f.lastSalt = salt
-	return "CDEPLOYFAKE000000000000000000000000000000000000000000000", nil
-}
-
-func (f *fakeDeployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error) {
-	_ = ctx
-	f.lastWasm = wasmPath
-	return xdr.Hash{}, nil
 }
 
 type fakeInvoker struct {
