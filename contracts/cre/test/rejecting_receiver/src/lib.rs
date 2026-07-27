@@ -21,7 +21,12 @@ pub struct RejectingReceiver;
 #[contractimpl]
 impl RejectingReceiver {
     /// Always returns Err — the forwarder records TransmissionState::Failed.
-    pub fn on_report(_env: Env, _sender: Address, _metadata: Bytes, _payload: Bytes) -> Result<(), ReceiverError> {
+    pub fn on_report(
+        _env: Env,
+        _sender: Address,
+        _metadata: Bytes,
+        _payload: Bytes,
+    ) -> Result<(), ReceiverError> {
         Err(ReceiverError::Rejected)
     }
 }
