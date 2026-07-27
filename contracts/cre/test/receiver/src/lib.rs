@@ -1,12 +1,13 @@
 #![no_std]
 //! A minimal CRE receiver for Local-CRE write tests.
 //!
-//! The KeystoneForwarder dispatches `on_report(metadata, payload)` to the target
-//! receiver. This contract records the last payload and a monotonically increasing
-//! report count so a test can assert that a write was actually delivered on-chain
-//! (read back via `last_payload` / `report_count`). It intentionally performs no
-//! authorization — it is test infrastructure, not a production receiver.
-use soroban_sdk::{contract, contractimpl, symbol_short, Bytes, Env, Symbol};
+//! The KeystoneForwarder dispatches `on_report(sender, metadata, payload)` to the
+//! target receiver. This contract records the last payload and a monotonically
+//! increasing report count so a test can assert that a write was actually
+//! delivered on-chain (read back via `last_payload` / `report_count`). It
+//! intentionally performs no authorization — it is test infrastructure, not a
+//! production receiver.
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, Env, Symbol};
 
 const LAST_PAYLOAD: Symbol = symbol_short!("payload");
 const COUNT: Symbol = symbol_short!("count");
@@ -17,7 +18,7 @@ pub struct Receiver;
 #[contractimpl]
 impl Receiver {
     /// Invoked by the forwarder's route/dispatch. Records the report payload.
-    pub fn on_report(env: Env, _metadata: Bytes, payload: Bytes) {
+    pub fn on_report(env: Env, _sender: Address, _metadata: Bytes, payload: Bytes) {
         env.storage().instance().set(&LAST_PAYLOAD, &payload);
         let count: u32 = env.storage().instance().get(&COUNT).unwrap_or(0);
         env.storage().instance().set(&COUNT, &(count + 1));
