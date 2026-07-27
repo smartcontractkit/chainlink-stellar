@@ -968,7 +968,6 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
- "signature",
 ]
 
 [[package]]
@@ -1317,6 +1316,13 @@ dependencies = [
 
 [[package]]
 name = "registry"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "rejecting-receiver"
 version = "0.0.0"
 dependencies = [
  "soroban-sdk",

@@ -21,6 +21,7 @@ members = [
   "contracts/cre/forwarder",
   "contracts/cre/test/read_fixture",
   "contracts/cre/test/receiver",
+  "contracts/cre/test/rejecting_receiver",
   "contracts/common/*",
 ]
 
