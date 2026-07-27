@@ -492,7 +492,8 @@ fn dispatch_to_receiver(
             env.current_contract_address(),
             metadata.clone(),
             validated_report.clone(),
-        ).into_val(env);
+        )
+            .into_val(env);
         let call =
             env.try_invoke_contract::<(), InvokeError>(receiver, &symbol_short!("on_report"), args);
         match call {
