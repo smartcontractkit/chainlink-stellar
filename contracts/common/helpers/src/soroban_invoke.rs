@@ -22,7 +22,7 @@
 //! Callers that need a *partial* decode (e.g. only the function name) and use the same `from_xdr`
 //! path inherit the same trap behavior for garbage bytes.
 
-use soroban_sdk::xdr::FromXdr;
+use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{Bytes, Env, Symbol, TryFromVal, Val, Vec};
 
 /// Recoverable failure while decoding a Soroban invoke payload.
@@ -64,6 +64,27 @@ pub fn decode_invoke_payload(
     }
 
     Ok((fn_sym, args))
+}
+
+/// Decode canonical XDR for a Soroban argument vector.
+///
+/// Unlike [`decode_invoke_payload`], the function symbol is supplied separately and every decoded
+/// value is an invocation argument. Re-encoding must reproduce the input exactly so alternative
+/// or trailing encodings are rejected at the governance boundary.
+pub fn decode_invoke_args(
+    env: &Env,
+    args_xdr: &Bytes,
+) -> Result<Vec<Val>, SorobanInvokeDecodeError> {
+    if args_xdr.len() == 0 {
+        return Err(SorobanInvokeDecodeError::InvalidPayload);
+    }
+
+    let args = Vec::<Val>::from_xdr(env, args_xdr)
+        .map_err(|_| SorobanInvokeDecodeError::InvalidPayload)?;
+    if args.clone().to_xdr(env) != args_xdr.clone() {
+        return Err(SorobanInvokeDecodeError::InvalidPayload);
+    }
+    Ok(args)
 }
 
 #[cfg(test)]
@@ -158,5 +179,34 @@ mod tests {
         assert_eq!(sym, fn_sym);
         let decoded = Address::try_from_val(&env, &args.get(0).unwrap()).unwrap();
         assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn args_only_vector_roundtrips() {
+        let env = Env::default();
+        let mut args: Vec<Val> = Vec::new(&env);
+        args.push_back(42u32.into_val(&env));
+        args.push_back(true.into_val(&env));
+        let args_xdr = args.clone().to_xdr(&env);
+
+        let decoded = decode_invoke_args(&env, &args_xdr).unwrap();
+        assert_eq!(decoded, args);
+    }
+
+    #[test]
+    fn empty_args_vector_is_valid() {
+        let env = Env::default();
+        let args: Vec<Val> = Vec::new(&env);
+        let decoded = decode_invoke_args(&env, &args.to_xdr(&env)).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn empty_args_bytes_are_invalid() {
+        let env = Env::default();
+        assert!(matches!(
+            decode_invoke_args(&env, &Bytes::new(&env)),
+            Err(SorobanInvokeDecodeError::InvalidPayload)
+        ));
     }
 }
