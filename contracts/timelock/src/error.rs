@@ -1,29 +1,27 @@
-//! RBACTimelock contract errors.
-
 use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum TimelockError {
-    // Initialization
     NotInitialized = 1,
     AlreadyInitialized = 2,
-    // Authorization
     NotAuthorized = 3,
-    // Scheduling
     OperationAlreadyScheduled = 20,
     InsufficientDelay = 21,
-    SelectorIsBlocked = 22,
-    // Execution
+    FunctionIsBlocked = 22,
     OperationNotReady = 30,
     MissingPredecessor = 31,
     CallReverted = 32,
-    // Cancellation
+    CallAborted = 33,
     OperationCannotBeCancelled = 40,
-    // Misc
-    InvalidInvokeData = 50,
+    InvalidInvokeData = 50, // reserved v1 code
     IndexOutOfBounds = 51,
+    UnknownRole = 52,
+    InvalidTarget = 53,
+    InvalidArgsXdr = 54,
+    EmptyBatch = 55,
+    UnsupportedSelfCall = 56,
 }
 
 impl From<common_error::CCIPError> for TimelockError {

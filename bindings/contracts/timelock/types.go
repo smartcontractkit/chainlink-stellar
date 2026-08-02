@@ -322,15 +322,17 @@ func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
 
 // Call represents the Call struct from the contract.
 type Call struct {
-	Data []byte
-	To   [32]byte
+	ArgsXdr  []byte
+	Function string
+	Target   string
 }
 
 // ToScVal converts Call to an xdr.ScVal for contract calls.
 func (s Call) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data": scval.BytesToScVal(s.Data),
-		"to":   scval.Bytes32ToScVal(s.To),
+		"args_xdr": scval.BytesToScVal(s.ArgsXdr),
+		"function": scval.SymbolToScVal(s.Function),
+		"target":   scval.AddressToScVal(s.Target),
 	})
 }
 
@@ -349,18 +351,24 @@ func CallFromScVal(val xdr.ScVal) (*Call, error) {
 		}
 
 		switch string(key) {
-		case "data":
+		case "args_xdr":
 			v, ok := entry.Val.GetBytes()
 			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
+				return nil, fmt.Errorf("args_xdr is not bytes")
 			}
-			result.Data = []byte(v)
-		case "to":
-			v, err := scval.Bytes32FromScVal(entry.Val)
+			result.ArgsXdr = []byte(v)
+		case "function":
+			v, err := scval.SymbolFromScVal(entry.Val)
 			if err != nil {
-				return nil, fmt.Errorf("to: %w", err)
+				return nil, fmt.Errorf("function: %w", err)
 			}
-			result.To = v
+			result.Function = v
+		case "target":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("target: %w", err)
+			}
+			result.Target = v
 		}
 	}
 
@@ -407,6 +415,53 @@ func CallsFromScVal(val xdr.ScVal) (*Calls, error) {
 				}
 				result.Inner[i] = *v
 			}
+		}
+	}
+
+	return result, nil
+}
+
+// BlockedFunction represents the BlockedFunction struct from the contract.
+type BlockedFunction struct {
+	Function string
+	Target   string
+}
+
+// ToScVal converts BlockedFunction to an xdr.ScVal for contract calls.
+func (s BlockedFunction) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"function": scval.SymbolToScVal(s.Function),
+		"target":   scval.AddressToScVal(s.Target),
+	})
+}
+
+// BlockedFunctionFromScVal parses an xdr.ScVal into BlockedFunction.
+func BlockedFunctionFromScVal(val xdr.ScVal) (*BlockedFunction, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &BlockedFunction{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "function":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("function: %w", err)
+			}
+			result.Function = v
+		case "target":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("target: %w", err)
+			}
+			result.Target = v
 		}
 	}
 
@@ -660,13 +715,19 @@ const (
 	TimelockErrorNotAuthorized              = 3
 	TimelockErrorOperationAlreadyScheduled  = 20
 	TimelockErrorInsufficientDelay          = 21
-	TimelockErrorSelectorIsBlocked          = 22
+	TimelockErrorFunctionIsBlocked          = 22
 	TimelockErrorOperationNotReady          = 30
 	TimelockErrorMissingPredecessor         = 31
 	TimelockErrorCallReverted               = 32
+	TimelockErrorCallAborted                = 33
 	TimelockErrorOperationCannotBeCancelled = 40
 	TimelockErrorInvalidInvokeData          = 50
 	TimelockErrorIndexOutOfBounds           = 51
+	TimelockErrorUnknownRole                = 52
+	TimelockErrorInvalidTarget              = 53
+	TimelockErrorInvalidArgsXdr             = 54
+	TimelockErrorEmptyBatch                 = 55
+	TimelockErrorUnsupportedSelfCall        = 56
 )
 
 // TimelockErrorMessage returns a human-readable message for error codes.
@@ -676,149 +737,51 @@ var TimelockErrorMessage = map[int]string{
 	3:  "not authorized",
 	20: "operation already scheduled",
 	21: "insufficient delay",
-	22: "selector is blocked",
+	22: "function is blocked",
 	30: "operation not ready",
 	31: "missing predecessor",
 	32: "call reverted",
+	33: "call aborted",
 	40: "operation cannot be cancelled",
 	50: "invalid invoke data",
 	51: "index out of bounds",
+	52: "unknown role",
+	53: "invalid target",
+	54: "invalid args xdr",
+	55: "empty batch",
+	56: "unsupported self call",
 }
-
-// CancelledEvent represents the CancelledEvent event.
-// Topics: [tl_Cancelled]
-type CancelledEvent struct {
-	Id [32]byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// CancelledEventTopic is the event topic identifier.
-const CancelledEventTopic = "tl_Cancelled"
-
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [tl_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "tl_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [tl_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "tl_RoleRevoked"
-
-// CallExecutedEvent represents the CallExecutedEvent event.
-// Topics: [tl_CallExecuted]
-type CallExecutedEvent struct {
-	Id    [32]byte
-	Index uint32
-	To    [32]byte
-	Data  []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// CallExecutedEventTopic is the event topic identifier.
-const CallExecutedEventTopic = "tl_CallExecuted"
-
-// CallScheduledEvent represents the CallScheduledEvent event.
-// Topics: [tl_CallScheduled]
-type CallScheduledEvent struct {
-	Id          [32]byte
-	Index       uint32
-	To          [32]byte
-	Data        []byte
-	Predecessor [32]byte
-	Salt        [32]byte
-	Delay       uint64
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// CallScheduledEventTopic is the event topic identifier.
-const CallScheduledEventTopic = "tl_CallScheduled"
-
-// MinDelayChangeEvent represents the MinDelayChangeEvent event.
-// Topics: [tl_MinDelay]
-type MinDelayChangeEvent struct {
-	OldDuration uint64
-	NewDuration uint64
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// MinDelayChangeEventTopic is the event topic identifier.
-const MinDelayChangeEventTopic = "tl_MinDelay"
-
-// BypasserCallExecutedEvent represents the BypasserCallExecutedEvent event.
-// Topics: [tl_BypCallExec]
-type BypasserCallExecutedEvent struct {
-	Index uint32
-	To    [32]byte
-	Data  []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// BypasserCallExecutedEventTopic is the event topic identifier.
-const BypasserCallExecutedEventTopic = "tl_BypCallExec"
-
-// FunctionSelectorBlockedEvent represents the FunctionSelectorBlockedEvent event.
-// Topics: [tl_SelBlocked]
-type FunctionSelectorBlockedEvent struct {
-	Selector string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FunctionSelectorBlockedEventTopic is the event topic identifier.
-const FunctionSelectorBlockedEventTopic = "tl_SelBlocked"
-
-// FunctionSelectorUnblockedEvent represents the FunctionSelectorUnblockedEvent event.
-// Topics: [tl_SelUnblock]
-type FunctionSelectorUnblockedEvent struct {
-	Selector string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FunctionSelectorUnblockedEventTopic is the event topic identifier.
-const FunctionSelectorUnblockedEventTopic = "tl_SelUnblock"
 
 // TimelockDataKey is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
 // Construct by setting exactly one variant pointer to a non-nil value.
 type TimelockDataKey struct {
-	OpTime *TimelockDataKeyOpTime
+	OpTime          *TimelockDataKeyOpTime
+	RoleMember      *TimelockDataKeyRoleMember
+	RoleMembers     *TimelockDataKeyRoleMembers
+	BlockedFunction *TimelockDataKeyBlockedFunction
 }
 
 // TimelockDataKeyOpTime is the tuple variant TimelockDataKey::OpTime.
 type TimelockDataKeyOpTime struct {
 	Field0 [32]byte
+}
+
+// TimelockDataKeyRoleMember is the tuple variant TimelockDataKey::RoleMember.
+type TimelockDataKeyRoleMember struct {
+	Field0 string
+	Field1 string
+}
+
+// TimelockDataKeyRoleMembers is the tuple variant TimelockDataKey::RoleMembers.
+type TimelockDataKeyRoleMembers struct {
+	Field0 string
+}
+
+// TimelockDataKeyBlockedFunction is the tuple variant TimelockDataKey::BlockedFunction.
+type TimelockDataKeyBlockedFunction struct {
+	Field0 string
+	Field1 string
 }
 
 // ToScVal converts TimelockDataKey to its Soroban discriminated-union encoding.
@@ -828,6 +791,15 @@ func (e TimelockDataKey) ToScVal() (xdr.ScVal, error) {
 	if e.OpTime != nil {
 		set++
 	}
+	if e.RoleMember != nil {
+		set++
+	}
+	if e.RoleMembers != nil {
+		set++
+	}
+	if e.BlockedFunction != nil {
+		set++
+	}
 	if set != 1 {
 		return xdr.ScVal{}, fmt.Errorf("TimelockDataKey: expected exactly one variant set, got %d", set)
 	}
@@ -835,6 +807,29 @@ func (e TimelockDataKey) ToScVal() (xdr.ScVal, error) {
 		items := []xdr.ScVal{
 			scval.SymbolToScVal("OpTime"),
 			scval.Bytes32ToScVal(e.OpTime.Field0),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.RoleMember != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("RoleMember"),
+			scval.SymbolToScVal(e.RoleMember.Field0),
+			scval.AddressToScVal(e.RoleMember.Field1),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.RoleMembers != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("RoleMembers"),
+			scval.SymbolToScVal(e.RoleMembers.Field0),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.BlockedFunction != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("BlockedFunction"),
+			scval.AddressToScVal(e.BlockedFunction.Field0),
+			scval.SymbolToScVal(e.BlockedFunction.Field1),
 		}
 		return scval.VecToScVal(items), nil
 	}
@@ -867,6 +862,49 @@ func TimelockDataKeyFromScVal(val xdr.ScVal) (TimelockDataKey, error) {
 			payload.Field0 = v
 		}
 		return TimelockDataKey{OpTime: payload}, nil
+	case "RoleMember":
+		if len(vec) != 3 {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::RoleMember: expected 3 elements, got %d", len(vec))
+		}
+		payload := &TimelockDataKeyRoleMember{}
+		if v, err := scval.SymbolFromScVal(vec[1]); err != nil {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::RoleMember[0]: %w", err)
+		} else {
+			payload.Field0 = v
+		}
+		if v, err := scval.AddressFromScVal(vec[2]); err != nil {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::RoleMember[1]: %w", err)
+		} else {
+			payload.Field1 = v
+		}
+		return TimelockDataKey{RoleMember: payload}, nil
+	case "RoleMembers":
+		if len(vec) != 2 {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::RoleMembers: expected 2 elements, got %d", len(vec))
+		}
+		payload := &TimelockDataKeyRoleMembers{}
+		if v, err := scval.SymbolFromScVal(vec[1]); err != nil {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::RoleMembers[0]: %w", err)
+		} else {
+			payload.Field0 = v
+		}
+		return TimelockDataKey{RoleMembers: payload}, nil
+	case "BlockedFunction":
+		if len(vec) != 3 {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::BlockedFunction: expected 3 elements, got %d", len(vec))
+		}
+		payload := &TimelockDataKeyBlockedFunction{}
+		if v, err := scval.AddressFromScVal(vec[1]); err != nil {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::BlockedFunction[0]: %w", err)
+		} else {
+			payload.Field0 = v
+		}
+		if v, err := scval.SymbolFromScVal(vec[2]); err != nil {
+			return TimelockDataKey{}, fmt.Errorf("TimelockDataKey::BlockedFunction[1]: %w", err)
+		} else {
+			payload.Field1 = v
+		}
+		return TimelockDataKey{BlockedFunction: payload}, nil
 	default:
 		return TimelockDataKey{}, fmt.Errorf("TimelockDataKey: unknown variant %q", tag)
 	}
