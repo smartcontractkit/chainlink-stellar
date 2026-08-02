@@ -625,23 +625,25 @@ func SignatureFromScVal(val xdr.ScVal) (*Signature, error) {
 
 // StellarOp represents the StellarOp struct from the contract.
 type StellarOp struct {
-	ChainId  [32]byte
-	Data     []byte
-	Multisig [32]byte
-	Nonce    uint64
-	To       [32]byte
-	Value    [32]byte
+	ArgsXdr         []byte
+	EncodingVersion uint32
+	Function        string
+	Multisig        string
+	NetworkId       [32]byte
+	Nonce           uint64
+	Target          string
 }
 
 // ToScVal converts StellarOp to an xdr.ScVal for contract calls.
 func (s StellarOp) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"chain_id": scval.Bytes32ToScVal(s.ChainId),
-		"data":     scval.BytesToScVal(s.Data),
-		"multisig": scval.Bytes32ToScVal(s.Multisig),
-		"nonce":    scval.Uint64ToScVal(s.Nonce),
-		"to":       scval.Bytes32ToScVal(s.To),
-		"value":    scval.Bytes32ToScVal(s.Value),
+		"args_xdr":         scval.BytesToScVal(s.ArgsXdr),
+		"encoding_version": scval.Uint32ToScVal(s.EncodingVersion),
+		"function":         scval.SymbolToScVal(s.Function),
+		"multisig":         scval.AddressToScVal(s.Multisig),
+		"network_id":       scval.Bytes32ToScVal(s.NetworkId),
+		"nonce":            scval.Uint64ToScVal(s.Nonce),
+		"target":           scval.AddressToScVal(s.Target),
 	})
 }
 
@@ -660,42 +662,48 @@ func StellarOpFromScVal(val xdr.ScVal) (*StellarOp, error) {
 		}
 
 		switch string(key) {
-		case "chain_id":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("chain_id: %w", err)
-			}
-			result.ChainId = v
-		case "data":
+		case "args_xdr":
 			v, ok := entry.Val.GetBytes()
 			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
+				return nil, fmt.Errorf("args_xdr is not bytes")
 			}
-			result.Data = []byte(v)
+			result.ArgsXdr = []byte(v)
+		case "encoding_version":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("encoding_version is not u32")
+			}
+			result.EncodingVersion = uint32(v)
+		case "function":
+			v, err := scval.SymbolFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("function: %w", err)
+			}
+			result.Function = v
 		case "multisig":
-			v, err := scval.Bytes32FromScVal(entry.Val)
+			v, err := scval.AddressFromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("multisig: %w", err)
 			}
 			result.Multisig = v
+		case "network_id":
+			v, err := scval.Bytes32FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("network_id: %w", err)
+			}
+			result.NetworkId = v
 		case "nonce":
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("nonce: %w", err)
 			}
 			result.Nonce = v
-		case "to":
-			v, err := scval.Bytes32FromScVal(entry.Val)
+		case "target":
+			v, err := scval.AddressFromScVal(entry.Val)
 			if err != nil {
-				return nil, fmt.Errorf("to: %w", err)
+				return nil, fmt.Errorf("target: %w", err)
 			}
-			result.To = v
-		case "value":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("value: %w", err)
-			}
-			result.Value = v
+			result.Target = v
 		}
 	}
 
@@ -888,8 +896,10 @@ func SignerAddressesFromScVal(val xdr.ScVal) (*SignerAddresses, error) {
 
 // StellarRootMetadata represents the StellarRootMetadata struct from the contract.
 type StellarRootMetadata struct {
-	ChainId              [32]byte
-	Multisig             [32]byte
+	ConfigVersion        uint64
+	EncodingVersion      uint32
+	Multisig             string
+	NetworkId            [32]byte
 	OverridePreviousRoot bool
 	PostOpCount          uint64
 	PreOpCount           uint64
@@ -898,8 +908,10 @@ type StellarRootMetadata struct {
 // ToScVal converts StellarRootMetadata to an xdr.ScVal for contract calls.
 func (s StellarRootMetadata) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"chain_id":               scval.Bytes32ToScVal(s.ChainId),
-		"multisig":               scval.Bytes32ToScVal(s.Multisig),
+		"config_version":         scval.Uint64ToScVal(s.ConfigVersion),
+		"encoding_version":       scval.Uint32ToScVal(s.EncodingVersion),
+		"multisig":               scval.AddressToScVal(s.Multisig),
+		"network_id":             scval.Bytes32ToScVal(s.NetworkId),
 		"override_previous_root": scval.BoolToScVal(s.OverridePreviousRoot),
 		"post_op_count":          scval.Uint64ToScVal(s.PostOpCount),
 		"pre_op_count":           scval.Uint64ToScVal(s.PreOpCount),
@@ -921,18 +933,30 @@ func StellarRootMetadataFromScVal(val xdr.ScVal) (*StellarRootMetadata, error) {
 		}
 
 		switch string(key) {
-		case "chain_id":
-			v, err := scval.Bytes32FromScVal(entry.Val)
+		case "config_version":
+			v, err := scval.Uint64FromScVal(entry.Val)
 			if err != nil {
-				return nil, fmt.Errorf("chain_id: %w", err)
+				return nil, fmt.Errorf("config_version: %w", err)
 			}
-			result.ChainId = v
+			result.ConfigVersion = v
+		case "encoding_version":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("encoding_version is not u32")
+			}
+			result.EncodingVersion = uint32(v)
 		case "multisig":
-			v, err := scval.Bytes32FromScVal(entry.Val)
+			v, err := scval.AddressFromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("multisig: %w", err)
 			}
 			result.Multisig = v
+		case "network_id":
+			v, err := scval.Bytes32FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("network_id: %w", err)
+			}
+			result.NetworkId = v
 		case "override_previous_root":
 			v, ok := entry.Val.GetB()
 			if !ok {
@@ -1291,6 +1315,13 @@ const (
 	McmsErrorMissingRootMetadata                          = 52
 	McmsErrorValidUntilExceedsMaximum                     = 53
 	McmsErrorInvalidMinSecsPerLedger                      = 54
+	McmsErrorCallAborted                                  = 55
+	McmsErrorUnsupportedEncodingVersion                   = 56
+	McmsErrorConfigVersionMismatch                        = 57
+	McmsErrorInvalidTarget                                = 58
+	McmsErrorInvalidMultisig                              = 59
+	McmsErrorInvalidArgsXdr                               = 60
+	McmsErrorConfigVersionOverflow                        = 61
 )
 
 // McmsErrorMessage returns a human-readable message for error codes.
@@ -1332,123 +1363,11 @@ var McmsErrorMessage = map[int]string{
 	52: "missing root metadata",
 	53: "valid until exceeds maximum",
 	54: "invalid min secs per ledger",
+	55: "call aborted",
+	56: "unsupported encoding version",
+	57: "config version mismatch",
+	58: "invalid target",
+	59: "invalid multisig",
+	60: "invalid args xdr",
+	61: "config version overflow",
 }
-
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
-// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
-type OwnershipTransferStartedEvent struct {
-	PreviousOwner string
-	NewOwner      string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// OwnershipTransferStartedEventTopic is the event topic identifier.
-const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
-
-// NewRootEvent represents the NewRootEvent event.
-// Topics: [mcms_NewRoot]
-type NewRootEvent struct {
-	Root       [32]byte
-	ValidUntil uint32
-	Metadata   StellarRootMetadata
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// NewRootEventTopic is the event topic identifier.
-const NewRootEventTopic = "mcms_NewRoot"
-
-// ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [mcms_ConfigSet]
-type ConfigSetEvent struct {
-	Config        Config
-	IsRootCleared bool
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// ConfigSetEventTopic is the event topic identifier.
-const ConfigSetEventTopic = "mcms_ConfigSet"
-
-// OpExecutedEvent represents the OpExecutedEvent event.
-// Topics: [mcms_OpExecuted]
-type OpExecutedEvent struct {
-	Nonce uint64
-	To    [32]byte
-	Data  []byte
-	Value [32]byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// OpExecutedEventTopic is the event topic identifier.
-const OpExecutedEventTopic = "mcms_OpExecuted"
-
-// MinSecsPerLedgerSetEvent represents the MinSecsPerLedgerSetEvent event.
-// Topics: [mcms_MinSecsPerLedgerSet]
-type MinSecsPerLedgerSetEvent struct {
-	MinSecsPerLedger uint64
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// MinSecsPerLedgerSetEventTopic is the event topic identifier.
-const MinSecsPerLedgerSetEventTopic = "mcms_MinSecsPerLedgerSet"

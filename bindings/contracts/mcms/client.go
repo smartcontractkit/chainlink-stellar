@@ -4,11 +4,9 @@ package mcms
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -175,10 +173,15 @@ func (c *McmsClient) InitOwner(ctx context.Context, owner string) error {
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *McmsClient) Initialize(ctx context.Context, owner string, chainNetworkId [32]byte) error {
+func (c *McmsClient) Initialize(ctx context.Context, owner string, chainNetworkId [32]byte, signerAddresses SignerAddresses, signerGroups SignerGroups, groupQuorums [32]byte, groupParents [32]byte, instanceLabel string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.Bytes32ToScVal(chainNetworkId),
+		scval.MustToScVal(signerAddresses.ToScVal()),
+		scval.MustToScVal(signerGroups.ToScVal()),
+		scval.Bytes32ToScVal(groupQuorums),
+		scval.Bytes32ToScVal(groupParents),
+		scval.SymbolToScVal(instanceLabel),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -346,32 +349,17 @@ func (c *McmsClient) GetRootMetadata(ctx context.Context) (*StellarRootMetadata,
 	return StellarRootMetadataFromScVal(*result)
 }
 
-// TransferOwnership calls the transfer_ownership function on the contract.
-func (c *McmsClient) TransferOwnership(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
-	if err != nil {
-		return fmt.Errorf("failed to call transfer_ownership: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// GetMinSecsPerLedger calls the get_min_secs_per_ledger function on the contract.
-func (c *McmsClient) GetMinSecsPerLedger(ctx context.Context) (uint64, error) {
+// GetConfigVersion calls the get_config_version function on the contract.
+func (c *McmsClient) GetConfigVersion(ctx context.Context) (uint64, error) {
 	args := []xdr.ScVal{}
 
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_min_secs_per_ledger", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_config_version", args)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call get_min_secs_per_ledger: %w", err)
+		return 0, fmt.Errorf("failed to call get_config_version: %w", err)
 	}
 
 	if result == nil {
-		return 0, fmt.Errorf("no return value from get_min_secs_per_ledger")
+		return 0, fmt.Errorf("no return value from get_config_version")
 	}
 
 	v, err := scval.Uint64FromScVal(*result)
@@ -381,15 +369,31 @@ func (c *McmsClient) GetMinSecsPerLedger(ctx context.Context) (uint64, error) {
 	return v, nil
 }
 
-// SetMinSecsPerLedger calls the set_min_secs_per_ledger function on the contract.
-func (c *McmsClient) SetMinSecsPerLedger(ctx context.Context, secs uint64) error {
-	args := []xdr.ScVal{
-		scval.Uint64ToScVal(secs),
+// GetInstanceLabel calls the get_instance_label function on the contract.
+func (c *McmsClient) GetInstanceLabel(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_instance_label", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call get_instance_label: %w", err)
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_min_secs_per_ledger", args)
+	if result == nil {
+		return "", fmt.Errorf("no return value from get_instance_label")
+	}
+
+	return scval.SymbolFromScVal(*result)
+}
+
+// TransferOwnership calls the transfer_ownership function on the contract.
+func (c *McmsClient) TransferOwnership(ctx context.Context, newOwner string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(newOwner),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "transfer_ownership", args)
 	if err != nil {
-		return fmt.Errorf("failed to call set_min_secs_per_ledger: %w", err)
+		return fmt.Errorf("failed to call transfer_ownership: %w", err)
 	}
 
 	_ = result // void return
@@ -407,662 +411,4 @@ func (c *McmsClient) CancelOwnershipTransfer(ctx context.Context) error {
 
 	_ = result // void return
 	return nil
-}
-
-// WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
-func (c *McmsClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleGrantedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseRoleGrantedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleGrantedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			v, err := scval.SymbolFromScVal(entry.Val)
-			if err == nil {
-				result.Role = v
-			}
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
-func (c *McmsClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleRevokedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseRoleRevokedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleRevokedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			v, err := scval.SymbolFromScVal(entry.Val)
-			if err == nil {
-				result.Role = v
-			}
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
-func (c *McmsClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseAuthorizedCallerAddedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerAddedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
-func (c *McmsClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseAuthorizedCallerRemovedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerRemovedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
-func (c *McmsClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferStartedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseOwnershipTransferStartedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTransferStartedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &OwnershipTransferStartedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "previous_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.PreviousOwner = v
-			}
-		case "new_owner":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.NewOwner = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForNewRootEvent waits for a NewRootEvent event.
-func (c *McmsClient) WaitForNewRootEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*NewRootEvent) bool) (*NewRootEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{NewRootEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseNewRootEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseNewRootEvent(e protocolrpc.EventInfo) (*NewRootEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &NewRootEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "root":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err == nil {
-				result.Root = v
-			}
-		case "valid_until":
-			v, ok := entry.Val.GetU32()
-			if ok {
-				result.ValidUntil = uint32(v)
-			}
-		case "metadata":
-			v, err := StellarRootMetadataFromScVal(entry.Val)
-			if err == nil {
-				result.Metadata = *v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForConfigSetEvent waits for a ConfigSetEvent event.
-func (c *McmsClient) WaitForConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ConfigSetEvent) bool) (*ConfigSetEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ConfigSetEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseConfigSetEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &ConfigSetEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "config":
-			v, err := ConfigFromScVal(entry.Val)
-			if err == nil {
-				result.Config = *v
-			}
-		case "is_root_cleared":
-			v, ok := entry.Val.GetB()
-			if ok {
-				result.IsRootCleared = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForOpExecutedEvent waits for a OpExecutedEvent event.
-func (c *McmsClient) WaitForOpExecutedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OpExecutedEvent) bool) (*OpExecutedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OpExecutedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseOpExecutedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseOpExecutedEvent(e protocolrpc.EventInfo) (*OpExecutedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &OpExecutedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "nonce":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.Nonce = v
-			}
-		case "to":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err == nil {
-				result.To = v
-			}
-		case "data":
-			v, ok := entry.Val.GetBytes()
-			if ok {
-				result.Data = []byte(v)
-			}
-		case "value":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err == nil {
-				result.Value = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForMinSecsPerLedgerSetEvent waits for a MinSecsPerLedgerSetEvent event.
-func (c *McmsClient) WaitForMinSecsPerLedgerSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*MinSecsPerLedgerSetEvent) bool) (*MinSecsPerLedgerSetEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{MinSecsPerLedgerSetEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseMinSecsPerLedgerSetEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseMinSecsPerLedgerSetEvent(e protocolrpc.EventInfo) (*MinSecsPerLedgerSetEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &MinSecsPerLedgerSetEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "min_secs_per_ledger":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.MinSecsPerLedger = v
-			}
-		}
-	}
-
-	return result, nil
 }

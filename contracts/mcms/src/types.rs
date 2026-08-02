@@ -1,6 +1,6 @@
 //! On-chain structs for MCMS-Stellar (see `docs/mcms-stellar-plan.md`).
 
-use soroban_sdk::{contracttype, Bytes, BytesN};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol};
 
 pub const NUM_GROUPS: u32 = 32;
 pub const MAX_NUM_SIGNERS: u32 = 200;
@@ -33,24 +33,26 @@ pub struct ExpiringRootAndOpCount {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StellarRootMetadata {
-    pub chain_id: BytesN<32>,
-    pub multisig: BytesN<32>,
+    pub network_id: BytesN<32>,
+    pub multisig: Address,
     pub pre_op_count: u64,
     pub post_op_count: u64,
     pub override_previous_root: bool,
+    pub config_version: u64,
+    pub encoding_version: u32,
 }
 
-/// Operation leaf (must match ABI hashing in `abi_encoding` and off-chain `mcms` encoder).
+/// Typed Stellar operation leaf. Function and argument XDR are deliberately separate.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StellarOp {
-    pub chain_id: BytesN<32>,
-    pub multisig: BytesN<32>,
+    pub network_id: BytesN<32>,
+    pub multisig: Address,
     pub nonce: u64,
-    pub to: BytesN<32>,
-    /// ABI `uint256` value; MUST be zero (32 zero bytes) in v1.
-    pub value: BytesN<32>,
-    pub data: Bytes,
+    pub target: Address,
+    pub function: Symbol,
+    pub args_xdr: Bytes,
+    pub encoding_version: u32,
 }
 
 #[contracttype]

@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Bytes, BytesN};
+use soroban_sdk::{contractevent, Address, BytesN, Symbol};
 
 use crate::types::{Config, StellarRootMetadata};
 
@@ -7,6 +7,7 @@ use crate::types::{Config, StellarRootMetadata};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigSetEvent {
     pub config: Config,
+    pub config_version: u64,
     pub is_root_cleared: bool,
 }
 
@@ -24,15 +25,7 @@ pub struct NewRootEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpExecutedEvent {
     pub nonce: u64,
-    pub to: BytesN<32>,
-    pub data: Bytes,
-    pub value: BytesN<32>,
-}
-
-/// Emitted when the owner-configured `min_secs_per_ledger` (used to derive the dynamic
-/// `valid_until` cap) is updated. No Solidity counterpart — Stellar-specific.
-#[contractevent(topics = ["mcms_MinSecsPerLedgerSet"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MinSecsPerLedgerSetEvent {
-    pub min_secs_per_ledger: u64,
+    pub target: Address,
+    pub function: Symbol,
+    pub args_hash: BytesN<32>,
 }
