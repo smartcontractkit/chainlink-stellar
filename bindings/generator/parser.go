@@ -24,15 +24,17 @@ type Struct struct {
 
 // Field represents a struct field.
 type Field struct {
-	Name string
-	Type string
+	Name  string
+	Type  string
+	Topic bool
 }
 
 // Function represents a contract function.
 type Function struct {
-	Name    string
-	Inputs  []Field
-	Returns string
+	Name     string
+	Inputs   []Field
+	Returns  string
+	ReadOnly bool
 }
 
 // ErrorEnum represents a contract error enum.
@@ -346,7 +348,7 @@ func parseFunctions(input string) []Function {
 
 	// Match individual functions
 	// fn name(env: Env, param: Type, ...) -> Result<RetType, Error>;
-	funcRe := regexp.MustCompile(`fn (\w+)\s*\(\s*env:\s*soroban_sdk::Env\s*(?:,\s*([^)]*))?\)\s*->\s*([^;]+);`)
+	funcRe := regexp.MustCompile(`fn (\w+)\s*\(\s*env:\s*soroban_sdk::Env\s*(?:,\s*([^)]*))?\)\s*(?:->\s*([^;]+))?;`)
 
 	var functions []Function
 	matches := funcRe.FindAllStringSubmatch(traitBody, -1)
@@ -355,6 +357,10 @@ func parseFunctions(input string) []Function {
 		name := match[1]
 		paramsStr := strings.TrimSpace(match[2])
 		returnStr := strings.TrimSpace(match[3])
+
+		if strings.HasPrefix(name, "__") {
+			continue
+		}
 
 		var inputs []Field
 		if paramsStr != "" {
@@ -469,7 +475,8 @@ func qualifySorobanType(t string) string {
 
 func parseEvents(input string) []Event {
 	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)]
-	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(\s*topics\s*=\s*\[([^\]]+)\][^)]*\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
+	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(([^)]*)\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
+	topicsListRe := regexp.MustCompile(`topics\s*=\s*\[([^\]]+)\]`)
 	fieldRe := regexp.MustCompile(`pub (\w+):\s*([^,]+),`)
 	topicRe := regexp.MustCompile(`"([^"]+)"`)
 
@@ -477,23 +484,29 @@ func parseEvents(input string) []Event {
 	matches := eventRe.FindAllStringSubmatch(input, -1)
 
 	for _, match := range matches {
-		topicsStr := match[1]
+		attrs := match[1]
 		name := match[2]
 		body := match[3]
 
+		topicsList := topicsListRe.FindStringSubmatch(attrs)
+		if topicsList == nil {
+			continue
+		}
 		var topics []string
-		topicMatches := topicRe.FindAllStringSubmatch(topicsStr, -1)
+		topicMatches := topicRe.FindAllStringSubmatch(topicsList[1], -1)
 		for _, tm := range topicMatches {
 			topics = append(topics, tm[1])
 		}
 
 		var fields []Field
-		fieldMatches := fieldRe.FindAllStringSubmatch(body, -1)
-		for _, fm := range fieldMatches {
+		prevEnd := 0
+		for _, ix := range fieldRe.FindAllStringSubmatchIndex(body, -1) {
 			fields = append(fields, Field{
-				Name: fm[1],
-				Type: qualifySorobanType(strings.TrimSpace(fm[2])),
+				Name:  body[ix[2]:ix[3]],
+				Type:  qualifySorobanType(strings.TrimSpace(body[ix[4]:ix[5]])),
+				Topic: strings.Contains(body[prevEnd:ix[0]], "#[topic]"),
 			})
+			prevEnd = ix[1]
 		}
 
 		events = append(events, Event{

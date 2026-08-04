@@ -26,4 +26,7 @@ const (
 
 	// RejectingReceiverWasm is the CRE test receiver that always rejects on_report
 	RejectingReceiverWasm = "rejecting_receiver.wasm"
+
+	// DataFeedsCacheWasm is the Data Feeds cache (contracts/data-feeds/data-feeds-cache).
+	DataFeedsCacheWasm = "data_feeds_cache.wasm"
 )

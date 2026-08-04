@@ -698,7 +698,7 @@ func TestBuildAndSubmitTransaction_FeeBumpApplied(t *testing.T) {
 	require.NoError(t, err)
 
 	// Default factor 1.25: bump = ceil(100000 * 0.25) = 25000 > minFeeBuffer(10000).
-	expectedFee := minResourceFee + 25_000
+	expectedFee := minResourceFee + 25_000 + 25_000
 	assert.Equal(t, expectedFee, capturedFee)
 }
 

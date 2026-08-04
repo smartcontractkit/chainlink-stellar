@@ -753,6 +753,24 @@ func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 		TxHash: e.TransactionHash,
 	}
 
+	if len(e.TopicXDR) > 1 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
+			if v, err := scval.Uint32FromScVal(tv); err == nil {
+				result.DonId = v
+			}
+		}
+	}
+
+	if len(e.TopicXDR) > 2 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[2], &tv) == nil {
+			if v, err := scval.Uint32FromScVal(tv); err == nil {
+				result.ConfigVersion = v
+			}
+		}
+	}
+
 	for _, entry := range *scMap {
 		key, ok := entry.Key.GetSym()
 		if !ok {
@@ -760,16 +778,6 @@ func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 		}
 
 		switch string(key) {
-		case "don_id":
-			v, ok := entry.Val.GetU32()
-			if ok {
-				result.DonId = uint32(v)
-			}
-		case "config_version":
-			v, ok := entry.Val.GetU32()
-			if ok {
-				result.ConfigVersion = uint32(v)
-			}
 		case "f":
 			v, ok := entry.Val.GetU32()
 			if ok {
@@ -909,6 +917,33 @@ func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, 
 		TxHash: e.TransactionHash,
 	}
 
+	if len(e.TopicXDR) > 1 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
+			if v, err := scval.AddressFromScVal(tv); err == nil {
+				result.Receiver = v
+			}
+		}
+	}
+
+	if len(e.TopicXDR) > 2 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[2], &tv) == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
+				result.WorkflowExecutionId = v
+			}
+		}
+	}
+
+	if len(e.TopicXDR) > 3 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[3], &tv) == nil {
+			if v, err := scval.Bytes2FromScVal(tv); err == nil {
+				result.ReportId = v
+			}
+		}
+	}
+
 	for _, entry := range *scMap {
 		key, ok := entry.Key.GetSym()
 		if !ok {
@@ -916,21 +951,6 @@ func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, 
 		}
 
 		switch string(key) {
-		case "receiver":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Receiver = v
-			}
-		case "workflow_execution_id":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err == nil {
-				result.WorkflowExecutionId = v
-			}
-		case "report_id":
-			v, err := scval.Bytes2FromScVal(entry.Val)
-			if err == nil {
-				result.ReportId = v
-			}
 		case "success":
 			v, ok := entry.Val.GetB()
 			if ok {
