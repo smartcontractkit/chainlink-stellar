@@ -1,0 +1,27 @@
+[package]
+name = "data-feeds-proxy"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+data-feeds-common = { workspace = true }
+data-feeds-cache = { workspace = true }
+stellar-access = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+data-feeds-cache = { workspace = true, features = ["contract", "testutils"] }
+data-feeds-common = { workspace = true, features = ["testutils"] }
+
+[features]
+default = ["contract"]
+contract = []
