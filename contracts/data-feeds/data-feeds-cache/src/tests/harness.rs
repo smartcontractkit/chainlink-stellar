@@ -10,7 +10,6 @@ pub(crate) use data_feeds_common::test_utils::{
     age_ttl, authorize, network_max_ttl, new_address, peek, roll, set_network_max_ttl, Harness,
 };
 
-use crate::domain::data_id::CanonicalId;
 pub(crate) use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, StaleReport,
@@ -21,7 +20,7 @@ pub(crate) use crate::interface::types::{
 };
 pub(crate) use crate::interface::CacheError;
 pub(crate) use crate::interface::FeedConfigEntry;
-pub(crate) use crate::storage::DataKey;
+pub(crate) use crate::storage::{CanonicalId, DataKey};
 pub(crate) use crate::{DataFeedsCache, DataFeedsCacheClient};
 
 use crate::domain::feed::perm_hash;

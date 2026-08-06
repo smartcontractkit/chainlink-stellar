@@ -2,11 +2,11 @@ use soroban_sdk::{
     testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec, I256,
 };
 
-use crate::domain::data_id::CanonicalId;
 use crate::interface::types::{
     DataId, FeedConfig, ReportEntry, WireDataId, WorkflowName, WorkflowOwner, WorkflowPermission,
 };
 use crate::interface::FeedConfigEntry;
+use crate::storage::CanonicalId;
 use crate::DataFeedsCacheClient;
 
 pub const DEFAULT_BYTE7: u8 = 0x32;

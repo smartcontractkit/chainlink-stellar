@@ -1,5 +1,5 @@
 use super::*;
-use crate::storage::DataKey;
+use crate::storage::{CanonicalId, DataKey};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{BytesN, I256};

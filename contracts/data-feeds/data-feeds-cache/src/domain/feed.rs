@@ -1,12 +1,11 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Env, String, Vec, I256};
 
-use crate::domain::data_id::CanonicalId;
 use crate::domain::search;
 use crate::interface::data_id::decimals_of;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
 use crate::interface::{CacheError, DataId, FeedConfig};
-use crate::storage::{FeedState, PermissionHash, Store, StoredConfig, Window};
+use crate::storage::{CanonicalId, FeedState, PermissionHash, Store, StoredConfig, Window};
 
 pub(crate) fn configure(
     env: &Env,

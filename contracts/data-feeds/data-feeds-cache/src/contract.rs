@@ -3,7 +3,6 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, V
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
-use crate::domain::data_id::CanonicalId;
 use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
 use crate::domain::feed;
 use crate::events::{
@@ -17,7 +16,7 @@ use crate::interface::{
     Bound, DataFeedsCacheAdmin, DataFeedsCacheReader, DataFeedsCacheWriter, DataId, FeedConfig,
     FeedConfigEntry,
 };
-use crate::storage::Store;
+use crate::storage::{CanonicalId, Store};
 
 #[contract]
 pub struct DataFeedsCache;
