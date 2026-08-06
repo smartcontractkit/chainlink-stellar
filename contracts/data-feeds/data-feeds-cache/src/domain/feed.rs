@@ -13,46 +13,32 @@ pub(crate) fn configure(
     id: &DataId,
     cfg: &FeedConfig,
     decimals: u32,
-) -> Result<bool, CacheError> {
+) -> Result<(), CacheError> {
     let key = CanonicalId::new(env, id);
-    if let Some(stored) = env.config_store().get(&key) {
-        if stored.decimals != decimals {
+    if let Some(old) = env.config_store().get(&key) {
+        if old.decimals != decimals {
             return Err(CacheError::DecimalsMismatch);
         }
+        for p in old.config.workflow_permissions.iter() {
+            env.permission_store()
+                .remove(&(key.clone(), perm_key(env, &p)));
+        }
     }
-    let existed = clear_permissions(env, &key);
-    let stored = StoredConfig {
-        config: cfg.clone(),
-        decimals,
-    };
-    env.config_store().set(&key, &stored);
+
+    env.config_store().set(
+        &key,
+        &StoredConfig {
+            config: cfg.clone(),
+            decimals,
+        },
+    );
     env.config_store().extend_ttl(&key);
     for p in cfg.workflow_permissions.iter() {
         let perm = (key.clone(), perm_key(env, &p));
         env.permission_store().set(&perm, &());
         env.permission_store().extend_ttl(&perm);
     }
-    Ok(existed)
-}
-
-pub(crate) fn remove(env: &Env, id: &DataId) -> bool {
-    let key = CanonicalId::new(env, id);
-    if !clear_permissions(env, &key) {
-        return false;
-    }
-    env.config_store().remove(&key);
-    true
-}
-
-fn clear_permissions(env: &Env, key: &CanonicalId) -> bool {
-    let Some(old) = env.config_store().get(key) else {
-        return false;
-    };
-    for p in old.config.workflow_permissions.iter() {
-        env.permission_store()
-            .remove(&(key.clone(), perm_key(env, &p)));
-    }
-    true
+    Ok(())
 }
 
 pub(crate) enum Recorded {

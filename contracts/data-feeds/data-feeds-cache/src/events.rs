@@ -51,13 +51,6 @@ pub struct FeedConfigSet {
     pub workflow_permissions: Vec<WorkflowPermission>,
 }
 
-#[contractevent(topics = ["FeedConfigRemoved"])]
-#[derive(Clone, Debug)]
-pub struct FeedConfigRemoved {
-    #[topic]
-    pub data_id: BytesN<16>,
-}
-
 #[contractevent(topics = ["FeedFrozenSet"])]
 #[derive(Clone, Debug)]
 pub struct FeedFrozenSet {

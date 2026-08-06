@@ -206,7 +206,7 @@ mod on_report {
     }
 
     #[test]
-    fn removed_feed_sender_on_report_is_soft_skipped() {
+    fn revoked_sender_on_report_is_soft_skipped() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         let env = &cache.env;
@@ -217,7 +217,7 @@ mod on_report {
             "round landed while configured"
         );
 
-        cache.remove(&feed);
+        cache.configure_feed(&feed.admin, &new_address(env), feed.tag, "BTC/USD");
 
         cache.write(&feed, 200, 6);
         cache.assert_event(InvalidUpdatePermission {
@@ -229,7 +229,7 @@ mod on_report {
         assert_eq!(
             cache.history(&feed).len(),
             1,
-            "revoked sender wrote nothing after feed removal — still just the pre-removal round"
+            "the revoked sender wrote nothing — still just the earlier round"
         );
     }
 

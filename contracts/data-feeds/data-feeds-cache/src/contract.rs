@@ -7,7 +7,7 @@ use crate::domain::data_id::CanonicalId;
 use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
 use crate::domain::feed;
 use crate::events::{
-    FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
+    FeedAdminAdded, FeedAdminRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, NonCanonicalReport, StaleReport,
 };
 use crate::interface::data_id::decimals_of;
@@ -189,57 +189,15 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for entry in entries.iter() {
-            let data_id = entry.data_id.clone();
-            let decimals = decimals_of(&data_id).ok_or(CacheError::InvalidDataId)?;
-            if feed::configure(&env, &data_id, &entry.config, decimals)? {
-                FeedConfigRemoved {
-                    data_id: data_id.clone(),
-                }
-                .publish(&env);
-            }
+            let decimals = decimals_of(&entry.data_id).ok_or(CacheError::InvalidDataId)?;
+            feed::configure(&env, &entry.data_id, &entry.config, decimals)?;
             FeedConfigSet {
-                data_id: data_id.clone(),
+                data_id: entry.data_id,
                 decimals,
-                description: entry.config.description.clone(),
-                workflow_permissions: entry.config.workflow_permissions.clone(),
+                description: entry.config.description,
+                workflow_permissions: entry.config.workflow_permissions,
             }
             .publish(&env);
-        }
-        Ok(())
-    }
-
-    fn remove_feed_configs(
-        env: Env,
-        admin: Address,
-        data_ids: Vec<BytesN<16>>,
-    ) -> Result<(), CacheError> {
-        admin.require_auth();
-        env.contract_store().extend_ttl();
-        if !authorize(&env, &admin) {
-            return Err(CacheError::UnauthorizedCaller);
-        }
-        if data_ids.is_empty() {
-            return Ok(());
-        }
-
-        for (i, did) in data_ids.iter().enumerate() {
-            let canonical = CanonicalId::new(&env, &did);
-            for j in (i as u32 + 1)..data_ids.len() {
-                if canonical == CanonicalId::new(&env, &data_ids.get_unchecked(j)) {
-                    return Err(CacheError::DuplicateFeedConfig);
-                }
-            }
-            if !feed::configured(&env, &did) {
-                return Err(CacheError::FeedNotConfigured);
-            }
-        }
-        for did in data_ids.iter() {
-            if feed::remove(&env, &did) {
-                FeedConfigRemoved {
-                    data_id: did.clone(),
-                }
-                .publish(&env);
-            }
         }
         Ok(())
     }

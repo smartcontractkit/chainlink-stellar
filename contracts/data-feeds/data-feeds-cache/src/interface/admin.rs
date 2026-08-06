@@ -11,12 +11,6 @@ pub trait DataFeedsCacheAdmin {
         entries: Vec<FeedConfigEntry>,
     ) -> Result<(), CacheError>;
 
-    fn remove_feed_configs(
-        env: Env,
-        admin: Address,
-        data_ids: Vec<BytesN<16>>,
-    ) -> Result<(), CacheError>;
-
     fn set_feed_frozen(
         env: Env,
         admin: Address,

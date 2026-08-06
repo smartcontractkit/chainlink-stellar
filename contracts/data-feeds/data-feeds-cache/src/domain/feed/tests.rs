@@ -45,9 +45,9 @@ fn state_ttl(env: &Env, id: &DataId) -> u32 {
         .get_ttl(&DataKey::FeedState(key_bytes(env, id)))
 }
 
-fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> bool {
+fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) {
     super::configure(env, id, cfg, decimals_of(id).expect("valid decimals byte"))
-        .expect("configure")
+        .expect("configure");
 }
 
 #[allow(clippy::unnecessary_min_or_max)]
@@ -91,9 +91,8 @@ mod configure {
             let id = mock_data_id(env);
             let p = permission(env);
 
-            let existed = configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
 
-            assert!(!existed);
             assert!(configured(env, &id));
             assert_eq!(
                 description(env, &id),
@@ -151,15 +150,14 @@ mod configure {
     }
 
     #[test]
-    fn existing_feed_returns_true_and_updates_description() {
+    fn reconfiguring_updates_the_description() {
         execute_as_contract(|env| {
             let id = mock_data_id(env);
             let p = permission(env);
             configure(env, &id, &config(env, core::slice::from_ref(&p), "old"));
 
-            let existed = configure(env, &id, &config(env, core::slice::from_ref(&p), "new"));
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "new"));
 
-            assert!(existed);
             assert_eq!(description(env, &id), Some(String::from_str(env, "new")));
         });
     }
@@ -221,51 +219,6 @@ mod configure {
                 aged_round,
                 "configure must not extend old round-data TTL; only the state is kept alive"
             );
-        });
-    }
-}
-
-mod remove {
-    use super::*;
-
-    #[test]
-    fn removes_config_and_permissions() {
-        execute_as_contract(|env| {
-            let id = mock_data_id(env);
-            let p = permission(env);
-            configure(env, &id, &config(env, core::slice::from_ref(&p), "X"));
-
-            let existed = remove(env, &id);
-
-            assert!(existed);
-            assert!(!configured(env, &id));
-            assert!(!permitted(env, &id, &perm_key(env, &p)));
-        });
-    }
-
-    #[test]
-    fn keeps_round_history() {
-        execute_as_contract(|env| {
-            let id = mock_data_id(env);
-            let p = permission(env);
-            configure(env, &id, &config(env, core::slice::from_ref(&p), "X"));
-            record(env, &id, &I256::from_i128(env, 1), 1);
-            record(env, &id, &I256::from_i128(env, 2), 2);
-
-            remove(env, &id);
-
-            assert_eq!(state(env, &id).latest_round.round_id, 2);
-            assert!(round(env, &id, 1).is_some());
-            assert!(round(env, &id, 2).is_some());
-        });
-    }
-
-    #[test]
-    fn unconfigured_feed_returns_false() {
-        execute_as_contract(|env| {
-            let id = mock_data_id(env);
-            assert!(!configured(env, &id));
-            assert!(!remove(env, &id));
         });
     }
 }
@@ -1015,17 +968,11 @@ mod decimals {
     }
 
     #[test]
-    fn gated_on_the_config() {
+    fn is_none_until_the_feed_is_configured() {
         execute_as_contract(|env| {
             let id = mock_data_id(env);
+
             assert_eq!(decimals(env, &id), None, "derivable but not configured");
-
-            let p = permission(env);
-            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-            assert_eq!(decimals(env, &id), decimals_of(&id));
-
-            remove(env, &id);
-            assert_eq!(decimals(env, &id), None);
         });
     }
 }
@@ -1213,19 +1160,6 @@ mod canonical {
                 Some(18),
                 "the stored scale is unchanged"
             );
-        });
-    }
-
-    #[test]
-    fn re_registering_the_feed_at_the_same_scale_is_allowed() {
-        execute_as_contract(|env| {
-            let id = feed_at(env, 0x32);
-            let p = permission(env);
-
-            let existed = configure(env, &id, &config(env, core::slice::from_ref(&p), "new"));
-
-            assert!(existed, "the config is replaced, not rejected");
-            assert_eq!(description(env, &id), Some(String::from_str(env, "new")));
         });
     }
 

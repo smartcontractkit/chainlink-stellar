@@ -355,9 +355,9 @@ mod is_configured {
         assert!(c.decimals(&id).is_some());
         assert!(c.description(&id).is_some());
 
-        c.remove_feed_configs(&admin, &vec![&cache.env, id.clone()]);
-        assert!(!c.is_configured(&id));
-        assert!(c.decimals(&id).is_none());
-        assert!(c.description(&id).is_none());
+        let unconfigured = mock_feed_id(&cache.env, 9);
+        assert!(!c.is_configured(&unconfigured));
+        assert!(c.decimals(&unconfigured).is_none());
+        assert!(c.description(&unconfigured).is_none());
     }
 }

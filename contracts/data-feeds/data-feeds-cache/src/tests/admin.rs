@@ -123,15 +123,11 @@ mod set_feed_configs {
             description: String::from_str(&cache.env, "BTC/USD"),
             workflow_permissions: vec![&cache.env, mock_permission(&cache.env, &s)],
         });
-        assert_eq!(
-            cache.events().len(),
-            1,
-            "no FeedConfigRemoved on first-time config"
-        );
+        assert_eq!(cache.events().len(), 1, "one event per configured feed");
     }
 
     #[test]
-    fn reconfigure_is_full_replace_removed_then_set() {
+    fn reconfigure_replaces_the_config_and_its_permissions() {
         let cache = Cache::deploy();
         let admin = cache.add_admin();
         let c = cache.client();
@@ -139,27 +135,13 @@ mod set_feed_configs {
         let s2 = new_address(&cache.env);
         let did = cache.configure_feed(&admin, &s1, 1, "old");
         cache.configure_feed(&admin, &s2, 1, "new");
-        let evs = cache.events();
-        let removed = FeedConfigRemoved {
-            data_id: did.clone(),
-        }
-        .to_xdr(&cache.env, &cache.id);
-        let set = FeedConfigSet {
+
+        cache.assert_event(FeedConfigSet {
             data_id: did.clone(),
             decimals: 18,
             description: String::from_str(&cache.env, "new"),
             workflow_permissions: vec![&cache.env, mock_permission(&cache.env, &s2)],
-        }
-        .to_xdr(&cache.env, &cache.id);
-        let i_removed = evs
-            .iter()
-            .position(|e| *e == removed)
-            .expect("FeedConfigRemoved emitted");
-        let i_set = evs
-            .iter()
-            .position(|e| *e == set)
-            .expect("FeedConfigSet emitted");
-        assert!(i_removed < i_set, "FeedConfigRemoved before FeedConfigSet");
+        });
         assert!(!c.has_permission(
             &did,
             &s1,
@@ -309,7 +291,7 @@ mod set_feed_configs {
     ));
 
     #[test]
-    fn stale_feed_state_resurrects_across_remove_upgrade_and_re_add() {
+    fn feed_state_survives_reconfiguring_and_an_upgrade() {
         let cache = Cache::deploy();
         set_network_max_ttl(&cache.env, 1_000_000);
         roll(&cache.env, 1_000);
@@ -322,26 +304,21 @@ mod set_feed_configs {
         assert_eq!(cache.latest_round(&feed).round_id, 3);
         assert_eq!(cache.history(&feed).len(), 3);
 
-        cache.remove(&feed);
+        cache.configure_feed(&feed.admin, &feed.sender, feed.tag, "BTC/USD");
         assert!(
-            cache.client().get_feed_permissions(&feed.id).is_empty(),
-            "permissions must be cleared by remove"
-        );
-        assert_eq!(
-            cache.client().description(&feed.id),
-            None,
-            "config must be gone after remove"
+            cache.client().is_configured(&feed.id),
+            "a config cannot be removed, only replaced"
         );
 
         assert_eq!(
             cache.client().latest_round(&feed.id).unwrap().round_id,
             3,
-            "FeedState survives remove_feed_configs"
+            "FeedState survives reconfiguring"
         );
         assert_eq!(
             cache.history(&feed).len(),
             3,
-            "round history survives remove"
+            "round history survives reconfiguring"
         );
 
         let hash = cache.env.deployer().upload_contract_wasm(SELF_WASM);
@@ -393,7 +370,7 @@ mod set_feed_configs {
     }
 
     #[test]
-    fn re_add_by_a_different_workflow_inherits_prior_history_and_counter() {
+    fn a_new_workflow_inherits_prior_history_and_counter() {
         let cache = Cache::deploy();
         set_network_max_ttl(&cache.env, 1_000_000);
         roll(&cache.env, 1_000);
@@ -404,8 +381,6 @@ mod set_feed_configs {
         cache.write(&feed, 111, 10);
         cache.write(&feed, 222, 20);
         assert_eq!(cache.latest_round(&feed).round_id, 2);
-
-        cache.remove(&feed);
 
         let w2_owner: WorkflowOwner = BytesN::from_array(env, &[0x77; 20]);
         let w2_name: WorkflowName = BytesN::from_array(env, &[0x66; 10]);
@@ -452,7 +427,7 @@ mod set_feed_configs {
     }
 
     #[test]
-    fn re_add_first_report_is_rejected_stale_against_the_resurrected_timestamp() {
+    fn a_report_after_reconfiguring_is_rejected_when_stale() {
         let cache = Cache::deploy();
         set_network_max_ttl(&cache.env, 1_000_000);
         roll(&cache.env, 1_000);
@@ -462,7 +437,6 @@ mod set_feed_configs {
         cache.write(&feed, 100, 1_000_000);
         assert_eq!(cache.latest_round(&feed).timestamp, 1_000_000);
 
-        cache.remove(&feed);
         cache.configure_feed(&feed.admin, &feed.sender, feed.tag, "BTC/USD");
 
         cache.write(&feed, 200, 500_000);
@@ -474,7 +448,7 @@ mod set_feed_configs {
         assert_eq!(
             cache.latest_round(&feed).round_id,
             1,
-            "re-added feed's first (lower-ts) report was dropped as stale"
+            "the lower-ts report after reconfiguring was dropped as stale"
         );
         assert_eq!(
             cache.latest_round(&feed).answer,
@@ -485,116 +459,6 @@ mod set_feed_configs {
         cache.write(&feed, 300, 1_000_001);
         assert_eq!(cache.latest_round(&feed).round_id, 2);
         assert_eq!(cache.latest_round(&feed).timestamp, 1_000_001);
-    }
-}
-
-mod remove_feed_configs {
-    use super::*;
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #101)")]
-    fn non_admin_caller_is_unauthorized() {
-        let cache = Cache::deploy();
-        let feed = cache.add_feed(1);
-        let not_admin = new_address(&cache.env);
-        cache
-            .client()
-            .remove_feed_configs(&not_admin, &vec![&cache.env, feed.id.clone()]);
-    }
-
-    #[test]
-    fn remove_empty_batch_is_noop_success() {
-        let cache = Cache::deploy();
-        let admin = cache.add_admin();
-        cache
-            .client()
-            .remove_feed_configs(&admin, &Vec::<DataId>::new(&cache.env));
-    }
-
-    #[test]
-    fn remove_deletes_config_and_permissions() {
-        let cache = Cache::deploy();
-        let feed = cache.add_feed(1);
-        let c = cache.client();
-        cache.remove(&feed);
-        cache.assert_event(FeedConfigRemoved {
-            data_id: feed.id.clone(),
-        });
-        assert!(!c.has_permission(
-            &feed.id,
-            &feed.sender,
-            &mock_wf_owner(&cache.env),
-            &mock_wf_name(&cache.env)
-        ));
-        assert_eq!(c.get_feed_permissions(&feed.id).len(), 0);
-        assert_eq!(c.description(&feed.id), None);
-    }
-
-    #[test]
-    fn remove_feed_configs_containing_unconfigured_feed_aborts_atomically() {
-        let cache = Cache::deploy();
-        let feed = cache.add_feed(1);
-        let c = cache.client();
-        let unconfigured_b = mock_feed_id(&cache.env, 9);
-        assert_eq!(
-            c.try_remove_feed_configs(
-                &feed.admin,
-                &vec![&cache.env, feed.id.clone(), unconfigured_b]
-            ),
-            Err(Ok(CacheError::FeedNotConfigured))
-        );
-        assert!(c.has_permission(
-            &feed.id,
-            &feed.sender,
-            &mock_wf_owner(&cache.env),
-            &mock_wf_name(&cache.env)
-        ));
-        assert_eq!(c.get_feed_permissions(&feed.id).len(), 1);
-        assert_eq!(
-            c.description(&feed.id),
-            Some(String::from_str(&cache.env, "BTC/USD"))
-        );
-    }
-
-    #[test]
-    fn duplicate_id_in_one_batch_is_rejected_and_removes_nothing() {
-        let cache = Cache::deploy();
-        let feed = cache.add_feed(1);
-        let c = cache.client();
-        let env = &cache.env;
-
-        assert_eq!(
-            c.try_remove_feed_configs(&feed.admin, &vec![env, feed.id.clone(), feed.id.clone()]),
-            Err(Ok(CacheError::DuplicateFeedConfig)),
-        );
-
-        assert!(c.has_permission(
-            &feed.id,
-            &feed.sender,
-            &mock_wf_owner(env),
-            &mock_wf_name(env)
-        ));
-        assert_eq!(c.get_feed_permissions(&feed.id).len(), 1);
-        assert_eq!(
-            c.description(&feed.id),
-            Some(String::from_str(env, "BTC/USD"))
-        );
-    }
-
-    #[test]
-    fn remove_feed_configs_extends_contract_instance_ttl() {
-        let cache = Cache::deploy();
-        let feed = cache.add_feed(1);
-        let full = network_max_ttl(&cache.env);
-        age_ttl(&cache.env);
-
-        cache.remove(&feed);
-
-        assert_eq!(
-            cache.instance_ttl(),
-            full,
-            "remove_feed_configs extends the contract instance TTL"
-        );
     }
 }
 
@@ -963,15 +827,15 @@ mod set_feed_frozen {
     }
 
     #[test]
-    fn outlives_config_removal() {
+    fn outlives_reconfiguring() {
         let cache = Cache::deploy();
         let feed = live_feed(&cache, 1);
         freeze(&cache, &feed, true);
-        cache.remove(&feed);
+        cache.configure_feed(&feed.admin, &feed.sender, feed.tag, "BTC/USD");
 
         let c = cache.client();
-        assert!(!c.is_configured(&feed.id));
-        assert!(c.is_frozen(&feed.id));
+        assert!(c.is_configured(&feed.id));
+        assert!(c.is_frozen(&feed.id), "reconfiguring does not thaw a feed");
         assert!(matches!(
             c.try_latest_round(&feed.id),
             Err(Ok(CacheError::FeedFrozen))

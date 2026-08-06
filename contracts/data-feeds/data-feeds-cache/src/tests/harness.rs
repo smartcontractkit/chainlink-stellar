@@ -3,7 +3,7 @@ pub(crate) use soroban_sdk::{
     token::{StellarAssetClient, TokenClient},
     vec,
     xdr::ToXdr,
-    Address, Bytes, BytesN, Env, Event, String, Vec, I256,
+    Address, Bytes, BytesN, Env, String, Vec, I256,
 };
 
 pub(crate) use data_feeds_common::test_utils::{
@@ -12,7 +12,7 @@ pub(crate) use data_feeds_common::test_utils::{
 
 use crate::domain::data_id::CanonicalId;
 pub(crate) use crate::events::{
-    FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
+    FeedAdminAdded, FeedAdminRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, StaleReport,
 };
 pub(crate) use crate::interface::types::{
@@ -140,11 +140,6 @@ impl Cache {
             roll(&self.env, 100 + k as u32);
             self.write(feed, (k * 100) as i128, k * 10);
         }
-    }
-
-    pub(crate) fn remove(&self, feed: &Feed) {
-        self.client()
-            .remove_feed_configs(&feed.admin, &vec![&self.env, feed.id.clone()]);
     }
 
     pub(crate) fn history(&self, feed: &Feed) -> Vec<RoundData> {
