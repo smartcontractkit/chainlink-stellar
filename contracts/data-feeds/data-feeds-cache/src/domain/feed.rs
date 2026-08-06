@@ -49,8 +49,9 @@ pub(crate) enum Recorded {
 
 pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> Recorded {
     let key = CanonicalId::new(env, id);
+    let config = env.config_store().get(&key);
 
-    if let Some(expected) = env.config_store().get(&key).map(|c| c.decimals) {
+    if let Some(expected) = config.as_ref().map(|c| c.decimals) {
         if decimals_of(id) != Some(expected) {
             return Recorded::NonCanonicalDecimals { expected };
         }
@@ -87,7 +88,7 @@ pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> R
     };
 
     env.feed_state_store().extend_ttl(&key);
-    if let Some(stored) = env.config_store().get(&key) {
+    if let Some(stored) = config {
         env.config_store().extend_ttl(&key);
         for p in stored.config.workflow_permissions.iter() {
             env.permission_store()
