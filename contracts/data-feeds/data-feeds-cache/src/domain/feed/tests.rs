@@ -1,10 +1,10 @@
 use super::*;
-use crate::storage::{CanonicalId, DataKey};
+use crate::storage::DataKey;
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{BytesN, I256};
 
-use crate::test_utils::{mock_data_id, round_ttl};
+use crate::test_utils::mock_data_id;
 use crate::test_utils::{mock_permission, mock_wf_name, mock_wf_owner};
 use data_feeds_common::test_utils::execute_as_contract;
 
@@ -23,19 +23,19 @@ fn config(env: &Env, perms: &[WorkflowPermission], desc: &str) -> FeedConfig {
     }
 }
 
-fn canonical_key(env: &Env, id: &DataId) -> BytesN<16> {
-    CanonicalId::new(env, id).as_bytes().clone()
+fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
+    crate::test_utils::round_ttl(env, &to_canonical(env, id), round_id)
 }
 
 fn config_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedConfig(canonical_key(env, id)))
+        .get_ttl(&DataKey::FeedConfig(to_canonical(env, id)))
 }
 
 fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
     env.storage().persistent().get_ttl(&DataKey::Permission(
-        canonical_key(env, id),
+        to_canonical(env, id),
         perm_key(env, p),
     ))
 }
@@ -43,7 +43,7 @@ fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
 fn state_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedState(canonical_key(env, id)))
+        .get_ttl(&DataKey::FeedState(to_canonical(env, id)))
 }
 
 fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) {
@@ -79,7 +79,7 @@ fn feed_with_rounds(env: &Env, n: u64, step: u64) -> DataId {
 fn expire_round(env: &Env, id: &DataId, round_id: u64) {
     env.storage()
         .temporary()
-        .remove(&DataKey::Round(canonical_key(env, id), round_id));
+        .remove(&DataKey::Round(to_canonical(env, id), round_id));
 }
 
 mod configure {
@@ -951,7 +951,7 @@ mod decimals {
     }
 
     #[test]
-    fn reports_the_stored_scale_for_every_addressable_scale() {
+    fn reports_stored_scale_at_any_scale() {
         execute_as_contract(|env| {
             let id = id_with_byte7(env, 0x32);
             let p = permission(env);
@@ -1065,85 +1065,31 @@ mod canonical {
     }
 
     #[test]
-    fn configured_is_true_for_every_scale() {
+    fn every_read_path_resolves_across_scales() {
         execute_as_contract(|env| {
-            let id = feed_at(env, 0x32);
-
-            for byte7 in [0x32u8, 0x28, 0x26] {
-                assert!(
-                    configured(env, &at_scale(env, &id, byte7)),
-                    "byte {byte7:#x} addresses the configured feed"
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn rounds_are_served_as_stored_whichever_scale_is_addressed() {
-        execute_as_contract(|env| {
-            let id = feed_at(env, 0x32);
-            record(env, &id, &I256::from_i128(env, STORED), 10);
-
-            for byte7 in [0x32u8, 0x28, 0x20] {
-                let answer = latest(env, &at_scale(env, &id, byte7))
-                    .expect("round present")
-                    .answer;
-                assert_eq!(
-                    answer.to_i128(),
-                    Some(STORED),
-                    "the cache never scales; byte {byte7:#x}"
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn permissions_are_shared_by_every_scale() {
-        execute_as_contract(|env| {
-            let id = crate::test_utils::mock_feed_id_with(env, 0x32, 0x02);
+            let id = crate::test_utils::mock_feed_id_with(env, 0x32, 0x01);
             let p = permission(env);
             configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-
-            assert!(
-                permitted(env, &at_scale(env, &id, 0x28), &perm_key(env, &p)),
-                "a derived scale must not need its own permission"
-            );
-        });
-    }
-
-    #[test]
-    fn freezing_a_feed_freezes_every_scale() {
-        execute_as_contract(|env| {
-            let id = feed_at(env, 0x32);
             record(env, &id, &I256::from_i128(env, STORED), 10);
             set_frozen(env, &id, true);
 
-            assert!(is_frozen(env, &at_scale(env, &id, 0x28)));
-        });
-    }
-
-    #[test]
-    fn a_report_at_another_scale_is_not_recorded() {
-        execute_as_contract(|env| {
-            let id = feed_at(env, 0x32);
-            record(env, &id, &I256::from_i128(env, STORED), 10);
-
-            let outcome = record(env, &at_scale(env, &id, 0x28), &I256::from_i128(env, 1), 20);
-
+            let scaled = at_scale(env, &id, 0x28);
+            assert!(configured(env, &scaled), "config resolves at a derived scale");
             assert!(
-                matches!(outcome, Recorded::NonCanonicalDecimals { expected: 18 }),
-                "writing at 8 decimals would silently rescale the feed"
+                permitted(env, &scaled, &perm_key(env, &p)),
+                "a derived scale must not need its own permission"
             );
             assert_eq!(
-                state(env, &id).latest_round.timestamp,
-                10,
-                "the rejected report must not append a round"
+                latest(env, &scaled).expect("round present").answer.to_i128(),
+                Some(STORED),
+                "the cache never scales"
             );
+            assert!(is_frozen(env, &scaled), "freezing a feed freezes every scale");
         });
     }
 
     #[test]
-    fn re_registering_the_feed_at_another_scale_is_rejected() {
+    fn reconfiguring_at_another_scale_is_rejected() {
         execute_as_contract(|env| {
             let id = feed_at(env, 0x32);
             let p = permission(env);
@@ -1159,20 +1105,6 @@ mod canonical {
                 decimals(env, &id),
                 Some(18),
                 "the stored scale is unchanged"
-            );
-        });
-    }
-
-    #[test]
-    fn a_zero_decimal_feed_is_configurable() {
-        execute_as_contract(|env| {
-            let id = feed_at(env, 0x20);
-            record(env, &id, &I256::from_i128(env, 4_270), 10);
-
-            assert_eq!(decimals(env, &id), Some(0));
-            assert_eq!(
-                latest(env, &id).expect("round present").answer.to_i128(),
-                Some(4_270)
             );
         });
     }

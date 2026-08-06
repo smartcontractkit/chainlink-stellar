@@ -44,10 +44,10 @@ impl DataFeedsProxyReader for DataFeedsProxy {
     fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError> {
         storage::extend_ttl(&env);
         let cache = DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env));
-        let stored = cache
-            .decimals(&data_id)
-            .ok_or(ProxyReadError::NoDataPresent)?;
-        requested_decimals(&data_id, stored)
+        if !cache.is_configured(&data_id) {
+            return Err(ProxyReadError::NoDataPresent);
+        }
+        decimals_of(&data_id).ok_or(ProxyReadError::InvalidDataId)
     }
 
     fn description(env: Env, data_id: BytesN<16>) -> Result<String, ProxyReadError> {
@@ -56,14 +56,6 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .description(&data_id)
             .ok_or(ProxyReadError::NoDataPresent)
     }
-}
-
-fn requested_decimals(data_id: &BytesN<16>, stored: u32) -> Result<u32, ProxyReadError> {
-    let requested = decimals_of(data_id).ok_or(ProxyReadError::InvalidDataId)?;
-    if requested > stored {
-        return Err(ProxyReadError::UnsupportedDecimals);
-    }
-    Ok(requested)
 }
 
 fn downscale(
@@ -75,7 +67,10 @@ fn downscale(
     let stored = cache
         .decimals(data_id)
         .ok_or(ProxyReadError::NoDataPresent)?;
-    let requested = requested_decimals(data_id, stored)?;
+    let requested = decimals_of(data_id).ok_or(ProxyReadError::InvalidDataId)?;
+    if requested > stored {
+        return Err(ProxyReadError::UnsupportedDecimals);
+    }
 
     let answer = if requested == stored {
         round.answer

@@ -56,7 +56,7 @@ mod latest_round {
     fn no_rounds_is_no_data_present() {
         let p = Proxy::deploy();
         assert!(matches!(
-            p.client().try_latest_round(&p.data_id()),
+            p.client().try_latest_round(&p.mock_data_id()),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -85,7 +85,7 @@ mod get_round {
     fn exact_round_projected() {
         let p = Proxy::deploy();
         p.inject(&[(6, 600, 60), (5, 500, 50)]);
-        let r = p.client().get_round(&p.data_id(), &5);
+        let r = p.client().get_round(&p.mock_data_id(), &5);
         assert_eq!(r.round_id, 5, "exact id 5, not the newer round 6");
         assert_eq!(r.answer, I256::from_i128(&p.env, 500));
         assert_eq!(r.timestamp, 50);
@@ -96,7 +96,7 @@ mod get_round {
         let p = Proxy::deploy();
         p.inject(&[(5, 5, 50)]);
         assert!(matches!(
-            p.client().try_get_round(&p.data_id(), &9u64),
+            p.client().try_get_round(&p.mock_data_id(), &9u64),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -104,7 +104,7 @@ mod get_round {
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
-            p.client().get_round(&p.data_id(), &1u64);
+            p.client().get_round(&p.mock_data_id(), &1u64);
         });
     }
 }
@@ -113,30 +113,31 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_reports_the_scale_the_id_addresses() {
+    fn decimals_returns_the_encoded_scale() {
         let p = Proxy::deploy();
         let c = p.client();
         let id_with_decimals = |dec: u8| mock_feed_id_with(&p.env, 0x20 + dec, 0);
+        p.configure_mock(&id_with_decimals(18));
 
         assert_eq!(c.decimals(&id_with_decimals(18)), 18, "the stored scale");
         assert_eq!(c.decimals(&id_with_decimals(8)), 8, "a derived scale");
     }
 
     #[test]
-    fn decimals_rejects_a_scale_above_the_stored_one() {
+    fn decimals_requires_a_configured_feed() {
         let p = Proxy::deploy();
-        let id = mock_feed_id_with(&p.env, 0x20 + 19, 0);
 
         assert_eq!(
-            p.client().try_decimals(&id),
-            Err(Ok(ProxyReadError::UnsupportedDecimals))
+            p.client().try_decimals(&p.mock_data_id()),
+            Err(Ok(ProxyReadError::NoDataPresent))
         );
     }
 
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
-            p.client().decimals(&p.data_id());
+            p.configure_mock(&p.mock_data_id());
+            p.client().decimals(&p.mock_data_id());
         });
     }
 }
@@ -148,7 +149,7 @@ mod description {
     fn description_passes_through() {
         let p = Proxy::deploy();
         assert_eq!(
-            p.client().description(&p.data_id()),
+            p.client().description(&p.mock_data_id()),
             String::from_str(&p.env, "MOCK")
         );
     }
@@ -156,7 +157,7 @@ mod description {
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
-            p.client().description(&p.data_id());
+            p.client().description(&p.mock_data_id());
         });
     }
 }
@@ -179,7 +180,7 @@ mod set_cache {
         p.inject(&[(1, 111, 5)]);
         let mock2 = p.env.register(MockCache, ());
         MockCacheClient::new(&p.env, &mock2).inject(
-            &p.data_id(),
+            &p.mock_data_id(),
             &vec![&p.env, mock_round_data(&p.env, (7, 222, 9))],
         );
         assert_eq!(p.latest_round().round_id, 1);
@@ -319,39 +320,33 @@ mod scaling {
 
     fn answer_at(p: &Proxy, decimals: u8) -> i128 {
         p.client()
-            .latest_round(&p.view_id(decimals))
+            .latest_round(&p.mock_data_id_with(decimals))
             .answer
             .to_i128()
             .expect("answer fits i128")
     }
 
     #[test]
-    fn serves_the_stored_answer_at_the_stored_scale() {
+    fn downscales_to_the_requested_scale() {
         let p = proxy_with_round();
 
-        assert_eq!(answer_at(&p, 18), STORED);
-    }
-
-    #[test]
-    fn downscales_to_the_addressed_scale() {
-        let p = proxy_with_round();
-
+        assert_eq!(answer_at(&p, 18), STORED, "the stored scale serves as-is");
         assert_eq!(answer_at(&p, 8), 150_000_000, "1.5 at 8dp");
         assert_eq!(answer_at(&p, 6), 1_500_000, "1.5 at 6dp");
     }
 
     #[test]
-    fn downscales_a_round_read_by_id() {
+    fn get_round_also_downscales() {
         let p = proxy_with_round();
 
-        let round = p.client().get_round(&p.view_id(8), &1);
+        let round = p.client().get_round(&p.mock_data_id_with(8), &1);
 
         assert_eq!(round.answer.to_i128(), Some(150_000_000));
         assert_eq!(round.round_id, 1, "identity is untouched by scaling");
     }
 
     #[test]
-    fn downscaling_truncates_towards_zero_for_negatives() {
+    fn negative_answers_truncate_towards_zero() {
         let p = Proxy::deploy();
         p.set_stored_decimals(18);
         p.inject(&[(1, -STORED, 5)]);
@@ -364,19 +359,19 @@ mod scaling {
         let p = proxy_with_round();
 
         assert!(matches!(
-            p.client().try_latest_round(&p.view_id(19)),
+            p.client().try_latest_round(&p.mock_data_id_with(19)),
             Err(Ok(ProxyReadError::UnsupportedDecimals))
         ));
     }
 
     #[test]
-    fn rejects_an_answer_that_would_truncate_to_zero() {
+    fn rejects_truncation_to_zero() {
         let p = Proxy::deploy();
         p.set_stored_decimals(18);
         p.inject(&[(1, 999, 5)]);
 
         assert!(matches!(
-            p.client().try_latest_round(&p.view_id(0)),
+            p.client().try_latest_round(&p.mock_data_id_with(0)),
             Err(Ok(ProxyReadError::AnswerTruncatedToZero))
         ));
     }

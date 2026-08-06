@@ -88,7 +88,7 @@ mod cache_reader_client {
     }
 
     #[test]
-    fn every_read_on_an_unconfigured_feed_is_no_data_present() {
+    fn unconfigured_feed_reads_are_no_data_present() {
         let s = ProxyWithCache::deploy(&[(12345, 7)]);
         let unknown = mock_feed_id(&s.env, 99);
         let c = s.client();
@@ -103,13 +103,21 @@ mod cache_reader_client {
         ));
         assert_eq!(
             c.try_decimals(&unknown),
-            Err(Ok(ProxyReadError::NoDataPresent)),
-            "a derivable id with no config is absence, not decimals 18"
+            Err(Ok(ProxyReadError::NoDataPresent))
         );
         assert_eq!(
             c.try_description(&unknown),
             Err(Ok(ProxyReadError::NoDataPresent))
         );
+    }
+
+    #[test]
+    fn decimals_reflects_the_id_scale_for_a_configured_feed() {
+        let s = ProxyWithCache::deploy(&[(12345, 7)]);
+        let derived = mock_feed_id_with(&s.env, 0x28, DUMMY_MOCK_FEED_ID);
+
+        assert_eq!(s.client().decimals(&s.did), 18, "the stored scale");
+        assert_eq!(s.client().decimals(&derived), 8, "a derived scale");
     }
 }
 

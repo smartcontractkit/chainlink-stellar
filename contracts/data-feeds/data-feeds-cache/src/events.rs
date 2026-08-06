@@ -33,14 +33,6 @@ pub struct InvalidUpdatePermission {
     pub workflow_name: BytesN<10>,
 }
 
-#[contractevent(topics = ["NonCanonicalReport"])]
-#[derive(Clone, Debug)]
-pub struct NonCanonicalReport {
-    #[topic]
-    pub data_id: BytesN<16>,
-    pub expected_decimals: u32,
-}
-
 #[contractevent(topics = ["FeedConfigSet"])]
 #[derive(Clone, Debug)]
 pub struct FeedConfigSet {

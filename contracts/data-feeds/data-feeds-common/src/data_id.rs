@@ -1,4 +1,4 @@
-use soroban_sdk::BytesN;
+use soroban_sdk::{BytesN, Env};
 
 pub const DECIMALS_BYTE: usize = 7;
 
@@ -12,6 +12,12 @@ pub fn decimals_of(id: &BytesN<16>) -> Option<u32> {
         return None;
     }
     byte.checked_sub(DECIMALS_OFFSET).map(u32::from)
+}
+
+pub fn to_canonical(env: &Env, id: &BytesN<16>) -> BytesN<16> {
+    let mut bytes = id.to_array();
+    bytes[DECIMALS_BYTE] = 0;
+    BytesN::from_array(env, &bytes)
 }
 
 #[cfg(test)]
@@ -47,5 +53,20 @@ mod tests {
         let env = Env::default();
         assert_eq!(decimals_of(&data_id(&env, 0x61)), None);
         assert_eq!(decimals_of(&data_id(&env, 0xFF)), None);
+    }
+
+    #[test]
+    fn every_scale_maps_to_one_unaddressable_key() {
+        let env = Env::default();
+        let key = to_canonical(&env, &data_id(&env, 0x20));
+        for byte in [0x20u8, 0x26, 0x28, 0x32, DECIMALS_BYTE_MAX] {
+            assert_eq!(
+                to_canonical(&env, &data_id(&env, byte)),
+                key,
+                "scale {byte:#x} must map to the same storage key, zero decimals included"
+            );
+        }
+        assert_eq!(key.to_array()[DECIMALS_BYTE], 0);
+        assert_eq!(decimals_of(&key), None, "a storage key is never addressable");
     }
 }

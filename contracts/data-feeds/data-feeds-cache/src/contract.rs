@@ -7,7 +7,7 @@ use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
 use crate::domain::feed;
 use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
-    InvalidUpdatePermission, NonCanonicalReport, StaleReport,
+    InvalidUpdatePermission, StaleReport,
 };
 use crate::interface::types::{RoundData, WorkflowPermission};
 use crate::interface::CacheError;
@@ -15,7 +15,7 @@ use crate::interface::{
     Bound, DataFeedsCacheAdmin, DataFeedsCacheReader, DataFeedsCacheWriter, DataId, FeedConfig,
     FeedConfigEntry,
 };
-use crate::storage::{CanonicalId, Store};
+use crate::storage::Store;
 
 #[contract]
 pub struct DataFeedsCache;
@@ -122,13 +122,6 @@ impl DataFeedsCacheWriter for DataFeedsCache {
             }
 
             match feed::record(&env, &data_id, &entry.answer, entry.timestamp) {
-                feed::Recorded::NonCanonicalDecimals { expected } => {
-                    NonCanonicalReport {
-                        data_id,
-                        expected_decimals: expected,
-                    }
-                    .publish(&env);
-                }
                 feed::Recorded::Stale { stored_ts } => {
                     StaleReport {
                         data_id,
@@ -174,9 +167,8 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             if entry.data_id.to_array() == [0u8; 16] {
                 return Err(CacheError::InvalidDataId);
             }
-            let canonical = CanonicalId::new(&env, &entry.data_id);
             for j in (i as u32 + 1)..entries.len() {
-                if canonical == CanonicalId::new(&env, &entries.get_unchecked(j).data_id) {
+                if feed::is_same_feed(&env, &entry.data_id, &entries.get_unchecked(j).data_id) {
                     return Err(CacheError::DuplicateFeedConfig);
                 }
             }
@@ -184,10 +176,10 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for entry in entries.iter() {
-            let decimals = feed::configure(&env, &entry.data_id, &entry.config)?;
+            feed::configure(&env, &entry.data_id, &entry.config)?;
             FeedConfigSet {
-                data_id: entry.data_id,
-                decimals,
+                data_id: entry.data_id.clone(),
+                decimals: feed::decimals(&env, &entry.data_id).expect("feed was just configured"),
                 description: entry.config.description,
                 workflow_permissions: entry.config.workflow_permissions,
             }
@@ -209,9 +201,8 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for (i, did) in data_ids.iter().enumerate() {
-            let canonical = CanonicalId::new(&env, &did);
             for j in (i as u32 + 1)..data_ids.len() {
-                if canonical == CanonicalId::new(&env, &data_ids.get_unchecked(j)) {
+                if feed::is_same_feed(&env, &did, &data_ids.get_unchecked(j)) {
                     return Err(CacheError::DuplicateFeedConfig);
                 }
             }

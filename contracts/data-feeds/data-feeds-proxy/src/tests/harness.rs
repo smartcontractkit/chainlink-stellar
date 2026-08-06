@@ -58,14 +58,18 @@ impl Proxy {
         for r in rows {
             v.push_back(mock_round_data(&self.env, *r));
         }
-        MockCacheClient::new(&self.env, &self.mock).inject(&self.data_id(), &v);
+        MockCacheClient::new(&self.env, &self.mock).inject(&self.mock_data_id(), &v);
     }
 
     pub(crate) fn set_stored_decimals(&self, decimals: u32) {
         MockCacheClient::new(&self.env, &self.mock).set_decimals(&decimals);
     }
 
-    pub(crate) fn view_id(&self, decimals: u8) -> DataId {
+    pub(crate) fn configure_mock(&self, id: &DataId) {
+        MockCacheClient::new(&self.env, &self.mock).configure(id);
+    }
+
+    pub(crate) fn mock_data_id_with(&self, decimals: u8) -> DataId {
         mock_feed_id_with(&self.env, 0x20 + decimals, DUMMY_MOCK_FEED_ID)
     }
 
@@ -73,7 +77,7 @@ impl Proxy {
         MockCacheClient::new(&self.env, &self.mock).set_err(&CacheError::MalformedReport);
     }
 
-    pub(crate) fn data_id(&self) -> DataId {
+    pub(crate) fn mock_data_id(&self) -> DataId {
         mock_feed_id(&self.env, DUMMY_MOCK_FEED_ID)
     }
 
@@ -82,6 +86,6 @@ impl Proxy {
     }
 
     pub(crate) fn latest_round(&self) -> Round {
-        self.client().latest_round(&self.data_id())
+        self.client().latest_round(&self.mock_data_id())
     }
 }
