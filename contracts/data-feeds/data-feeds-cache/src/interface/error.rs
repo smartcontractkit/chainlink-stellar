@@ -6,7 +6,6 @@ use soroban_sdk::contracterror;
 pub enum CacheError {
     MalformedReport = 100,
     UnauthorizedCaller = 101,
-    FeedNotConfigured = 102,
     EmptyConfig = 103,
     InvalidAddress = 104,
     InvalidWorkflowName = 105,

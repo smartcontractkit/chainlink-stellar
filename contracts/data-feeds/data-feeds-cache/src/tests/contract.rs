@@ -23,7 +23,6 @@ mod invariants {
         let cache = [
             CacheError::MalformedReport,
             CacheError::UnauthorizedCaller,
-            CacheError::FeedNotConfigured,
             CacheError::EmptyConfig,
             CacheError::InvalidAddress,
             CacheError::InvalidWorkflowName,
@@ -38,7 +37,6 @@ mod invariants {
             let expected = match e {
                 CacheError::MalformedReport => 100,
                 CacheError::UnauthorizedCaller => 101,
-                CacheError::FeedNotConfigured => 102,
                 CacheError::EmptyConfig => 103,
                 CacheError::InvalidAddress => 104,
                 CacheError::InvalidWorkflowName => 105,
