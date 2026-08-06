@@ -61,6 +61,14 @@ impl Proxy {
         MockCacheClient::new(&self.env, &self.mock).inject(&self.data_id(), &v);
     }
 
+    pub(crate) fn set_stored_decimals(&self, decimals: u32) {
+        MockCacheClient::new(&self.env, &self.mock).set_decimals(&decimals);
+    }
+
+    pub(crate) fn view_id(&self, decimals: u8) -> DataId {
+        mock_feed_id_with(&self.env, 0x20 + decimals, DUMMY_MOCK_FEED_ID)
+    }
+
     pub(crate) fn fail_cache(&self) {
         MockCacheClient::new(&self.env, &self.mock).set_err(&CacheError::MalformedReport);
     }

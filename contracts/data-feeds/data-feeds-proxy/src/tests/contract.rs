@@ -113,15 +113,23 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_passes_through() {
+    fn decimals_reports_the_scale_the_id_addresses() {
         let p = Proxy::deploy();
         let c = p.client();
         let id_with_decimals = |dec: u8| mock_feed_id_with(&p.env, 0x20 + dec, 0);
-        assert_eq!(c.decimals(&id_with_decimals(1)), 1);
+
+        assert_eq!(c.decimals(&id_with_decimals(18)), 18, "the stored scale");
+        assert_eq!(c.decimals(&id_with_decimals(8)), 8, "a derived scale");
+    }
+
+    #[test]
+    fn decimals_rejects_a_scale_above_the_stored_one() {
+        let p = Proxy::deploy();
+        let id = mock_feed_id_with(&p.env, 0x20 + 19, 0);
+
         assert_eq!(
-            c.decimals(&id_with_decimals(3)),
-            3,
-            "distinct ids yield distinct values, so the answer comes from the cache"
+            p.client().try_decimals(&id),
+            Err(Ok(ProxyReadError::UnsupportedDecimals))
         );
     }
 
@@ -215,10 +223,18 @@ mod invariants {
             stellar_access::ownable::OwnableError::TransferInProgress as u32,
             stellar_access::ownable::OwnableError::OwnerAlreadySet as u32,
         ];
-        let proxy = [ProxyReadError::NoDataPresent];
+        let proxy = [
+            ProxyReadError::NoDataPresent,
+            ProxyReadError::UnsupportedDecimals,
+            ProxyReadError::AnswerTruncatedToZero,
+            ProxyReadError::InvalidDataId,
+        ];
         for e in proxy {
             let expected = match e {
                 ProxyReadError::NoDataPresent => 50,
+                ProxyReadError::UnsupportedDecimals => 51,
+                ProxyReadError::AnswerTruncatedToZero => 52,
+                ProxyReadError::InvalidDataId => 53,
             };
             let code = e as u32;
             assert_eq!(code, expected, "discriminant matches its wire value");
@@ -286,5 +302,93 @@ mod lifecycle {
         let hash = p.env.deployer().upload_contract_wasm(TARGET_WASM);
         p.client().upgrade(&hash);
         assert_eq!(peek(&p.env, &p.id), 0);
+    }
+}
+
+mod scaling {
+    use super::*;
+
+    const STORED: i128 = 1_500_000_000_000_000_000;
+
+    fn proxy_with_round() -> Proxy {
+        let p = Proxy::deploy();
+        p.set_stored_decimals(18);
+        p.inject(&[(1, STORED, 5)]);
+        p
+    }
+
+    fn answer_at(p: &Proxy, decimals: u8) -> i128 {
+        p.client()
+            .latest_round(&p.view_id(decimals))
+            .answer
+            .to_i128()
+            .expect("answer fits i128")
+    }
+
+    #[test]
+    fn serves_the_stored_answer_at_the_stored_scale() {
+        let p = proxy_with_round();
+
+        assert_eq!(answer_at(&p, 18), STORED);
+    }
+
+    #[test]
+    fn downscales_to_the_addressed_scale() {
+        let p = proxy_with_round();
+
+        assert_eq!(answer_at(&p, 8), 150_000_000, "1.5 at 8dp");
+        assert_eq!(answer_at(&p, 6), 1_500_000, "1.5 at 6dp");
+    }
+
+    #[test]
+    fn downscales_a_round_read_by_id() {
+        let p = proxy_with_round();
+
+        let round = p.client().get_round(&p.view_id(8), &1);
+
+        assert_eq!(round.answer.to_i128(), Some(150_000_000));
+        assert_eq!(round.round_id, 1, "identity is untouched by scaling");
+    }
+
+    #[test]
+    fn downscaling_truncates_towards_zero_for_negatives() {
+        let p = Proxy::deploy();
+        p.set_stored_decimals(18);
+        p.inject(&[(1, -STORED, 5)]);
+
+        assert_eq!(answer_at(&p, 8), -150_000_000);
+    }
+
+    #[test]
+    fn rejects_a_scale_above_the_stored_one() {
+        let p = proxy_with_round();
+
+        assert!(matches!(
+            p.client().try_latest_round(&p.view_id(19)),
+            Err(Ok(ProxyReadError::UnsupportedDecimals))
+        ));
+    }
+
+    #[test]
+    fn rejects_an_answer_that_would_truncate_to_zero() {
+        let p = Proxy::deploy();
+        p.set_stored_decimals(18);
+        p.inject(&[(1, 999, 5)]);
+
+        assert!(matches!(
+            p.client().try_latest_round(&p.view_id(0)),
+            Err(Ok(ProxyReadError::AnswerTruncatedToZero))
+        ));
+    }
+
+    #[test]
+    fn rejects_a_decimals_byte_out_of_range() {
+        let p = proxy_with_round();
+        let id = mock_feed_id_with(&p.env, 0xFF, DUMMY_MOCK_FEED_ID);
+
+        assert!(matches!(
+            p.client().try_latest_round(&id),
+            Err(Ok(ProxyReadError::InvalidDataId))
+        ));
     }
 }

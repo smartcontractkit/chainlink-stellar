@@ -3,13 +3,14 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, V
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
-use crate::domain::data_id::{decimals_of, CanonicalId};
+use crate::domain::data_id::CanonicalId;
 use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
 use crate::domain::feed;
 use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, NonCanonicalReport, StaleReport,
 };
+use crate::interface::data_id::decimals_of;
 use crate::interface::types::{RoundData, WorkflowPermission};
 use crate::interface::CacheError;
 use crate::interface::{
@@ -33,7 +34,7 @@ impl DataFeedsCache {
 impl DataFeedsCacheReader for DataFeedsCache {
     fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Option<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        feed::latest(&env, &data_id)
+        Ok(feed::latest(&env, &data_id))
     }
 
     fn get_round(
@@ -42,7 +43,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        feed::round(&env, &data_id, round_id)
+        Ok(feed::round(&env, &data_id, round_id))
     }
 
     fn round_range(
@@ -52,7 +53,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         to: u64,
     ) -> Result<Vec<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        feed::range(&env, &data_id, from, to)
+        Ok(feed::range(&env, &data_id, from, to))
     }
 
     fn find_round(
@@ -62,12 +63,12 @@ impl DataFeedsCacheReader for DataFeedsCache {
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        feed::find_round(&env, &data_id, timestamp, bound)
+        Ok(feed::find_round(&env, &data_id, timestamp, bound))
     }
 
     fn decimals(env: Env, data_id: BytesN<16>) -> Result<Option<u32>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        feed::decimals(&env, &data_id)
+        Ok(feed::decimals(&env, &data_id))
     }
 
     fn description(env: Env, data_id: BytesN<16>) -> Result<Option<String>, CacheError> {
@@ -190,7 +191,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         for entry in entries.iter() {
             let data_id = entry.data_id.clone();
             let decimals = decimals_of(&data_id).ok_or(CacheError::InvalidDataId)?;
-            if feed::configure(&env, &data_id, &entry.config, decimals) {
+            if feed::configure(&env, &data_id, &entry.config, decimals)? {
                 FeedConfigRemoved {
                     data_id: data_id.clone(),
                 }

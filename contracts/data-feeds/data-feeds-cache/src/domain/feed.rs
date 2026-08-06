@@ -1,20 +1,25 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Env, String, Vec, I256};
 
-use crate::domain::data_id::{decimals_of, CanonicalId};
+use crate::domain::data_id::CanonicalId;
 use crate::domain::search;
+use crate::interface::data_id::decimals_of;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
 use crate::interface::{CacheError, DataId, FeedConfig};
 use crate::storage::{FeedState, PermissionHash, Store, StoredConfig, Window};
 
-struct View {
-    key: CanonicalId,
-    canonical: Option<u32>,
-    target: u32,
-}
-
-pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig, decimals: u32) -> bool {
+pub(crate) fn configure(
+    env: &Env,
+    id: &DataId,
+    cfg: &FeedConfig,
+    decimals: u32,
+) -> Result<bool, CacheError> {
     let key = CanonicalId::new(env, id);
+    if let Some(stored) = env.config_store().get(&key) {
+        if stored.decimals != decimals {
+            return Err(CacheError::DecimalsMismatch);
+        }
+    }
     let existed = clear_permissions(env, &key);
     let stored = StoredConfig {
         config: cfg.clone(),
@@ -27,7 +32,7 @@ pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig, decimals: u32)
         env.permission_store().set(&perm, &());
         env.permission_store().extend_ttl(&perm);
     }
-    existed
+    Ok(existed)
 }
 
 pub(crate) fn remove(env: &Env, id: &DataId) -> bool {
@@ -168,9 +173,10 @@ pub(crate) fn permissions(env: &Env, id: &DataId) -> Vec<WorkflowPermission> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-pub(crate) fn decimals(env: &Env, id: &DataId) -> Result<Option<u32>, CacheError> {
-    let v = view(env, id)?;
-    Ok(v.canonical.map(|_| v.target))
+pub(crate) fn decimals(env: &Env, id: &DataId) -> Option<u32> {
+    env.config_store()
+        .get(&CanonicalId::new(env, id))
+        .map(|c| c.decimals)
 }
 
 pub(crate) fn description(env: &Env, id: &DataId) -> Option<String> {
@@ -200,92 +206,36 @@ fn perm_key(env: &Env, p: &WorkflowPermission) -> PermissionHash {
     )
 }
 
-pub(crate) fn latest(env: &Env, id: &DataId) -> Result<Option<RoundData>, CacheError> {
-    let v = view(env, id)?;
-    let Some(state) = feed_state_at(env, &v.key) else {
-        return Ok(None);
-    };
-    scale(env, state.latest_round, &v).map(Some)
+pub(crate) fn latest(env: &Env, id: &DataId) -> Option<RoundData> {
+    feed_state(env, id).map(|s| s.latest_round)
 }
 
-pub(crate) fn round(
-    env: &Env,
-    id: &DataId,
-    round_id: u64,
-) -> Result<Option<RoundData>, CacheError> {
-    let v = view(env, id)?;
-    let Some(state) = feed_state_at(env, &v.key) else {
-        return Ok(None);
-    };
-    match read_round(env, &v.key, &state, round_id) {
-        Some(r) => scale(env, r, &v).map(Some),
-        None => Ok(None),
-    }
+pub(crate) fn round(env: &Env, id: &DataId, round_id: u64) -> Option<RoundData> {
+    let key = CanonicalId::new(env, id);
+    let state = feed_state_at(env, &key)?;
+    read_round(env, &key, &state, round_id)
 }
 
-pub(crate) fn range(
-    env: &Env,
-    id: &DataId,
-    from: u64,
-    to: u64,
-) -> Result<Vec<RoundData>, CacheError> {
+pub(crate) fn range(env: &Env, id: &DataId, from: u64, to: u64) -> Vec<RoundData> {
     let mut out = Vec::new(env);
-    let v = view(env, id)?;
-    let Some(state) = feed_state_at(env, &v.key) else {
-        return Ok(out);
+    let key = CanonicalId::new(env, id);
+    let Some(state) = feed_state_at(env, &key) else {
+        return out;
     };
     for rid in from.max(1)..=to.min(state.latest_round.round_id) {
-        if let Some(r) = read_round(env, &v.key, &state, rid) {
-            out.push_back(scale(env, r, &v)?);
+        if let Some(r) = read_round(env, &key, &state, rid) {
+            out.push_back(r);
         }
     }
-    Ok(out)
+    out
 }
 
-pub(crate) fn find_round(
-    env: &Env,
-    id: &DataId,
-    ts: u64,
-    bound: Bound,
-) -> Result<Option<RoundData>, CacheError> {
-    let v = view(env, id)?;
-    let Some(state) = feed_state_at(env, &v.key) else {
-        return Ok(None);
-    };
-    let found = search::boundary(1, state.latest_round.round_id, ts, bound, |rid| {
-        read_round(env, &v.key, &state, rid).map(|r| (r.timestamp, r))
-    });
-    match found {
-        Some(r) => scale(env, r, &v).map(Some),
-        None => Ok(None),
-    }
-}
-
-fn view(env: &Env, id: &DataId) -> Result<View, CacheError> {
+pub(crate) fn find_round(env: &Env, id: &DataId, ts: u64, bound: Bound) -> Option<RoundData> {
     let key = CanonicalId::new(env, id);
-    let target = decimals_of(id).ok_or(CacheError::InvalidDataId)?;
-    let canonical = env.config_store().get(&key).map(|c| c.decimals);
-    if canonical.is_some_and(|c| target > c) {
-        return Err(CacheError::UnsupportedDecimals);
-    }
-    Ok(View {
-        key,
-        canonical,
-        target,
+    let state = feed_state_at(env, &key)?;
+    search::boundary(1, state.latest_round.round_id, ts, bound, |rid| {
+        read_round(env, &key, &state, rid).map(|r| (r.timestamp, r))
     })
-}
-
-fn scale(env: &Env, round: RoundData, v: &View) -> Result<RoundData, CacheError> {
-    let Some(canonical) = v.canonical.filter(|c| *c != v.target) else {
-        return Ok(round);
-    };
-    let zero = I256::from_i32(env, 0);
-    let divisor = I256::from_i32(env, 10).pow(canonical - v.target);
-    let answer = round.answer.div(&divisor);
-    if answer == zero && round.answer != zero {
-        return Err(CacheError::AnswerTruncatedToZero);
-    }
-    Ok(RoundData { answer, ..round })
 }
 
 fn read_round(env: &Env, key: &CanonicalId, state: &FeedState, round_id: u64) -> Option<RoundData> {

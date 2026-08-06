@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Env, String, Vec, I256};
+use soroban_sdk::{contract, contractimpl, contracttype, BytesN, Env, String, Vec, I256};
 
 use data_feeds_cache::{Bound, CacheError, DataFeedsCacheReader, RoundData};
 
@@ -10,16 +10,34 @@ pub(crate) struct MockCache;
 #[contracttype]
 enum MockKey {
     Rounds(DataId),
+    Decimals,
     Err,
+}
+
+const DEFAULT_STORED_DECIMALS: u32 = 18;
+
+fn shared_key(env: &Env, data_id: &DataId) -> DataId {
+    let mut bytes = data_id.to_array();
+    bytes[7] = 0;
+    BytesN::from_array(env, &bytes)
+}
+
+fn stored_decimals(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&MockKey::Decimals)
+        .unwrap_or(DEFAULT_STORED_DECIMALS)
 }
 
 #[contractimpl]
 impl MockCache {
     pub fn __constructor(_env: Env) {}
     pub fn inject(env: Env, data_id: DataId, rounds: Vec<RoundData>) {
-        env.storage()
-            .instance()
-            .set(&MockKey::Rounds(data_id), &rounds);
+        let key = shared_key(&env, &data_id);
+        env.storage().instance().set(&MockKey::Rounds(key), &rounds);
+    }
+    pub fn set_decimals(env: Env, decimals: u32) {
+        env.storage().instance().set(&MockKey::Decimals, &decimals);
     }
     pub fn set_err(env: Env, e: CacheError) {
         env.storage().instance().set(&MockKey::Err, &e);
@@ -35,7 +53,7 @@ impl DataFeedsCacheReader for MockCache {
         let rounds: Vec<RoundData> = env
             .storage()
             .instance()
-            .get(&MockKey::Rounds(data_id))
+            .get(&MockKey::Rounds(shared_key(&env, &data_id)))
             .unwrap_or(Vec::new(&env));
         Ok(rounds.iter().max_by_key(|v| v.round_id))
     }
@@ -50,7 +68,7 @@ impl DataFeedsCacheReader for MockCache {
         let rounds: Vec<RoundData> = env
             .storage()
             .instance()
-            .get(&MockKey::Rounds(data_id))
+            .get(&MockKey::Rounds(shared_key(&env, &data_id)))
             .unwrap_or(Vec::new(&env));
         Ok(rounds.iter().find(|v| v.round_id == round_id))
     }
@@ -70,14 +88,11 @@ impl DataFeedsCacheReader for MockCache {
     ) -> Result<Option<RoundData>, CacheError> {
         unimplemented!("MockCache simulates no search reads; add real logic before testing them")
     }
-    fn decimals(env: Env, data_id: DataId) -> Result<Option<u32>, CacheError> {
+    fn decimals(env: Env, _data_id: DataId) -> Result<Option<u32>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
             return Err(e);
         }
-        Ok(Some(match data_id.to_array()[7] {
-            b @ 0x20..=0x60 => (b - 0x20) as u32,
-            _ => 0,
-        }))
+        Ok(Some(stored_decimals(&env)))
     }
     fn is_configured(_env: Env, _data_id: DataId) -> Result<bool, CacheError> {
         unimplemented!("MockCache simulates no config reads; add real logic before testing them")

@@ -15,6 +15,5 @@ pub enum CacheError {
     DuplicateFeedConfig = 108,
     FeedFrozen = 109,
     NoFeedState = 110,
-    UnsupportedDecimals = 111,
-    AnswerTruncatedToZero = 112,
+    DecimalsMismatch = 111,
 }

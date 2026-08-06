@@ -13,6 +13,9 @@ pub struct Round {
 #[repr(u32)]
 pub enum ProxyReadError {
     NoDataPresent = 50,
+    UnsupportedDecimals = 51,
+    AnswerTruncatedToZero = 52,
+    InvalidDataId = 53,
 }
 
 #[contractclient(name = "DataFeedsProxyReaderClient")]

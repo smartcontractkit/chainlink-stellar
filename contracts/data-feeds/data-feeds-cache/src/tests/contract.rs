@@ -32,8 +32,7 @@ mod invariants {
             CacheError::DuplicateFeedConfig,
             CacheError::FeedFrozen,
             CacheError::NoFeedState,
-            CacheError::UnsupportedDecimals,
-            CacheError::AnswerTruncatedToZero,
+            CacheError::DecimalsMismatch,
         ];
         for e in cache {
             let expected = match e {
@@ -48,8 +47,7 @@ mod invariants {
                 CacheError::DuplicateFeedConfig => 108,
                 CacheError::FeedFrozen => 109,
                 CacheError::NoFeedState => 110,
-                CacheError::UnsupportedDecimals => 111,
-                CacheError::AnswerTruncatedToZero => 112,
+                CacheError::DecimalsMismatch => 111,
             };
             let code = e as u32;
             assert_eq!(code, expected, "discriminant matches its wire value");
