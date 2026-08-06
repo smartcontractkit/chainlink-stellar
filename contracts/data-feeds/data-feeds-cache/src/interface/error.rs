@@ -15,4 +15,8 @@ pub enum CacheError {
     DuplicateFeedConfig = 108,
     FeedFrozen = 109,
     NoFeedState = 110,
+    /// The `DataId` asked for more decimals than the feed is stored at.
+    UnsupportedDecimals = 111,
+    /// Downscaling the stored answer to the requested decimals would leave zero.
+    AnswerTruncatedToZero = 112,
 }

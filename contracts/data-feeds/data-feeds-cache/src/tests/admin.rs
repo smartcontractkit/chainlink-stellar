@@ -292,7 +292,7 @@ mod set_feed_configs {
             "set_feed_configs extends the contract instance TTL"
         );
         assert_eq!(
-            cache.persistent_ttl(&DataKey::FeedConfig(did.clone())),
+            cache.persistent_ttl(&DataKey::FeedConfig(cache.key_bytes(&did))),
             full,
             "set_feed_configs extends the feed config TTL"
         );

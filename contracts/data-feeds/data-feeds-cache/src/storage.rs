@@ -1,6 +1,7 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 
-use crate::interface::{types::RoundData, DataId, FeedConfig};
+use crate::domain::data_id::CanonicalId;
+use crate::interface::{types::RoundData, FeedConfig};
 
 pub(crate) type PermissionHash = BytesN<32>;
 
@@ -40,6 +41,16 @@ pub(crate) struct FeedState {
     pub(crate) latest_round: RoundData,
     pub(crate) window: Window,
     pub(crate) frozen: bool,
+}
+
+/// A feed's config plus the decimals its stored answers are written at. Reads
+/// against another scale are derived from `decimals`, so it is recorded once at
+/// configuration time rather than inferred per read.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub(crate) struct StoredConfig {
+    pub(crate) config: FeedConfig,
+    pub(crate) decimals: u32,
 }
 
 macro_rules! store {
@@ -103,12 +114,14 @@ macro_rules! store {
     };
 }
 
+// Feed-scoped stores are keyed by `CanonicalId`, never by a raw `DataId`, so a
+// feed read at 8 decimals and the same feed read at 18 share one entry.
 store! {
-    (AdminStore,       admin_store,        persistent, Address,                  (),         u32::MAX, |a: &Address| DataKey::FeedAdmin(a.clone())),
-    (ConfigStore,      config_store,       persistent, DataId,                   FeedConfig, u32::MAX,|d: &DataId| DataKey::FeedConfig(d.clone())),
-    (PermissionStore,  permission_store,   persistent, (DataId, PermissionHash), (),         u32::MAX, |(d, ph): &(DataId, PermissionHash)| DataKey::Permission(d.clone(), ph.clone())),
-    (FeedStateStore, feed_state_store, persistent, DataId,                   FeedState,        u32::MAX, |d: &DataId| DataKey::FeedState(d.clone())),
-    (RoundStore,       round_store,        temporary,  (DataId, u64),            RoundData,  DATA_RETENTION_TTL,   |(d, r): &(DataId, u64)| DataKey::Round(d.clone(), *r)),
+    (AdminStore,       admin_store,        persistent, Address,                       (),           u32::MAX, |a: &Address| DataKey::FeedAdmin(a.clone())),
+    (ConfigStore,      config_store,       persistent, CanonicalId,                   StoredConfig, u32::MAX, |c: &CanonicalId| DataKey::FeedConfig(c.as_bytes().clone())),
+    (PermissionStore,  permission_store,   persistent, (CanonicalId, PermissionHash), (),           u32::MAX, |(c, ph): &(CanonicalId, PermissionHash)| DataKey::Permission(c.as_bytes().clone(), ph.clone())),
+    (FeedStateStore,   feed_state_store,   persistent, CanonicalId,                   FeedState,    u32::MAX, |c: &CanonicalId| DataKey::FeedState(c.as_bytes().clone())),
+    (RoundStore,       round_store,        temporary,  (CanonicalId, u64),            RoundData,    DATA_RETENTION_TTL, |(c, r): &(CanonicalId, u64)| DataKey::Round(c.as_bytes().clone(), *r)),
 }
 
 #[cfg(test)]
@@ -122,8 +135,8 @@ mod tests {
     use crate::test_utils::{mock_data_id, round_ttl};
     use data_feeds_common::test_utils::execute_as_contract;
 
-    fn store_round(env: &Env) -> (DataId, u64) {
-        let key = (mock_data_id(env), 1u64);
+    fn store_round(env: &Env) -> (CanonicalId, u64) {
+        let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
         let round = RoundData {
             round_id: 1,
             answer: I256::from_i128(env, 1),
@@ -138,7 +151,7 @@ mod tests {
     #[test]
     fn get_and_exists_are_false_for_an_absent_key() {
         execute_as_contract(|env| {
-            let key = (mock_data_id(env), 1u64);
+            let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
             assert!(!env.round_store().exists(&key));
             assert!(env.round_store().get(&key).is_none());
         });
@@ -174,7 +187,7 @@ mod tests {
     #[test]
     fn extend_ttl_on_an_absent_key_is_a_noop() {
         execute_as_contract(|env| {
-            let key = (mock_data_id(env), 1u64);
+            let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
             env.round_store().extend_ttl(&key);
             assert!(
                 !env.round_store().exists(&key),
@@ -189,7 +202,7 @@ mod tests {
             env.ledger().set_max_entry_ttl(1_000);
             let key = store_round(env);
             assert_eq!(
-                round_ttl(env, &key.0, key.1),
+                round_ttl(env, &mock_data_id(env), key.1),
                 1_000,
                 "network cap wins below the retention constant"
             );
@@ -198,7 +211,7 @@ mod tests {
             env.ledger().set_max_entry_ttl(600_000);
             let key = store_round(env);
             assert_eq!(
-                round_ttl(env, &key.0, key.1),
+                round_ttl(env, &mock_data_id(env), key.1),
                 DATA_RETENTION_TTL,
                 "retention wins below the network cap"
             );
@@ -215,7 +228,7 @@ mod tests {
             env.ledger().with_mut(|li| li.sequence_number = 2_000);
             env.round_store().set(&key, &stored);
             assert_eq!(
-                round_ttl(env, &key.0, key.1),
+                round_ttl(env, &mock_data_id(env), key.1),
                 9_000,
                 "set never re-pins a live entry"
             );
@@ -231,7 +244,7 @@ mod tests {
             env.ledger().with_mut(|li| li.sequence_number = 2_000);
             env.round_store().extend_ttl(&key);
             assert_eq!(
-                round_ttl(env, &key.0, key.1),
+                round_ttl(env, &mock_data_id(env), key.1),
                 10_000,
                 "extend_ttl bumps to full regardless of remaining"
             );
@@ -263,16 +276,19 @@ mod tests {
     #[test]
     fn distinct_datakey_variants_sharing_one_data_id_never_alias() {
         execute_as_contract(|env| {
-            let d = mock_data_id(env);
+            let d = CanonicalId::new(env, &mock_data_id(env));
 
             let mut hb = [0xAAu8; 32];
             hb[..16].copy_from_slice(&[0x32; 16]);
             let ph: PermissionHash = BytesN::from_array(env, &hb);
             let ph2: PermissionHash = BytesN::from_array(env, &[0xBB; 32]);
 
-            let config = FeedConfig {
-                description: String::from_str(env, "CONFIG"),
-                workflow_permissions: Vec::new(env),
+            let config = StoredConfig {
+                config: FeedConfig {
+                    description: String::from_str(env, "CONFIG"),
+                    workflow_permissions: Vec::new(env),
+                },
+                decimals: 18,
             };
             let state = FeedState {
                 latest_round: RoundData {
@@ -305,7 +321,7 @@ mod tests {
 
             let got_cfg = env.config_store().get(&d).expect("config present");
             assert_eq!(
-                got_cfg.description,
+                got_cfg.config.description,
                 String::from_str(env, "CONFIG"),
                 "FeedConfig(d) survived a same-id FeedState write"
             );
@@ -329,9 +345,12 @@ mod tests {
 
             env.config_store().set(
                 &d,
-                &FeedConfig {
-                    description: String::from_str(env, "REWRITTEN"),
-                    workflow_permissions: Vec::new(env),
+                &StoredConfig {
+                    config: FeedConfig {
+                        description: String::from_str(env, "REWRITTEN"),
+                        workflow_permissions: Vec::new(env),
+                    },
+                    decimals: 18,
                 },
             );
             assert_eq!(

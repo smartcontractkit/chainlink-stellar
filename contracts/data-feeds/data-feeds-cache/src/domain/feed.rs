@@ -1,49 +1,82 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Env, String, Vec, I256};
 
+use crate::domain::data_id::{decimals_of, CanonicalId};
 use crate::domain::search;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
-use crate::interface::{DataId, FeedConfig};
-use crate::storage::{FeedState, PermissionHash, Store, Window};
+use crate::interface::{CacheError, DataId, FeedConfig};
+use crate::storage::{FeedState, PermissionHash, Store, StoredConfig, Window};
 
-pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> bool {
-    let existed = clear_permissions(env, id);
-    env.config_store().set(id, cfg);
-    env.config_store().extend_ttl(id);
+/// A feed read at a particular scale: which entry to load, what the stored
+/// answers are scaled at, and what the caller asked for. `canonical` is `None`
+/// for an unconfigured feed, whose rounds are served unscaled.
+struct View {
+    key: CanonicalId,
+    canonical: Option<u32>,
+    target: u32,
+}
+
+pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig, decimals: u32) -> bool {
+    let key = CanonicalId::new(env, id);
+    let existed = clear_permissions(env, &key);
+    let stored = StoredConfig {
+        config: cfg.clone(),
+        decimals,
+    };
+    env.config_store().set(&key, &stored);
+    env.config_store().extend_ttl(&key);
     for p in cfg.workflow_permissions.iter() {
-        let key = (id.clone(), perm_key(env, &p));
-        env.permission_store().set(&key, &());
-        env.permission_store().extend_ttl(&key);
+        let perm = (key.clone(), perm_key(env, &p));
+        env.permission_store().set(&perm, &());
+        env.permission_store().extend_ttl(&perm);
     }
     existed
 }
 
 pub(crate) fn remove(env: &Env, id: &DataId) -> bool {
-    if !clear_permissions(env, id) {
+    let key = CanonicalId::new(env, id);
+    if !clear_permissions(env, &key) {
         return false;
     }
-    env.config_store().remove(id);
+    env.config_store().remove(&key);
     true
 }
 
-fn clear_permissions(env: &Env, id: &DataId) -> bool {
-    let Some(old) = env.config_store().get(id) else {
+fn clear_permissions(env: &Env, key: &CanonicalId) -> bool {
+    let Some(old) = env.config_store().get(key) else {
         return false;
     };
-    for p in old.workflow_permissions.iter() {
+    for p in old.config.workflow_permissions.iter() {
         env.permission_store()
-            .remove(&(id.clone(), perm_key(env, &p)));
+            .remove(&(key.clone(), perm_key(env, &p)));
     }
     true
 }
 
 pub(crate) enum Recorded {
-    Appended { round_id: u64 },
-    Stale { stored_ts: u64 },
+    Appended {
+        round_id: u64,
+    },
+    Stale {
+        stored_ts: u64,
+    },
+    /// The report addressed the feed at a scale other than the one it is stored
+    /// at. Accepting it would silently change the scale of the stored answers.
+    NonCanonicalDecimals {
+        expected: u32,
+    },
 }
 
 pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> Recorded {
-    let state = feed_state(env, id);
+    let key = CanonicalId::new(env, id);
+
+    if let Some(expected) = env.config_store().get(&key).map(|c| c.decimals) {
+        if decimals_of(id) != Some(expected) {
+            return Recorded::NonCanonicalDecimals { expected };
+        }
+    }
+
+    let state = feed_state_at(env, &key);
     let stored_ts = state.as_ref().map_or(0, |t| t.latest_round.timestamp);
 
     let outcome = if timestamp <= stored_ts {
@@ -61,9 +94,9 @@ pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> R
             ledger_seq: seq,
             primary: true,
         };
-        env.round_store().set(&(id.clone(), round_id), &round);
+        env.round_store().set(&(key.clone(), round_id), &round);
         env.feed_state_store().set(
-            id,
+            &key,
             &FeedState {
                 latest_round: round,
                 window,
@@ -73,12 +106,12 @@ pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> R
         Recorded::Appended { round_id }
     };
 
-    env.feed_state_store().extend_ttl(id);
-    if let Some(cfg) = env.config_store().get(id) {
-        env.config_store().extend_ttl(id);
-        for p in cfg.workflow_permissions.iter() {
+    env.feed_state_store().extend_ttl(&key);
+    if let Some(stored) = env.config_store().get(&key) {
+        env.config_store().extend_ttl(&key);
+        for p in stored.config.workflow_permissions.iter() {
             env.permission_store()
-                .extend_ttl(&(id.clone(), perm_key(env, &p)));
+                .extend_ttl(&(key.clone(), perm_key(env, &p)));
         }
     }
 
@@ -108,15 +141,20 @@ fn next_window(state: Option<&FeedState>, ttl: u32, seq: u32) -> Window {
 }
 
 pub(crate) fn feed_state(env: &Env, id: &DataId) -> Option<FeedState> {
-    env.feed_state_store().get(id)
+    feed_state_at(env, &CanonicalId::new(env, id))
+}
+
+fn feed_state_at(env: &Env, key: &CanonicalId) -> Option<FeedState> {
+    env.feed_state_store().get(key)
 }
 
 pub(crate) fn permitted(env: &Env, id: &DataId, phash: &PermissionHash) -> bool {
-    env.permission_store().exists(&(id.clone(), phash.clone()))
+    let key = CanonicalId::new(env, id);
+    env.permission_store().exists(&(key, phash.clone()))
 }
 
 pub(crate) fn configured(env: &Env, id: &DataId) -> bool {
-    env.config_store().exists(id)
+    env.config_store().exists(&CanonicalId::new(env, id))
 }
 
 pub(crate) fn is_frozen(env: &Env, id: &DataId) -> bool {
@@ -124,35 +162,34 @@ pub(crate) fn is_frozen(env: &Env, id: &DataId) -> bool {
 }
 
 pub(crate) fn set_frozen(env: &Env, id: &DataId, frozen: bool) -> bool {
-    let Some(mut state) = feed_state(env, id) else {
+    let key = CanonicalId::new(env, id);
+    let Some(mut state) = feed_state_at(env, &key) else {
         return false;
     };
     state.frozen = frozen;
-    env.feed_state_store().set(id, &state);
-    env.feed_state_store().extend_ttl(id);
+    env.feed_state_store().set(&key, &state);
+    env.feed_state_store().extend_ttl(&key);
     true
 }
 
 pub(crate) fn permissions(env: &Env, id: &DataId) -> Vec<WorkflowPermission> {
     env.config_store()
-        .get(id)
-        .map(|c| c.workflow_permissions)
+        .get(&CanonicalId::new(env, id))
+        .map(|c| c.config.workflow_permissions)
         .unwrap_or_else(|| Vec::new(env))
 }
 
-pub(crate) fn decimals_from_id(id: &DataId) -> u32 {
-    match id.to_array()[7] {
-        b @ 0x20..=0x60 => (b - 0x20) as u32,
-        _ => 0,
-    }
-}
-
-pub(crate) fn decimals(env: &Env, id: &DataId) -> Option<u32> {
-    configured(env, id).then(|| decimals_from_id(id))
+/// Decimals the caller addressed, once the feed is known to serve that scale.
+/// `None` while the feed is unconfigured, matching [`description`].
+pub(crate) fn decimals(env: &Env, id: &DataId) -> Result<Option<u32>, CacheError> {
+    let v = view(env, id)?;
+    Ok(v.canonical.map(|_| v.target))
 }
 
 pub(crate) fn description(env: &Env, id: &DataId) -> Option<String> {
-    env.config_store().get(id).map(|c| c.description)
+    env.config_store()
+        .get(&CanonicalId::new(env, id))
+        .map(|c| c.config.description)
 }
 
 pub(crate) fn perm_hash(
@@ -176,39 +213,106 @@ fn perm_key(env: &Env, p: &WorkflowPermission) -> PermissionHash {
     )
 }
 
-pub(crate) fn round(env: &Env, id: &DataId, round_id: u64) -> Option<RoundData> {
-    let state = feed_state(env, id)?;
-    read_round(env, id, &state, round_id)
+pub(crate) fn latest(env: &Env, id: &DataId) -> Result<Option<RoundData>, CacheError> {
+    let v = view(env, id)?;
+    let Some(state) = feed_state_at(env, &v.key) else {
+        return Ok(None);
+    };
+    scale(env, state.latest_round, &v).map(Some)
 }
 
-pub(crate) fn range(env: &Env, id: &DataId, from: u64, to: u64) -> Vec<RoundData> {
+pub(crate) fn round(
+    env: &Env,
+    id: &DataId,
+    round_id: u64,
+) -> Result<Option<RoundData>, CacheError> {
+    let v = view(env, id)?;
+    let Some(state) = feed_state_at(env, &v.key) else {
+        return Ok(None);
+    };
+    match read_round(env, &v.key, &state, round_id) {
+        Some(r) => scale(env, r, &v).map(Some),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn range(
+    env: &Env,
+    id: &DataId,
+    from: u64,
+    to: u64,
+) -> Result<Vec<RoundData>, CacheError> {
     let mut out = Vec::new(env);
-    let Some(state) = feed_state(env, id) else {
-        return out;
+    let v = view(env, id)?;
+    let Some(state) = feed_state_at(env, &v.key) else {
+        return Ok(out);
     };
     for rid in from.max(1)..=to.min(state.latest_round.round_id) {
-        if let Some(r) = read_round(env, id, &state, rid) {
-            out.push_back(r);
+        if let Some(r) = read_round(env, &v.key, &state, rid) {
+            out.push_back(scale(env, r, &v)?);
         }
     }
-    out
+    Ok(out)
 }
 
-pub(crate) fn find_round(env: &Env, id: &DataId, ts: u64, bound: Bound) -> Option<RoundData> {
-    let state = feed_state(env, id)?;
-    search::boundary(1, state.latest_round.round_id, ts, bound, |rid| {
-        read_round(env, id, &state, rid).map(|r| (r.timestamp, r))
+pub(crate) fn find_round(
+    env: &Env,
+    id: &DataId,
+    ts: u64,
+    bound: Bound,
+) -> Result<Option<RoundData>, CacheError> {
+    let v = view(env, id)?;
+    let Some(state) = feed_state_at(env, &v.key) else {
+        return Ok(None);
+    };
+    let found = search::boundary(1, state.latest_round.round_id, ts, bound, |rid| {
+        read_round(env, &v.key, &state, rid).map(|r| (r.timestamp, r))
+    });
+    match found {
+        Some(r) => scale(env, r, &v).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Resolves `id` to the feed it addresses and the scale it asks for.
+fn view(env: &Env, id: &DataId) -> Result<View, CacheError> {
+    let key = CanonicalId::new(env, id);
+    let target = decimals_of(id).ok_or(CacheError::InvalidDataId)?;
+    let canonical = env.config_store().get(&key).map(|c| c.decimals);
+    if canonical.is_some_and(|c| target > c) {
+        return Err(CacheError::UnsupportedDecimals);
+    }
+    Ok(View {
+        key,
+        canonical,
+        target,
     })
 }
 
-fn read_round(env: &Env, id: &DataId, state: &FeedState, round_id: u64) -> Option<RoundData> {
+/// Downscales a stored answer to the scale the caller addressed. Scaling up is
+/// rejected by [`view`], so this only ever divides. An unconfigured feed has no
+/// scale to convert from, so its rounds are served as stored.
+fn scale(env: &Env, round: RoundData, v: &View) -> Result<RoundData, CacheError> {
+    let Some(canonical) = v.canonical.filter(|c| *c != v.target) else {
+        return Ok(round);
+    };
+    let zero = I256::from_i32(env, 0);
+    let divisor = I256::from_i32(env, 10).pow(canonical - v.target);
+    let answer = round.answer.div(&divisor);
+    if answer == zero && round.answer != zero {
+        return Err(CacheError::AnswerTruncatedToZero);
+    }
+    Ok(RoundData { answer, ..round })
+}
+
+fn read_round(env: &Env, key: &CanonicalId, state: &FeedState, round_id: u64) -> Option<RoundData> {
     if round_id == state.latest_round.round_id {
         return Some(state.latest_round.clone());
     }
     let now = env.ledger().sequence();
     let window_start = now.saturating_sub(state.window.width_at(now));
     env.round_store()
-        .get(&(id.clone(), round_id))
+        .get(&(key.clone(), round_id))
         .filter(|r| r.ledger_seq >= window_start)
 }
 

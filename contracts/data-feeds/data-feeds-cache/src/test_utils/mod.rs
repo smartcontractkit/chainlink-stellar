@@ -2,6 +2,7 @@ use soroban_sdk::{
     testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec, I256,
 };
 
+use crate::domain::data_id::CanonicalId;
 use crate::interface::types::{
     DataId, FeedConfig, ReportEntry, WireDataId, WorkflowName, WorkflowOwner, WorkflowPermission,
 };
@@ -20,7 +21,10 @@ pub fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
 
     env.storage()
         .temporary()
-        .get_ttl(&crate::storage::DataKey::Round(id.clone(), round_id))
+        .get_ttl(&crate::storage::DataKey::Round(
+            CanonicalId::new(env, id).as_bytes().clone(),
+            round_id,
+        ))
 }
 
 pub fn mock_feed_id(env: &Env, tag: u8) -> DataId {

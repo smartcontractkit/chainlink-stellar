@@ -10,6 +10,7 @@ pub(crate) use data_feeds_common::test_utils::{
     age_ttl, authorize, network_max_ttl, new_address, peek, roll, set_network_max_ttl, Harness,
 };
 
+use crate::domain::data_id::CanonicalId;
 pub(crate) use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, StaleReport,
@@ -87,6 +88,11 @@ impl Cache {
             .as_contract(&self.id, || self.env.storage().persistent().get_ttl(key))
     }
 
+    /// Feed-scoped storage keys drop the decimals byte, see `CanonicalId`.
+    pub(crate) fn key_bytes(&self, id: &DataId) -> BytesN<16> {
+        CanonicalId::new(&self.env, id).as_bytes().clone()
+    }
+
     pub(crate) fn permission_ttl(&self, id: &DataId, sender: &Address) -> u32 {
         let phash = perm_hash(
             &self.env,
@@ -94,7 +100,7 @@ impl Cache {
             &mock_wf_owner(&self.env),
             &mock_wf_name(&self.env),
         );
-        self.persistent_ttl(&DataKey::Permission(id.clone(), phash))
+        self.persistent_ttl(&DataKey::Permission(self.key_bytes(id), phash))
     }
 
     pub(crate) fn add_feed(&self, tag: u8) -> Feed {
@@ -161,10 +167,10 @@ impl Cache {
     pub(crate) fn expire_round(&self, feed: &Feed, round_id: u64) {
         let did = feed.id.clone();
         self.env.as_contract(&self.id, || {
-            self.env
-                .storage()
-                .temporary()
-                .remove(&DataKey::Round(did.clone(), round_id));
+            self.env.storage().temporary().remove(&DataKey::Round(
+                CanonicalId::new(&self.env, &did).as_bytes().clone(),
+                round_id,
+            ));
         });
     }
 }

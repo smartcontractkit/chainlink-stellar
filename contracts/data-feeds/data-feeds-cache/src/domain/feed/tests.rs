@@ -23,22 +23,46 @@ fn config(env: &Env, perms: &[WorkflowPermission], desc: &str) -> FeedConfig {
     }
 }
 
+fn key_bytes(env: &Env, id: &DataId) -> BytesN<16> {
+    CanonicalId::new(env, id).as_bytes().clone()
+}
+
 fn config_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedConfig(id.clone()))
+        .get_ttl(&DataKey::FeedConfig(key_bytes(env, id)))
 }
 
 fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::Permission(id.clone(), perm_key(env, p)))
+        .get_ttl(&DataKey::Permission(key_bytes(env, id), perm_key(env, p)))
 }
 
 fn state_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedState(id.clone()))
+        .get_ttl(&DataKey::FeedState(key_bytes(env, id)))
+}
+
+/// Configures at the scale the id encodes; the scale itself is covered by the
+/// view tests below.
+fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> bool {
+    super::configure(env, id, cfg, decimals_of(id).expect("valid decimals byte"))
+}
+
+/// Reads at the id's own scale, where no scaling is applied and the read cannot
+/// fail. Scaled and rejected reads are asserted explicitly in the view tests.
+fn round(env: &Env, id: &DataId, round_id: u64) -> Option<RoundData> {
+    super::round(env, id, round_id).expect("round read")
+}
+
+fn range(env: &Env, id: &DataId, from: u64, to: u64) -> Vec<RoundData> {
+    super::range(env, id, from, to).expect("range read")
+}
+
+fn find_round(env: &Env, id: &DataId, ts: u64, bound: Bound) -> Option<RoundData> {
+    super::find_round(env, id, ts, bound).expect("find_round read")
 }
 
 #[allow(clippy::unnecessary_min_or_max)]
@@ -70,7 +94,7 @@ fn feed_with_rounds(env: &Env, n: u64, step: u64) -> DataId {
 fn expire_round(env: &Env, id: &DataId, round_id: u64) {
     env.storage()
         .temporary()
-        .remove(&DataKey::Round(id.clone(), round_id));
+        .remove(&DataKey::Round(key_bytes(env, id), round_id));
 }
 
 mod configure {
@@ -710,7 +734,7 @@ mod permitted {
     fn is_scoped_to_data_id() {
         execute_as_contract(|env| {
             let id_a = mock_data_id(env);
-            let id_b = BytesN::from_array(env, &[0x99; 16]);
+            let id_b = crate::test_utils::mock_feed_id(env, 0x99);
             let p = permission(env);
             configure(env, &id_a, &config(env, core::slice::from_ref(&p), "A"));
 
@@ -760,7 +784,7 @@ mod permissions {
     fn does_not_leak_other_feeds_permissions() {
         execute_as_contract(|env| {
             let id_a = mock_data_id(env);
-            let id_b = BytesN::from_array(env, &[0x99; 16]);
+            let id_b = crate::test_utils::mock_feed_id(env, 0x99);
             let p1 = permission(env);
             let p2 = permission(env);
             let p3 = permission(env);
@@ -859,7 +883,7 @@ mod range {
     #[test]
     fn unknown_dataid_is_noop() {
         execute_as_contract(|env| {
-            let unknown = BytesN::from_array(env, &[0x77; 16]);
+            let unknown = crate::test_utils::mock_feed_id(env, 0x77);
             assert_eq!(range(env, &unknown, 1, 5).len(), 0);
         });
     }
@@ -989,41 +1013,66 @@ mod decimals {
     }
 
     #[test]
-    fn decodes_correctly() {
-        let env = Env::default();
-        for (byte, expected) in [(0x20u8, 0u32), (0x26, 6), (0x32, 18), (0x60, 64)] {
-            assert_eq!(
-                decimals_from_id(&id_with_byte7(&env, byte)),
-                expected,
-                "byte {byte:#x}"
-            );
-        }
+    fn reports_the_scale_the_id_addresses() {
+        execute_as_contract(|env| {
+            let id = id_with_byte7(env, 0x32);
+            let p = permission(env);
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+
+            for (byte, expected) in [(0x32u8, 18u32), (0x28, 8), (0x26, 6), (0x20, 0)] {
+                assert_eq!(
+                    decimals(env, &id_with_byte7(env, byte)),
+                    Ok(Some(expected)),
+                    "byte {byte:#x}"
+                );
+            }
+        });
     }
 
     #[test]
-    fn non_decimal_type_returns_zero() {
-        let env = Env::default();
-        for byte in [0x00u8, 0x1F, 0x61, 0xFF] {
+    fn rejects_a_decimals_byte_out_of_range() {
+        execute_as_contract(|env| {
+            let id = id_with_byte7(env, 0x32);
+            let p = permission(env);
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+
+            for byte in [0x00u8, 0x1F, 0x61, 0xFF] {
+                assert_eq!(
+                    decimals(env, &id_with_byte7(env, byte)),
+                    Err(CacheError::InvalidDataId),
+                    "byte {byte:#x}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn rejects_more_decimals_than_the_feed_is_stored_at() {
+        execute_as_contract(|env| {
+            let id = id_with_byte7(env, 0x28);
+            let p = permission(env);
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+
             assert_eq!(
-                decimals_from_id(&id_with_byte7(&env, byte)),
-                0,
-                "byte {byte:#x}"
+                decimals(env, &id_with_byte7(env, 0x32)),
+                Err(CacheError::UnsupportedDecimals),
+                "18 decimals is not derivable from an 8 decimal feed"
             );
-        }
+        });
     }
 
     #[test]
     fn gated_on_the_config() {
         execute_as_contract(|env| {
             let id = mock_data_id(env);
-            assert_eq!(decimals(env, &id), None, "derivable but not configured");
+            assert_eq!(decimals(env, &id), Ok(None), "derivable but not configured");
 
             let p = permission(env);
             configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-            assert_eq!(decimals(env, &id), Some(decimals_from_id(&id)));
+            assert_eq!(decimals(env, &id), Ok(decimals_of(&id)));
 
             remove(env, &id);
-            assert_eq!(decimals(env, &id), None);
+            assert_eq!(decimals(env, &id), Ok(None));
         });
     }
 }
@@ -1094,5 +1143,217 @@ mod perm_hash {
             perm_hash(&env, &sender, &mock_wf_owner(&env), &other_name),
             base
         );
+    }
+}
+
+/// Reads addressed at a different scale than the feed is stored at. The stored
+/// answer is written once at the canonical scale; every other scale is derived.
+mod view {
+    use super::*;
+
+    /// 1.5 at 18 decimals.
+    const STORED: i128 = 1_500_000_000_000_000_000;
+
+    fn feed_at(env: &Env, byte7: u8) -> DataId {
+        let id = crate::test_utils::mock_feed_id_with(env, byte7, 0x01);
+        let p = permission(env);
+        configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+        id
+    }
+
+    fn view_of(env: &Env, id: &DataId, byte7: u8) -> DataId {
+        let mut bytes = id.to_array();
+        bytes[7] = byte7;
+        BytesN::from_array(env, &bytes)
+    }
+
+    fn answer_at(env: &Env, id: &DataId, byte7: u8) -> Result<i128, CacheError> {
+        super::super::latest(env, &view_of(env, id, byte7)).map(|r| {
+            r.expect("round present")
+                .answer
+                .to_i128()
+                .expect("answer fits i128")
+        })
+    }
+
+    #[test]
+    fn every_scale_resolves_to_the_same_feed() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+
+            for byte7 in [0x32u8, 0x28, 0x26] {
+                assert!(
+                    configured(env, &view_of(env, &id, byte7)),
+                    "byte {byte7:#x} addresses the configured feed"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn reading_at_the_stored_scale_does_not_change_the_answer() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+
+            assert_eq!(answer_at(env, &id, 0x32), Ok(STORED));
+        });
+    }
+
+    #[test]
+    fn reading_at_fewer_decimals_downscales_the_answer() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+
+            assert_eq!(answer_at(env, &id, 0x28), Ok(150_000_000), "1.5 at 8dp");
+            assert_eq!(answer_at(env, &id, 0x26), Ok(1_500_000), "1.5 at 6dp");
+            assert_eq!(
+                answer_at(env, &id, 0x20),
+                Ok(1),
+                "1.5 truncates to 1 at 0dp"
+            );
+        });
+    }
+
+    #[test]
+    fn downscaling_truncates_towards_zero_for_negatives() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, -STORED), 10);
+
+            assert_eq!(answer_at(env, &id, 0x28), Ok(-150_000_000));
+        });
+    }
+
+    #[test]
+    fn rejects_a_scale_the_feed_is_not_stored_at() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x28);
+            record(env, &id, &I256::from_i128(env, 150_000_000), 10);
+
+            assert_eq!(
+                answer_at(env, &id, 0x32),
+                Err(CacheError::UnsupportedDecimals),
+                "an 8 decimal feed cannot serve 18 decimals"
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_a_read_that_would_truncate_the_answer_away() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, 999), 10);
+
+            assert_eq!(
+                answer_at(env, &id, 0x20),
+                Err(CacheError::AnswerTruncatedToZero),
+                "999 wei of a unit is not zero, so the read must fail loudly"
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_a_decimals_byte_out_of_range() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+
+            for byte7 in [0x00u8, 0x1F, 0x61, 0xFF] {
+                assert_eq!(
+                    answer_at(env, &id, byte7),
+                    Err(CacheError::InvalidDataId),
+                    "byte {byte7:#x}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn scales_every_round_in_a_range() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            for i in 1..=3i128 {
+                let seq = env.ledger().sequence() + 1;
+                env.ledger().with_mut(|li| li.sequence_number = seq);
+                record(env, &id, &I256::from_i128(env, STORED * i), i as u64 * 10);
+            }
+
+            let scaled =
+                super::super::range(env, &view_of(env, &id, 0x28), 1, 3).expect("range read");
+
+            assert_eq!(scaled.len(), 3, "every round in the range is returned");
+            for (i, r) in scaled.iter().enumerate() {
+                assert_eq!(
+                    r.answer.to_i128(),
+                    Some(150_000_000 * (i as i128 + 1)),
+                    "round {} is scaled to 8dp",
+                    r.round_id
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn scales_a_round_found_by_timestamp() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            write(env, &id, env.ledger().sequence() + 1, 10);
+            record(env, &id, &I256::from_i128(env, STORED), 20);
+
+            let found =
+                super::super::find_round(env, &view_of(env, &id, 0x28), 20, Bound::AtOrAfter)
+                    .expect("find_round read")
+                    .expect("round present");
+
+            assert_eq!(found.answer.to_i128(), Some(150_000_000));
+        });
+    }
+
+    #[test]
+    fn permissions_are_shared_by_every_scale() {
+        execute_as_contract(|env| {
+            let id = crate::test_utils::mock_feed_id_with(env, 0x32, 0x02);
+            let p = permission(env);
+            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
+
+            assert!(
+                permitted(env, &view_of(env, &id, 0x28), &perm_key(env, &p)),
+                "a view must not need its own permission"
+            );
+        });
+    }
+
+    #[test]
+    fn freezing_a_feed_freezes_every_scale() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+            set_frozen(env, &id, true);
+
+            assert!(is_frozen(env, &view_of(env, &id, 0x28)));
+        });
+    }
+
+    #[test]
+    fn a_report_at_another_scale_is_not_recorded() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x32);
+            record(env, &id, &I256::from_i128(env, STORED), 10);
+
+            let outcome = record(env, &view_of(env, &id, 0x28), &I256::from_i128(env, 1), 20);
+
+            assert!(
+                matches!(outcome, Recorded::NonCanonicalDecimals { expected: 18 }),
+                "writing at 8 decimals would silently rescale the feed"
+            );
+            assert_eq!(
+                state(env, &id).latest_round.timestamp,
+                10,
+                "the rejected report must not append a round"
+            );
+        });
     }
 }

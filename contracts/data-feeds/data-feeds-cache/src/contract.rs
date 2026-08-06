@@ -3,11 +3,12 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, V
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
+use crate::domain::data_id::{decimals_of, CanonicalId};
 use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
 use crate::domain::feed;
 use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
-    InvalidUpdatePermission, StaleReport,
+    InvalidUpdatePermission, NonCanonicalReport, StaleReport,
 };
 use crate::interface::types::{RoundData, WorkflowPermission};
 use crate::interface::CacheError;
@@ -31,13 +32,8 @@ impl DataFeedsCache {
 #[contractimpl]
 impl DataFeedsCacheReader for DataFeedsCache {
     fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Option<RoundData>, CacheError> {
-        let Some(state) = feed::feed_state(&env, &data_id) else {
-            return Ok(None);
-        };
-        if state.frozen {
-            return Err(CacheError::FeedFrozen);
-        }
-        Ok(Some(state.latest_round))
+        reject_frozen(&env, &data_id)?;
+        feed::latest(&env, &data_id)
     }
 
     fn get_round(
@@ -46,7 +42,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        Ok(feed::round(&env, &data_id, round_id))
+        feed::round(&env, &data_id, round_id)
     }
 
     fn round_range(
@@ -56,7 +52,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         to: u64,
     ) -> Result<Vec<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        Ok(feed::range(&env, &data_id, from, to))
+        feed::range(&env, &data_id, from, to)
     }
 
     fn find_round(
@@ -66,12 +62,12 @@ impl DataFeedsCacheReader for DataFeedsCache {
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        Ok(feed::find_round(&env, &data_id, timestamp, bound))
+        feed::find_round(&env, &data_id, timestamp, bound)
     }
 
     fn decimals(env: Env, data_id: BytesN<16>) -> Result<Option<u32>, CacheError> {
         reject_frozen(&env, &data_id)?;
-        Ok(feed::decimals(&env, &data_id))
+        feed::decimals(&env, &data_id)
     }
 
     fn description(env: Env, data_id: BytesN<16>) -> Result<Option<String>, CacheError> {
@@ -127,6 +123,13 @@ impl DataFeedsCacheWriter for DataFeedsCache {
             }
 
             match feed::record(&env, &data_id, &entry.answer, entry.timestamp) {
+                feed::Recorded::NonCanonicalDecimals { expected } => {
+                    NonCanonicalReport {
+                        data_id,
+                        expected_decimals: expected,
+                    }
+                    .publish(&env);
+                }
                 feed::Recorded::Stale { stored_ts } => {
                     StaleReport {
                         data_id,
@@ -172,8 +175,16 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             if entry.data_id.to_array() == [0u8; 16] {
                 return Err(CacheError::InvalidDataId);
             }
+            // The decimals byte defines the scale the feed is stored at, so it
+            // has to be a scale we can read back.
+            if decimals_of(&entry.data_id).is_none() {
+                return Err(CacheError::InvalidDataId);
+            }
+            // Two ids differing only in decimals address one feed, so they would
+            // configure the same entry twice.
+            let canonical = CanonicalId::new(&env, &entry.data_id);
             for j in (i as u32 + 1)..entries.len() {
-                if entry.data_id == entries.get_unchecked(j).data_id {
+                if canonical == CanonicalId::new(&env, &entries.get_unchecked(j).data_id) {
                     return Err(CacheError::DuplicateFeedConfig);
                 }
             }
@@ -182,7 +193,8 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
 
         for entry in entries.iter() {
             let data_id = entry.data_id.clone();
-            if feed::configure(&env, &data_id, &entry.config) {
+            let decimals = decimals_of(&data_id).ok_or(CacheError::InvalidDataId)?;
+            if feed::configure(&env, &data_id, &entry.config, decimals) {
                 FeedConfigRemoved {
                     data_id: data_id.clone(),
                 }
@@ -190,7 +202,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             }
             FeedConfigSet {
                 data_id: data_id.clone(),
-                decimals: feed::decimals_from_id(&data_id),
+                decimals,
                 description: entry.config.description.clone(),
                 workflow_permissions: entry.config.workflow_permissions.clone(),
             }
@@ -214,8 +226,9 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for (i, did) in data_ids.iter().enumerate() {
+            let canonical = CanonicalId::new(&env, &did);
             for j in (i as u32 + 1)..data_ids.len() {
-                if did == data_ids.get_unchecked(j) {
+                if canonical == CanonicalId::new(&env, &data_ids.get_unchecked(j)) {
                     return Err(CacheError::DuplicateFeedConfig);
                 }
             }
@@ -247,8 +260,9 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for (i, did) in data_ids.iter().enumerate() {
+            let canonical = CanonicalId::new(&env, &did);
             for j in (i as u32 + 1)..data_ids.len() {
-                if did == data_ids.get_unchecked(j) {
+                if canonical == CanonicalId::new(&env, &data_ids.get_unchecked(j)) {
                     return Err(CacheError::DuplicateFeedConfig);
                 }
             }
