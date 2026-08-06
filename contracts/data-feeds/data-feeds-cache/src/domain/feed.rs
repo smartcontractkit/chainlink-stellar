@@ -1,18 +1,15 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Env, String, Vec, I256};
 
+use data_feeds_common::data_id::decimals_of;
+
 use crate::domain::search;
-use crate::interface::data_id::decimals_of;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
 use crate::interface::{CacheError, DataId, FeedConfig};
 use crate::storage::{CanonicalId, FeedState, PermissionHash, Store, StoredConfig, Window};
 
-pub(crate) fn configure(
-    env: &Env,
-    id: &DataId,
-    cfg: &FeedConfig,
-    decimals: u32,
-) -> Result<(), CacheError> {
+pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> Result<u32, CacheError> {
+    let decimals = decimals_of(id).ok_or(CacheError::InvalidDataId)?;
     let key = CanonicalId::new(env, id);
     if let Some(old) = env.config_store().get(&key) {
         if old.decimals != decimals {
@@ -37,7 +34,7 @@ pub(crate) fn configure(
         env.permission_store().set(&perm, &());
         env.permission_store().extend_ttl(&perm);
     }
-    Ok(())
+    Ok(decimals)
 }
 
 pub(crate) enum Recorded {

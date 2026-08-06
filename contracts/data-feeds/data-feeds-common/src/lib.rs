@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod data_id;
+
 mod token_recoverable;
 mod upgradeable;
 mod versioned;

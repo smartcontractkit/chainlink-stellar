@@ -1,12 +1,12 @@
-use crate::interface::DataId;
+use soroban_sdk::BytesN;
 
-pub(crate) const DECIMALS_BYTE: usize = 7;
+pub const DECIMALS_BYTE: usize = 7;
 
 const DECIMALS_OFFSET: u8 = 0x20;
 
 const DECIMALS_BYTE_MAX: u8 = 0x60;
 
-pub fn decimals_of(id: &DataId) -> Option<u32> {
+pub fn decimals_of(id: &BytesN<16>) -> Option<u32> {
     let byte = id.to_array()[DECIMALS_BYTE];
     if byte > DECIMALS_BYTE_MAX {
         return None;
@@ -17,9 +17,9 @@ pub fn decimals_of(id: &DataId) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{BytesN, Env};
+    use soroban_sdk::Env;
 
-    fn data_id(env: &Env, decimals_byte: u8) -> DataId {
+    fn data_id(env: &Env, decimals_byte: u8) -> BytesN<16> {
         let mut bytes = [0xAB; 16];
         bytes[DECIMALS_BYTE] = decimals_byte;
         BytesN::from_array(env, &bytes)

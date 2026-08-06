@@ -9,7 +9,6 @@ use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, NonCanonicalReport, StaleReport,
 };
-use crate::interface::data_id::decimals_of;
 use crate::interface::types::{RoundData, WorkflowPermission};
 use crate::interface::CacheError;
 use crate::interface::{
@@ -175,9 +174,6 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             if entry.data_id.to_array() == [0u8; 16] {
                 return Err(CacheError::InvalidDataId);
             }
-            if decimals_of(&entry.data_id).is_none() {
-                return Err(CacheError::InvalidDataId);
-            }
             let canonical = CanonicalId::new(&env, &entry.data_id);
             for j in (i as u32 + 1)..entries.len() {
                 if canonical == CanonicalId::new(&env, &entries.get_unchecked(j).data_id) {
@@ -188,8 +184,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for entry in entries.iter() {
-            let decimals = decimals_of(&entry.data_id).ok_or(CacheError::InvalidDataId)?;
-            feed::configure(&env, &entry.data_id, &entry.config, decimals)?;
+            let decimals = feed::configure(&env, &entry.data_id, &entry.config)?;
             FeedConfigSet {
                 data_id: entry.data_id,
                 decimals,

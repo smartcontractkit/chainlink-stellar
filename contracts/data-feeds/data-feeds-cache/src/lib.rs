@@ -12,10 +12,9 @@ mod events;
 mod storage;
 
 pub use interface::{
-    decimals_of, Bound, CacheError, DataFeedsCacheAdmin, DataFeedsCacheAdminClient,
-    DataFeedsCacheReader, DataFeedsCacheReaderClient, DataFeedsCacheWriter,
-    DataFeedsCacheWriterClient, DataId, FeedConfig, FeedConfigEntry, Metadata, ReportEntry,
-    RoundData, WorkflowPermission,
+    Bound, CacheError, DataFeedsCacheAdmin, DataFeedsCacheAdminClient, DataFeedsCacheReader,
+    DataFeedsCacheReaderClient, DataFeedsCacheWriter, DataFeedsCacheWriterClient, DataId,
+    FeedConfig, FeedConfigEntry, Metadata, ReportEntry, RoundData, WorkflowPermission,
 };
 
 #[cfg(feature = "contract")]

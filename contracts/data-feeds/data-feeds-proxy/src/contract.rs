@@ -1,6 +1,7 @@
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, I256};
 
-use data_feeds_cache::{decimals_of, DataFeedsCacheReaderClient, RoundData};
+use data_feeds_cache::{DataFeedsCacheReaderClient, RoundData};
+use data_feeds_common::data_id::decimals_of;
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 

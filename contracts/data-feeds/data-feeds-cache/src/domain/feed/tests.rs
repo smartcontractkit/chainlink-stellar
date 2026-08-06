@@ -47,8 +47,7 @@ fn state_ttl(env: &Env, id: &DataId) -> u32 {
 }
 
 fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) {
-    super::configure(env, id, cfg, decimals_of(id).expect("valid decimals byte"))
-        .expect("configure");
+    super::configure(env, id, cfg).expect("configure");
 }
 
 #[allow(clippy::unnecessary_min_or_max)]
@@ -1152,7 +1151,7 @@ mod canonical {
 
             let rescaled = at_scale(env, &id, 0x28);
             assert_eq!(
-                super::super::configure(env, &rescaled, &cfg, 8),
+                super::super::configure(env, &rescaled, &cfg),
                 Err(CacheError::DecimalsMismatch),
                 "the scale a feed is stored at is immutable"
             );

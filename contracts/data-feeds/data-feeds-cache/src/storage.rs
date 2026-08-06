@@ -1,7 +1,7 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 
-use crate::interface::data_id::DECIMALS_BYTE;
 use crate::interface::{types::RoundData, DataId, FeedConfig};
+use data_feeds_common::data_id::DECIMALS_BYTE;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalId(BytesN<16>);
@@ -142,8 +142,8 @@ mod tests {
     use soroban_sdk::I256;
     use soroban_sdk::{String, Vec};
 
-    use crate::interface::data_id::decimals_of;
     use crate::test_utils::{mock_data_id, round_ttl};
+    use data_feeds_common::data_id::decimals_of;
     use data_feeds_common::test_utils::execute_as_contract;
 
     fn data_id(env: &Env, decimals_byte: u8) -> DataId {
