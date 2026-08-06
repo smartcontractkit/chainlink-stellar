@@ -7,9 +7,6 @@ use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, Wor
 use crate::interface::{CacheError, DataId, FeedConfig};
 use crate::storage::{FeedState, PermissionHash, Store, StoredConfig, Window};
 
-/// A feed read at a particular scale: which entry to load, what the stored
-/// answers are scaled at, and what the caller asked for. `canonical` is `None`
-/// for an unconfigured feed, whose rounds are served unscaled.
 struct View {
     key: CanonicalId,
     canonical: Option<u32>,
@@ -54,17 +51,9 @@ fn clear_permissions(env: &Env, key: &CanonicalId) -> bool {
 }
 
 pub(crate) enum Recorded {
-    Appended {
-        round_id: u64,
-    },
-    Stale {
-        stored_ts: u64,
-    },
-    /// The report addressed the feed at a scale other than the one it is stored
-    /// at. Accepting it would silently change the scale of the stored answers.
-    NonCanonicalDecimals {
-        expected: u32,
-    },
+    Appended { round_id: u64 },
+    Stale { stored_ts: u64 },
+    NonCanonicalDecimals { expected: u32 },
 }
 
 pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> Recorded {
@@ -179,8 +168,6 @@ pub(crate) fn permissions(env: &Env, id: &DataId) -> Vec<WorkflowPermission> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-/// Decimals the caller addressed, once the feed is known to serve that scale.
-/// `None` while the feed is unconfigured, matching [`description`].
 pub(crate) fn decimals(env: &Env, id: &DataId) -> Result<Option<u32>, CacheError> {
     let v = view(env, id)?;
     Ok(v.canonical.map(|_| v.target))
@@ -274,7 +261,6 @@ pub(crate) fn find_round(
     }
 }
 
-/// Resolves `id` to the feed it addresses and the scale it asks for.
 fn view(env: &Env, id: &DataId) -> Result<View, CacheError> {
     let key = CanonicalId::new(env, id);
     let target = decimals_of(id).ok_or(CacheError::InvalidDataId)?;
@@ -289,9 +275,6 @@ fn view(env: &Env, id: &DataId) -> Result<View, CacheError> {
     })
 }
 
-/// Downscales a stored answer to the scale the caller addressed. Scaling up is
-/// rejected by [`view`], so this only ever divides. An unconfigured feed has no
-/// scale to convert from, so its rounds are served as stored.
 fn scale(env: &Env, round: RoundData, v: &View) -> Result<RoundData, CacheError> {
     let Some(canonical) = v.canonical.filter(|c| *c != v.target) else {
         return Ok(round);

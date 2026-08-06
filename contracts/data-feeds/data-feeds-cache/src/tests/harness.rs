@@ -88,7 +88,6 @@ impl Cache {
             .as_contract(&self.id, || self.env.storage().persistent().get_ttl(key))
     }
 
-    /// Feed-scoped storage keys drop the decimals byte, see `CanonicalId`.
     pub(crate) fn key_bytes(&self, id: &DataId) -> BytesN<16> {
         CanonicalId::new(&self.env, id).as_bytes().clone()
     }

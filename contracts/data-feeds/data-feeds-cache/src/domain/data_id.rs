@@ -1,29 +1,13 @@
-//! `DataId` layout.
-//!
-//! A `DataId` addresses a feed *and* the scale its answer is read at: byte
-//! [`DECIMALS_BYTE`] carries the decimals, offset by [`DECIMALS_OFFSET`]. One
-//! feed is therefore reachable at several scales - `0x..32..` reads 18 decimals
-//! and `0x..28..` reads the same answer downscaled to 8 - without writing the
-//! feed twice.
-//!
-//! Storage keys clear that byte, see [`CanonicalId`], so every scale of a feed
-//! resolves to the single answer the workflow wrote.
-
 use soroban_sdk::{BytesN, Env};
 
 use crate::interface::DataId;
 
-/// Position of the decimals byte inside a `DataId`.
 const DECIMALS_BYTE: usize = 7;
 
-/// Offset applied to the decimals byte, so `0x20` reads as zero decimals.
 const DECIMALS_OFFSET: u8 = 0x20;
 
-/// Largest decimals byte accepted, `0x60`, i.e. 64 decimals.
 const DECIMALS_BYTE_MAX: u8 = 0x60;
 
-/// A `DataId` with the decimals byte cleared: the storage key shared by every
-/// scale of one feed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalId(BytesN<16>);
 
@@ -34,13 +18,11 @@ impl CanonicalId {
         Self(BytesN::from_array(env, &bytes))
     }
 
-    /// The masked bytes, for building storage keys.
     pub(crate) fn as_bytes(&self) -> &BytesN<16> {
         &self.0
     }
 }
 
-/// Decimals addressed by `id`, or `None` when the decimals byte is out of range.
 pub(crate) fn decimals_of(id: &DataId) -> Option<u32> {
     let byte = id.to_array()[DECIMALS_BYTE];
     if byte > DECIMALS_BYTE_MAX {
@@ -113,6 +95,14 @@ mod tests {
         let env = Env::default();
         assert_eq!(decimals_of(&data_id(&env, 0x00)), None);
         assert_eq!(decimals_of(&data_id(&env, 0x1F)), None);
+    }
+
+    #[test]
+    fn decimals_of_rejects_the_masked_key_byte() {
+        let env = Env::default();
+        let masked = CanonicalId::new(&env, &data_id(&env, 0x32));
+
+        assert_eq!(decimals_of(masked.as_bytes()), None);
     }
 
     #[test]

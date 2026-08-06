@@ -45,14 +45,10 @@ fn state_ttl(env: &Env, id: &DataId) -> u32 {
         .get_ttl(&DataKey::FeedState(key_bytes(env, id)))
 }
 
-/// Configures at the scale the id encodes; the scale itself is covered by the
-/// view tests below.
 fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> bool {
     super::configure(env, id, cfg, decimals_of(id).expect("valid decimals byte"))
 }
 
-/// Reads at the id's own scale, where no scaling is applied and the read cannot
-/// fail. Scaled and rejected reads are asserted explicitly in the view tests.
 fn round(env: &Env, id: &DataId, round_id: u64) -> Option<RoundData> {
     super::round(env, id, round_id).expect("round read")
 }
@@ -1013,7 +1009,7 @@ mod decimals {
     }
 
     #[test]
-    fn reports_the_scale_the_id_addresses() {
+    fn returns_the_scale_the_id_addresses() {
         execute_as_contract(|env| {
             let id = id_with_byte7(env, 0x32);
             let p = permission(env);
@@ -1026,38 +1022,6 @@ mod decimals {
                     "byte {byte:#x}"
                 );
             }
-        });
-    }
-
-    #[test]
-    fn rejects_a_decimals_byte_out_of_range() {
-        execute_as_contract(|env| {
-            let id = id_with_byte7(env, 0x32);
-            let p = permission(env);
-            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-
-            for byte in [0x00u8, 0x1F, 0x61, 0xFF] {
-                assert_eq!(
-                    decimals(env, &id_with_byte7(env, byte)),
-                    Err(CacheError::InvalidDataId),
-                    "byte {byte:#x}"
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn rejects_more_decimals_than_the_feed_is_stored_at() {
-        execute_as_contract(|env| {
-            let id = id_with_byte7(env, 0x28);
-            let p = permission(env);
-            configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-
-            assert_eq!(
-                decimals(env, &id_with_byte7(env, 0x32)),
-                Err(CacheError::UnsupportedDecimals),
-                "18 decimals is not derivable from an 8 decimal feed"
-            );
         });
     }
 
@@ -1146,12 +1110,9 @@ mod perm_hash {
     }
 }
 
-/// Reads addressed at a different scale than the feed is stored at. The stored
-/// answer is written once at the canonical scale; every other scale is derived.
 mod view {
     use super::*;
 
-    /// 1.5 at 18 decimals.
     const STORED: i128 = 1_500_000_000_000_000_000;
 
     fn feed_at(env: &Env, byte7: u8) -> DataId {
@@ -1177,7 +1138,7 @@ mod view {
     }
 
     #[test]
-    fn every_scale_resolves_to_the_same_feed() {
+    fn configured_is_true_for_every_scale() {
         execute_as_contract(|env| {
             let id = feed_at(env, 0x32);
             record(env, &id, &I256::from_i128(env, STORED), 10);
@@ -1228,7 +1189,7 @@ mod view {
     }
 
     #[test]
-    fn rejects_a_scale_the_feed_is_not_stored_at() {
+    fn reading_above_the_stored_scale_is_rejected() {
         execute_as_contract(|env| {
             let id = feed_at(env, 0x28);
             record(env, &id, &I256::from_i128(env, 150_000_000), 10);
@@ -1242,7 +1203,7 @@ mod view {
     }
 
     #[test]
-    fn rejects_a_read_that_would_truncate_the_answer_away() {
+    fn reading_that_would_truncate_to_zero_is_rejected() {
         execute_as_contract(|env| {
             let id = feed_at(env, 0x32);
             record(env, &id, &I256::from_i128(env, 999), 10);
@@ -1256,7 +1217,7 @@ mod view {
     }
 
     #[test]
-    fn rejects_a_decimals_byte_out_of_range() {
+    fn reading_with_a_byte_out_of_range_is_rejected() {
         execute_as_contract(|env| {
             let id = feed_at(env, 0x32);
             record(env, &id, &I256::from_i128(env, STORED), 10);
@@ -1309,6 +1270,31 @@ mod view {
                     .expect("round present");
 
             assert_eq!(found.answer.to_i128(), Some(150_000_000));
+        });
+    }
+
+    #[test]
+    fn a_zero_decimal_feed_is_configurable_and_readable() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x20);
+            record(env, &id, &I256::from_i128(env, 4_270), 10);
+
+            assert_eq!(decimals(env, &id), Ok(Some(0)), "0x20 encodes 0 decimals");
+            assert_eq!(answer_at(env, &id, 0x20), Ok(4_270), "served as stored");
+        });
+    }
+
+    #[test]
+    fn a_zero_decimal_feed_has_no_lower_scale_to_serve() {
+        execute_as_contract(|env| {
+            let id = feed_at(env, 0x20);
+            record(env, &id, &I256::from_i128(env, 4_270), 10);
+
+            assert_eq!(
+                answer_at(env, &id, 0x28),
+                Err(CacheError::UnsupportedDecimals),
+                "a 0 decimal feed cannot serve 8 decimals"
+            );
         });
     }
 

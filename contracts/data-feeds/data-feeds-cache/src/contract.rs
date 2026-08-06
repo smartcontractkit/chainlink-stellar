@@ -175,13 +175,9 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             if entry.data_id.to_array() == [0u8; 16] {
                 return Err(CacheError::InvalidDataId);
             }
-            // The decimals byte defines the scale the feed is stored at, so it
-            // has to be a scale we can read back.
             if decimals_of(&entry.data_id).is_none() {
                 return Err(CacheError::InvalidDataId);
             }
-            // Two ids differing only in decimals address one feed, so they would
-            // configure the same entry twice.
             let canonical = CanonicalId::new(&env, &entry.data_id);
             for j in (i as u32 + 1)..entries.len() {
                 if canonical == CanonicalId::new(&env, &entries.get_unchecked(j).data_id) {

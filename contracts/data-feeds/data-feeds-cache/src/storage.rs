@@ -43,9 +43,6 @@ pub(crate) struct FeedState {
     pub(crate) frozen: bool,
 }
 
-/// A feed's config plus the decimals its stored answers are written at. Reads
-/// against another scale are derived from `decimals`, so it is recorded once at
-/// configuration time rather than inferred per read.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub(crate) struct StoredConfig {
@@ -114,8 +111,6 @@ macro_rules! store {
     };
 }
 
-// Feed-scoped stores are keyed by `CanonicalId`, never by a raw `DataId`, so a
-// feed read at 8 decimals and the same feed read at 18 share one entry.
 store! {
     (AdminStore,       admin_store,        persistent, Address,                       (),           u32::MAX, |a: &Address| DataKey::FeedAdmin(a.clone())),
     (ConfigStore,      config_store,       persistent, CanonicalId,                   StoredConfig, u32::MAX, |c: &CanonicalId| DataKey::FeedConfig(c.as_bytes().clone())),
