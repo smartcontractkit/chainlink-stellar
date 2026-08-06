@@ -1,22 +1,6 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 
 use crate::interface::{types::RoundData, DataId, FeedConfig};
-use data_feeds_common::data_id::DECIMALS_BYTE;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CanonicalId(BytesN<16>);
-
-impl CanonicalId {
-    pub(crate) fn new(env: &Env, id: &DataId) -> Self {
-        let mut bytes = id.to_array();
-        bytes[DECIMALS_BYTE] = 0;
-        Self(BytesN::from_array(env, &bytes))
-    }
-
-    pub(crate) fn as_bytes(&self) -> &BytesN<16> {
-        &self.0
-    }
-}
 
 pub(crate) type PermissionHash = BytesN<32>;
 
@@ -128,10 +112,10 @@ macro_rules! store {
 
 store! {
     (AdminStore,       admin_store,        persistent, Address,                       (),           u32::MAX, |a: &Address| DataKey::FeedAdmin(a.clone())),
-    (ConfigStore,      config_store,       persistent, CanonicalId,                   StoredConfig, u32::MAX, |c: &CanonicalId| DataKey::FeedConfig(c.as_bytes().clone())),
-    (PermissionStore,  permission_store,   persistent, (CanonicalId, PermissionHash), (),           u32::MAX, |(c, ph): &(CanonicalId, PermissionHash)| DataKey::Permission(c.as_bytes().clone(), ph.clone())),
-    (FeedStateStore,   feed_state_store,   persistent, CanonicalId,                   FeedState,    u32::MAX, |c: &CanonicalId| DataKey::FeedState(c.as_bytes().clone())),
-    (RoundStore,       round_store,        temporary,  (CanonicalId, u64),            RoundData,    DATA_RETENTION_TTL, |(c, r): &(CanonicalId, u64)| DataKey::Round(c.as_bytes().clone(), *r)),
+    (ConfigStore,      config_store,       persistent, DataId,                        StoredConfig, u32::MAX, |d: &DataId| DataKey::FeedConfig(d.clone())),
+    (PermissionStore,  permission_store,   persistent, (DataId, PermissionHash),      (),           u32::MAX, |(d, ph): &(DataId, PermissionHash)| DataKey::Permission(d.clone(), ph.clone())),
+    (FeedStateStore,   feed_state_store,   persistent, DataId,                        FeedState,    u32::MAX, |d: &DataId| DataKey::FeedState(d.clone())),
+    (RoundStore,       round_store,        temporary,  (DataId, u64),                 RoundData,    DATA_RETENTION_TTL, |(d, r): &(DataId, u64)| DataKey::Round(d.clone(), *r)),
 }
 
 #[cfg(test)]
@@ -143,64 +127,10 @@ mod tests {
     use soroban_sdk::{String, Vec};
 
     use crate::test_utils::{mock_data_id, round_ttl};
-    use data_feeds_common::data_id::decimals_of;
     use data_feeds_common::test_utils::execute_as_contract;
 
-    fn data_id(env: &Env, decimals_byte: u8) -> DataId {
-        let mut bytes = [0xAB; 16];
-        bytes[DECIMALS_BYTE] = decimals_byte;
-        BytesN::from_array(env, &bytes)
-    }
-
-    #[test]
-    fn canonical_id_clears_the_decimals_byte() {
-        let env = Env::default();
-        let canonical = CanonicalId::new(&env, &data_id(&env, 0x32));
-        assert_eq!(canonical.as_bytes().to_array()[DECIMALS_BYTE], 0);
-    }
-
-    #[test]
-    fn canonical_id_is_shared_by_every_scale_of_a_feed() {
-        let env = Env::default();
-        let eighteen = CanonicalId::new(&env, &data_id(&env, 0x32));
-        let eight = CanonicalId::new(&env, &data_id(&env, 0x28));
-        assert_eq!(eighteen, eight);
-    }
-
-    #[test]
-    fn canonical_id_keeps_the_feed_identity() {
-        let env = Env::default();
-        let id = data_id(&env, 0x32);
-        let canonical = CanonicalId::new(&env, &id);
-        let (original, masked) = (id.to_array(), canonical.as_bytes().to_array());
-        for (i, (o, m)) in original.iter().zip(masked.iter()).enumerate() {
-            if i != DECIMALS_BYTE {
-                assert_eq!(o, m, "byte {i} changed");
-            }
-        }
-    }
-
-    #[test]
-    fn canonical_id_separates_different_feeds() {
-        let env = Env::default();
-        let mut other = [0xAB; 16];
-        other[0] = 0xCD;
-        other[DECIMALS_BYTE] = 0x32;
-        let a = CanonicalId::new(&env, &data_id(&env, 0x32));
-        let b = CanonicalId::new(&env, &BytesN::from_array(&env, &other));
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn a_canonical_key_is_never_itself_addressable() {
-        let env = Env::default();
-        let masked = CanonicalId::new(&env, &data_id(&env, 0x32));
-
-        assert_eq!(decimals_of(masked.as_bytes()), None);
-    }
-
-    fn store_round(env: &Env) -> (CanonicalId, u64) {
-        let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
+    fn store_round(env: &Env) -> (DataId, u64) {
+        let key = (mock_data_id(env), 1u64);
         let round = RoundData {
             round_id: 1,
             answer: I256::from_i128(env, 1),
@@ -215,7 +145,7 @@ mod tests {
     #[test]
     fn get_and_exists_are_false_for_an_absent_key() {
         execute_as_contract(|env| {
-            let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
+            let key = (mock_data_id(env), 1u64);
             assert!(!env.round_store().exists(&key));
             assert!(env.round_store().get(&key).is_none());
         });
@@ -251,7 +181,7 @@ mod tests {
     #[test]
     fn extend_ttl_on_an_absent_key_is_a_noop() {
         execute_as_contract(|env| {
-            let key = (CanonicalId::new(env, &mock_data_id(env)), 1u64);
+            let key = (mock_data_id(env), 1u64);
             env.round_store().extend_ttl(&key);
             assert!(
                 !env.round_store().exists(&key),
@@ -266,7 +196,7 @@ mod tests {
             env.ledger().set_max_entry_ttl(1_000);
             let key = store_round(env);
             assert_eq!(
-                round_ttl(env, &mock_data_id(env), key.1),
+                round_ttl(env, &key.0, key.1),
                 1_000,
                 "network cap wins below the retention constant"
             );
@@ -275,7 +205,7 @@ mod tests {
             env.ledger().set_max_entry_ttl(600_000);
             let key = store_round(env);
             assert_eq!(
-                round_ttl(env, &mock_data_id(env), key.1),
+                round_ttl(env, &key.0, key.1),
                 DATA_RETENTION_TTL,
                 "retention wins below the network cap"
             );
@@ -292,7 +222,7 @@ mod tests {
             env.ledger().with_mut(|li| li.sequence_number = 2_000);
             env.round_store().set(&key, &stored);
             assert_eq!(
-                round_ttl(env, &mock_data_id(env), key.1),
+                round_ttl(env, &key.0, key.1),
                 9_000,
                 "set never re-pins a live entry"
             );
@@ -308,7 +238,7 @@ mod tests {
             env.ledger().with_mut(|li| li.sequence_number = 2_000);
             env.round_store().extend_ttl(&key);
             assert_eq!(
-                round_ttl(env, &mock_data_id(env), key.1),
+                round_ttl(env, &key.0, key.1),
                 10_000,
                 "extend_ttl bumps to full regardless of remaining"
             );
@@ -340,7 +270,7 @@ mod tests {
     #[test]
     fn distinct_datakey_variants_sharing_one_data_id_never_alias() {
         execute_as_contract(|env| {
-            let d = CanonicalId::new(env, &mock_data_id(env));
+            let d = mock_data_id(env);
 
             let mut hb = [0xAAu8; 32];
             hb[..16].copy_from_slice(&[0x32; 16]);

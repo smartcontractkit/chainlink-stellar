@@ -20,10 +20,10 @@ pub(crate) use crate::interface::types::{
 };
 pub(crate) use crate::interface::CacheError;
 pub(crate) use crate::interface::FeedConfigEntry;
-pub(crate) use crate::storage::{CanonicalId, DataKey};
+pub(crate) use crate::storage::DataKey;
 pub(crate) use crate::{DataFeedsCache, DataFeedsCacheClient};
 
-use crate::domain::feed::perm_hash;
+use crate::domain::feed::{canonical, perm_hash};
 
 pub(crate) use crate::test_utils::*;
 
@@ -87,8 +87,8 @@ impl Cache {
             .as_contract(&self.id, || self.env.storage().persistent().get_ttl(key))
     }
 
-    pub(crate) fn canonical_key(&self, id: &DataId) -> BytesN<16> {
-        CanonicalId::new(&self.env, id).as_bytes().clone()
+    pub(crate) fn canonical_key(&self, id: &DataId) -> DataId {
+        canonical(&self.env, id)
     }
 
     pub(crate) fn permission_ttl(&self, id: &DataId, sender: &Address) -> u32 {
@@ -160,10 +160,10 @@ impl Cache {
     pub(crate) fn expire_round(&self, feed: &Feed, round_id: u64) {
         let did = feed.id.clone();
         self.env.as_contract(&self.id, || {
-            self.env.storage().temporary().remove(&DataKey::Round(
-                CanonicalId::new(&self.env, &did).as_bytes().clone(),
-                round_id,
-            ));
+            self.env
+                .storage()
+                .temporary()
+                .remove(&DataKey::Round(canonical(&self.env, &did), round_id));
         });
     }
 }

@@ -6,7 +6,6 @@ use crate::interface::types::{
     DataId, FeedConfig, ReportEntry, WireDataId, WorkflowName, WorkflowOwner, WorkflowPermission,
 };
 use crate::interface::FeedConfigEntry;
-use crate::storage::CanonicalId;
 use crate::DataFeedsCacheClient;
 
 pub const DEFAULT_BYTE7: u8 = 0x32;
@@ -16,15 +15,12 @@ pub fn mock_data_id(env: &Env) -> DataId {
     BytesN::from_array(env, &[0x32; 16])
 }
 
-pub fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
+pub fn round_ttl(env: &Env, key: &DataId, round_id: u64) -> u32 {
     use soroban_sdk::testutils::storage::Temporary as _;
 
     env.storage()
         .temporary()
-        .get_ttl(&crate::storage::DataKey::Round(
-            CanonicalId::new(env, id).as_bytes().clone(),
-            round_id,
-        ))
+        .get_ttl(&crate::storage::DataKey::Round(key.clone(), round_id))
 }
 
 pub fn mock_feed_id(env: &Env, tag: u8) -> DataId {

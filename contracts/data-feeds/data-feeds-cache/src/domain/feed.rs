@@ -1,16 +1,26 @@
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{Address, Env, String, Vec, I256};
+use soroban_sdk::{Address, BytesN, Env, String, Vec, I256};
 
-use data_feeds_common::data_id::decimals_of;
+use data_feeds_common::data_id::{decimals_of, DECIMALS_BYTE};
 
 use crate::domain::search;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
 use crate::interface::{CacheError, DataId, FeedConfig};
-use crate::storage::{CanonicalId, FeedState, PermissionHash, Store, StoredConfig, Window};
+use crate::storage::{FeedState, PermissionHash, Store, StoredConfig, Window};
+
+pub(crate) fn canonical(env: &Env, id: &DataId) -> DataId {
+    let mut bytes = id.to_array();
+    bytes[DECIMALS_BYTE] = 0;
+    BytesN::from_array(env, &bytes)
+}
+
+pub(crate) fn is_same_feed(env: &Env, a: &DataId, b: &DataId) -> bool {
+    canonical(env, a) == canonical(env, b)
+}
 
 pub(crate) fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) -> Result<u32, CacheError> {
     let decimals = decimals_of(id).ok_or(CacheError::InvalidDataId)?;
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     if let Some(old) = env.config_store().get(&key) {
         if old.decimals != decimals {
             return Err(CacheError::DecimalsMismatch);
@@ -44,7 +54,7 @@ pub(crate) enum Recorded {
 }
 
 pub(crate) fn record(env: &Env, id: &DataId, answer: &I256, timestamp: u64) -> Recorded {
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     let config = env.config_store().get(&key);
 
     if let Some(expected) = config.as_ref().map(|c| c.decimals) {
@@ -118,20 +128,20 @@ fn next_window(state: Option<&FeedState>, ttl: u32, seq: u32) -> Window {
 }
 
 pub(crate) fn feed_state(env: &Env, id: &DataId) -> Option<FeedState> {
-    feed_state_at(env, &CanonicalId::new(env, id))
+    feed_state_at(env, &canonical(env, id))
 }
 
-fn feed_state_at(env: &Env, key: &CanonicalId) -> Option<FeedState> {
+fn feed_state_at(env: &Env, key: &DataId) -> Option<FeedState> {
     env.feed_state_store().get(key)
 }
 
 pub(crate) fn permitted(env: &Env, id: &DataId, phash: &PermissionHash) -> bool {
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     env.permission_store().exists(&(key, phash.clone()))
 }
 
 pub(crate) fn configured(env: &Env, id: &DataId) -> bool {
-    env.config_store().exists(&CanonicalId::new(env, id))
+    env.config_store().exists(&canonical(env, id))
 }
 
 pub(crate) fn is_frozen(env: &Env, id: &DataId) -> bool {
@@ -139,7 +149,7 @@ pub(crate) fn is_frozen(env: &Env, id: &DataId) -> bool {
 }
 
 pub(crate) fn set_frozen(env: &Env, id: &DataId, frozen: bool) -> bool {
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     let Some(mut state) = feed_state_at(env, &key) else {
         return false;
     };
@@ -151,20 +161,20 @@ pub(crate) fn set_frozen(env: &Env, id: &DataId, frozen: bool) -> bool {
 
 pub(crate) fn permissions(env: &Env, id: &DataId) -> Vec<WorkflowPermission> {
     env.config_store()
-        .get(&CanonicalId::new(env, id))
+        .get(&canonical(env, id))
         .map(|c| c.config.workflow_permissions)
         .unwrap_or_else(|| Vec::new(env))
 }
 
 pub(crate) fn decimals(env: &Env, id: &DataId) -> Option<u32> {
     env.config_store()
-        .get(&CanonicalId::new(env, id))
+        .get(&canonical(env, id))
         .map(|c| c.decimals)
 }
 
 pub(crate) fn description(env: &Env, id: &DataId) -> Option<String> {
     env.config_store()
-        .get(&CanonicalId::new(env, id))
+        .get(&canonical(env, id))
         .map(|c| c.config.description)
 }
 
@@ -194,14 +204,14 @@ pub(crate) fn latest(env: &Env, id: &DataId) -> Option<RoundData> {
 }
 
 pub(crate) fn round(env: &Env, id: &DataId, round_id: u64) -> Option<RoundData> {
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     let state = feed_state_at(env, &key)?;
     read_round(env, &key, &state, round_id)
 }
 
 pub(crate) fn range(env: &Env, id: &DataId, from: u64, to: u64) -> Vec<RoundData> {
     let mut out = Vec::new(env);
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     let Some(state) = feed_state_at(env, &key) else {
         return out;
     };
@@ -214,14 +224,14 @@ pub(crate) fn range(env: &Env, id: &DataId, from: u64, to: u64) -> Vec<RoundData
 }
 
 pub(crate) fn find_round(env: &Env, id: &DataId, ts: u64, bound: Bound) -> Option<RoundData> {
-    let key = CanonicalId::new(env, id);
+    let key = canonical(env, id);
     let state = feed_state_at(env, &key)?;
     search::boundary(1, state.latest_round.round_id, ts, bound, |rid| {
         read_round(env, &key, &state, rid).map(|r| (r.timestamp, r))
     })
 }
 
-fn read_round(env: &Env, key: &CanonicalId, state: &FeedState, round_id: u64) -> Option<RoundData> {
+fn read_round(env: &Env, key: &DataId, state: &FeedState, round_id: u64) -> Option<RoundData> {
     if round_id == state.latest_round.round_id {
         return Some(state.latest_round.clone());
     }

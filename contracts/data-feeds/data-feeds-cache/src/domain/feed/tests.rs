@@ -1,10 +1,10 @@
 use super::*;
-use crate::storage::{CanonicalId, DataKey};
+use crate::storage::DataKey;
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{BytesN, I256};
 
-use crate::test_utils::{mock_data_id, round_ttl};
+use crate::test_utils::mock_data_id;
 use crate::test_utils::{mock_permission, mock_wf_name, mock_wf_owner};
 use data_feeds_common::test_utils::execute_as_contract;
 
@@ -23,19 +23,19 @@ fn config(env: &Env, perms: &[WorkflowPermission], desc: &str) -> FeedConfig {
     }
 }
 
-fn canonical_key(env: &Env, id: &DataId) -> BytesN<16> {
-    CanonicalId::new(env, id).as_bytes().clone()
+fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
+    crate::test_utils::round_ttl(env, &canonical(env, id), round_id)
 }
 
 fn config_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedConfig(canonical_key(env, id)))
+        .get_ttl(&DataKey::FeedConfig(canonical(env, id)))
 }
 
 fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
     env.storage().persistent().get_ttl(&DataKey::Permission(
-        canonical_key(env, id),
+        canonical(env, id),
         perm_key(env, p),
     ))
 }
@@ -43,7 +43,7 @@ fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
 fn state_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedState(canonical_key(env, id)))
+        .get_ttl(&DataKey::FeedState(canonical(env, id)))
 }
 
 fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) {
@@ -79,7 +79,75 @@ fn feed_with_rounds(env: &Env, n: u64, step: u64) -> DataId {
 fn expire_round(env: &Env, id: &DataId, round_id: u64) {
     env.storage()
         .temporary()
-        .remove(&DataKey::Round(canonical_key(env, id), round_id));
+        .remove(&DataKey::Round(canonical(env, id), round_id));
+}
+
+mod canonical_id {
+    use super::*;
+
+    fn data_id(env: &Env, decimals_byte: u8) -> DataId {
+        let mut bytes = [0xAB; 16];
+        bytes[DECIMALS_BYTE] = decimals_byte;
+        BytesN::from_array(env, &bytes)
+    }
+
+    #[test]
+    fn clears_the_decimals_byte() {
+        let env = Env::default();
+        assert_eq!(canonical(&env, &data_id(&env, 0x32)).to_array()[DECIMALS_BYTE], 0);
+    }
+
+    #[test]
+    fn is_shared_by_every_scale_of_a_feed() {
+        let env = Env::default();
+        let eighteen = canonical(&env, &data_id(&env, 0x32));
+        let eight = canonical(&env, &data_id(&env, 0x28));
+        assert_eq!(eighteen, eight);
+    }
+
+    #[test]
+    fn keeps_the_feed_identity() {
+        let env = Env::default();
+        let id = data_id(&env, 0x32);
+        let (original, masked) = (id.to_array(), canonical(&env, &id).to_array());
+        for (i, (o, m)) in original.iter().zip(masked.iter()).enumerate() {
+            if i != DECIMALS_BYTE {
+                assert_eq!(o, m, "byte {i} changed");
+            }
+        }
+    }
+
+    #[test]
+    fn separates_different_feeds() {
+        let env = Env::default();
+        let mut other = [0xAB; 16];
+        other[0] = 0xCD;
+        other[DECIMALS_BYTE] = 0x32;
+        let a = canonical(&env, &data_id(&env, 0x32));
+        let b = canonical(&env, &BytesN::from_array(&env, &other));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn is_never_itself_addressable() {
+        let env = Env::default();
+        assert_eq!(decimals_of(&canonical(&env, &data_id(&env, 0x32))), None);
+    }
+
+    #[test]
+    fn is_same_feed_matches_across_scales() {
+        let env = Env::default();
+        assert!(is_same_feed(&env, &data_id(&env, 0x32), &data_id(&env, 0x28)));
+
+        let mut other = [0xAB; 16];
+        other[0] = 0xCD;
+        other[DECIMALS_BYTE] = 0x32;
+        assert!(!is_same_feed(
+            &env,
+            &data_id(&env, 0x32),
+            &BytesN::from_array(&env, &other)
+        ));
+    }
 }
 
 mod configure {
