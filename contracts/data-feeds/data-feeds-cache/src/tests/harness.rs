@@ -88,7 +88,7 @@ impl Cache {
             .as_contract(&self.id, || self.env.storage().persistent().get_ttl(key))
     }
 
-    pub(crate) fn key_bytes(&self, id: &DataId) -> BytesN<16> {
+    pub(crate) fn canonical_key(&self, id: &DataId) -> BytesN<16> {
         CanonicalId::new(&self.env, id).as_bytes().clone()
     }
 
@@ -99,7 +99,7 @@ impl Cache {
             &mock_wf_owner(&self.env),
             &mock_wf_name(&self.env),
         );
-        self.persistent_ttl(&DataKey::Permission(self.key_bytes(id), phash))
+        self.persistent_ttl(&DataKey::Permission(self.canonical_key(id), phash))
     }
 
     pub(crate) fn add_feed(&self, tag: u8) -> Feed {

@@ -23,26 +23,27 @@ fn config(env: &Env, perms: &[WorkflowPermission], desc: &str) -> FeedConfig {
     }
 }
 
-fn key_bytes(env: &Env, id: &DataId) -> BytesN<16> {
+fn canonical_key(env: &Env, id: &DataId) -> BytesN<16> {
     CanonicalId::new(env, id).as_bytes().clone()
 }
 
 fn config_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedConfig(key_bytes(env, id)))
+        .get_ttl(&DataKey::FeedConfig(canonical_key(env, id)))
 }
 
 fn perm_ttl(env: &Env, id: &DataId, p: &WorkflowPermission) -> u32 {
-    env.storage()
-        .persistent()
-        .get_ttl(&DataKey::Permission(key_bytes(env, id), perm_key(env, p)))
+    env.storage().persistent().get_ttl(&DataKey::Permission(
+        canonical_key(env, id),
+        perm_key(env, p),
+    ))
 }
 
 fn state_ttl(env: &Env, id: &DataId) -> u32 {
     env.storage()
         .persistent()
-        .get_ttl(&DataKey::FeedState(key_bytes(env, id)))
+        .get_ttl(&DataKey::FeedState(canonical_key(env, id)))
 }
 
 fn configure(env: &Env, id: &DataId, cfg: &FeedConfig) {
@@ -79,7 +80,7 @@ fn feed_with_rounds(env: &Env, n: u64, step: u64) -> DataId {
 fn expire_round(env: &Env, id: &DataId, round_id: u64) {
     env.storage()
         .temporary()
-        .remove(&DataKey::Round(key_bytes(env, id), round_id));
+        .remove(&DataKey::Round(canonical_key(env, id), round_id));
 }
 
 mod configure {

@@ -250,7 +250,7 @@ mod on_report {
             "on_report extends the contract instance TTL"
         );
         assert_eq!(
-            cache.persistent_ttl(&DataKey::FeedConfig(cache.key_bytes(&feed.id))),
+            cache.persistent_ttl(&DataKey::FeedConfig(cache.canonical_key(&feed.id))),
             full,
             "on_report extends the config TTL"
         );
@@ -260,7 +260,7 @@ mod on_report {
             "on_report extends the permission TTL"
         );
         assert_eq!(
-            cache.persistent_ttl(&DataKey::FeedState(cache.key_bytes(&feed.id))),
+            cache.persistent_ttl(&DataKey::FeedState(cache.canonical_key(&feed.id))),
             full,
             "on_report extends the latest-tip TTL"
         );
