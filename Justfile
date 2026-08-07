@@ -20,6 +20,13 @@ check-contracts:
 build-contracts:
     stellar contract build
 
+# Rebuild the embedded CRE contract WASM committed under deployment/cre/artifacts/
+# (served to Go consumers via deployment/cre.Artifact). CI fails if out of sync.
+# Always builds in a pinned linux/amd64 docker container (bytes are
+# host-platform-dependent, so there is exactly one canonical environment).
+update-cre-artifacts:
+    ./scripts/update_cre_artifacts.sh
+
 # Format all Rust code
 fmt-contracts:
     cargo fmt --all
