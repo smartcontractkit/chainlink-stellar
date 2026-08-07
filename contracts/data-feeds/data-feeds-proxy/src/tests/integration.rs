@@ -71,11 +71,11 @@ mod cache_reader_client {
         let s = ProxyWithCache::deploy(&[(12345, 7)]);
         let c = s.client();
 
-        let latest = c.latest_round(&s.did);
+        let latest = c.latest_round(&s.did, &18);
         assert_eq!(latest.answer, I256::from_i128(&s.env, 12345));
         assert_eq!(latest.timestamp, 7);
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &18).answer,
             I256::from_i128(&s.env, 12345),
             "historical round resolves through the proxy"
         );
@@ -88,17 +88,37 @@ mod cache_reader_client {
     }
 
     #[test]
+    fn downscales_end_to_end_through_the_real_cache() {
+        let s = ProxyWithCache::deploy(&[(1_500_000_000_000_000_000, 7)]);
+        let c = s.client();
+
+        let scaled = c.latest_round(&s.did, &8);
+        assert_eq!(
+            scaled.answer,
+            I256::from_i128(&s.env, 150_000_000),
+            "1.5 at 18dp served as 1.5 at 8dp"
+        );
+        assert!(
+            matches!(
+                c.try_latest_round(&s.did, &19),
+                Err(Ok(ProxyReadError::UnsupportedDecimals))
+            ),
+            "precision above the configured 18 is rejected"
+        );
+    }
+
+    #[test]
     fn every_read_on_an_unconfigured_feed_is_no_data_present() {
         let s = ProxyWithCache::deploy(&[(12345, 7)]);
         let unknown = mock_feed_id(&s.env, 99);
         let c = s.client();
 
         assert!(matches!(
-            c.try_latest_round(&unknown),
+            c.try_latest_round(&unknown, &18),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
         assert!(matches!(
-            c.try_get_round(&unknown, &1),
+            c.try_get_round(&unknown, &1, &18),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
         assert_eq!(
@@ -121,7 +141,7 @@ mod lifecycle {
         let s = ProxyWithCache::deploy(&[(100, 5)]);
         let id_before = s.proxy.clone();
         let c = s.client();
-        assert_eq!(c.latest_round(&s.did).answer, I256::from_i128(&s.env, 100));
+        assert_eq!(c.latest_round(&s.did, &18).answer, I256::from_i128(&s.env, 100));
 
         let hash = s.env.deployer().upload_contract_wasm(PROXY_SELF_WASM);
         c.upgrade(&hash);
@@ -131,7 +151,7 @@ mod lifecycle {
             "proxy address is stable across the upgrade"
         );
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &18).answer,
             I256::from_i128(&s.env, 100),
             "reader interface and cache routing survive the upgrade"
         );
@@ -141,7 +161,7 @@ mod lifecycle {
     fn cache_is_upgradable() {
         let s = ProxyWithCache::deploy(&[(100, 5), (110, 6)]);
         let c = s.client();
-        assert_eq!(c.latest_round(&s.did).answer, I256::from_i128(&s.env, 110));
+        assert_eq!(c.latest_round(&s.did, &18).answer, I256::from_i128(&s.env, 110));
 
         let cache_id_before = s.cache.clone();
         let hash = s.env.deployer().upload_contract_wasm(CACHE_SELF_WASM);
@@ -152,19 +172,19 @@ mod lifecycle {
             "cache address is stable across the upgrade"
         );
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &18).answer,
             I256::from_i128(&s.env, 110),
             "latest round survives the cache upgrade"
         );
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &18).answer,
             I256::from_i128(&s.env, 100),
             "historical round survives the cache upgrade"
         );
 
         seed_round(&s.env, &s.cache, &s.did, &s.sender, 250, 9);
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &18).answer,
             I256::from_i128(&s.env, 250),
             "the upgraded cache keeps operating end-to-end"
         );
@@ -176,7 +196,7 @@ mod lifecycle {
         let cache_b = s.deploy_secondary_cache(&[(999, 90)]);
         let id_before = s.proxy.clone();
         let c = s.client();
-        let before = c.latest_round(&s.did);
+        let before = c.latest_round(&s.did, &18);
         assert_eq!(before.answer, I256::from_i128(&s.env, 100));
         assert_eq!(before.timestamp, 5);
 
@@ -186,7 +206,7 @@ mod lifecycle {
             s.proxy, id_before,
             "proxy address is stable across the swap"
         );
-        let after = c.latest_round(&s.did);
+        let after = c.latest_round(&s.did, &18);
         assert_eq!(
             after.answer,
             I256::from_i128(&s.env, 999),
@@ -203,16 +223,16 @@ mod lifecycle {
         let s = ProxyWithCache::deploy(&[(100, 5), (110, 6)]);
         let cache2 = s.deploy_secondary_cache(&[(200, 5)]);
         let c = s.client();
-        assert_eq!(c.get_round(&s.did, &2).answer, I256::from_i128(&s.env, 110));
+        assert_eq!(c.get_round(&s.did, &2, &18).answer, I256::from_i128(&s.env, 110));
         c.set_cache(&cache2);
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &18).answer,
             I256::from_i128(&s.env, 200),
             "round 1 now resolves from the new cache"
         );
         assert!(
             matches!(
-                c.try_get_round(&s.did, &2),
+                c.try_get_round(&s.did, &2, &18),
                 Err(Ok(ProxyReadError::NoDataPresent))
             ),
             "old cache's round 2 is unreachable — round history never spans caches"

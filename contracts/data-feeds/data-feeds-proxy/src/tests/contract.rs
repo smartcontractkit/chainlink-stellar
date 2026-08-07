@@ -56,7 +56,7 @@ mod latest_round {
     fn no_rounds_is_no_data_present() {
         let p = Proxy::deploy();
         assert!(matches!(
-            p.client().try_latest_round(&p.data_id()),
+            p.client().try_latest_round(&p.data_id(), &STORED_DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -85,7 +85,7 @@ mod get_round {
     fn exact_round_projected() {
         let p = Proxy::deploy();
         p.inject(&[(6, 600, 60), (5, 500, 50)]);
-        let r = p.client().get_round(&p.data_id(), &5);
+        let r = p.client().get_round(&p.data_id(), &5, &STORED_DECIMALS);
         assert_eq!(r.round_id, 5, "exact id 5, not the newer round 6");
         assert_eq!(r.answer, I256::from_i128(&p.env, 500));
         assert_eq!(r.timestamp, 50);
@@ -96,7 +96,7 @@ mod get_round {
         let p = Proxy::deploy();
         p.inject(&[(5, 5, 50)]);
         assert!(matches!(
-            p.client().try_get_round(&p.data_id(), &9u64),
+            p.client().try_get_round(&p.data_id(), &9u64, &STORED_DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -104,7 +104,7 @@ mod get_round {
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
-            p.client().get_round(&p.data_id(), &1u64);
+            p.client().get_round(&p.data_id(), &1u64, &STORED_DECIMALS);
         });
     }
 }
@@ -215,10 +215,16 @@ mod invariants {
             stellar_access::ownable::OwnableError::TransferInProgress as u32,
             stellar_access::ownable::OwnableError::OwnerAlreadySet as u32,
         ];
-        let proxy = [ProxyReadError::NoDataPresent];
+        let proxy = [
+            ProxyReadError::NoDataPresent,
+            ProxyReadError::UnsupportedDecimals,
+            ProxyReadError::AnswerTruncatedToZero,
+        ];
         for e in proxy {
             let expected = match e {
                 ProxyReadError::NoDataPresent => 50,
+                ProxyReadError::UnsupportedDecimals => 51,
+                ProxyReadError::AnswerTruncatedToZero => 52,
             };
             let code = e as u32;
             assert_eq!(code, expected, "discriminant matches its wire value");
@@ -286,5 +292,84 @@ mod lifecycle {
         let hash = p.env.deployer().upload_contract_wasm(TARGET_WASM);
         p.client().upgrade(&hash);
         assert_eq!(peek(&p.env, &p.id), 0);
+    }
+}
+
+mod scaling {
+    use super::*;
+
+    const STORED: i128 = 1_500_000_000_000_000_000;
+
+    fn proxy_with_round() -> Proxy {
+        let p = Proxy::deploy();
+        p.inject(&[(1, STORED, 5)]);
+        p
+    }
+
+    fn answer_at(p: &Proxy, precision: u32) -> i128 {
+        p.client()
+            .latest_round(&p.data_id(), &precision)
+            .answer
+            .to_i128()
+            .expect("answer fits i128")
+    }
+
+    #[test]
+    fn downscales_to_the_requested_precision() {
+        let p = proxy_with_round();
+
+        let cases: [(u32, i128); 5] = [
+            (STORED_DECIMALS, STORED),
+            (17, 150_000_000_000_000_000),
+            (15, 1_500_000_000_000_000),
+            (8, 150_000_000),
+            (0, 1),
+        ];
+        for (precision, expected) in cases {
+            assert_eq!(
+                answer_at(&p, precision),
+                expected,
+                "1.5 at 18dp scaled to {precision}dp"
+            );
+        }
+    }
+
+    #[test]
+    fn get_round_also_downscales() {
+        let p = proxy_with_round();
+
+        let round = p.client().get_round(&p.data_id(), &1, &8);
+
+        assert_eq!(round.answer.to_i128(), Some(150_000_000));
+        assert_eq!(round.round_id, 1, "identity is untouched by scaling");
+    }
+
+    #[test]
+    fn negative_answers_truncate_towards_zero() {
+        let p = Proxy::deploy();
+        p.inject(&[(1, -STORED, 5)]);
+
+        assert_eq!(answer_at(&p, 8), -150_000_000);
+    }
+
+    #[test]
+    fn rejects_a_precision_above_the_stored_one() {
+        let p = proxy_with_round();
+
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &19),
+            Err(Ok(ProxyReadError::UnsupportedDecimals))
+        ));
+    }
+
+    #[test]
+    fn rejects_truncation_to_zero() {
+        let p = Proxy::deploy();
+        p.inject(&[(1, 999, 5)]);
+
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &0),
+            Err(Ok(ProxyReadError::AnswerTruncatedToZero))
+        ));
     }
 }

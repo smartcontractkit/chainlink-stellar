@@ -16,6 +16,8 @@ pub(crate) use crate::{DataFeedsProxy, DataFeedsProxyClient, DataId, ProxyReadEr
 
 pub(crate) const DUMMY_MOCK_FEED_ID: u8 = 1;
 
+pub(crate) const STORED_DECIMALS: u32 = 18;
+
 pub(crate) struct Proxy {
     pub(crate) env: Env,
     pub(crate) id: Address,
@@ -74,6 +76,6 @@ impl Proxy {
     }
 
     pub(crate) fn latest_round(&self) -> Round {
-        self.client().latest_round(&self.data_id())
+        self.client().latest_round(&self.data_id(), &STORED_DECIMALS)
     }
 }

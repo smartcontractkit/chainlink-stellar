@@ -1,6 +1,6 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, I256};
 
-use data_feeds_cache::DataFeedsCacheReaderClient;
+use data_feeds_cache::{DataFeedsCacheReaderClient, RoundData};
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
@@ -22,28 +22,31 @@ impl DataFeedsProxy {
 
 #[contractimpl]
 impl DataFeedsProxyReader for DataFeedsProxy {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Round, ProxyReadError> {
+    fn latest_round(
+        env: Env,
+        data_id: BytesN<16>,
+        precision: u32,
+    ) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
-        DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
+        let cache = DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env));
+        let round = cache
             .latest_round(&data_id)
-            .map(|r| Round {
-                round_id: r.round_id,
-                answer: r.answer,
-                timestamp: r.timestamp,
-            })
-            .ok_or(ProxyReadError::NoDataPresent)
+            .ok_or(ProxyReadError::NoDataPresent)?;
+        downscale(&env, &cache, &data_id, precision, round)
     }
 
-    fn get_round(env: Env, data_id: BytesN<16>, round_id: u64) -> Result<Round, ProxyReadError> {
+    fn get_round(
+        env: Env,
+        data_id: BytesN<16>,
+        round_id: u64,
+        precision: u32,
+    ) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
-        DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
+        let cache = DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env));
+        let round = cache
             .get_round(&data_id, &round_id)
-            .map(|r| Round {
-                round_id: r.round_id,
-                answer: r.answer,
-                timestamp: r.timestamp,
-            })
-            .ok_or(ProxyReadError::NoDataPresent)
+            .ok_or(ProxyReadError::NoDataPresent)?;
+        downscale(&env, &cache, &data_id, precision, round)
     }
 
     fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError> {
@@ -59,6 +62,39 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .description(&data_id)
             .ok_or(ProxyReadError::NoDataPresent)
     }
+}
+
+fn downscale(
+    env: &Env,
+    cache: &DataFeedsCacheReaderClient,
+    data_id: &BytesN<16>,
+    precision: u32,
+    round: RoundData,
+) -> Result<Round, ProxyReadError> {
+    let stored = cache
+        .decimals(data_id)
+        .ok_or(ProxyReadError::NoDataPresent)?;
+    if precision > stored {
+        return Err(ProxyReadError::UnsupportedDecimals);
+    }
+
+    let answer = if precision == stored {
+        round.answer
+    } else {
+        let zero = I256::from_i32(env, 0);
+        let divisor = I256::from_i32(env, 10).pow(stored - precision);
+        let scaled = round.answer.div(&divisor);
+        if scaled == zero && round.answer != zero {
+            return Err(ProxyReadError::AnswerTruncatedToZero);
+        }
+        scaled
+    };
+
+    Ok(Round {
+        round_id: round.round_id,
+        answer,
+        timestamp: round.timestamp,
+    })
 }
 
 #[contractimpl]
