@@ -6,10 +6,18 @@ WASM_DIR := target/wasm32v1-none/release
 # lives elsewhere, e.g. `make docker-ccv-dev CCV_REPO=$HOME/code/chainlink-ccv`.
 CCV_REPO ?= ../chainlink-ccv
 
-.PHONY: build test test-e2e check fmt clean generate-interfaces generate-bindings docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
+.PHONY: build test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
 
 build:
 	stellar contract build
+
+# Rebuild the embedded CRE contract WASM committed under deployment/cre/artifacts/
+# (served to Go consumers via deployment/cre.Artifact). CI fails if these are
+# out of sync with the contract sources. Always builds in a pinned linux/amd64
+# docker container — the bytes are host-platform-dependent, so there is exactly
+# one canonical build environment. Requires docker.
+update-cre-artifacts:
+	./scripts/update_cre_artifacts.sh
 
 test-e2e:
 	go test -v -timeout 30m ./tests/e2e/...

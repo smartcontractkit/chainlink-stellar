@@ -43,7 +43,12 @@ jobs:
       - name: Regenerate interfaces and bindings
         run: make generate-bindings
 
+      - name: Rebuild embedded CRE contract artifacts
+        run: make update-cre-artifacts
+
       - name: Check for uncommitted changes
         run: |
           git diff --exit-code -- contracts/common/interfaces/ bindings/contracts/ || \
             (echo "Generated code is out of date. Run 'make generate-bindings' and commit the result." && exit 1)
+          git diff --exit-code -- deployment/cre/artifacts/ || \
+            (echo "Embedded CRE contract WASM is out of date. Run 'make update-cre-artifacts' and commit the result." && exit 1)
