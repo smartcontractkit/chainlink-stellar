@@ -108,6 +108,9 @@ jobs:
 
       - name: Install Stellar CLI
         uses: ./.github/actions/setup-stellar-cli
+        with:
+          version: "27.0.0"
+          shasum: "357bf712f6353c28cd33c794402a3c87231757a5b305e6ef1604365af4fdd556"
 
       - name: Build contract WASMs
         run: just build
