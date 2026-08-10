@@ -48,6 +48,10 @@ PruneInterval = '10m' # Default
 # PruneTxExpiration is the minimum time a terminal tx is retained after reaching its terminal state before being eligible for pruning. Ignored when PruneInterval is 0.
 PruneTxExpiration = '2h' # Default
 
+[BalanceMonitor]
+# BalancePollPeriod is the rate to poll keystore account balances for the account_balance telemetry gauge. Balances move slowly; 30s halves RPC load vs the common 10s default.
+BalancePollPeriod = '30s' # Default
+
 [MultiNode]
 # Enabled enables the multinode feature. The Stellar relayer always uses the multinode pool; false is ignored.
 Enabled = true # Default
