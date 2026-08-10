@@ -91,6 +91,38 @@ NewHeadsPollInterval = "1s"
 	})
 }
 
+func TestSetDefaults_BalanceMonitor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fills the 30s default", func(t *testing.T) {
+		raw := `
+ChainID = "` + chain_selectors.STELLAR_TESTNET.ChainID + `"
+[[Nodes]]
+Name = "primary"
+URL = "https://example.invalid"
+`
+		cfg, err := NewDecodedTOMLConfig(raw)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.BalanceMonitor.BalancePollPeriod)
+		require.Equal(t, 30*time.Second, cfg.BalanceMonitor.BalancePollPeriod.Duration())
+	})
+
+	t.Run("respects explicit override", func(t *testing.T) {
+		raw := `
+ChainID = "` + chain_selectors.STELLAR_TESTNET.ChainID + `"
+[[Nodes]]
+Name = "primary"
+URL = "https://example.invalid"
+
+[BalanceMonitor]
+BalancePollPeriod = "10s"
+`
+		cfg, err := NewDecodedTOMLConfig(raw)
+		require.NoError(t, err)
+		require.Equal(t, 10*time.Second, cfg.BalanceMonitor.BalancePollPeriod.Duration())
+	})
+}
+
 // TestSetDefaults_Idempotent ensures double SetDefaults doesn't clobber overrides.
 func TestSetDefaults_Idempotent(t *testing.T) {
 	t.Parallel()
