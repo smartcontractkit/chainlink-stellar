@@ -8,8 +8,6 @@ import (
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	frameworkmetrics "github.com/smartcontractkit/chainlink-framework/metrics"
-
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-common/pkg/monitoring/balance"
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
@@ -46,13 +44,6 @@ func NewBalanceMonitor(opts BalanceMonitorOpts) (services.Service, error) {
 	if opts.Timeout <= 0 {
 		return nil, fmt.Errorf("balance monitor timeout must be positive, got %s", opts.Timeout)
 	}
-	// Records the NOP-facing node_balance Prometheus gauge plus its Beholder
-	// twin (framework metrics has no Stellar chain-family constant yet).
-	balanceMetrics, err := frameworkmetrics.NewGenericBalanceMetrics(opts.ChainInfo.ChainFamilyName, opts.ChainInfo.ChainID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize balance metrics: %w", err)
-	}
-	lggr := logger.Named(opts.Logger, "StellarBalanceMonitor")
 	return balance.NewGenericBalanceMonitor(balance.GenericBalanceMonitorOpts{
 		ChainInfo:           opts.ChainInfo,
 		ChainNativeCurrency: "XLM",
@@ -61,17 +52,15 @@ func NewBalanceMonitor(opts BalanceMonitorOpts) (services.Service, error) {
 		Logger:   opts.Logger,
 		Keystore: opts.Keystore,
 		NewGenericBalanceClient: func() (balance.GenericBalanceClient, error) {
-			return &balanceClient{getClient: opts.GetClient, timeout: opts.Timeout, lggr: lggr, balanceMetrics: balanceMetrics}, nil
+			return &balanceClient{getClient: opts.GetClient, timeout: opts.Timeout}, nil
 		},
 		KeyToAccountMapper: func(_ context.Context, pk string) (string, error) { return pk, nil },
 	})
 }
 
 type balanceClient struct {
-	getClient      func(ctx context.Context) (BalanceMonitorRPCClient, error)
-	timeout        time.Duration
-	lggr           logger.Logger
-	balanceMetrics frameworkmetrics.GenericBalanceMetrics
+	getClient func(ctx context.Context) (BalanceMonitorRPCClient, error)
+	timeout   time.Duration
 }
 
 var _ balance.GenericBalanceClient = (*balanceClient)(nil)
@@ -81,16 +70,6 @@ func (c *balanceClient) GetAccountBalance(addr string) (float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	bal, err := c.fetchBalance(ctx, addr)
-	if err != nil {
-		return 0, err
-	}
-	// NOPs rely on prometheus
-	c.balanceMetrics.RecordNodeBalance(ctx, addr, bal)
-	return bal, nil
-}
-
-func (c *balanceClient) fetchBalance(ctx context.Context, addr string) (float64, error) {
 	accountID, err := xdr.AddressToAccountId(addr)
 	if err != nil {
 		return 0, fmt.Errorf("invalid stellar account address %q: %w", addr, err)

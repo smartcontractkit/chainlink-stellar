@@ -6,15 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
-
-	frameworkmetrics "github.com/smartcontractkit/chainlink-framework/metrics"
 
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
@@ -23,34 +20,14 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/relayer/monitor/mocks"
 )
 
-const (
-	testAddress = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
-	testChainID = "test-network-id-hash"
-)
-
-func newTestBalanceMetrics(t *testing.T) frameworkmetrics.GenericBalanceMetrics {
-	t.Helper()
-	m, err := frameworkmetrics.NewGenericBalanceMetrics("stellar", testChainID)
-	require.NoError(t, err)
-	return m
-}
+const testAddress = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
 
 func newTestClient(t *testing.T, rpc BalanceMonitorRPCClient) *balanceClient {
 	t.Helper()
 	return &balanceClient{
-		getClient:      func(context.Context) (BalanceMonitorRPCClient, error) { return rpc, nil },
-		timeout:        time.Second,
-		lggr:           logger.Test(t),
-		balanceMetrics: newTestBalanceMetrics(t),
+		getClient: func(context.Context) (BalanceMonitorRPCClient, error) { return rpc, nil },
+		timeout:   time.Second,
 	}
-}
-
-// nodeBalancePromValue reads back the NOP-facing node_balance Prometheus gauge.
-func nodeBalancePromValue(t *testing.T) float64 {
-	t.Helper()
-	g, err := frameworkmetrics.NodeBalance.GetMetricWithLabelValues(testAddress, testChainID, "stellar")
-	require.NoError(t, err)
-	return testutil.ToFloat64(g)
 }
 
 // accountEntryXDR builds a base64 XDR LedgerEntryData for an account entry.
@@ -91,8 +68,6 @@ func TestBalanceClient_GetAccountBalance(t *testing.T) {
 		require.NoError(t, err)
 		assert.InDelta(t, 123.456789, got, 1e-9)
 		require.Len(t, gotKeys, 1, "expected exactly one ledger key per fetch")
-		assert.InDelta(t, 123.456789, nodeBalancePromValue(t), 1e-9,
-			"balance must be mirrored to the NOP-facing node_balance prom gauge")
 	})
 
 	t.Run("unfunded account returns zero without error", func(t *testing.T) {
@@ -103,8 +78,6 @@ func TestBalanceClient_GetAccountBalance(t *testing.T) {
 		got, err := newTestClient(t, rpc).GetAccountBalance(testAddress)
 		require.NoError(t, err)
 		assert.Zero(t, got)
-		assert.Zero(t, nodeBalancePromValue(t),
-			"unfunded-account zero must also reach the node_balance prom gauge")
 	})
 
 	t.Run("invalid address errors", func(t *testing.T) {
@@ -125,10 +98,8 @@ func TestBalanceClient_GetAccountBalance(t *testing.T) {
 
 	t.Run("client selection error propagates", func(t *testing.T) {
 		c := &balanceClient{
-			getClient:      func(context.Context) (BalanceMonitorRPCClient, error) { return nil, errors.New("no live nodes") },
-			timeout:        time.Second,
-			lggr:           logger.Test(t),
-			balanceMetrics: newTestBalanceMetrics(t),
+			getClient: func(context.Context) (BalanceMonitorRPCClient, error) { return nil, errors.New("no live nodes") },
+			timeout:   time.Second,
 		}
 		_, err := c.GetAccountBalance(testAddress)
 		require.ErrorContains(t, err, "no live nodes")
