@@ -34,6 +34,7 @@ func (c *TOMLConfig) SetFrom(f *TOMLConfig) {
 		c.ChainID = f.ChainID
 	}
 	c.TxManager.SetFrom(&f.TxManager)
+	c.BalanceMonitor.SetFrom(&f.BalanceMonitor)
 	c.MultiNode.SetFrom(&f.MultiNode)
 	c.Nodes.SetFrom(&f.Nodes)
 	if f.RequestTimeout != nil {
@@ -123,6 +124,14 @@ func (c *TxManagerConfig) SetFrom(f *TxManagerConfig) {
 	if f.PruneTxExpiration != nil {
 		v := *f.PruneTxExpiration
 		c.PruneTxExpiration = &v
+	}
+}
+
+// SetFrom copies non-nil fields from f onto c (deep-copied).
+func (c *BalanceMonitorConfig) SetFrom(f *BalanceMonitorConfig) {
+	if f.BalancePollPeriod != nil {
+		v := *f.BalancePollPeriod
+		c.BalancePollPeriod = &v
 	}
 }
 

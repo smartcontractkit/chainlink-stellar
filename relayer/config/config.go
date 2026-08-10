@@ -58,6 +58,10 @@ type TOMLConfig struct {
 	// fields use defaults applied by SetDefaults (from docs.toml).
 	TxManager TxManagerConfig `toml:"TxManager"`
 
+	// BalanceMonitor holds optional account balance monitor settings. Omitted
+	// fields use defaults applied by SetDefaults (from docs.toml).
+	BalanceMonitor BalanceMonitorConfig `toml:"BalanceMonitor"`
+
 	// MultiNode configures RPC node selection, health checking, and failover. Omitted fields
 	// are filled by SetDefaults. See chainlink-framework/multinode.
 	MultiNode mncfg.MultiNodeConfig `toml:"MultiNode"`
@@ -69,6 +73,13 @@ type TOMLConfig struct {
 
 // DefaultRequestTimeout bounds each individual Soroban RPC call when RequestTimeout is unset.
 const DefaultRequestTimeout = 30 * time.Second
+
+// BalanceMonitorConfig configures the keystore account balance monitor.
+type BalanceMonitorConfig struct {
+	// BalancePollPeriod is the rate to poll account balances for the
+	// account_balance telemetry gauge.
+	BalancePollPeriod *clconfig.Duration `toml:"BalancePollPeriod"`
+}
 
 // SetDefaults fills unset fields with docs.toml defaults via SetFrom, then
 // resolves TXM simulation hints. Returns a fully-resolved config in one phase.

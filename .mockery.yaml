@@ -20,3 +20,15 @@ packages:
   github.com/smartcontractkit/chainlink-stellar/relayer:
     interfaces:
       StellarTxManager:
+
+  github.com/smartcontractkit/chainlink-common/pkg/types/core:
+    config:
+      dir: ./relayer/monitor/mocks
+    interfaces:
+      Keystore:
+
+  github.com/smartcontractkit/chainlink-stellar/relayer/monitor:
+    config:
+      dir: ./relayer/monitor/mocks
+    interfaces:
+      BalanceMonitorRPCClient:

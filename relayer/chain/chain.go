@@ -14,11 +14,13 @@ import (
 	"github.com/smartcontractkit/chainlink-framework/multinode"
 
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
+	"github.com/smartcontractkit/chainlink-common/pkg/monitoring/balance"
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
 	"github.com/smartcontractkit/chainlink-common/pkg/types"
 	"github.com/smartcontractkit/chainlink-common/pkg/types/core"
 
 	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/monitor"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 
@@ -60,8 +62,9 @@ type chain struct {
 	lggr      logger.Logger
 	keyStore  core.Keystore
 
-	txm       *txm.StellarTxm
-	multiNode *multinode.MultiNode[multinode.StringID, *MultiNodeClient]
+	txm            *txm.StellarTxm
+	multiNode      *multinode.MultiNode[multinode.StringID, *MultiNodeClient]
+	balanceMonitor services.Service
 }
 
 // Opts are the external dependencies required to construct a Chain.
@@ -120,6 +123,26 @@ func NewChain(cfg *config.TOMLConfig, opts Opts, chainInfo chainsel.StellarChain
 	}
 	ch.txm = t
 
+	bm, err := monitor.NewBalanceMonitor(monitor.BalanceMonitorOpts{
+		ChainInfo: balance.ChainInfo{
+			ChainFamilyName: config.ChainFamilyName,
+			ChainID:         chainInfo.ChainID,
+			NetworkName:     string(chainInfo.NetworkType),
+			NetworkNameFull: chainInfo.Name,
+		},
+		Config:   balance.GenericBalanceConfig{BalancePollPeriod: *cfg.BalanceMonitor.BalancePollPeriod},
+		Logger:   lggr,
+		Keystore: opts.KeyStore,
+		GetClient: func(ctx context.Context) (monitor.BalanceMonitorRPCClient, error) {
+			return ch.GetClient(ctx)
+		},
+		Timeout: cfg.RequestTimeout.Duration(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create balance monitor: %w", err)
+	}
+	ch.balanceMonitor = bm
+
 	return ch, nil
 }
 
@@ -172,7 +195,7 @@ func (c *chain) Start(ctx context.Context) error {
 	return c.StartOnce("StellarChain", func() error {
 		c.lggr.Debugw("Starting")
 		var ms services.MultiStart
-		return ms.Start(ctx, c.multiNode, c.txm)
+		return ms.Start(ctx, c.multiNode, c.txm, c.balanceMonitor)
 	})
 }
 
@@ -180,6 +203,10 @@ func (c *chain) Close() error {
 	return c.StopOnce("StellarChain", func() error {
 		c.lggr.Debugw("Stopping")
 		var errs error
+		if err := c.balanceMonitor.Close(); err != nil {
+			c.lggr.Warnw("Error closing balance monitor", "err", err)
+			errs = errors.Join(errs, fmt.Errorf("close balance monitor: %w", err))
+		}
 		if err := c.txm.Close(); err != nil {
 			c.lggr.Warnw("Error closing txm", "err", err)
 			errs = errors.Join(errs, fmt.Errorf("close txm: %w", err))
@@ -193,13 +220,14 @@ func (c *chain) Close() error {
 }
 
 func (c *chain) Ready() error {
-	return errors.Join(c.StateMachine.Ready(), c.multiNode.Ready(), c.txm.Ready())
+	return errors.Join(c.StateMachine.Ready(), c.multiNode.Ready(), c.txm.Ready(), c.balanceMonitor.Ready())
 }
 
 func (c *chain) HealthReport() map[string]error {
 	report := map[string]error{c.Name(): c.StateMachine.Healthy()}
 	services.CopyHealth(report, c.multiNode.HealthReport())
 	services.CopyHealth(report, c.txm.HealthReport())
+	services.CopyHealth(report, c.balanceMonitor.HealthReport())
 	return report
 }
 

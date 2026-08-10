@@ -1,4 +1,4 @@
-// Package cre exposes metadata about the CRE contract WASM artifacts produced by
+// Package cre exposes the CRE contract WASM artifacts produced by
 // `stellar contract build` (into target/wasm32v1-none/release/).
 //
 // These filenames are the source of truth for callers that must select a specific
@@ -7,6 +7,11 @@
 // must match the corresponding Cargo package name with '-' replaced by '_'; that
 // invariant is enforced by artifacts_test.go so a Rust package rename can't silently
 // drift from the Go name.
+//
+// The compiled WASM for each constant is also committed under artifacts/ and
+// exposed via Artifact, so Go consumers can deploy the pinned bytecode without
+// a Rust toolchain; the check-generated CI job keeps the blobs in sync with
+// the contract sources.
 package cre
 
 const (
@@ -18,4 +23,7 @@ const (
 
 	// ReceiverWasm is the CRE test receiver (contracts/cre/test/receiver).
 	ReceiverWasm = "receiver.wasm"
+
+	// RejectingReceiverWasm is the CRE test receiver that always rejects on_report
+	RejectingReceiverWasm = "rejecting_receiver.wasm"
 )
