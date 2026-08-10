@@ -1,14 +1,22 @@
-# Pin Rust for GitHub Actions. Bump `toolchain` below and align rust-toolchain.toml when upgrading.
+# Pin Rust for GitHub Actions. Bump the `toolchain` default below and align rust-toolchain.toml when upgrading.
 name: Setup Rust toolchain
-description: Install pinned Rust toolchain with optional wasm target and rustfmt.
+description: Install pinned Rust toolchain with optional wasm target, rustfmt, and clippy.
 
 inputs:
+  toolchain:
+    description: Rust toolchain version
+    required: false
+    default: "1.93.1"
   wasm32-target:
     description: Also install wasm32v1-none target (Soroban contracts)
     required: false
     default: "false"
   rustfmt:
     description: Also install rustfmt component
+    required: false
+    default: "false"
+  clippy:
+    description: Also install clippy component
     required: false
     default: "false"
 
@@ -18,12 +26,16 @@ runs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
       with:
-        toolchain: "1.93.1"
+        toolchain: ${{ inputs.toolchain }}
     - name: Add wasm32v1-none target
       if: ${{ inputs.wasm32-target == 'true' }}
       shell: bash
-      run: rustup target add wasm32v1-none
+      run: rustup target add wasm32v1-none --toolchain ${{ inputs.toolchain }}
     - name: Add rustfmt
       if: ${{ inputs.rustfmt == 'true' }}
       shell: bash
-      run: rustup component add rustfmt
+      run: rustup component add rustfmt --toolchain ${{ inputs.toolchain }}
+    - name: Add clippy
+      if: ${{ inputs.clippy == 'true' }}
+      shell: bash
+      run: rustup component add clippy --toolchain ${{ inputs.toolchain }}

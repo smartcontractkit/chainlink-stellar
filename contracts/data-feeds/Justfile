@@ -1,0 +1,29 @@
+# Default: show available recipes
+default:
+    just --list
+
+host_target := `rustc -vV | grep host | awk '{print $2}'`
+
+# Run all data feeds contract tests
+test:
+    cargo test --workspace --target {{host_target}} --verbose
+
+# Check contracts compile
+check:
+    cargo check --workspace --target {{host_target}}
+
+# Lint with clippy (CI mode, warnings are errors)
+lint:
+    cargo clippy --workspace --all-targets --target {{host_target}} -- -D warnings
+
+# Format all data feeds Rust code
+fmt:
+    cargo fmt --all
+
+# Check formatting
+fmt-check:
+    cargo fmt --all -- --check
+
+# Build all data feeds contract WASMs
+build:
+    stellar contract build
