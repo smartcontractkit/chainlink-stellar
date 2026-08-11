@@ -21,7 +21,7 @@ require (
 	github.com/smartcontractkit/chainlink-framework/metrics v0.0.0-20260423135514-5b1a7565a99c
 	github.com/smartcontractkit/chainlink-framework/multinode v0.0.0-20260423135514-5b1a7565a99c
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.1
-	github.com/stellar/go-stellar-sdk v0.6.0
+	github.com/stellar/go-stellar-sdk v0.7.1
 	github.com/stretchr/testify v1.11.1
 )
 
