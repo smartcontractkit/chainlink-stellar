@@ -65,6 +65,15 @@ impl Proxy {
         MockCacheClient::new(&self.env, &self.mock).set_err(&CacheError::MalformedReport);
     }
 
+    pub(crate) fn freeze(&self) {
+        MockCacheClient::new(&self.env, &self.mock).set_frozen(&self.data_id(), &true);
+    }
+
+    pub(crate) fn set_latest(&self, row: (u64, i128, u64)) {
+        MockCacheClient::new(&self.env, &self.mock)
+            .set_latest(&self.data_id(), &mock_round_data(&self.env, row));
+    }
+
     pub(crate) fn data_id(&self) -> DataId {
         mock_feed_id(&self.env, DUMMY_MOCK_FEED_ID)
     }

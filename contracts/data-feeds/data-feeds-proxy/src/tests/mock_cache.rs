@@ -10,6 +10,8 @@ pub(crate) struct MockCache;
 #[contracttype]
 enum MockKey {
     Rounds(DataId),
+    Latest(DataId),
+    Frozen(DataId),
     Err,
 }
 
@@ -24,20 +26,32 @@ impl MockCache {
     pub fn set_err(env: Env, e: CacheError) {
         env.storage().instance().set(&MockKey::Err, &e);
     }
+    pub fn set_latest(env: Env, data_id: DataId, latest: RoundData) {
+        env.storage()
+            .instance()
+            .set(&MockKey::Latest(data_id), &latest);
+    }
+    pub fn set_frozen(env: Env, data_id: DataId, frozen: bool) {
+        env.storage()
+            .instance()
+            .set(&MockKey::Frozen(data_id), &frozen);
+    }
 }
 
 #[contractimpl]
 impl DataFeedsCacheReader for MockCache {
-    fn latest_round(env: Env, data_id: DataId) -> Result<Option<RoundData>, CacheError> {
+    fn latest_round(
+        env: Env,
+        data_ids: Vec<DataId>,
+    ) -> Result<Vec<Option<RoundData>>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
             return Err(e);
         }
-        let rounds: Vec<RoundData> = env
-            .storage()
-            .instance()
-            .get(&MockKey::Rounds(data_id))
-            .unwrap_or(Vec::new(&env));
-        Ok(rounds.iter().max_by_key(|v| v.round_id))
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(env.storage().instance().get(&MockKey::Latest(data_id)));
+        }
+        Ok(out)
     }
     fn get_round(
         env: Env,
@@ -82,8 +96,11 @@ impl DataFeedsCacheReader for MockCache {
     fn is_configured(_env: Env, _data_id: DataId) -> Result<bool, CacheError> {
         unimplemented!("MockCache simulates no config reads; add real logic before testing them")
     }
-    fn is_frozen(_env: Env, _data_id: DataId) -> bool {
-        unimplemented!("MockCache simulates no freeze state; add real logic before testing it")
+    fn is_frozen(env: Env, data_id: DataId) -> bool {
+        env.storage()
+            .instance()
+            .get(&MockKey::Frozen(data_id))
+            .unwrap_or(false)
     }
     fn description(env: Env, _data_id: DataId) -> Result<Option<String>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
