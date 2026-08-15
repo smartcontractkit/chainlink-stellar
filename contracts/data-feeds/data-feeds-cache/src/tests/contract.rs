@@ -150,7 +150,7 @@ mod lifecycle {
         cache.write(&feed, 123_456_789, big_ts);
 
         let history_before = cache.history(&feed);
-        let latest_before = cache.latest_round(&feed);
+        let latest_before = cache.latest_round(&feed.id).unwrap();
         let decimals_before = cache.client().decimals(&feed.id);
         let description_before = cache.client().description(&feed.id);
         let perms_before = cache.client().get_feed_permissions(&feed.id);
@@ -186,7 +186,7 @@ mod lifecycle {
                 .expect("round lost across upgrade");
             assert_same_round(&after, &before, "history round");
         }
-        assert_same_round(&cache.latest_round(&feed), &latest_before, "latest_round");
+        assert_same_round(&cache.latest_round(&feed.id).unwrap(), &latest_before, "latest_round");
 
         let r2_before = history_before.iter().find(|r| r.round_id == 2).unwrap();
         assert_same_round(&cache.round(&feed, 2).unwrap(), &r2_before, "get_round(2)");

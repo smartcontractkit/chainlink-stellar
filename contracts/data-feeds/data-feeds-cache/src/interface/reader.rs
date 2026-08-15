@@ -5,7 +5,10 @@ use crate::interface::CacheError;
 
 #[contractclient(name = "DataFeedsCacheReaderClient")]
 pub trait DataFeedsCacheReader {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Option<RoundData>, CacheError>;
+    fn latest_round(
+        env: Env,
+        data_ids: Vec<BytesN<16>>,
+    ) -> Result<Vec<Option<RoundData>>, CacheError>;
 
     fn get_round(
         env: Env,

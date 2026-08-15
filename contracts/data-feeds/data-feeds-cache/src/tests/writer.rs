@@ -335,7 +335,7 @@ mod on_report {
             stored_ts: 0,
         });
         cache.write(&feed, 7, 1);
-        assert_eq!(cache.latest_round(&feed).round_id, 1);
+        assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 1);
     }
 
     #[test]
@@ -376,7 +376,7 @@ mod on_report {
             3,
             "the ts=12 accept lands after the stale ts=11 skip"
         );
-        assert_eq!(cache.latest_round(&feed).timestamp, 12);
+        assert_eq!(cache.latest_round(&feed.id).unwrap().timestamp, 12);
     }
 
     #[test]
@@ -395,7 +395,7 @@ mod on_report {
         assert_eq!(history.get(0).unwrap().round_id, 1);
         assert_eq!(history.get(1).unwrap().round_id, 2);
         assert_eq!(history.get(1).unwrap().answer, I256::from_i128(env, 200));
-        assert_eq!(cache.latest_round(&feed).timestamp, 6);
+        assert_eq!(cache.latest_round(&feed.id).unwrap().timestamp, 6);
     }
 
     #[test]
@@ -404,7 +404,7 @@ mod on_report {
         let feed = cache.add_feed(1);
         roll(&cache.env, 4242);
         cache.write(&feed, 100, 5);
-        let rd = cache.latest_round(&feed);
+        let rd = cache.latest_round(&feed.id).unwrap();
         assert_eq!(rd.round_id, 1);
         assert_eq!(rd.answer, I256::from_i128(&cache.env, 100));
         assert_eq!(rd.timestamp, 5);
@@ -436,8 +436,8 @@ mod on_report {
             &md,
             &report(&cache.env, &[(mock_wire_id(&cache.env, 2, 0), 9, 5)]),
         );
-        assert_eq!(c.latest_round(&a).unwrap().round_id, 2);
-        assert_eq!(c.latest_round(&b).unwrap().round_id, 1);
+        assert_eq!(cache.latest_round(&a).unwrap().round_id, 2);
+        assert_eq!(cache.latest_round(&b).unwrap().round_id, 1);
     }
 
     #[test]
@@ -446,12 +446,12 @@ mod on_report {
         let feed = cache.add_feed(1);
         cache.write(&feed, i128::MAX, 5);
         assert_eq!(
-            cache.latest_round(&feed).answer,
+            cache.latest_round(&feed.id).unwrap().answer,
             I256::from_i128(&cache.env, i128::MAX)
         );
         cache.write(&feed, i128::MIN, 6);
         assert_eq!(
-            cache.latest_round(&feed).answer,
+            cache.latest_round(&feed.id).unwrap().answer,
             I256::from_i128(&cache.env, i128::MIN)
         );
     }
@@ -477,7 +477,7 @@ mod on_report {
             .client()
             .on_report(&feed.sender, &mock_metadata(env), &report);
 
-        let got = cache.latest_round(&feed).answer;
+        let got = cache.latest_round(&feed.id).unwrap().answer;
         assert_eq!(got, big);
         assert!(got.to_i128().is_none(), "answer coerced into i128 range");
     }
@@ -504,7 +504,7 @@ mod on_report {
             ),
         );
         assert_eq!(cache.history(&feed).len(), 3);
-        let latest = cache.latest_round(&feed);
+        let latest = cache.latest_round(&feed.id).unwrap();
         assert_eq!(latest.round_id, 3, "skips do not advance the counter");
         assert_eq!(latest.timestamp, 12);
     }
@@ -554,11 +554,11 @@ mod on_report {
             primary: true,
         });
         assert_eq!(
-            c.latest_round(&a).unwrap().round_id,
+            cache.latest_round(&a).unwrap().round_id,
             2,
             "feed A's own counter, not a batch-global one"
         );
-        let b_latest = c.latest_round(&b).unwrap();
+        let b_latest = cache.latest_round(&b).unwrap();
         assert_eq!(
             b_latest.round_id, 1,
             "feed B starts its own round sequence at 1"
@@ -593,11 +593,11 @@ mod on_report {
             report_ts: 15,
             stored_ts: 20,
         });
-        let b_latest = c.latest_round(&b).unwrap();
+        let b_latest = cache.latest_round(&b).unwrap();
         assert_eq!(b_latest.round_id, 1);
         assert_eq!(b_latest.answer, I256::from_i128(&cache.env, 222));
         assert_eq!(b_latest.timestamp, 5);
-        let a_latest = c.latest_round(&a).unwrap();
+        let a_latest = cache.latest_round(&a).unwrap();
         assert_eq!(
             a_latest.round_id, 1,
             "A's stale entry skipped; no second round"

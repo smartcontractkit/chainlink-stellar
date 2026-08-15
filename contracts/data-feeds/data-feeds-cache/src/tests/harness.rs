@@ -15,8 +15,8 @@ pub(crate) use crate::events::{
     InvalidUpdatePermission, StaleReport,
 };
 pub(crate) use crate::interface::types::{
-    Bound, DataId, FeedConfig, ReportEntry, RoundData, WireDataId, WorkflowName, WorkflowOwner,
-    WorkflowPermission,
+    Bound, DataId, FeedConfig, ReportEntry, RoundData, WireDataId, WorkflowName,
+    WorkflowOwner, WorkflowPermission,
 };
 pub(crate) use crate::interface::CacheError;
 pub(crate) use crate::interface::FeedConfigEntry;
@@ -154,8 +154,10 @@ impl Cache {
         self.client().find_round(&feed.id, &ts, &bound)
     }
 
-    pub(crate) fn latest_round(&self, feed: &Feed) -> RoundData {
-        self.client().latest_round(&feed.id).unwrap()
+    pub(crate) fn latest_round(&self, id: &DataId) -> Option<RoundData> {
+        self.client()
+            .latest_round(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
     }
 
     pub(crate) fn expire_round(&self, feed: &Feed, round_id: u64) {

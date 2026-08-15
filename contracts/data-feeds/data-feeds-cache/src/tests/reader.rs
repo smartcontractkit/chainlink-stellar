@@ -40,7 +40,7 @@ mod latest_round {
     fn absent_is_none() {
         let cache = Cache::deploy();
         let missing = mock_feed_id(&cache.env, 1);
-        assert!(cache.client().latest_round(&missing).is_none());
+        assert!(cache.latest_round(&missing).is_none());
     }
 
     #[test]
@@ -48,7 +48,7 @@ mod latest_round {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         cache.seed(&feed, 3);
-        let latest = cache.latest_round(&feed);
+        let latest = cache.latest_round(&feed.id).unwrap();
         assert_eq!(latest.round_id, 3);
         assert_eq!(latest.answer, I256::from_i128(&cache.env, 300));
         assert_eq!(latest.timestamp, 30);
@@ -60,7 +60,7 @@ mod latest_round {
         let feed = cache.add_feed(1);
         cache.seed(&feed, 3);
         cache.expire_round(&feed, 3);
-        assert_eq!(cache.latest_round(&feed).round_id, 3);
+        assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
     }
 }
 
@@ -360,4 +360,54 @@ mod is_configured {
         assert!(c.decimals(&id).is_none());
         assert!(c.description(&id).is_none());
     }
+}
+
+mod latest_round_batches {
+    use super::*;
+    #[test]
+    fn mixed_batch_preserves_order() {
+        let cache = Cache::deploy();
+        let written = cache.add_feed(1);
+        cache.seed(&written, 2);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, missing, written.id.clone()];
+
+        let rounds = cache.client().latest_round(&ids);
+
+        assert_eq!(rounds.len(), 2);
+        assert!(rounds.get_unchecked(0).is_none());
+        let latest = rounds.get_unchecked(1).unwrap();
+        assert_eq!(latest.round_id, 2);
+        assert_eq!(latest.timestamp, 20);
+    }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 3);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.client().is_frozen(&feed.id));
+        assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().latest_round(&Vec::new(&cache.env)).len(), 0);
+    }
+
+    #[test]
+    fn reads_large_batches() {
+        let cache = Cache::deploy();
+        let mut ids = Vec::new(&cache.env);
+        for i in 0..90u32 {
+            ids.push_back(mock_feed_id(&cache.env, (i % 250) as u8));
+        }
+        assert_eq!(cache.client().latest_round(&ids).len(), ids.len());
+    }
+
 }

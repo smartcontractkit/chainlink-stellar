@@ -30,14 +30,15 @@ impl DataFeedsCache {
 
 #[contractimpl]
 impl DataFeedsCacheReader for DataFeedsCache {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Option<RoundData>, CacheError> {
-        let Some(state) = feed::feed_state(&env, &data_id) else {
-            return Ok(None);
-        };
-        if state.frozen {
-            return Err(CacheError::FeedFrozen);
+    fn latest_round(
+        env: Env,
+        data_ids: Vec<BytesN<16>>,
+    ) -> Result<Vec<Option<RoundData>>, CacheError> {
+        let mut rounds = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            rounds.push_back(feed::feed_state(&env, &data_id).map(|state| state.latest_round));
         }
-        Ok(Some(state.latest_round))
+        Ok(rounds)
     }
 
     fn get_round(
@@ -45,7 +46,6 @@ impl DataFeedsCacheReader for DataFeedsCache {
         data_id: BytesN<16>,
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError> {
-        reject_frozen(&env, &data_id)?;
         Ok(feed::round(&env, &data_id, round_id))
     }
 
@@ -55,7 +55,6 @@ impl DataFeedsCacheReader for DataFeedsCache {
         from: u64,
         to: u64,
     ) -> Result<Vec<RoundData>, CacheError> {
-        reject_frozen(&env, &data_id)?;
         Ok(feed::range(&env, &data_id, from, to))
     }
 
@@ -65,17 +64,14 @@ impl DataFeedsCacheReader for DataFeedsCache {
         timestamp: u64,
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError> {
-        reject_frozen(&env, &data_id)?;
         Ok(feed::find_round(&env, &data_id, timestamp, bound))
     }
 
     fn decimals(env: Env, data_id: BytesN<16>) -> Result<Option<u32>, CacheError> {
-        reject_frozen(&env, &data_id)?;
         Ok(feed::decimals(&env, &data_id))
     }
 
     fn description(env: Env, data_id: BytesN<16>) -> Result<Option<String>, CacheError> {
-        reject_frozen(&env, &data_id)?;
         Ok(feed::description(&env, &data_id))
     }
 
@@ -86,13 +82,6 @@ impl DataFeedsCacheReader for DataFeedsCache {
     fn is_frozen(env: Env, data_id: BytesN<16>) -> bool {
         feed::is_frozen(&env, &data_id)
     }
-}
-
-fn reject_frozen(env: &Env, data_id: &DataId) -> Result<(), CacheError> {
-    if feed::is_frozen(env, data_id) {
-        return Err(CacheError::FeedFrozen);
-    }
-    Ok(())
 }
 
 #[contractimpl]
