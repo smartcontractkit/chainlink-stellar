@@ -77,10 +77,6 @@ mod latest_round {
         p.fail_cache();
         p.latest_round();
     }
-}
-
-mod frozen {
-    use super::*;
 
     #[test]
     #[should_panic(expected = "Error(Contract, #109)")]
@@ -88,32 +84,6 @@ mod frozen {
         let p = Proxy::deploy();
         p.freeze();
         p.latest_round();
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #109)")]
-    fn get_round_rejects_a_frozen_feed() {
-        let p = Proxy::deploy();
-        p.inject(&[(3, 300, 30)]);
-        p.freeze();
-
-        p.client().get_round(&p.data_id(), &3);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #109)")]
-    fn decimals_rejects_a_frozen_feed() {
-        let p = Proxy::deploy();
-        p.freeze();
-        p.client().decimals(&p.data_id());
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #109)")]
-    fn description_rejects_a_frozen_feed() {
-        let p = Proxy::deploy();
-        p.freeze();
-        p.client().description(&p.data_id());
     }
 }
 
@@ -146,6 +116,16 @@ mod get_round {
             p.client().get_round(&p.data_id(), &1u64);
         });
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn get_round_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.inject(&[(3, 300, 30)]);
+        p.freeze();
+
+        p.client().get_round(&p.data_id(), &3);
+    }
 }
 
 mod decimals {
@@ -170,6 +150,14 @@ mod decimals {
             p.client().decimals(&p.data_id());
         });
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn decimals_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.freeze();
+        p.client().decimals(&p.data_id());
+    }
 }
 
 mod description {
@@ -189,6 +177,14 @@ mod description {
         assert_read_extends_ttl(|p| {
             p.client().description(&p.data_id());
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn description_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.freeze();
+        p.client().description(&p.data_id());
     }
 }
 
