@@ -393,6 +393,47 @@ mod metadata_batches {
     }
 
     #[test]
+    fn duplicates_and_missing_ids_keep_input_shape() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 2);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, feed.id.clone(), missing, feed.id.clone()];
+        let c = cache.client();
+
+        let rounds = c.latest_round(&ids);
+        assert_eq!(rounds.len(), ids.len());
+        assert_eq!(rounds.get_unchecked(0).unwrap().round_id, 2);
+        assert!(rounds.get_unchecked(1).is_none());
+        assert_eq!(rounds.get_unchecked(2).unwrap().round_id, 2);
+
+        let decimals = c.decimals(&ids);
+        assert_eq!(decimals.len(), ids.len());
+        assert_eq!(decimals.get_unchecked(0), Some(18));
+        assert_eq!(decimals.get_unchecked(1), None);
+        assert_eq!(decimals.get_unchecked(2), Some(18));
+
+        let expected_desc = Some(String::from_str(&cache.env, "BTC/USD"));
+        let descriptions = c.description(&ids);
+        assert_eq!(descriptions.len(), ids.len());
+        assert_eq!(descriptions.get_unchecked(0), expected_desc);
+        assert_eq!(descriptions.get_unchecked(1), None);
+        assert_eq!(descriptions.get_unchecked(2), expected_desc);
+
+        let configured = c.is_configured(&ids);
+        assert_eq!(configured.len(), ids.len());
+        assert!(configured.get_unchecked(0));
+        assert!(!configured.get_unchecked(1));
+        assert!(configured.get_unchecked(2));
+
+        let frozen = c.is_frozen(&ids);
+        assert_eq!(frozen.len(), ids.len());
+        assert!(!frozen.get_unchecked(0));
+        assert!(!frozen.get_unchecked(1));
+        assert!(!frozen.get_unchecked(2));
+    }
+
+    #[test]
     fn is_frozen_mixed_batch_preserves_order() {
         let cache = Cache::deploy();
         let frozen = cache.add_feed(1);
