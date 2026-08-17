@@ -132,16 +132,9 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_passes_through() {
+    fn decimals_is_always_eighteen() {
         let p = Proxy::deploy();
-        let c = p.client();
-        let id_with_decimals = |dec: u8| mock_feed_id_with(&p.env, 0x20 + dec, 0);
-        assert_eq!(c.decimals(&id_with_decimals(1)), 1);
-        assert_eq!(
-            c.decimals(&id_with_decimals(3)),
-            3,
-            "distinct ids yield distinct values, so the answer comes from the cache"
-        );
+        assert_eq!(p.client().decimals(&p.data_id()), 18);
     }
 
     #[test]
@@ -185,6 +178,97 @@ mod description {
         let p = Proxy::deploy();
         p.freeze();
         p.client().description(&p.data_id());
+    }
+}
+
+mod latest_answer {
+    use super::*;
+
+    const ONE_AT_18: i128 = 1_000_000_000_000_000_000;
+
+    #[test]
+    fn full_precision_returns_the_stored_answer() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ONE_AT_18, 10));
+        assert_eq!(
+            p.client().latest_answer(&p.data_id(), &18),
+            I256::from_i128(&p.env, ONE_AT_18)
+        );
+    }
+
+    #[test]
+    fn lower_precision_scales_down_once_the_minimum_allows_it() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ONE_AT_18, 10));
+        p.client().set_min_precision(&8);
+        assert_eq!(
+            p.client().latest_answer(&p.data_id(), &8),
+            I256::from_i128(&p.env, 100_000_000)
+        );
+    }
+
+    #[test]
+    fn negative_answers_scale_toward_zero() {
+        let p = Proxy::deploy();
+        p.set_latest((1, -1_500_000_000_000_000_000, 10));
+        p.client().set_min_precision(&0);
+        assert_eq!(
+            p.client().latest_answer(&p.data_id(), &0),
+            I256::from_i128(&p.env, -1),
+            "I256 division truncates toward zero"
+        );
+    }
+
+    #[test]
+    fn precision_outside_the_window_is_rejected() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ONE_AT_18, 10));
+        assert_eq!(
+            p.client().try_latest_answer(&p.data_id(), &8),
+            Err(Ok(ProxyReadError::PrecisionOutOfRange)),
+            "below the default minimum of 18"
+        );
+        assert_eq!(
+            p.client().try_latest_answer(&p.data_id(), &19),
+            Err(Ok(ProxyReadError::PrecisionOutOfRange)),
+            "above the hard maximum of 18"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn latest_answer_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ONE_AT_18, 10));
+        p.freeze();
+        p.client().latest_answer(&p.data_id(), &18);
+    }
+}
+
+mod min_precision {
+    use super::*;
+
+    #[test]
+    fn defaults_to_the_maximum_and_can_be_lowered() {
+        let p = Proxy::deploy();
+        assert_eq!(p.client().min_precision(), 18);
+        p.client().set_min_precision(&6);
+        assert_eq!(p.client().min_precision(), 6);
+    }
+
+    #[test]
+    fn cannot_exceed_the_hard_maximum() {
+        let p = Proxy::deploy();
+        assert_eq!(
+            p.client().try_set_min_precision(&19),
+            Err(Ok(ProxyReadError::PrecisionOutOfRange))
+        );
+    }
+
+    #[test]
+    fn set_min_precision_by_non_owner_host_fails() {
+        let p = Proxy::deploy_no_auth();
+        assert!(p.client().try_set_min_precision(&6).is_err());
     }
 }
 
@@ -248,10 +332,14 @@ mod invariants {
             stellar_access::ownable::OwnableError::TransferInProgress as u32,
             stellar_access::ownable::OwnableError::OwnerAlreadySet as u32,
         ];
-        let proxy = [ProxyReadError::NoDataPresent];
+        let proxy = [
+            ProxyReadError::NoDataPresent,
+            ProxyReadError::PrecisionOutOfRange,
+        ];
         for e in proxy {
             let expected = match e {
                 ProxyReadError::NoDataPresent => 50,
+                ProxyReadError::PrecisionOutOfRange => 51,
             };
             let code = e as u32;
             assert_eq!(code, expected, "discriminant matches its wire value");

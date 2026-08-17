@@ -3,16 +3,16 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, V
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
-use crate::domain::decode::{decode_metadata, decode_report, truncate_data_id};
+use crate::domain::decode::{decode_metadata, decode_report};
 use crate::domain::feed;
 use crate::events::{
     FeedAdminAdded, FeedAdminRemoved, FeedConfigRemoved, FeedConfigSet, FeedFrozenSet, FeedUpdated,
     InvalidUpdatePermission, StaleReport,
 };
-use crate::interface::types::{RoundData, WorkflowPermission};
+use crate::interface::types::{RoundData, WorkflowPermission, DECIMALS};
 use crate::interface::CacheError;
 use crate::interface::{
-    Bound, DataFeedsCacheAdmin, DataFeedsCacheReader, DataFeedsCacheWriter, DataId, FeedConfig,
+    Bound, DataFeedsCacheAdmin, DataFeedsCacheReader, DataFeedsCacheWriter, FeedConfig,
     FeedConfigEntry,
 };
 use crate::storage::Store;
@@ -32,7 +32,7 @@ impl DataFeedsCache {
 impl DataFeedsCacheReader for DataFeedsCache {
     fn latest_round(
         env: Env,
-        data_ids: Vec<BytesN<16>>,
+        data_ids: Vec<BytesN<32>>,
     ) -> Result<Vec<Option<RoundData>>, CacheError> {
         let mut rounds = Vec::new(&env);
         for data_id in data_ids.iter() {
@@ -43,7 +43,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
 
     fn get_round(
         env: Env,
-        data_id: BytesN<16>,
+        data_id: BytesN<32>,
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError> {
         Ok(feed::round(&env, &data_id, round_id))
@@ -51,7 +51,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
 
     fn round_range(
         env: Env,
-        data_id: BytesN<16>,
+        data_id: BytesN<32>,
         from: u64,
         to: u64,
     ) -> Result<Vec<RoundData>, CacheError> {
@@ -60,14 +60,14 @@ impl DataFeedsCacheReader for DataFeedsCache {
 
     fn find_round(
         env: Env,
-        data_id: BytesN<16>,
+        data_id: BytesN<32>,
         timestamp: u64,
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError> {
         Ok(feed::find_round(&env, &data_id, timestamp, bound))
     }
 
-    fn decimals(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<u32>>, CacheError> {
+    fn decimals(env: Env, data_ids: Vec<BytesN<32>>) -> Result<Vec<Option<u32>>, CacheError> {
         let mut out = Vec::new(&env);
         for data_id in data_ids.iter() {
             out.push_back(feed::decimals(&env, &data_id));
@@ -75,7 +75,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         Ok(out)
     }
 
-    fn description(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<String>>, CacheError> {
+    fn description(env: Env, data_ids: Vec<BytesN<32>>) -> Result<Vec<Option<String>>, CacheError> {
         let mut out = Vec::new(&env);
         for data_id in data_ids.iter() {
             out.push_back(feed::description(&env, &data_id));
@@ -83,7 +83,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         Ok(out)
     }
 
-    fn is_configured(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<bool>, CacheError> {
+    fn is_configured(env: Env, data_ids: Vec<BytesN<32>>) -> Result<Vec<bool>, CacheError> {
         let mut out = Vec::new(&env);
         for data_id in data_ids.iter() {
             out.push_back(feed::configured(&env, &data_id));
@@ -91,7 +91,7 @@ impl DataFeedsCacheReader for DataFeedsCache {
         Ok(out)
     }
 
-    fn is_frozen(env: Env, data_ids: Vec<BytesN<16>>) -> Vec<bool> {
+    fn is_frozen(env: Env, data_ids: Vec<BytesN<32>>) -> Vec<bool> {
         let mut out = Vec::new(&env);
         for data_id in data_ids.iter() {
             out.push_back(feed::is_frozen(&env, &data_id));
@@ -118,7 +118,7 @@ impl DataFeedsCacheWriter for DataFeedsCache {
         let phash = feed::perm_hash(&env, &sender, &md.workflow_owner, &md.workflow_name);
 
         for entry in entries.iter() {
-            let data_id = truncate_data_id(&env, &entry.data_id);
+            let data_id = entry.data_id.clone();
 
             if !feed::permitted(&env, &data_id, &phash) {
                 InvalidUpdatePermission {
@@ -174,7 +174,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         }
 
         for (i, entry) in entries.iter().enumerate() {
-            if entry.data_id.to_array() == [0u8; 16] {
+            if entry.data_id.to_array() == [0u8; 32] {
                 return Err(CacheError::InvalidDataId);
             }
             for j in (i as u32 + 1)..entries.len() {
@@ -195,7 +195,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
             }
             FeedConfigSet {
                 data_id: data_id.clone(),
-                decimals: feed::decimals_from_id(&data_id),
+                decimals: DECIMALS,
                 description: entry.config.description.clone(),
                 workflow_permissions: entry.config.workflow_permissions.clone(),
             }
@@ -207,7 +207,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
     fn remove_feed_configs(
         env: Env,
         admin: Address,
-        data_ids: Vec<BytesN<16>>,
+        data_ids: Vec<BytesN<32>>,
     ) -> Result<(), CacheError> {
         admin.require_auth();
         env.contract_store().extend_ttl();
@@ -242,7 +242,7 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
     fn set_feed_frozen(
         env: Env,
         admin: Address,
-        data_ids: Vec<BytesN<16>>,
+        data_ids: Vec<BytesN<32>>,
         frozen: bool,
     ) -> Result<(), CacheError> {
         admin.require_auth();
@@ -288,13 +288,13 @@ impl DataFeedsCacheAdmin for DataFeedsCache {
         Ok(())
     }
 
-    fn get_feed_permissions(env: Env, data_id: BytesN<16>) -> Vec<WorkflowPermission> {
+    fn get_feed_permissions(env: Env, data_id: BytesN<32>) -> Vec<WorkflowPermission> {
         feed::permissions(&env, &data_id)
     }
 
     fn has_permission(
         env: Env,
-        data_id: BytesN<16>,
+        data_id: BytesN<32>,
         sender: Address,
         workflow_owner: BytesN<20>,
         workflow_name: BytesN<10>,

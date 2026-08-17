@@ -382,7 +382,7 @@ mod set_feed_configs {
         env: &Env,
         owner: &WorkflowOwner,
         name: &WorkflowName,
-        wid: &WireDataId,
+        wid: &DataId,
         answer: i128,
         ts: u64,
     ) -> (Bytes, Bytes) {
@@ -887,8 +887,6 @@ mod set_feed_frozen {
         let cache = Cache::deploy();
         let feed = live_feed(&cache, 3);
         freeze(&cache, &feed, true);
-        let c = cache.client();
-
         assert!(cache.is_frozen(&feed.id));
         assert!(cache.is_frozen(&feed.id));
         assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
@@ -913,8 +911,6 @@ mod set_feed_frozen {
         let feed = live_feed(&cache, 3);
         freeze(&cache, &feed, true);
         freeze(&cache, &feed, false);
-        let c = cache.client();
-
         assert!(!cache.is_frozen(&feed.id));
         assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
         assert_eq!(cache.round(&feed, 1).unwrap().round_id, 1);
@@ -952,7 +948,6 @@ mod set_feed_frozen {
         freeze(&cache, &feed, true);
         cache.remove(&feed);
 
-        let c = cache.client();
         assert!(!cache.is_configured(&feed.id));
         assert!(cache.is_frozen(&feed.id));
         assert!(cache.is_frozen(&feed.id));

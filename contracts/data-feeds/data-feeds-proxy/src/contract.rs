@@ -1,11 +1,15 @@
-use soroban_sdk::{contract, contractimpl, panic_with_error, vec, Address, BytesN, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, vec, Address, BytesN, Env, String, I256,
+};
 
 use data_feeds_cache::{CacheError, DataFeedsCacheReaderClient};
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
 use crate::events::CacheSet;
-use crate::interface::{DataFeedsProxyAdmin, DataFeedsProxyReader, ProxyReadError, Round};
+use crate::interface::{
+    DataFeedsProxyAdmin, DataFeedsProxyReader, ProxyReadError, Round, MAX_PRECISION,
+};
 use crate::storage;
 
 #[contract]
@@ -20,7 +24,7 @@ impl DataFeedsProxy {
     }
 }
 
-fn assert_not_frozen(env: &Env, data_id: &BytesN<16>) {
+fn assert_not_frozen(env: &Env, data_id: &BytesN<32>) {
     let cache = DataFeedsCacheReaderClient::new(env, &storage::get_cache(env));
     if cache
         .is_frozen(&vec![env, data_id.clone()])
@@ -32,7 +36,7 @@ fn assert_not_frozen(env: &Env, data_id: &BytesN<16>) {
 
 #[contractimpl]
 impl DataFeedsProxyReader for DataFeedsProxy {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Round, ProxyReadError> {
+    fn latest_round(env: Env, data_id: BytesN<32>) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -46,7 +50,24 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn get_round(env: Env, data_id: BytesN<16>, round_id: u64) -> Result<Round, ProxyReadError> {
+    fn latest_answer(
+        env: Env,
+        data_id: BytesN<32>,
+        precision: u32,
+    ) -> Result<I256, ProxyReadError> {
+        if precision < storage::get_min_precision(&env) || precision > MAX_PRECISION {
+            return Err(ProxyReadError::PrecisionOutOfRange);
+        }
+        let answer = Self::latest_round(env.clone(), data_id)?.answer;
+        let scale = I256::from_i128(&env, 10i128.pow(MAX_PRECISION - precision));
+        Ok(answer.div(&scale))
+    }
+
+    fn min_precision(env: Env) -> u32 {
+        storage::get_min_precision(&env)
+    }
+
+    fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -59,7 +80,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError> {
+    fn decimals(env: Env, data_id: BytesN<32>) -> Result<u32, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -68,7 +89,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<String, ProxyReadError> {
+    fn description(env: Env, data_id: BytesN<32>) -> Result<String, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -80,6 +101,16 @@ impl DataFeedsProxyReader for DataFeedsProxy {
 
 #[contractimpl]
 impl DataFeedsProxyAdmin for DataFeedsProxy {
+    fn set_min_precision(env: Env, min_precision: u32) -> Result<(), ProxyReadError> {
+        enforce_owner_auth(&env);
+        storage::extend_ttl(&env);
+        if min_precision > MAX_PRECISION {
+            return Err(ProxyReadError::PrecisionOutOfRange);
+        }
+        storage::set_min_precision(&env, min_precision);
+        Ok(())
+    }
+
     fn set_cache(env: Env, cache: Address) {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);

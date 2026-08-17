@@ -2,6 +2,7 @@ use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Env, String, Vec, I256};
 
 use crate::domain::search;
+use crate::interface::types::DECIMALS;
 use crate::interface::types::{Bound, RoundData, WorkflowName, WorkflowOwner, WorkflowPermission};
 use crate::interface::{DataId, FeedConfig};
 use crate::storage::{FeedState, PermissionHash, Store, Window};
@@ -140,15 +141,8 @@ pub(crate) fn permissions(env: &Env, id: &DataId) -> Vec<WorkflowPermission> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-pub(crate) fn decimals_from_id(id: &DataId) -> u32 {
-    match id.to_array()[7] {
-        b @ 0x20..=0x60 => (b - 0x20) as u32,
-        _ => 0,
-    }
-}
-
 pub(crate) fn decimals(env: &Env, id: &DataId) -> Option<u32> {
-    configured(env, id).then(|| decimals_from_id(id))
+    configured(env, id).then_some(DECIMALS)
 }
 
 pub(crate) fn description(env: &Env, id: &DataId) -> Option<String> {
