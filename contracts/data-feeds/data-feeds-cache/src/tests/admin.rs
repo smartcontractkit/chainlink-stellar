@@ -255,7 +255,7 @@ mod set_feed_configs {
         let c = cache.client();
         let env = &cache.env;
         let id_a = mock_feed_id(env, 1);
-        let id_b = mock_feed_id_with(env, 0x26, 2);
+        let id_b = mock_feed_id(env, 2);
         let s1 = new_address(env);
         let s2 = new_address(env);
         let cfg_a = mock_feed_config(env, &id_a, &s1, "A");

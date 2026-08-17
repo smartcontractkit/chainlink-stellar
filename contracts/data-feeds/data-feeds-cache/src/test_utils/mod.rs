@@ -8,7 +8,6 @@ use crate::interface::types::{
 use crate::interface::FeedConfigEntry;
 use crate::DataFeedsCacheClient;
 
-pub const DEFAULT_VARIANT: u8 = 0x32;
 pub const DEFAULT_DESC: &str = "BTC/USD";
 
 pub fn mock_data_id(env: &Env) -> DataId {
@@ -24,27 +23,17 @@ pub fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
 }
 
 pub fn mock_feed_id(env: &Env, tag: u8) -> DataId {
-    mock_feed_id_with(env, DEFAULT_VARIANT, tag)
-}
-
-pub fn zero_feed_id(env: &Env) -> DataId {
-    mock_feed_id_with(env, 0, 0)
-}
-
-pub fn mock_feed_id_with(env: &Env, variant: u8, tag: u8) -> DataId {
     let mut a = [0u8; 32];
-    a[7] = variant;
     a[15] = tag;
     BytesN::from_array(env, &a)
 }
 
-pub fn mock_wire_id(env: &Env, tag_hi: u8, tag_lo: u8) -> DataId {
-    mock_wire_id_with(env, DEFAULT_VARIANT, tag_hi, tag_lo)
+pub fn zero_feed_id(env: &Env) -> DataId {
+    BytesN::from_array(env, &[0u8; 32])
 }
 
-pub fn mock_wire_id_with(env: &Env, variant: u8, tag_hi: u8, tag_lo: u8) -> DataId {
+pub fn mock_wire_id(env: &Env, tag_hi: u8, tag_lo: u8) -> DataId {
     let mut a = [0u8; 32];
-    a[7] = variant;
     a[15] = tag_hi;
     a[31] = tag_lo;
     BytesN::from_array(env, &a)
@@ -128,11 +117,9 @@ pub fn seed_round(
     answer: i128,
     ts: u64,
 ) {
-    let a = data_id.to_array();
-    let wid = mock_wire_id_with(env, a[7], a[15], 0);
     DataFeedsCacheClient::new(env, cache).on_report(
         sender,
         &mock_metadata(env),
-        &report(env, &[(wid, answer, ts)]),
+        &report(env, &[(data_id.clone(), answer, ts)]),
     );
 }
