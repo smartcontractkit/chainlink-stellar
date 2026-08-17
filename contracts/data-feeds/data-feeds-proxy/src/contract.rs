@@ -22,7 +22,10 @@ impl DataFeedsProxy {
 
 fn assert_not_frozen(env: &Env, data_id: &BytesN<16>) {
     let cache = DataFeedsCacheReaderClient::new(env, &storage::get_cache(env));
-    if cache.is_frozen(data_id) {
+    if cache
+        .is_frozen(&vec![env, data_id.clone()])
+        .get_unchecked(0)
+    {
         panic_with_error!(env, CacheError::FeedFrozen);
     }
 }
@@ -60,7 +63,8 @@ impl DataFeedsProxyReader for DataFeedsProxy {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
-            .decimals(&data_id)
+            .decimals(&vec![&env, data_id])
+            .get_unchecked(0)
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
@@ -68,7 +72,8 @@ impl DataFeedsProxyReader for DataFeedsProxy {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
-            .description(&data_id)
+            .description(&vec![&env, data_id])
+            .get_unchecked(0)
             .ok_or(ProxyReadError::NoDataPresent)
     }
 }

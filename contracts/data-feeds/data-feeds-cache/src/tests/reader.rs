@@ -298,14 +298,14 @@ mod decimals {
     fn derived_from_id_byte7() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
-        assert_eq!(cache.client().decimals(&feed.id), Some(18));
+        assert_eq!(cache.decimals(&feed.id), Some(18));
     }
 
     #[test]
     fn unconfigured_feed_is_none() {
         let cache = Cache::deploy();
         assert_eq!(
-            cache.client().decimals(&mock_feed_id(&cache.env, 123)),
+            cache.decimals(&mock_feed_id(&cache.env, 123)),
             None,
             "a derivable id is still None until it is configured"
         );
@@ -320,7 +320,7 @@ mod description {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         assert_eq!(
-            cache.client().description(&feed.id),
+            cache.description(&feed.id),
             Some(String::from_str(&cache.env, "BTC/USD"))
         );
     }
@@ -329,7 +329,7 @@ mod description {
     fn unconfigured_feed_is_none() {
         let cache = Cache::deploy();
         let unknown = mock_feed_id(&cache.env, 99);
-        assert_eq!(cache.client().description(&unknown), None);
+        assert_eq!(cache.description(&unknown), None);
     }
 }
 
@@ -340,8 +340,8 @@ mod is_configured {
     fn tracks_the_feed_config() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
-        assert!(cache.client().is_configured(&feed.id));
-        assert!(!cache.client().is_configured(&mock_feed_id(&cache.env, 99)));
+        assert!(cache.is_configured(&feed.id));
+        assert!(!cache.is_configured(&mock_feed_id(&cache.env, 99)));
     }
 
     #[test]
@@ -351,14 +351,79 @@ mod is_configured {
         let sender = new_address(&cache.env);
         let id = cache.configure_feed(&admin, &sender, 2, "");
         let c = cache.client();
-        assert!(c.is_configured(&id));
-        assert!(c.decimals(&id).is_some());
-        assert!(c.description(&id).is_some());
+        assert!(cache.is_configured(&id));
+        assert!(cache.decimals(&id).is_some());
+        assert!(cache.description(&id).is_some());
 
         c.remove_feed_configs(&admin, &vec![&cache.env, id.clone()]);
-        assert!(!c.is_configured(&id));
-        assert!(c.decimals(&id).is_none());
-        assert!(c.description(&id).is_none());
+        assert!(!cache.is_configured(&id));
+        assert!(cache.decimals(&id).is_none());
+        assert!(cache.description(&id).is_none());
+    }
+}
+
+mod metadata_batches {
+    use super::*;
+
+    #[test]
+    fn mixed_batch_preserves_order() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, missing, feed.id.clone()];
+        let c = cache.client();
+
+        let decimals = c.decimals(&ids);
+        assert_eq!(decimals.len(), 2);
+        assert_eq!(decimals.get_unchecked(0), None);
+        assert_eq!(decimals.get_unchecked(1), Some(18));
+
+        let descriptions = c.description(&ids);
+        assert_eq!(descriptions.len(), 2);
+        assert_eq!(descriptions.get_unchecked(0), None);
+        assert_eq!(
+            descriptions.get_unchecked(1),
+            Some(String::from_str(&cache.env, "BTC/USD"))
+        );
+
+        let configured = c.is_configured(&ids);
+        assert_eq!(configured.len(), 2);
+        assert!(!configured.get_unchecked(0));
+        assert!(configured.get_unchecked(1));
+    }
+
+    #[test]
+    fn is_frozen_mixed_batch_preserves_order() {
+        let cache = Cache::deploy();
+        let frozen = cache.add_feed(1);
+        let thawed = cache.add_feed(2);
+        cache.seed(&frozen, 1);
+        cache
+            .client()
+            .set_feed_frozen(&frozen.admin, &vec![&cache.env, frozen.id.clone()], &true);
+
+        let flags = cache.client().is_frozen(&vec![
+            &cache.env,
+            thawed.id.clone(),
+            frozen.id.clone(),
+            mock_feed_id(&cache.env, 9),
+        ]);
+
+        assert_eq!(flags.len(), 3);
+        assert!(!flags.get_unchecked(0));
+        assert!(flags.get_unchecked(1));
+        assert!(!flags.get_unchecked(2), "unknown feeds are not frozen");
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        let c = cache.client();
+        let none: Vec<DataId> = Vec::new(&cache.env);
+        assert_eq!(c.decimals(&none).len(), 0);
+        assert_eq!(c.description(&none).len(), 0);
+        assert_eq!(c.is_configured(&none).len(), 0);
+        assert_eq!(c.is_frozen(&none).len(), 0);
     }
 }
 
@@ -390,7 +455,7 @@ mod latest_round_batches {
             .client()
             .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
 
-        assert!(cache.client().is_frozen(&feed.id));
+        assert!(cache.is_frozen(&feed.id));
         assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
     }
 
@@ -409,5 +474,4 @@ mod latest_round_batches {
         }
         assert_eq!(cache.client().latest_round(&ids).len(), ids.len());
     }
-
 }

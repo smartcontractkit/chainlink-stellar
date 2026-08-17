@@ -328,7 +328,7 @@ mod set_feed_configs {
             "permissions must be cleared by remove"
         );
         assert_eq!(
-            cache.client().description(&feed.id),
+            cache.description(&feed.id),
             None,
             "config must be gone after remove"
         );
@@ -527,7 +527,7 @@ mod remove_feed_configs {
             &mock_wf_name(&cache.env)
         ));
         assert_eq!(c.get_feed_permissions(&feed.id).len(), 0);
-        assert_eq!(c.description(&feed.id), None);
+        assert_eq!(cache.description(&feed.id), None);
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod remove_feed_configs {
         ));
         assert_eq!(c.get_feed_permissions(&feed.id).len(), 1);
         assert_eq!(
-            c.description(&feed.id),
+            cache.description(&feed.id),
             Some(String::from_str(&cache.env, "BTC/USD"))
         );
     }
@@ -576,7 +576,7 @@ mod remove_feed_configs {
         ));
         assert_eq!(c.get_feed_permissions(&feed.id).len(), 1);
         assert_eq!(
-            c.description(&feed.id),
+            cache.description(&feed.id),
             Some(String::from_str(env, "BTC/USD"))
         );
     }
@@ -889,8 +889,8 @@ mod set_feed_frozen {
         freeze(&cache, &feed, true);
         let c = cache.client();
 
-        assert!(c.is_frozen(&feed.id));
-        assert!(c.is_frozen(&feed.id));
+        assert!(cache.is_frozen(&feed.id));
+        assert!(cache.is_frozen(&feed.id));
         assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
         assert_eq!(cache.round(&feed, 1).unwrap().round_id, 1);
         assert_eq!(
@@ -898,10 +898,10 @@ mod set_feed_frozen {
             1
         );
         assert_eq!(cache.history(&feed).len(), 3);
-        assert_eq!(c.decimals(&feed.id), Some(18));
-        assert!(c.description(&feed.id).is_some());
+        assert_eq!(cache.decimals(&feed.id), Some(18));
+        assert!(cache.description(&feed.id).is_some());
         assert!(
-            c.is_configured(&feed.id),
+            cache.is_configured(&feed.id),
             "freeze is consumer policy enforced at the proxy; the cache serves \
              raw data and only reports the flag"
         );
@@ -915,7 +915,7 @@ mod set_feed_frozen {
         freeze(&cache, &feed, false);
         let c = cache.client();
 
-        assert!(!c.is_frozen(&feed.id));
+        assert!(!cache.is_frozen(&feed.id));
         assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
         assert_eq!(cache.round(&feed, 1).unwrap().round_id, 1);
         assert_eq!(
@@ -923,9 +923,9 @@ mod set_feed_frozen {
             1
         );
         assert_eq!(cache.history(&feed).len(), 3);
-        assert_eq!(c.decimals(&feed.id), Some(18));
+        assert_eq!(cache.decimals(&feed.id), Some(18));
         assert_eq!(
-            c.description(&feed.id),
+            cache.description(&feed.id),
             Some(String::from_str(&cache.env, "BTC/USD"))
         );
     }
@@ -937,10 +937,7 @@ mod set_feed_frozen {
         freeze(&cache, &feed, true);
 
         cache.write(&feed, 500, 99);
-        assert!(
-            cache.client().is_frozen(&feed.id),
-            "a report must not thaw the feed"
-        );
+        assert!(cache.is_frozen(&feed.id), "a report must not thaw the feed");
 
         freeze(&cache, &feed, false);
         let latest = cache.latest_round(&feed.id).unwrap();
@@ -956,9 +953,9 @@ mod set_feed_frozen {
         cache.remove(&feed);
 
         let c = cache.client();
-        assert!(!c.is_configured(&feed.id));
-        assert!(c.is_frozen(&feed.id));
-        assert!(c.is_frozen(&feed.id));
+        assert!(!cache.is_configured(&feed.id));
+        assert!(cache.is_frozen(&feed.id));
+        assert!(cache.is_frozen(&feed.id));
         assert!(cache.latest_round(&feed.id).is_some());
     }
 
@@ -970,7 +967,7 @@ mod set_feed_frozen {
         cache.seed(&b, 1);
         freeze(&cache, &a, true);
 
-        assert!(cache.client().is_frozen(&a.id));
+        assert!(cache.is_frozen(&a.id));
         assert!(cache.latest_round(&a.id).is_some());
         assert_eq!(cache.latest_round(&b.id).unwrap().round_id, 1);
     }
@@ -1009,7 +1006,7 @@ mod set_feed_frozen {
                 ),
                 Err(Ok(CacheError::NoFeedState))
             );
-            assert!(!c.is_frozen(&feed.id), "the valid id must not survive");
+            assert!(!cache.is_frozen(&feed.id), "the valid id must not survive");
         }
     }
 
@@ -1026,7 +1023,7 @@ mod set_feed_frozen {
             ),
             Err(Ok(CacheError::DuplicateFeedConfig))
         );
-        assert!(!c.is_frozen(&feed.id));
+        assert!(!cache.is_frozen(&feed.id));
     }
 
     #[test]

@@ -67,20 +67,36 @@ impl DataFeedsCacheReader for DataFeedsCache {
         Ok(feed::find_round(&env, &data_id, timestamp, bound))
     }
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<Option<u32>, CacheError> {
-        Ok(feed::decimals(&env, &data_id))
+    fn decimals(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<u32>>, CacheError> {
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(feed::decimals(&env, &data_id));
+        }
+        Ok(out)
     }
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<Option<String>, CacheError> {
-        Ok(feed::description(&env, &data_id))
+    fn description(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<String>>, CacheError> {
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(feed::description(&env, &data_id));
+        }
+        Ok(out)
     }
 
-    fn is_configured(env: Env, data_id: BytesN<16>) -> Result<bool, CacheError> {
-        Ok(feed::configured(&env, &data_id))
+    fn is_configured(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<bool>, CacheError> {
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(feed::configured(&env, &data_id));
+        }
+        Ok(out)
     }
 
-    fn is_frozen(env: Env, data_id: BytesN<16>) -> bool {
-        feed::is_frozen(&env, &data_id)
+    fn is_frozen(env: Env, data_ids: Vec<BytesN<16>>) -> Vec<bool> {
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(feed::is_frozen(&env, &data_id));
+        }
+        out
     }
 }
 

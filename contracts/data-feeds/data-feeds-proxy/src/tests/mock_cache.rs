@@ -40,10 +40,7 @@ impl MockCache {
 
 #[contractimpl]
 impl DataFeedsCacheReader for MockCache {
-    fn latest_round(
-        env: Env,
-        data_ids: Vec<DataId>,
-    ) -> Result<Vec<Option<RoundData>>, CacheError> {
+    fn latest_round(env: Env, data_ids: Vec<DataId>) -> Result<Vec<Option<RoundData>>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
             return Err(e);
         }
@@ -84,29 +81,43 @@ impl DataFeedsCacheReader for MockCache {
     ) -> Result<Option<RoundData>, CacheError> {
         unimplemented!("MockCache simulates no search reads; add real logic before testing them")
     }
-    fn decimals(env: Env, data_id: DataId) -> Result<Option<u32>, CacheError> {
+    fn decimals(env: Env, data_ids: Vec<DataId>) -> Result<Vec<Option<u32>>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
             return Err(e);
         }
-        Ok(Some(match data_id.to_array()[7] {
-            b @ 0x20..=0x60 => (b - 0x20) as u32,
-            _ => 0,
-        }))
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(Some(match data_id.to_array()[7] {
+                b @ 0x20..=0x60 => (b - 0x20) as u32,
+                _ => 0,
+            }));
+        }
+        Ok(out)
     }
-    fn is_configured(_env: Env, _data_id: DataId) -> Result<bool, CacheError> {
+    fn is_configured(_env: Env, _data_ids: Vec<DataId>) -> Result<Vec<bool>, CacheError> {
         unimplemented!("MockCache simulates no config reads; add real logic before testing them")
     }
-    fn is_frozen(env: Env, data_id: DataId) -> bool {
-        env.storage()
-            .instance()
-            .get(&MockKey::Frozen(data_id))
-            .unwrap_or(false)
+    fn is_frozen(env: Env, data_ids: Vec<DataId>) -> Vec<bool> {
+        let mut out = Vec::new(&env);
+        for data_id in data_ids.iter() {
+            out.push_back(
+                env.storage()
+                    .instance()
+                    .get(&MockKey::Frozen(data_id))
+                    .unwrap_or(false),
+            );
+        }
+        out
     }
-    fn description(env: Env, _data_id: DataId) -> Result<Option<String>, CacheError> {
+    fn description(env: Env, data_ids: Vec<DataId>) -> Result<Vec<Option<String>>, CacheError> {
         if let Some(e) = env.storage().instance().get(&MockKey::Err) {
             return Err(e);
         }
-        Ok(Some(String::from_str(&env, "MOCK")))
+        let mut out = Vec::new(&env);
+        for _ in data_ids.iter() {
+            out.push_back(Some(String::from_str(&env, "MOCK")));
+        }
+        Ok(out)
     }
 }
 
