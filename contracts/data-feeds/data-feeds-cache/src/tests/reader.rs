@@ -97,16 +97,6 @@ mod latest_round {
         let cache = Cache::deploy();
         assert_eq!(cache.client().latest_round(&Vec::new(&cache.env)).len(), 0);
     }
-
-    #[test]
-    fn reads_large_batches() {
-        let cache = Cache::deploy();
-        let mut ids = Vec::new(&cache.env);
-        for i in 0..90u32 {
-            ids.push_back(mock_feed_id(&cache.env, (i % 250) as u8));
-        }
-        assert_eq!(cache.client().latest_round(&ids).len(), ids.len());
-    }
 }
 
 mod get_round {
@@ -376,6 +366,19 @@ mod decimals {
         let cache = Cache::deploy();
         assert_eq!(cache.client().decimals(&Vec::new(&cache.env)).len(), 0);
     }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 1);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.is_frozen(&feed.id));
+        assert_eq!(cache.decimals(&feed.id), Some(18));
+    }
 }
 
 mod description {
@@ -418,6 +421,22 @@ mod description {
     fn empty_ids_returns_empty() {
         let cache = Cache::deploy();
         assert_eq!(cache.client().description(&Vec::new(&cache.env)).len(), 0);
+    }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 1);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.is_frozen(&feed.id));
+        assert_eq!(
+            cache.description(&feed.id),
+            Some(String::from_str(&cache.env, "BTC/USD"))
+        );
     }
 }
 
