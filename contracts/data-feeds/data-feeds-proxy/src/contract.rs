@@ -1,15 +1,11 @@
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, vec, Address, BytesN, Env, String, I256,
-};
+use soroban_sdk::{contract, contractimpl, panic_with_error, vec, Address, BytesN, Env, String};
 
 use data_feeds_cache::{CacheError, DataFeedsCacheReaderClient};
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
 use crate::events::CacheSet;
-use crate::interface::{
-    DataFeedsProxyAdmin, DataFeedsProxyReader, ProxyReadError, Round, MAX_PRECISION,
-};
+use crate::interface::{DataFeedsProxyAdmin, DataFeedsProxyReader, ProxyReadError, Round};
 use crate::storage;
 
 #[contract]
@@ -50,23 +46,6 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn latest_answer(
-        env: Env,
-        data_id: BytesN<32>,
-        precision: u32,
-    ) -> Result<I256, ProxyReadError> {
-        if precision < storage::get_min_precision(&env, &data_id) || precision > MAX_PRECISION {
-            return Err(ProxyReadError::PrecisionOutOfRange);
-        }
-        let answer = Self::latest_round(env.clone(), data_id)?.answer;
-        let scale = I256::from_i128(&env, 10i128.pow(MAX_PRECISION - precision));
-        Ok(answer.div(&scale))
-    }
-
-    fn min_precision(env: Env, data_id: BytesN<32>) -> u32 {
-        storage::get_min_precision(&env, &data_id)
-    }
-
     fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
@@ -101,20 +80,6 @@ impl DataFeedsProxyReader for DataFeedsProxy {
 
 #[contractimpl]
 impl DataFeedsProxyAdmin for DataFeedsProxy {
-    fn set_min_precision(
-        env: Env,
-        data_id: BytesN<32>,
-        min_precision: u32,
-    ) -> Result<(), ProxyReadError> {
-        enforce_owner_auth(&env);
-        storage::extend_ttl(&env);
-        if min_precision > MAX_PRECISION {
-            return Err(ProxyReadError::PrecisionOutOfRange);
-        }
-        storage::set_min_precision(&env, &data_id, min_precision);
-        Ok(())
-    }
-
     fn set_cache(env: Env, cache: Address) {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
