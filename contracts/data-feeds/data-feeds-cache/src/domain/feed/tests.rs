@@ -710,7 +710,7 @@ mod permitted {
     fn is_scoped_to_data_id() {
         execute_as_contract(|env| {
             let id_a = mock_data_id(env);
-            let id_b = BytesN::from_array(env, &[0x99; 16]);
+            let id_b = BytesN::from_array(env, &[0x99; 32]);
             let p = permission(env);
             configure(env, &id_a, &config(env, core::slice::from_ref(&p), "A"));
 
@@ -760,7 +760,7 @@ mod permissions {
     fn does_not_leak_other_feeds_permissions() {
         execute_as_contract(|env| {
             let id_a = mock_data_id(env);
-            let id_b = BytesN::from_array(env, &[0x99; 16]);
+            let id_b = BytesN::from_array(env, &[0x99; 32]);
             let p1 = permission(env);
             let p2 = permission(env);
             let p3 = permission(env);
@@ -859,7 +859,7 @@ mod range {
     #[test]
     fn unknown_dataid_is_noop() {
         execute_as_contract(|env| {
-            let unknown = BytesN::from_array(env, &[0x77; 16]);
+            let unknown = BytesN::from_array(env, &[0x77; 32]);
             assert_eq!(range(env, &unknown, 1, 5).len(), 0);
         });
     }
@@ -982,45 +982,15 @@ mod find_round {
 mod decimals {
     use super::*;
 
-    fn id_with_byte7(env: &Env, b: u8) -> DataId {
-        let mut raw = [0xFFu8; 16];
-        raw[7] = b;
-        BytesN::from_array(env, &raw)
-    }
-
-    #[test]
-    fn decodes_correctly() {
-        let env = Env::default();
-        for (byte, expected) in [(0x20u8, 0u32), (0x26, 6), (0x32, 18), (0x60, 64)] {
-            assert_eq!(
-                decimals_from_id(&id_with_byte7(&env, byte)),
-                expected,
-                "byte {byte:#x}"
-            );
-        }
-    }
-
-    #[test]
-    fn non_decimal_type_returns_zero() {
-        let env = Env::default();
-        for byte in [0x00u8, 0x1F, 0x61, 0xFF] {
-            assert_eq!(
-                decimals_from_id(&id_with_byte7(&env, byte)),
-                0,
-                "byte {byte:#x}"
-            );
-        }
-    }
-
     #[test]
     fn gated_on_the_config() {
         execute_as_contract(|env| {
             let id = mock_data_id(env);
-            assert_eq!(decimals(env, &id), None, "derivable but not configured");
+            assert_eq!(decimals(env, &id), None, "not configured");
 
             let p = permission(env);
             configure(env, &id, &config(env, core::slice::from_ref(&p), "BTC/USD"));
-            assert_eq!(decimals(env, &id), Some(decimals_from_id(&id)));
+            assert_eq!(decimals(env, &id), Some(DECIMALS));
 
             remove(env, &id);
             assert_eq!(decimals(env, &id), None);

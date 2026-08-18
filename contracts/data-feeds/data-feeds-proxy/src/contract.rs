@@ -20,7 +20,7 @@ impl DataFeedsProxy {
     }
 }
 
-fn assert_not_frozen(env: &Env, data_id: &BytesN<16>) {
+fn assert_not_frozen(env: &Env, data_id: &BytesN<32>) {
     let cache = DataFeedsCacheReaderClient::new(env, &storage::get_cache(env));
     if cache
         .is_frozen(&vec![env, data_id.clone()])
@@ -32,7 +32,7 @@ fn assert_not_frozen(env: &Env, data_id: &BytesN<16>) {
 
 #[contractimpl]
 impl DataFeedsProxyReader for DataFeedsProxy {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Round, ProxyReadError> {
+    fn latest_round(env: Env, data_id: BytesN<32>) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -46,7 +46,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn get_round(env: Env, data_id: BytesN<16>, round_id: u64) -> Result<Round, ProxyReadError> {
+    fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -59,7 +59,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError> {
+    fn decimals(env: Env, data_id: BytesN<32>) -> Result<u32, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
@@ -68,7 +68,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<String, ProxyReadError> {
+    fn description(env: Env, data_id: BytesN<32>) -> Result<String, ProxyReadError> {
         storage::extend_ttl(&env);
         assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))

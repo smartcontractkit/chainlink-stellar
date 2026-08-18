@@ -76,7 +76,7 @@ mod on_report {
     }
 
     #[test]
-    fn wire_id_truncates_to_high_16_bytes() {
+    fn report_id_must_match_the_configured_id_exactly() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(7);
         let env = &cache.env;
@@ -84,14 +84,18 @@ mod on_report {
         c.on_report(
             &feed.sender,
             &mock_metadata(env),
-            &report(env, &[(mock_wire_id(env, 7, 0xAA), 100, 5)]),
+            &report(env, &[(mock_wire_id(env, 7, 0), 100, 5)]),
         );
         c.on_report(
             &feed.sender,
             &mock_metadata(env),
             &report(env, &[(mock_wire_id(env, 7, 0xBB), 200, 6)]),
         );
-        assert_eq!(cache.history(&feed).len(), 2);
+        assert_eq!(
+            cache.history(&feed).len(),
+            1,
+            "an id differing in the low bytes is a different feed"
+        );
     }
 
     #[test]
