@@ -55,7 +55,7 @@ impl DataFeedsProxyReader for DataFeedsProxy {
         data_id: BytesN<32>,
         precision: u32,
     ) -> Result<I256, ProxyReadError> {
-        if precision < storage::get_min_precision(&env) || precision > MAX_PRECISION {
+        if precision < storage::get_min_precision(&env, &data_id) || precision > MAX_PRECISION {
             return Err(ProxyReadError::PrecisionOutOfRange);
         }
         let answer = Self::latest_round(env.clone(), data_id)?.answer;
@@ -63,8 +63,8 @@ impl DataFeedsProxyReader for DataFeedsProxy {
         Ok(answer.div(&scale))
     }
 
-    fn min_precision(env: Env) -> u32 {
-        storage::get_min_precision(&env)
+    fn min_precision(env: Env, data_id: BytesN<32>) -> u32 {
+        storage::get_min_precision(&env, &data_id)
     }
 
     fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError> {
@@ -101,13 +101,17 @@ impl DataFeedsProxyReader for DataFeedsProxy {
 
 #[contractimpl]
 impl DataFeedsProxyAdmin for DataFeedsProxy {
-    fn set_min_precision(env: Env, min_precision: u32) -> Result<(), ProxyReadError> {
+    fn set_min_precision(
+        env: Env,
+        data_id: BytesN<32>,
+        min_precision: u32,
+    ) -> Result<(), ProxyReadError> {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
         if min_precision > MAX_PRECISION {
             return Err(ProxyReadError::PrecisionOutOfRange);
         }
-        storage::set_min_precision(&env, min_precision);
+        storage::set_min_precision(&env, &data_id, min_precision);
         Ok(())
     }
 

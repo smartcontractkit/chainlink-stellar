@@ -2,7 +2,6 @@ use soroban_sdk::{contracttype, Address, BytesN, String, Vec, I256};
 
 pub type DataId = BytesN<32>;
 
-/// Every feed is stored and served with 18 decimals.
 pub const DECIMALS: u32 = 18;
 
 pub type WorkflowOwner = BytesN<20>;

@@ -200,7 +200,7 @@ mod latest_answer {
     fn lower_precision_scales_down_once_the_minimum_allows_it() {
         let p = Proxy::deploy();
         p.set_latest((1, ONE_AT_18, 10));
-        p.client().set_min_precision(&8);
+        p.client().set_min_precision(&p.data_id(), &8);
         assert_eq!(
             p.client().latest_answer(&p.data_id(), &8),
             I256::from_i128(&p.env, 100_000_000)
@@ -211,7 +211,7 @@ mod latest_answer {
     fn negative_answers_scale_toward_zero() {
         let p = Proxy::deploy();
         p.set_latest((1, -1_500_000_000_000_000_000, 10));
-        p.client().set_min_precision(&0);
+        p.client().set_min_precision(&p.data_id(), &0);
         assert_eq!(
             p.client().latest_answer(&p.data_id(), &0),
             I256::from_i128(&p.env, -1),
@@ -249,18 +249,26 @@ mod min_precision {
     use super::*;
 
     #[test]
-    fn defaults_to_the_maximum_and_can_be_lowered() {
+    fn defaults_to_the_maximum_and_is_lowered_per_feed() {
         let p = Proxy::deploy();
-        assert_eq!(p.client().min_precision(), 18);
-        p.client().set_min_precision(&6);
-        assert_eq!(p.client().min_precision(), 6);
+        let other = mock_feed_id(&p.env, 99);
+        assert_eq!(p.client().min_precision(&p.data_id()), 18);
+
+        p.client().set_min_precision(&p.data_id(), &6);
+
+        assert_eq!(p.client().min_precision(&p.data_id()), 6);
+        assert_eq!(
+            p.client().min_precision(&other),
+            18,
+            "other feeds keep the default"
+        );
     }
 
     #[test]
     fn cannot_exceed_the_hard_maximum() {
         let p = Proxy::deploy();
         assert_eq!(
-            p.client().try_set_min_precision(&19),
+            p.client().try_set_min_precision(&p.data_id(), &19),
             Err(Ok(ProxyReadError::PrecisionOutOfRange))
         );
     }
@@ -268,7 +276,7 @@ mod min_precision {
     #[test]
     fn set_min_precision_by_non_owner_host_fails() {
         let p = Proxy::deploy_no_auth();
-        assert!(p.client().try_set_min_precision(&6).is_err());
+        assert!(p.client().try_set_min_precision(&p.data_id(), &6).is_err());
     }
 }
 

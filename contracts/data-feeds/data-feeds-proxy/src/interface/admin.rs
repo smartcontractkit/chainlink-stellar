@@ -1,4 +1,4 @@
-use soroban_sdk::{contractclient, Address, Env};
+use soroban_sdk::{contractclient, Address, BytesN, Env};
 
 use super::reader::ProxyReadError;
 
@@ -6,5 +6,9 @@ use super::reader::ProxyReadError;
 pub trait DataFeedsProxyAdmin {
     fn set_cache(env: Env, cache: Address);
 
-    fn set_min_precision(env: Env, min_precision: u32) -> Result<(), ProxyReadError>;
+    fn set_min_precision(
+        env: Env,
+        data_id: BytesN<32>,
+        min_precision: u32,
+    ) -> Result<(), ProxyReadError>;
 }

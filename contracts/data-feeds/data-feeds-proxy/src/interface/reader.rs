@@ -16,9 +16,7 @@ pub enum ProxyReadError {
     PrecisionOutOfRange = 51,
 }
 
-/// Answers are stored with 18 decimals; a lower precision can be requested
-/// per read, never a higher one. Raising this ceiling requires an upgrade.
-pub const MAX_PRECISION: u32 = 18;
+pub const MAX_PRECISION: u32 = data_feeds_cache::DECIMALS;
 
 #[contractclient(name = "DataFeedsProxyReaderClient")]
 pub trait DataFeedsProxyReader {
@@ -27,7 +25,7 @@ pub trait DataFeedsProxyReader {
     fn latest_answer(env: Env, data_id: BytesN<32>, precision: u32)
         -> Result<I256, ProxyReadError>;
 
-    fn min_precision(env: Env) -> u32;
+    fn min_precision(env: Env, data_id: BytesN<32>) -> u32;
 
     fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError>;
 
