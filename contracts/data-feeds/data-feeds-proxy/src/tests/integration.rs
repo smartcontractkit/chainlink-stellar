@@ -79,7 +79,7 @@ mod cache_reader_client {
             I256::from_i128(&s.env, 12345),
             "historical round resolves through the proxy"
         );
-        assert_eq!(c.decimals(&s.did), 18, "decimals derive from the feed id");
+        assert_eq!(c.decimals(&s.did), 18, "decimals are a constant 18");
         assert_eq!(
             c.description(&s.did),
             String::from_str(&s.env, DEFAULT_DESC),
@@ -104,7 +104,7 @@ mod cache_reader_client {
         assert_eq!(
             c.try_decimals(&unknown),
             Err(Ok(ProxyReadError::NoDataPresent)),
-            "a derivable id with no config is absence, not decimals 18"
+            "an unconfigured id is absence, not decimals 18"
         );
         assert_eq!(
             c.try_description(&unknown),

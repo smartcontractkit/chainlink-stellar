@@ -10,10 +10,10 @@ pub(crate) const DATA_RETENTION_TTL: u32 = 518_400;
 #[derive(Clone, Debug)]
 pub(crate) enum DataKey {
     FeedAdmin(Address),
-    FeedConfig(BytesN<16>),
-    Permission(BytesN<16>, PermissionHash),
-    FeedState(BytesN<16>),
-    Round(BytesN<16>, u64),
+    FeedConfig(BytesN<32>),
+    Permission(BytesN<32>, PermissionHash),
+    FeedState(BytesN<32>),
+    Round(BytesN<32>, u64),
 }
 
 #[contracttype]

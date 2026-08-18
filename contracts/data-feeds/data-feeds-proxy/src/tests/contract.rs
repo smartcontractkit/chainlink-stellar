@@ -3,6 +3,7 @@ use super::harness::*;
 fn assert_read_extends_ttl(read: impl Fn(&Proxy)) {
     let p = Proxy::deploy();
     p.inject(&[(1, 100, 5)]);
+    p.set_latest((1, 100, 5));
     let full = network_max_ttl(&p.env);
     age_ttl(&p.env);
     assert!(
@@ -23,7 +24,7 @@ mod constructor {
     #[test]
     fn constructor_stores_owner_and_routes_reads() {
         let p = Proxy::deploy();
-        p.inject(&[(1, 100, 5)]);
+        p.set_latest((1, 100, 5));
         assert_eq!(p.client().get_owner().unwrap(), p.owner);
         assert_eq!(p.latest_round().round_id, 1);
     }
@@ -45,7 +46,7 @@ mod latest_round {
     #[test]
     fn latest_returns_newest() {
         let p = Proxy::deploy();
-        p.inject(&[(5, 500, 50), (9, 900, 90)]);
+        p.set_latest((9, 900, 90));
         let r = p.latest_round();
         assert_eq!(r.round_id, 9);
         assert_eq!(r.answer, I256::from_i128(&p.env, 900));
@@ -72,8 +73,16 @@ mod latest_round {
     #[should_panic(expected = "Error(Contract, #100)")]
     fn cache_error_traps_the_read() {
         let p = Proxy::deploy();
-        p.inject(&[(1, 1, 10)]);
+        p.set_latest((1, 1, 10));
         p.fail_cache();
+        p.latest_round();
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn latest_round_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.freeze();
         p.latest_round();
     }
 }
@@ -107,22 +116,25 @@ mod get_round {
             p.client().get_round(&p.data_id(), &1u64);
         });
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn get_round_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.inject(&[(3, 300, 30)]);
+        p.freeze();
+
+        p.client().get_round(&p.data_id(), &3);
+    }
 }
 
 mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_passes_through() {
+    fn decimals_is_always_eighteen() {
         let p = Proxy::deploy();
-        let c = p.client();
-        let id_with_decimals = |dec: u8| mock_feed_id_with(&p.env, 0x20 + dec, 0);
-        assert_eq!(c.decimals(&id_with_decimals(1)), 1);
-        assert_eq!(
-            c.decimals(&id_with_decimals(3)),
-            3,
-            "distinct ids yield distinct values, so the answer comes from the cache"
-        );
+        assert_eq!(p.client().decimals(&p.data_id()), 18);
     }
 
     #[test]
@@ -130,6 +142,14 @@ mod decimals {
         assert_read_extends_ttl(|p| {
             p.client().decimals(&p.data_id());
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn decimals_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.freeze();
+        p.client().decimals(&p.data_id());
     }
 }
 
@@ -151,6 +171,14 @@ mod description {
             p.client().description(&p.data_id());
         });
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #109)")]
+    fn description_rejects_a_frozen_feed() {
+        let p = Proxy::deploy();
+        p.freeze();
+        p.client().description(&p.data_id());
+    }
 }
 
 mod set_cache {
@@ -168,12 +196,10 @@ mod set_cache {
     #[test]
     fn set_cache_swaps_routing_and_emits() {
         let p = Proxy::deploy();
-        p.inject(&[(1, 111, 5)]);
+        p.set_latest((1, 111, 5));
         let mock2 = p.env.register(MockCache, ());
-        MockCacheClient::new(&p.env, &mock2).inject(
-            &p.data_id(),
-            &vec![&p.env, mock_round_data(&p.env, (7, 222, 9))],
-        );
+        MockCacheClient::new(&p.env, &mock2)
+            .set_latest(&p.data_id(), &mock_round_data(&p.env, (7, 222, 9)));
         assert_eq!(p.latest_round().round_id, 1);
         p.client().set_cache(&mock2);
         p.assert_event(CacheSet {

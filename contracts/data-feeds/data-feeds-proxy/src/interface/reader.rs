@@ -17,11 +17,11 @@ pub enum ProxyReadError {
 
 #[contractclient(name = "DataFeedsProxyReaderClient")]
 pub trait DataFeedsProxyReader {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Round, ProxyReadError>;
+    fn latest_round(env: Env, data_id: BytesN<32>) -> Result<Round, ProxyReadError>;
 
-    fn get_round(env: Env, data_id: BytesN<16>, round_id: u64) -> Result<Round, ProxyReadError>;
+    fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError>;
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError>;
+    fn decimals(env: Env, data_id: BytesN<32>) -> Result<u32, ProxyReadError>;
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<String, ProxyReadError>;
+    fn description(env: Env, data_id: BytesN<32>) -> Result<String, ProxyReadError>;
 }

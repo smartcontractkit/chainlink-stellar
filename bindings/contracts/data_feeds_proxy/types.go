@@ -74,6 +74,36 @@ var ProxyReadErrorMessage = map[int]string{
 	50: "no data present",
 }
 
+// CacheError represents the contract error codes.
+const (
+	CacheErrorMalformedReport     = 100
+	CacheErrorUnauthorizedCaller  = 101
+	CacheErrorFeedNotConfigured   = 102
+	CacheErrorEmptyConfig         = 103
+	CacheErrorInvalidAddress      = 104
+	CacheErrorInvalidWorkflowName = 105
+	CacheErrorDuplicatePermission = 106
+	CacheErrorInvalidDataId       = 107
+	CacheErrorDuplicateFeedConfig = 108
+	CacheErrorFeedFrozen          = 109
+	CacheErrorNoFeedState         = 110
+)
+
+// CacheErrorMessage returns a human-readable message for error codes.
+var CacheErrorMessage = map[int]string{
+	100: "malformed report",
+	101: "unauthorized caller",
+	102: "feed not configured",
+	103: "empty config",
+	104: "invalid address",
+	105: "invalid workflow name",
+	106: "duplicate permission",
+	107: "invalid data id",
+	108: "duplicate feed config",
+	109: "feed frozen",
+	110: "no feed state",
+}
+
 // RoleTransferError represents the contract error codes.
 const (
 	RoleTransferErrorNoPendingTransfer      = 2200

@@ -137,14 +137,14 @@ func FeedConfigFromScVal(val xdr.ScVal) (*FeedConfig, error) {
 // FeedConfigEntry represents the FeedConfigEntry struct from the contract.
 type FeedConfigEntry struct {
 	Config FeedConfig
-	DataId [16]byte
+	DataId [32]byte
 }
 
 // ToScVal converts FeedConfigEntry to an xdr.ScVal for contract calls.
 func (s FeedConfigEntry) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"config":  scval.MustToScVal((s.Config).ToScVal()),
-		"data_id": scval.Bytes16ToScVal(s.DataId),
+		"data_id": scval.Bytes32ToScVal(s.DataId),
 	})
 }
 
@@ -170,7 +170,7 @@ func FeedConfigEntryFromScVal(val xdr.ScVal) (*FeedConfigEntry, error) {
 			}
 			result.Config = *v
 		case "data_id":
-			v, err := scval.Bytes16FromScVal(entry.Val)
+			v, err := scval.Bytes32FromScVal(entry.Val)
 			if err != nil {
 				return nil, fmt.Errorf("data_id: %w", err)
 			}
@@ -299,7 +299,7 @@ var OwnableErrorMessage = map[int]string{
 // FeedUpdated represents the FeedUpdated event.
 // Topics: [FeedUpdated]
 type FeedUpdated struct {
-	DataId    [16]byte
+	DataId    [32]byte
 	RoundId   uint64
 	Timestamp uint64
 	Answer    *big.Int
@@ -316,7 +316,7 @@ const FeedUpdatedTopic = "FeedUpdated"
 // StaleReport represents the StaleReport event.
 // Topics: [StaleReport]
 type StaleReport struct {
-	DataId   [16]byte
+	DataId   [32]byte
 	ReportTs uint64
 	StoredTs uint64
 	// Event metadata
@@ -330,7 +330,7 @@ const StaleReportTopic = "StaleReport"
 // FeedConfigSet represents the FeedConfigSet event.
 // Topics: [FeedConfigSet]
 type FeedConfigSet struct {
-	DataId              [16]byte
+	DataId              [32]byte
 	Decimals            uint32
 	Description         string
 	WorkflowPermissions []WorkflowPermission
@@ -345,7 +345,7 @@ const FeedConfigSetTopic = "FeedConfigSet"
 // FeedFrozenSet represents the FeedFrozenSet event.
 // Topics: [FeedFrozenSet]
 type FeedFrozenSet struct {
-	DataId [16]byte
+	DataId [32]byte
 	Frozen bool
 	// Event metadata
 	Ledger uint32
@@ -382,7 +382,7 @@ const FeedAdminRemovedTopic = "FeedAdminRemoved"
 // FeedConfigRemoved represents the FeedConfigRemoved event.
 // Topics: [FeedConfigRemoved]
 type FeedConfigRemoved struct {
-	DataId [16]byte
+	DataId [32]byte
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -394,7 +394,7 @@ const FeedConfigRemovedTopic = "FeedConfigRemoved"
 // InvalidUpdatePermission represents the InvalidUpdatePermission event.
 // Topics: [InvalidUpdatePermission]
 type InvalidUpdatePermission struct {
-	DataId        [16]byte
+	DataId        [32]byte
 	Sender        string
 	WorkflowOwner [20]byte
 	WorkflowName  [10]byte

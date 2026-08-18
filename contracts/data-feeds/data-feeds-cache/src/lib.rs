@@ -14,7 +14,7 @@ mod storage;
 pub use interface::{
     Bound, CacheError, DataFeedsCacheAdmin, DataFeedsCacheAdminClient, DataFeedsCacheReader,
     DataFeedsCacheReaderClient, DataFeedsCacheWriter, DataFeedsCacheWriterClient, DataId,
-    FeedConfig, FeedConfigEntry, Metadata, ReportEntry, RoundData, WorkflowPermission,
+    FeedConfig, FeedConfigEntry, Metadata, ReportEntry, RoundData, WorkflowPermission, DECIMALS,
 };
 
 #[cfg(feature = "contract")]

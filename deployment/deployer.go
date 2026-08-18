@@ -283,6 +283,14 @@ func (d *Deployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr
 	if err != nil {
 		return xdr.Hash{}, fmt.Errorf("failed to read WASM file: %w", err)
 	}
+	return d.UploadContractWASMBytes(ctx, wasmBytes)
+}
+
+// UploadContractWASMBytes uploads the given WASM bytes and returns their code
+// hash, without instantiating a contract: the hash is what an upgrade points an
+// existing instance at. Use this when the WASM is embedded in the binary (e.g.
+// go:embed); UploadContractWASM is the file-path wrapper around it.
+func (d *Deployer) UploadContractWASMBytes(ctx context.Context, wasmBytes []byte) (xdr.Hash, error) {
 	return d.uploadWASM(ctx, wasmBytes)
 }
 

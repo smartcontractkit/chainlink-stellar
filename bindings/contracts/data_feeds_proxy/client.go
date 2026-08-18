@@ -67,9 +67,9 @@ func (c *DataFeedsProxyClient) Version(ctx context.Context) (uint32, error) {
 }
 
 // Decimals calls the decimals function on the contract.
-func (c *DataFeedsProxyClient) Decimals(ctx context.Context, dataId [16]byte) (uint32, error) {
+func (c *DataFeedsProxyClient) Decimals(ctx context.Context, dataId [32]byte) (uint32, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "decimals", args)
@@ -109,9 +109,9 @@ func (c *DataFeedsProxyClient) GetOwner(ctx context.Context) (*string, error) {
 }
 
 // GetRound calls the get_round function on the contract.
-func (c *DataFeedsProxyClient) GetRound(ctx context.Context, dataId [16]byte, roundId uint64) (*Round, error) {
+func (c *DataFeedsProxyClient) GetRound(ctx context.Context, dataId [32]byte, roundId uint64) (*Round, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 		scval.Uint64ToScVal(roundId),
 	}
 
@@ -143,9 +143,9 @@ func (c *DataFeedsProxyClient) SetCache(ctx context.Context, cache string) error
 }
 
 // Description calls the description function on the contract.
-func (c *DataFeedsProxyClient) Description(ctx context.Context, dataId [16]byte) (string, error) {
+func (c *DataFeedsProxyClient) Description(ctx context.Context, dataId [32]byte) (string, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "description", args)
@@ -161,9 +161,9 @@ func (c *DataFeedsProxyClient) Description(ctx context.Context, dataId [16]byte)
 }
 
 // LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId [16]byte) (*Round, error) {
+func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId [32]byte) (*Round, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
