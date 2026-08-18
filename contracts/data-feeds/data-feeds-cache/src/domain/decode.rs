@@ -1,11 +1,10 @@
 use soroban_sdk::xdr::FromXdr;
-use soroban_sdk::{Bytes, BytesN, Env, Vec};
+use soroban_sdk::{Bytes, Env, Vec};
 
 use crate::interface::types::{
-    Metadata, ReportEntry, ReportId, WireDataId, WorkflowCid, WorkflowName, WorkflowOwner,
+    Metadata, ReportEntry, ReportId, WorkflowCid, WorkflowName, WorkflowOwner,
 };
 use crate::interface::CacheError;
-use crate::interface::DataId;
 
 pub(crate) fn decode_report(env: &Env, report: &Bytes) -> Result<Vec<ReportEntry>, CacheError> {
     Vec::<ReportEntry>::from_xdr(env, report).map_err(|_| CacheError::MalformedReport)
@@ -31,18 +30,11 @@ pub(crate) fn decode_metadata(_env: &Env, metadata: &Bytes) -> Result<Metadata, 
     })
 }
 
-pub(crate) fn truncate_data_id(env: &Env, wire_id: &WireDataId) -> DataId {
-    let full = wire_id.to_array();
-    let mut hi = [0u8; 16];
-    hi.copy_from_slice(&full[0..16]);
-    BytesN::from_array(env, &hi)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::xdr::ToXdr;
-    use soroban_sdk::I256;
+    use soroban_sdk::{BytesN, I256};
 
     const CID: [u8; 32] = [
         0x15, 0xc6, 0x31, 0xd2, 0x95, 0xef, 0x5e, 0x32, 0xde, 0xb9, 0x9a, 0x10, 0xee, 0x68, 0x04,
@@ -120,15 +112,5 @@ mod tests {
                 "len {len}"
             );
         }
-    }
-
-    #[test]
-    fn truncate_data_id_keeps_high_16_bytes() {
-        let env = Env::default();
-        let wire: [u8; 32] = core::array::from_fn(|i| i as u8);
-        let did = truncate_data_id(&env, &BytesN::from_array(&env, &wire));
-        let mut high = [0u8; 16];
-        high.copy_from_slice(&wire[0..16]);
-        assert_eq!(did.to_array(), high);
     }
 }

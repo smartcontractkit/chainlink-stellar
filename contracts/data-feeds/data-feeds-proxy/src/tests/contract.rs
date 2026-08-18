@@ -132,16 +132,9 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_passes_through() {
+    fn decimals_is_always_eighteen() {
         let p = Proxy::deploy();
-        let c = p.client();
-        let id_with_decimals = |dec: u8| mock_feed_id_with(&p.env, 0x20 + dec, 0);
-        assert_eq!(c.decimals(&id_with_decimals(1)), 1);
-        assert_eq!(
-            c.decimals(&id_with_decimals(3)),
-            3,
-            "distinct ids yield distinct values, so the answer comes from the cache"
-        );
+        assert_eq!(p.client().decimals(&p.data_id()), 18);
     }
 
     #[test]

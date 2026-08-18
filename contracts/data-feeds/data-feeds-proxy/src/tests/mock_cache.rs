@@ -1,6 +1,6 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Env, String, Vec, I256};
 
-use data_feeds_cache::{Bound, CacheError, DataFeedsCacheReader, RoundData};
+use data_feeds_cache::{Bound, CacheError, DataFeedsCacheReader, RoundData, DECIMALS};
 
 use crate::DataId;
 
@@ -86,11 +86,8 @@ impl DataFeedsCacheReader for MockCache {
             return Err(e);
         }
         let mut out = Vec::new(&env);
-        for data_id in data_ids.iter() {
-            out.push_back(Some(match data_id.to_array()[7] {
-                b @ 0x20..=0x60 => (b - 0x20) as u32,
-                _ => 0,
-            }));
+        for _ in data_ids.iter() {
+            out.push_back(Some(DECIMALS));
         }
         Ok(out)
     }

@@ -330,7 +330,7 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn derived_from_id_byte7() {
+    fn always_eighteen_for_configured_feeds() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         assert_eq!(cache.decimals(&feed.id), Some(18));
@@ -342,7 +342,7 @@ mod decimals {
         assert_eq!(
             cache.decimals(&mock_feed_id(&cache.env, 123)),
             None,
-            "a derivable id is still None until it is configured"
+            "an id is None until it is configured"
         );
     }
 

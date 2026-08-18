@@ -15,7 +15,7 @@ pub(crate) use crate::events::{
     InvalidUpdatePermission, StaleReport,
 };
 pub(crate) use crate::interface::types::{
-    Bound, DataId, FeedConfig, ReportEntry, RoundData, WireDataId, WorkflowName, WorkflowOwner,
+    Bound, DataId, FeedConfig, ReportEntry, RoundData, WorkflowName, WorkflowOwner,
     WorkflowPermission,
 };
 pub(crate) use crate::interface::CacheError;
