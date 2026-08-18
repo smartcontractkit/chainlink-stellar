@@ -5,7 +5,10 @@ use crate::interface::CacheError;
 
 #[contractclient(name = "DataFeedsCacheReaderClient")]
 pub trait DataFeedsCacheReader {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Option<RoundData>, CacheError>;
+    fn latest_round(
+        env: Env,
+        data_ids: Vec<BytesN<16>>,
+    ) -> Result<Vec<Option<RoundData>>, CacheError>;
 
     fn get_round(
         env: Env,
@@ -27,11 +30,11 @@ pub trait DataFeedsCacheReader {
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError>;
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<Option<u32>, CacheError>;
+    fn decimals(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<u32>>, CacheError>;
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<Option<String>, CacheError>;
+    fn description(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<Option<String>>, CacheError>;
 
-    fn is_configured(env: Env, data_id: BytesN<16>) -> Result<bool, CacheError>;
+    fn is_configured(env: Env, data_ids: Vec<BytesN<16>>) -> Result<Vec<bool>, CacheError>;
 
-    fn is_frozen(env: Env, data_id: BytesN<16>) -> bool;
+    fn is_frozen(env: Env, data_ids: Vec<BytesN<16>>) -> Vec<bool>;
 }

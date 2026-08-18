@@ -154,8 +154,34 @@ impl Cache {
         self.client().find_round(&feed.id, &ts, &bound)
     }
 
-    pub(crate) fn latest_round(&self, feed: &Feed) -> RoundData {
-        self.client().latest_round(&feed.id).unwrap()
+    pub(crate) fn latest_round(&self, id: &DataId) -> Option<RoundData> {
+        self.client()
+            .latest_round(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
+    }
+
+    pub(crate) fn decimals(&self, id: &DataId) -> Option<u32> {
+        self.client()
+            .decimals(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
+    }
+
+    pub(crate) fn description(&self, id: &DataId) -> Option<String> {
+        self.client()
+            .description(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
+    }
+
+    pub(crate) fn is_configured(&self, id: &DataId) -> bool {
+        self.client()
+            .is_configured(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
+    }
+
+    pub(crate) fn is_frozen(&self, id: &DataId) -> bool {
+        self.client()
+            .is_frozen(&vec![&self.env, id.clone()])
+            .get_unchecked(0)
     }
 
     pub(crate) fn expire_round(&self, feed: &Feed, round_id: u64) {

@@ -40,7 +40,7 @@ mod latest_round {
     fn absent_is_none() {
         let cache = Cache::deploy();
         let missing = mock_feed_id(&cache.env, 1);
-        assert!(cache.client().latest_round(&missing).is_none());
+        assert!(cache.latest_round(&missing).is_none());
     }
 
     #[test]
@@ -48,7 +48,7 @@ mod latest_round {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         cache.seed(&feed, 3);
-        let latest = cache.latest_round(&feed);
+        let latest = cache.latest_round(&feed.id).unwrap();
         assert_eq!(latest.round_id, 3);
         assert_eq!(latest.answer, I256::from_i128(&cache.env, 300));
         assert_eq!(latest.timestamp, 30);
@@ -60,7 +60,42 @@ mod latest_round {
         let feed = cache.add_feed(1);
         cache.seed(&feed, 3);
         cache.expire_round(&feed, 3);
-        assert_eq!(cache.latest_round(&feed).round_id, 3);
+        assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
+    }
+
+    #[test]
+    fn batch_preserves_order_and_handles_duplicates_and_missing() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 2);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, feed.id.clone(), missing, feed.id.clone()];
+
+        let rounds = cache.client().latest_round(&ids);
+
+        assert_eq!(rounds.len(), ids.len());
+        assert_eq!(rounds.get_unchecked(0).unwrap().round_id, 2);
+        assert!(rounds.get_unchecked(1).is_none());
+        assert_eq!(rounds.get_unchecked(2).unwrap().round_id, 2);
+    }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 3);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.is_frozen(&feed.id));
+        assert_eq!(cache.latest_round(&feed.id).unwrap().round_id, 3);
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().latest_round(&Vec::new(&cache.env)).len(), 0);
     }
 }
 
@@ -298,17 +333,51 @@ mod decimals {
     fn derived_from_id_byte7() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
-        assert_eq!(cache.client().decimals(&feed.id), Some(18));
+        assert_eq!(cache.decimals(&feed.id), Some(18));
     }
 
     #[test]
     fn unconfigured_feed_is_none() {
         let cache = Cache::deploy();
         assert_eq!(
-            cache.client().decimals(&mock_feed_id(&cache.env, 123)),
+            cache.decimals(&mock_feed_id(&cache.env, 123)),
             None,
             "a derivable id is still None until it is configured"
         );
+    }
+
+    #[test]
+    fn batch_preserves_order_and_handles_duplicates_and_missing() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, feed.id.clone(), missing, feed.id.clone()];
+
+        let decimals = cache.client().decimals(&ids);
+
+        assert_eq!(decimals.len(), ids.len());
+        assert_eq!(decimals.get_unchecked(0), Some(18));
+        assert_eq!(decimals.get_unchecked(1), None);
+        assert_eq!(decimals.get_unchecked(2), Some(18));
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().decimals(&Vec::new(&cache.env)).len(), 0);
+    }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 1);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.is_frozen(&feed.id));
+        assert_eq!(cache.decimals(&feed.id), Some(18));
     }
 }
 
@@ -320,7 +389,7 @@ mod description {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
         assert_eq!(
-            cache.client().description(&feed.id),
+            cache.description(&feed.id),
             Some(String::from_str(&cache.env, "BTC/USD"))
         );
     }
@@ -329,7 +398,45 @@ mod description {
     fn unconfigured_feed_is_none() {
         let cache = Cache::deploy();
         let unknown = mock_feed_id(&cache.env, 99);
-        assert_eq!(cache.client().description(&unknown), None);
+        assert_eq!(cache.description(&unknown), None);
+    }
+
+    #[test]
+    fn batch_preserves_order_and_handles_duplicates_and_missing() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, feed.id.clone(), missing, feed.id.clone()];
+        let expected = Some(String::from_str(&cache.env, "BTC/USD"));
+
+        let descriptions = cache.client().description(&ids);
+
+        assert_eq!(descriptions.len(), ids.len());
+        assert_eq!(descriptions.get_unchecked(0), expected);
+        assert_eq!(descriptions.get_unchecked(1), None);
+        assert_eq!(descriptions.get_unchecked(2), expected);
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().description(&Vec::new(&cache.env)).len(), 0);
+    }
+
+    #[test]
+    fn frozen_feeds_read_normally() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        cache.seed(&feed, 1);
+        cache
+            .client()
+            .set_feed_frozen(&feed.admin, &vec![&cache.env, feed.id.clone()], &true);
+
+        assert!(cache.is_frozen(&feed.id));
+        assert_eq!(
+            cache.description(&feed.id),
+            Some(String::from_str(&cache.env, "BTC/USD"))
+        );
     }
 }
 
@@ -340,8 +447,8 @@ mod is_configured {
     fn tracks_the_feed_config() {
         let cache = Cache::deploy();
         let feed = cache.add_feed(1);
-        assert!(cache.client().is_configured(&feed.id));
-        assert!(!cache.client().is_configured(&mock_feed_id(&cache.env, 99)));
+        assert!(cache.is_configured(&feed.id));
+        assert!(!cache.is_configured(&mock_feed_id(&cache.env, 99)));
     }
 
     #[test]
@@ -351,13 +458,70 @@ mod is_configured {
         let sender = new_address(&cache.env);
         let id = cache.configure_feed(&admin, &sender, 2, "");
         let c = cache.client();
-        assert!(c.is_configured(&id));
-        assert!(c.decimals(&id).is_some());
-        assert!(c.description(&id).is_some());
+        assert!(cache.is_configured(&id));
+        assert!(cache.decimals(&id).is_some());
+        assert!(cache.description(&id).is_some());
 
         c.remove_feed_configs(&admin, &vec![&cache.env, id.clone()]);
-        assert!(!c.is_configured(&id));
-        assert!(c.decimals(&id).is_none());
-        assert!(c.description(&id).is_none());
+        assert!(!cache.is_configured(&id));
+        assert!(cache.decimals(&id).is_none());
+        assert!(cache.description(&id).is_none());
+    }
+
+    #[test]
+    fn batch_preserves_order_and_handles_duplicates_and_missing() {
+        let cache = Cache::deploy();
+        let feed = cache.add_feed(1);
+        let missing = mock_feed_id(&cache.env, 9);
+        let ids = vec![&cache.env, feed.id.clone(), missing, feed.id.clone()];
+
+        let configured = cache.client().is_configured(&ids);
+
+        assert_eq!(configured.len(), ids.len());
+        assert!(configured.get_unchecked(0));
+        assert!(!configured.get_unchecked(1));
+        assert!(configured.get_unchecked(2));
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().is_configured(&Vec::new(&cache.env)).len(), 0);
+    }
+}
+
+mod is_frozen {
+    use super::*;
+
+    #[test]
+    fn batch_preserves_order_and_handles_duplicates_and_missing() {
+        let cache = Cache::deploy();
+        let frozen = cache.add_feed(1);
+        let thawed = cache.add_feed(2);
+        cache.seed(&frozen, 1);
+        cache
+            .client()
+            .set_feed_frozen(&frozen.admin, &vec![&cache.env, frozen.id.clone()], &true);
+        let ids = vec![
+            &cache.env,
+            frozen.id.clone(),
+            thawed.id.clone(),
+            mock_feed_id(&cache.env, 9),
+            frozen.id.clone(),
+        ];
+
+        let flags = cache.client().is_frozen(&ids);
+
+        assert_eq!(flags.len(), ids.len());
+        assert!(flags.get_unchecked(0));
+        assert!(!flags.get_unchecked(1));
+        assert!(!flags.get_unchecked(2), "unknown feeds are not frozen");
+        assert!(flags.get_unchecked(3));
+    }
+
+    #[test]
+    fn empty_ids_returns_empty() {
+        let cache = Cache::deploy();
+        assert_eq!(cache.client().is_frozen(&Vec::new(&cache.env)).len(), 0);
     }
 }
