@@ -1,6 +1,6 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, vec, Address, BytesN, Env, String};
 
-use data_feeds_cache::DataFeedsCacheReaderClient;
+use data_feeds_cache::{CacheError, DataFeedsCacheReaderClient};
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
@@ -20,12 +20,24 @@ impl DataFeedsProxy {
     }
 }
 
+fn assert_not_frozen(env: &Env, data_id: &BytesN<32>) {
+    let cache = DataFeedsCacheReaderClient::new(env, &storage::get_cache(env));
+    if cache
+        .is_frozen(&vec![env, data_id.clone()])
+        .get_unchecked(0)
+    {
+        panic_with_error!(env, CacheError::FeedFrozen);
+    }
+}
+
 #[contractimpl]
 impl DataFeedsProxyReader for DataFeedsProxy {
-    fn latest_round(env: Env, data_id: BytesN<16>) -> Result<Round, ProxyReadError> {
+    fn latest_round(env: Env, data_id: BytesN<32>) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
+        assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
-            .latest_round(&data_id)
+            .latest_round(&vec![&env, data_id])
+            .get_unchecked(0)
             .map(|r| Round {
                 round_id: r.round_id,
                 answer: r.answer,
@@ -34,8 +46,9 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn get_round(env: Env, data_id: BytesN<16>, round_id: u64) -> Result<Round, ProxyReadError> {
+    fn get_round(env: Env, data_id: BytesN<32>, round_id: u64) -> Result<Round, ProxyReadError> {
         storage::extend_ttl(&env);
+        assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
             .get_round(&data_id, &round_id)
             .map(|r| Round {
@@ -46,17 +59,21 @@ impl DataFeedsProxyReader for DataFeedsProxy {
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn decimals(env: Env, data_id: BytesN<16>) -> Result<u32, ProxyReadError> {
+    fn decimals(env: Env, data_id: BytesN<32>) -> Result<u32, ProxyReadError> {
         storage::extend_ttl(&env);
+        assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
-            .decimals(&data_id)
+            .decimals(&vec![&env, data_id])
+            .get_unchecked(0)
             .ok_or(ProxyReadError::NoDataPresent)
     }
 
-    fn description(env: Env, data_id: BytesN<16>) -> Result<String, ProxyReadError> {
+    fn description(env: Env, data_id: BytesN<32>) -> Result<String, ProxyReadError> {
         storage::extend_ttl(&env);
+        assert_not_frozen(&env, &data_id);
         DataFeedsCacheReaderClient::new(&env, &storage::get_cache(&env))
-            .description(&data_id)
+            .description(&vec![&env, data_id])
+            .get_unchecked(0)
             .ok_or(ProxyReadError::NoDataPresent)
     }
 }

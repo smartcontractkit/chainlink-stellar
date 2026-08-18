@@ -1,6 +1,8 @@
 use soroban_sdk::{contracttype, Address, BytesN, String, Vec, I256};
 
-pub type DataId = BytesN<16>;
+pub type DataId = BytesN<32>;
+
+pub const DECIMALS: u32 = 18;
 
 pub type WorkflowOwner = BytesN<20>;
 
@@ -9,8 +11,6 @@ pub type WorkflowName = BytesN<10>;
 pub type WorkflowCid = BytesN<32>;
 
 pub type ReportId = BytesN<2>;
-
-pub type WireDataId = BytesN<32>;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -47,7 +47,7 @@ pub struct FeedConfig {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct FeedConfigEntry {
-    pub data_id: BytesN<16>,
+    pub data_id: BytesN<32>,
     pub config: FeedConfig,
 }
 

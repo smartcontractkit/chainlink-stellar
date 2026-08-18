@@ -3,16 +3,15 @@ use soroban_sdk::{
 };
 
 use crate::interface::types::{
-    DataId, FeedConfig, ReportEntry, WireDataId, WorkflowName, WorkflowOwner, WorkflowPermission,
+    DataId, FeedConfig, ReportEntry, WorkflowName, WorkflowOwner, WorkflowPermission,
 };
 use crate::interface::FeedConfigEntry;
 use crate::DataFeedsCacheClient;
 
-pub const DEFAULT_BYTE7: u8 = 0x32;
 pub const DEFAULT_DESC: &str = "BTC/USD";
 
 pub fn mock_data_id(env: &Env) -> DataId {
-    BytesN::from_array(env, &[0x32; 16])
+    BytesN::from_array(env, &[0x32; 32])
 }
 
 pub fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
@@ -24,27 +23,17 @@ pub fn round_ttl(env: &Env, id: &DataId, round_id: u64) -> u32 {
 }
 
 pub fn mock_feed_id(env: &Env, tag: u8) -> DataId {
-    mock_feed_id_with(env, DEFAULT_BYTE7, tag)
-}
-
-pub fn zero_feed_id(env: &Env) -> DataId {
-    mock_feed_id_with(env, 0, 0)
-}
-
-pub fn mock_feed_id_with(env: &Env, byte7: u8, tag: u8) -> DataId {
-    let mut a = [0u8; 16];
-    a[7] = byte7;
+    let mut a = [0u8; 32];
     a[15] = tag;
     BytesN::from_array(env, &a)
 }
 
-pub fn mock_wire_id(env: &Env, tag_hi: u8, tag_lo: u8) -> WireDataId {
-    mock_wire_id_with(env, DEFAULT_BYTE7, tag_hi, tag_lo)
+pub fn zero_feed_id(env: &Env) -> DataId {
+    BytesN::from_array(env, &[0u8; 32])
 }
 
-pub fn mock_wire_id_with(env: &Env, byte7: u8, tag_hi: u8, tag_lo: u8) -> WireDataId {
+pub fn mock_wire_id(env: &Env, tag_hi: u8, tag_lo: u8) -> DataId {
     let mut a = [0u8; 32];
-    a[7] = byte7;
     a[15] = tag_hi;
     a[31] = tag_lo;
     BytesN::from_array(env, &a)
@@ -69,7 +58,7 @@ pub fn mock_metadata(env: &Env) -> Bytes {
     metadata(env, &mock_wf_owner(env), &mock_wf_name(env))
 }
 
-pub fn report(env: &Env, entries: &[(WireDataId, i128, u64)]) -> Bytes {
+pub fn report(env: &Env, entries: &[(DataId, i128, u64)]) -> Bytes {
     let mut v: Vec<ReportEntry> = Vec::new(env);
     for (d, a, t) in entries {
         v.push_back(ReportEntry {
@@ -128,11 +117,9 @@ pub fn seed_round(
     answer: i128,
     ts: u64,
 ) {
-    let a = data_id.to_array();
-    let wid = mock_wire_id_with(env, a[7], a[15], 0);
     DataFeedsCacheClient::new(env, cache).on_report(
         sender,
         &mock_metadata(env),
-        &report(env, &[(wid, answer, ts)]),
+        &report(env, &[(data_id.clone(), answer, ts)]),
     );
 }

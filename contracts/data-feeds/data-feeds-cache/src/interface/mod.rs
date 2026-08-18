@@ -9,6 +9,6 @@ pub use error::CacheError;
 pub use reader::{DataFeedsCacheReader, DataFeedsCacheReaderClient};
 pub use types::{
     Bound, DataId, FeedConfig, FeedConfigEntry, Metadata, ReportEntry, RoundData,
-    WorkflowPermission,
+    WorkflowPermission, DECIMALS,
 };
 pub use writer::{DataFeedsCacheWriter, DataFeedsCacheWriterClient};
