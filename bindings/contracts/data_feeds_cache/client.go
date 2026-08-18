@@ -67,9 +67,9 @@ func (c *DataFeedsCacheClient) Version(ctx context.Context) (uint32, error) {
 }
 
 // Decimals calls the decimals function on the contract.
-func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataId [16]byte) (*uint32, error) {
+func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataIds [][32]byte) ([]*uint32, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "decimals", args)
@@ -81,11 +81,19 @@ func (c *DataFeedsCacheClient) Decimals(ctx context.Context, dataId [16]byte) (*
 		return nil, fmt.Errorf("no return value from decimals")
 	}
 
-	v, err := scval.OptionalUint32FromScVal(*result)
-	if err != nil {
-		return nil, err
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	return v, nil
+	out := make([]*uint32, len(*vec))
+	for i, item := range *vec {
+		v, err := scval.OptionalUint32FromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
 }
 
 // GetOwner calls the get_owner function on the contract.
@@ -109,9 +117,9 @@ func (c *DataFeedsCacheClient) GetOwner(ctx context.Context) (*string, error) {
 }
 
 // GetRound calls the get_round function on the contract.
-func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId [16]byte, roundId uint64) (*RoundData, error) {
+func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId [32]byte, roundId uint64) (*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 		scval.Uint64ToScVal(roundId),
 	}
 
@@ -135,25 +143,33 @@ func (c *DataFeedsCacheClient) GetRound(ctx context.Context, dataId [16]byte, ro
 }
 
 // IsFrozen calls the is_frozen function on the contract.
-func (c *DataFeedsCacheClient) IsFrozen(ctx context.Context, dataId [16]byte) (bool, error) {
+func (c *DataFeedsCacheClient) IsFrozen(ctx context.Context, dataIds [][32]byte) ([]bool, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_frozen", args)
 	if err != nil {
-		return false, fmt.Errorf("failed to call is_frozen: %w", err)
+		return nil, fmt.Errorf("failed to call is_frozen: %w", err)
 	}
 
 	if result == nil {
-		return false, fmt.Errorf("no return value from is_frozen")
+		return nil, fmt.Errorf("no return value from is_frozen")
 	}
 
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	return v, nil
+	out := make([]bool, len(*vec))
+	for i, item := range *vec {
+		v, ok := item.GetB()
+		if !ok {
+			return nil, fmt.Errorf("vec item is not bool")
+		}
+		out[i] = bool(v)
+	}
+	return out, nil
 }
 
 // OnReport calls the on_report function on the contract.
@@ -174,9 +190,9 @@ func (c *DataFeedsCacheClient) OnReport(ctx context.Context, sender string, meta
 }
 
 // FindRound calls the find_round function on the contract.
-func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId [16]byte, timestamp uint64, bound Bound) (*RoundData, error) {
+func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId [32]byte, timestamp uint64, bound Bound) (*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 		scval.Uint64ToScVal(timestamp),
 		scval.MustToScVal(bound.ToScVal()),
 	}
@@ -201,9 +217,9 @@ func (c *DataFeedsCacheClient) FindRound(ctx context.Context, dataId [16]byte, t
 }
 
 // Description calls the description function on the contract.
-func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId [16]byte) (*string, error) {
+func (c *DataFeedsCacheClient) Description(ctx context.Context, dataIds [][32]byte) ([]*string, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "description", args)
@@ -215,17 +231,25 @@ func (c *DataFeedsCacheClient) Description(ctx context.Context, dataId [16]byte)
 		return nil, fmt.Errorf("no return value from description")
 	}
 
-	v, err := scval.OptionalStringFromScVal(*result)
-	if err != nil {
-		return nil, err
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	return v, nil
+	out := make([]*string, len(*vec))
+	for i, item := range *vec {
+		v, err := scval.OptionalStringFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
 }
 
 // RoundRange calls the round_range function on the contract.
-func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId [16]byte, from uint64, to uint64) ([]RoundData, error) {
+func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId [32]byte, from uint64, to uint64) ([]RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 		scval.Uint64ToScVal(from),
 		scval.Uint64ToScVal(to),
 	}
@@ -255,9 +279,9 @@ func (c *DataFeedsCacheClient) RoundRange(ctx context.Context, dataId [16]byte, 
 }
 
 // LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataId [16]byte) (*RoundData, error) {
+func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataIds [][32]byte) ([]*RoundData, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
@@ -269,36 +293,52 @@ func (c *DataFeedsCacheClient) LatestRound(ctx context.Context, dataId [16]byte)
 		return nil, fmt.Errorf("no return value from latest_round")
 	}
 
-	if result.Type == xdr.ScValTypeScvVoid {
-		return nil, nil
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	v, err := RoundDataFromScVal(*result)
-	if err != nil {
-		return nil, err
+	out := make([]*RoundData, len(*vec))
+	for i, item := range *vec {
+		if item.Type == xdr.ScValTypeScvVoid {
+			continue
+		}
+		v, err := RoundDataFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
 	}
-	return v, nil
+	return out, nil
 }
 
 // IsConfigured calls the is_configured function on the contract.
-func (c *DataFeedsCacheClient) IsConfigured(ctx context.Context, dataId [16]byte) (bool, error) {
+func (c *DataFeedsCacheClient) IsConfigured(ctx context.Context, dataIds [][32]byte) ([]bool, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_configured", args)
 	if err != nil {
-		return false, fmt.Errorf("failed to call is_configured: %w", err)
+		return nil, fmt.Errorf("failed to call is_configured: %w", err)
 	}
 
 	if result == nil {
-		return false, fmt.Errorf("no return value from is_configured")
+		return nil, fmt.Errorf("no return value from is_configured")
 	}
 
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	return v, nil
+	out := make([]bool, len(*vec))
+	for i, item := range *vec {
+		v, ok := item.GetB()
+		if !ok {
+			return nil, fmt.Errorf("vec item is not bool")
+		}
+		out[i] = bool(v)
+	}
+	return out, nil
 }
 
 // IsFeedAdmin calls the is_feed_admin function on the contract.
@@ -339,9 +379,9 @@ func (c *DataFeedsCacheClient) AddFeedAdmin(ctx context.Context, newAdmin string
 }
 
 // HasPermission calls the has_permission function on the contract.
-func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId [16]byte, sender string, workflowOwner [20]byte, workflowName [10]byte) (bool, error) {
+func (c *DataFeedsCacheClient) HasPermission(ctx context.Context, dataId [32]byte, sender string, workflowOwner [20]byte, workflowName [10]byte) (bool, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 		scval.AddressToScVal(sender),
 		scval.Bytes20ToScVal(workflowOwner),
 		scval.Bytes10ToScVal(workflowName),
@@ -381,10 +421,10 @@ func (c *DataFeedsCacheClient) RecoverTokens(ctx context.Context, token string, 
 }
 
 // SetFeedFrozen calls the set_feed_frozen function on the contract.
-func (c *DataFeedsCacheClient) SetFeedFrozen(ctx context.Context, admin string, dataIds [][16]byte, frozen bool) error {
+func (c *DataFeedsCacheClient) SetFeedFrozen(ctx context.Context, admin string, dataIds [][32]byte, frozen bool) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
-		scval.Bytes16SliceToScVal(dataIds),
+		scval.Bytes32SliceToScVal(dataIds),
 		scval.BoolToScVal(frozen),
 	}
 
@@ -487,10 +527,10 @@ func (c *DataFeedsCacheClient) TransferOwnership(ctx context.Context, newOwner s
 }
 
 // RemoveFeedConfigs calls the remove_feed_configs function on the contract.
-func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin string, dataIds [][16]byte) error {
+func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin string, dataIds [][32]byte) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(admin),
-		scval.Bytes16SliceToScVal(dataIds),
+		scval.Bytes32SliceToScVal(dataIds),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_feed_configs", args)
@@ -503,9 +543,9 @@ func (c *DataFeedsCacheClient) RemoveFeedConfigs(ctx context.Context, admin stri
 }
 
 // GetFeedPermissions calls the get_feed_permissions function on the contract.
-func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId [16]byte) ([]WorkflowPermission, error) {
+func (c *DataFeedsCacheClient) GetFeedPermissions(ctx context.Context, dataId [32]byte) ([]WorkflowPermission, error) {
 	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(dataId),
+		scval.Bytes32ToScVal(dataId),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_feed_permissions", args)
@@ -584,7 +624,7 @@ func ParseFeedUpdated(e protocolrpc.EventInfo) (*FeedUpdated, error) {
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
@@ -680,7 +720,7 @@ func ParseStaleReport(e protocolrpc.EventInfo) (*StaleReport, error) {
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
@@ -761,7 +801,7 @@ func ParseFeedConfigSet(e protocolrpc.EventInfo) (*FeedConfigSet, error) {
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
@@ -854,7 +894,7 @@ func ParseFeedFrozenSet(e protocolrpc.EventInfo) (*FeedFrozenSet, error) {
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
@@ -1072,7 +1112,7 @@ func ParseFeedConfigRemoved(e protocolrpc.EventInfo) (*FeedConfigRemoved, error)
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
@@ -1143,7 +1183,7 @@ func ParseInvalidUpdatePermission(e protocolrpc.EventInfo) (*InvalidUpdatePermis
 	if len(e.TopicXDR) > 1 {
 		var tv xdr.ScVal
 		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
-			if v, err := scval.Bytes16FromScVal(tv); err == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
 				result.DataId = v
 			}
 		}
