@@ -5,15 +5,18 @@ pub trait DataFeedsCacheInterface {
     fn version(env: soroban_sdk::Env) -> u32;
     fn decimals(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
-    ) -> Result<Option<u32>, CacheError>;
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> Result<soroban_sdk::Vec<Option<u32>>, CacheError>;
     fn get_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: soroban_sdk::BytesN<32>,
         round_id: u64,
     ) -> Result<Option<RoundData>, CacheError>;
-    fn is_frozen(env: soroban_sdk::Env, data_id: soroban_sdk::BytesN<16>) -> bool;
+    fn is_frozen(
+        env: soroban_sdk::Env,
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> soroban_sdk::Vec<bool>;
     fn on_report(
         env: soroban_sdk::Env,
         sender: soroban_sdk::Address,
@@ -22,29 +25,29 @@ pub trait DataFeedsCacheInterface {
     ) -> Result<(), CacheError>;
     fn find_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: soroban_sdk::BytesN<32>,
         timestamp: u64,
         bound: Bound,
     ) -> Result<Option<RoundData>, CacheError>;
     fn description(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
-    ) -> Result<Option<soroban_sdk::String>, CacheError>;
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> Result<soroban_sdk::Vec<Option<soroban_sdk::String>>, CacheError>;
     fn round_range(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: soroban_sdk::BytesN<32>,
         from: u64,
         to: u64,
     ) -> Result<soroban_sdk::Vec<RoundData>, CacheError>;
     fn latest_round(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
-    ) -> Result<Option<RoundData>, CacheError>;
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> Result<soroban_sdk::Vec<Option<RoundData>>, CacheError>;
     fn __constructor(env: soroban_sdk::Env, owner: soroban_sdk::Address);
     fn is_configured(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
-    ) -> Result<bool, CacheError>;
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    ) -> Result<soroban_sdk::Vec<bool>, CacheError>;
     fn is_feed_admin(env: soroban_sdk::Env, admin: soroban_sdk::Address) -> bool;
     fn add_feed_admin(
         env: soroban_sdk::Env,
@@ -52,7 +55,7 @@ pub trait DataFeedsCacheInterface {
     ) -> Result<(), CacheError>;
     fn has_permission(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: soroban_sdk::BytesN<32>,
         sender: soroban_sdk::Address,
         workflow_owner: soroban_sdk::BytesN<20>,
         workflow_name: soroban_sdk::BytesN<10>,
@@ -66,7 +69,7 @@ pub trait DataFeedsCacheInterface {
     fn set_feed_frozen(
         env: soroban_sdk::Env,
         admin: soroban_sdk::Address,
-        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
         frozen: bool,
     ) -> Result<(), CacheError>;
     fn accept_ownership(env: soroban_sdk::Env);
@@ -89,11 +92,11 @@ pub trait DataFeedsCacheInterface {
     fn remove_feed_configs(
         env: soroban_sdk::Env,
         admin: soroban_sdk::Address,
-        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
+        data_ids: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
     ) -> Result<(), CacheError>;
     fn get_feed_permissions(
         env: soroban_sdk::Env,
-        data_id: soroban_sdk::BytesN<16>,
+        data_id: soroban_sdk::BytesN<32>,
     ) -> soroban_sdk::Vec<WorkflowPermission>;
 }
 #[soroban_sdk::contracttype(export = false)]
@@ -115,7 +118,7 @@ pub struct FeedConfig {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigEntry {
     pub config: FeedConfig,
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -164,7 +167,7 @@ pub enum OwnableError {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedUpdated {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
     pub round_id: u64,
     pub timestamp: u64,
     pub answer: soroban_sdk::I256,
@@ -175,7 +178,7 @@ pub struct FeedUpdated {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaleReport {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
     pub report_ts: u64,
     pub stored_ts: u64,
 }
@@ -183,7 +186,7 @@ pub struct StaleReport {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigSet {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
     pub decimals: u32,
     pub description: soroban_sdk::String,
     pub workflow_permissions: soroban_sdk::Vec<WorkflowPermission>,
@@ -192,7 +195,7 @@ pub struct FeedConfigSet {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedFrozenSet {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
     pub frozen: bool,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["FeedAdminAdded"])]
@@ -211,13 +214,13 @@ pub struct FeedAdminRemoved {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigRemoved {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["InvalidUpdatePermission"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InvalidUpdatePermission {
     #[topic]
-    pub data_id: soroban_sdk::BytesN<16>,
+    pub data_id: soroban_sdk::BytesN<32>,
     pub sender: soroban_sdk::Address,
     pub workflow_owner: soroban_sdk::BytesN<20>,
     pub workflow_name: soroban_sdk::BytesN<10>,

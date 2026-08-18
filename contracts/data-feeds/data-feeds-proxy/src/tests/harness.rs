@@ -1,13 +1,13 @@
 pub(crate) use soroban_sdk::{
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env, String, Vec, I256,
+    Address, Env, String, Vec, I256,
 };
 
 pub(crate) use data_feeds_common::test_utils::{
     age_ttl, authorize, network_max_ttl, new_address, peek, Harness,
 };
 
-pub(crate) use data_feeds_cache::test_utils::{mock_feed_id, mock_feed_id_with};
+pub(crate) use data_feeds_cache::test_utils::mock_feed_id;
 pub(crate) use data_feeds_cache::{CacheError, RoundData};
 
 pub(crate) use super::mock_cache::{mock_round_data, MockCache, MockCacheClient};
@@ -63,6 +63,15 @@ impl Proxy {
 
     pub(crate) fn fail_cache(&self) {
         MockCacheClient::new(&self.env, &self.mock).set_err(&CacheError::MalformedReport);
+    }
+
+    pub(crate) fn freeze(&self) {
+        MockCacheClient::new(&self.env, &self.mock).set_frozen(&self.data_id(), &true);
+    }
+
+    pub(crate) fn set_latest(&self, row: (u64, i128, u64)) {
+        MockCacheClient::new(&self.env, &self.mock)
+            .set_latest(&self.data_id(), &mock_round_data(&self.env, row));
     }
 
     pub(crate) fn data_id(&self) -> DataId {
