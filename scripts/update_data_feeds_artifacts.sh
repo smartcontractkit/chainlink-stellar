@@ -3,10 +3,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The data feeds contracts live in a nested cargo workspace with its own
-# soroban-sdk pin, so every build must go through --manifest-path; the root
-# workspace does not descend into it.
-MANIFEST="contracts/data-feeds/Cargo.toml"
 PACKAGES="data-feeds-cache data-feeds-proxy"
 
 # Pinned to contracts/data-feeds/rust-toolchain.toml (1.96.0) and the stellar-cli
@@ -28,9 +24,8 @@ docker run --rm --platform linux/amd64 \
   -v "$PWD":/src:ro \
   -v "$PWD/deployment/data-feeds/artifacts":/out \
   ${MOUNTS[@]+"${MOUNTS[@]}"} \
-  -w /src \
+  -w /src/contracts/data-feeds \
   -e CARGO_TARGET_DIR=/build \
-  -e MANIFEST="$MANIFEST" \
   -e PACKAGES="$PACKAGES" \
   -e STELLAR_CLI_VERSION="$STELLAR_CLI_VERSION" \
   -e STELLAR_CLI_SHA256="$STELLAR_CLI_SHA256" \
@@ -45,7 +40,7 @@ docker run --rm --platform linux/amd64 \
     echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum --check --quiet
     tar -xzf /tmp/stellar-cli.tar.gz -C /usr/local/bin
     for pkg in $PACKAGES; do
-      stellar contract build --manifest-path "$MANIFEST" --package "$pkg"
+      stellar contract build --manifest-path Cargo.toml --package "$pkg"
       cp "/build/wasm32v1-none/release/${pkg//-/_}.wasm" /out/
     done
   '
