@@ -10,10 +10,10 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true, features = ["hazmat-address"] }
-stellar-strkey = { workspace = true }
 common-guard = { workspace = true }
 common-error = { workspace = true }
 common-helpers = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+stellar-strkey = { workspace = true }
