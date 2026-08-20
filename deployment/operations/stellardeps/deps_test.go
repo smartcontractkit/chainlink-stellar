@@ -28,6 +28,13 @@ func (f *fakeDeployer) DeployContract(ctx context.Context, wasmPath string, salt
 	return "CDEPLOYFAKE000000000000000000000000000000000000000000000", nil
 }
 
+func (f *fakeDeployer) DeployContractBytes(ctx context.Context, wasm []byte, salt [32]byte) (string, error) {
+	_ = ctx
+	f.lastWasm = string(wasm)
+	f.lastSalt = salt
+	return "CDEPLOYFAKE000000000000000000000000000000000000000000000", nil
+}
+
 type fakeInvoker struct {
 	lastContract string
 	lastFn       string
@@ -112,4 +119,28 @@ func TestExecuteOperation_withStellarDeps(t *testing.T) {
 	require.Equal(t, byte(7), fd.lastSalt[0])
 	require.Equal(t, fi.lastContract, report.Output.Contract)
 	require.Equal(t, "__self_test__", fi.lastFn)
+}
+
+func TestExecuteDeployBytesOperation(t *testing.T) {
+	t.Parallel()
+
+	fd := &fakeDeployer{}
+	deps := stellardeps.StellarDeps{Deploy: fd}
+	bundle := cldfops.NewBundle(
+		func() context.Context { return context.Background() },
+		cldflogger.Test(t),
+		cldfops.NewMemoryReporter(),
+	)
+	op := stellarops.NewDeployBytesOperation("stellardeps:bytes-test", "deploy supplied bytes")
+	salt := [32]byte{1, 2, 3}
+
+	report, err := cldfops.ExecuteOperation(bundle, op, deps, stellarops.DeployBytesInput{
+		Wasm: []byte{0, 97, 115, 109},
+		Salt: salt,
+	})
+	require.NoError(t, err)
+	require.Nil(t, report.Err)
+	require.Equal(t, string([]byte{0, 97, 115, 109}), fd.lastWasm)
+	require.Equal(t, salt, fd.lastSalt)
+	require.NotEmpty(t, report.Output.ContractID)
 }

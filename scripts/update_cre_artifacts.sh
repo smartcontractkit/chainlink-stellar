@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PACKAGES="forwarder receiver rejecting-receiver read-fixture"
+PACKAGES="forwarder receiver rejecting-receiver read-fixture mcms timelock"
 IMAGE="rust:1.93.1@sha256:ecbe59a8408895edd02d9ef422504b8501dd9fa1526de27a45b73406d734d659"
 STELLAR_CLI_VERSION="25.1.0"
 STELLAR_CLI_SHA256="e6fac619b2ae9b3ecb843a9e8e3bfc94dce79e0b73c63cb1cbbd08682bb0a0ba"

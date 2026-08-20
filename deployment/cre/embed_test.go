@@ -12,7 +12,7 @@ import (
 func TestArtifactEmbedsEveryConstant(t *testing.T) {
 	wasmMagic := []byte{0x00, 'a', 's', 'm'}
 
-	for _, name := range []string{ReadFixtureWasm, ForwarderWasm, ReceiverWasm, RejectingReceiverWasm} {
+	for _, name := range []string{ReadFixtureWasm, ForwarderWasm, ReceiverWasm, RejectingReceiverWasm, MCMSWasm, TimelockWasm} {
 		wasm, err := Artifact(name)
 		require.NoErrorf(t, err, "artifact %s is not embedded — run 'make update-cre-artifacts'", name)
 		require.Greaterf(t, len(wasm), len(wasmMagic), "embedded artifact %s is truncated", name)
@@ -37,6 +37,6 @@ func TestEmbeddedSetIsExactlyTheConstants(t *testing.T) {
 		got = append(got, e.Name())
 	}
 	require.ElementsMatch(t,
-		[]string{ForwarderWasm, ReceiverWasm, RejectingReceiverWasm, ReadFixtureWasm},
+		[]string{ForwarderWasm, ReceiverWasm, RejectingReceiverWasm, ReadFixtureWasm, MCMSWasm, TimelockWasm},
 		got, "embedded artifacts/ must contain exactly the documented artifact set")
 }

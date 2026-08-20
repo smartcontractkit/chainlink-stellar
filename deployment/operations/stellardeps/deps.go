@@ -11,6 +11,7 @@ import (
 // and create a contract instance (contract ID string).
 type SorobanContractDeployer interface {
 	DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error)
+	DeployContractBytes(ctx context.Context, wasm []byte, salt [32]byte) (string, error)
 }
 
 // StellarDeps bundles deploy-time and runtime chain I/O used by Soroban

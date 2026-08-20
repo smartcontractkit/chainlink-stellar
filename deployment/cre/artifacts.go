@@ -24,6 +24,12 @@ const (
 	// ReceiverWasm is the CRE test receiver (contracts/cre/test/receiver).
 	ReceiverWasm = "receiver.wasm"
 
-	// RejectingReceiverWasm is the CRE test receiver that always rejects on_report
+	// RejectingReceiverWasm is the CRE test receiver that always rejects on_report.
 	RejectingReceiverWasm = "rejecting_receiver.wasm"
+
+	// MCMSWasm is the MCMS contract (contracts/mcms).
+	MCMSWasm = "mcms.wasm"
+
+	// TimelockWasm is the RBAC Timelock contract (contracts/timelock).
+	TimelockWasm = "timelock.wasm"
 )

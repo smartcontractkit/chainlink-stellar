@@ -36,7 +36,7 @@ jobs:
             exit 0
           fi
           if git diff --name-only "$BASE_SHA...HEAD" -- \
-              contracts/cre/ contracts/common/ \
+              contracts/cre/ contracts/common/ contracts/mcms/ contracts/timelock/ \
               Cargo.toml Cargo.lock rust-toolchain.toml \
               deployment/cre/artifacts/ scripts/update_cre_artifacts.sh \
               | grep -q .; then

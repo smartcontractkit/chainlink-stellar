@@ -22,7 +22,8 @@ var artifactsFS embed.FS
 // constants above, e.g. Artifact(ForwarderWasm).
 func Artifact(name string) ([]byte, error) {
 	switch name {
-	case ForwarderWasm, ReceiverWasm, RejectingReceiverWasm, ReadFixtureWasm:
+	case ForwarderWasm, ReceiverWasm, RejectingReceiverWasm, ReadFixtureWasm,
+		MCMSWasm, TimelockWasm:
 	default:
 		return nil, fmt.Errorf("unknown CRE artifact %q", name)
 	}

@@ -41,6 +41,13 @@ func (stubDeployer) DeployContract(ctx context.Context, wasmPath string, salt [3
 	return "", nil
 }
 
+func (stubDeployer) DeployContractBytes(ctx context.Context, wasm []byte, salt [32]byte) (string, error) {
+	_ = ctx
+	_ = wasm
+	_ = salt
+	return "", nil
+}
+
 type stubInvoker struct{}
 
 func (stubInvoker) InvokeContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {

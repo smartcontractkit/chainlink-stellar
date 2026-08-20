@@ -9,6 +9,13 @@ type DeployInput struct {
 	Salt     [32]byte `json:"salt"`
 }
 
+// DeployBytesInput is the native input for callers that already own the WASM
+// artifact. It avoids leaking filesystem concerns into deployment workflows.
+type DeployBytesInput struct {
+	Wasm []byte   `json:"-"`
+	Salt [32]byte `json:"salt"`
+}
+
 // DeployOutput carries the deployed contract address (StrKey).
 type DeployOutput struct {
 	ContractID string `json:"contract_id"`
