@@ -786,7 +786,6 @@ fn test_set_root_execute_and_post_op_count_reached() {
     ));
 }
 
-
 #[test]
 fn test_execute_reverted_call_does_not_consume_nonce_and_can_retry() {
     let env = Env::default();
