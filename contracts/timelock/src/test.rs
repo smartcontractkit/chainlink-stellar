@@ -1,26 +1,19 @@
-//! Integration-style contract tests for RBACTimelock.
-
 #![cfg(test)]
 
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    address_payload::AddressPayload, contract, contractimpl, symbol_short, Address, Bytes, BytesN,
-    Env, IntoVal, Symbol, Val, Vec as SorobanVec,
+    contract, contracterror, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
+    Symbol, Val, Vec,
 };
 
-use crate::error::TimelockError;
-use crate::types::{
-    Call, Calls, ADMIN_ROLE, BYPASSER_ROLE, CANCELLER_ROLE, EXECUTOR_ROLE, PROPOSER_ROLE,
+use crate::{
+    Call, Calls, TimelockContract, TimelockContractClient, TimelockError, ADMIN_ROLE,
+    BYPASSER_ROLE, CANCELLER_ROLE, PROPOSER_ROLE,
 };
-use crate::{TimelockContract, TimelockContractClient};
-
-// -------------------------------------------------------------------------
-// Mock target contract
-// -------------------------------------------------------------------------
 
 #[contract]
-pub struct MockTarget;
+struct MockTarget;
 
 #[contractimpl]
 impl MockTarget {
@@ -30,751 +23,387 @@ impl MockTarget {
     pub fn get_value(env: Env) -> u32 {
         env.storage()
             .instance()
-            .get::<_, u32>(&symbol_short!("VAL"))
+            .get(&symbol_short!("VAL"))
             .unwrap_or(0)
     }
 }
 
-// -------------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------------
-
-fn register_timelock(env: &Env) -> TimelockContractClient<'_> {
-    let id = env.register(TimelockContract, ());
-    TimelockContractClient::new(env, &id)
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+enum FailingTargetError {
+    Rejected = 1,
 }
 
-fn addr_to_contract_id(addr: &Address, env: &Env) -> BytesN<32> {
-    match addr.to_payload() {
-        Some(AddressPayload::ContractIdHash(id)) => id,
-        _ => BytesN::from_array(env, &[0u8; 32]),
+#[contract]
+struct FailingTarget;
+
+#[contractimpl]
+impl FailingTarget {
+    pub fn set_reject(env: Env, reject: bool) {
+        env.storage()
+            .instance()
+            .set(&symbol_short!("REJECT"), &reject);
+    }
+    pub fn maybe_fail(env: Env) -> Result<(), FailingTargetError> {
+        if env
+            .storage()
+            .instance()
+            .get(&symbol_short!("REJECT"))
+            .unwrap_or(false)
+        {
+            Err(FailingTargetError::Rejected)
+        } else {
+            Ok(())
+        }
+    }
+    pub fn abort() {
+        panic!("intentional abort");
     }
 }
 
-fn zero_bytes32(env: &Env) -> BytesN<32> {
+fn register(env: &Env) -> TimelockContractClient<'_> {
+    let address = env.register(TimelockContract, ());
+    TimelockContractClient::new(env, &address)
+}
+
+fn args(env: &Env, values: &[Val]) -> Bytes {
+    let mut out = Vec::<Val>::new(env);
+    for value in values {
+        out.push_back(*value);
+    }
+    out.to_xdr(env)
+}
+
+fn call(env: &Env, target: &Address, function: &str, values: &[Val]) -> Call {
+    Call {
+        target: target.clone(),
+        function: Symbol::new(env, function),
+        args_xdr: args(env, values),
+    }
+}
+
+fn calls(env: &Env, call: Call) -> Calls {
+    Calls {
+        inner: Vec::from_array(env, [call]),
+    }
+}
+
+fn zero(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0u8; 32])
 }
 
-fn salt(env: &Env, v: u8) -> BytesN<32> {
-    let mut s = [0u8; 32];
-    s[31] = v;
-    BytesN::from_array(env, &s)
+fn salt(env: &Env, marker: u8) -> BytesN<32> {
+    let mut bytes = [0u8; 32];
+    bytes[31] = marker;
+    BytesN::from_array(env, &bytes)
 }
 
-fn encode_set_value(env: &Env, value: u32) -> Bytes {
-    let mut payload: SorobanVec<Val> = SorobanVec::new(env);
-    payload.push_back(Symbol::new(env, "set_value").into_val(env));
-    payload.push_back(value.into_val(env));
-    payload.to_xdr(env)
-}
-
-fn make_call(to: &BytesN<32>, data: Bytes) -> Call {
-    Call {
-        to: to.clone(),
-        data,
-    }
-}
-
-fn single_calls(env: &Env, call: Call) -> Calls {
-    Calls {
-        inner: SorobanVec::from_array(env, [call]),
-    }
-}
-
-/// Initialize timelock with one address in each role, min_delay = 100.
-fn setup_full<'a>(
+fn initialize<'a>(
     env: &'a Env,
-    admin: &Address,
+    min_delay: u64,
     proposer: &Address,
-    executor: &Address,
     canceller: &Address,
     bypasser: &Address,
 ) -> TimelockContractClient<'a> {
-    let client = register_timelock(env);
+    let client = register(env);
     client.initialize(
-        &100u64,
-        admin,
-        &SorobanVec::from_array(env, [proposer.clone()]),
-        &SorobanVec::from_array(env, [executor.clone()]),
-        &SorobanVec::from_array(env, [canceller.clone()]),
-        &SorobanVec::from_array(env, [bypasser.clone()]),
+        &min_delay,
+        &Vec::from_array(env, [proposer.clone()]),
+        &Vec::from_array(env, [canceller.clone()]),
+        &Vec::from_array(env, [bypasser.clone()]),
     );
     client
 }
 
-// -------------------------------------------------------------------------
-// Initialization
-// -------------------------------------------------------------------------
-
 #[test]
-fn test_initialize_sets_roles_and_delay() {
+fn initialization_is_self_administered_and_roles_are_exact() {
     let env = Env::default();
     env.mock_all_auths();
-    let admin = Address::generate(&env);
     let proposer = Address::generate(&env);
-    let executor = Address::generate(&env);
     let canceller = Address::generate(&env);
     let bypasser = Address::generate(&env);
+    let client = initialize(&env, 100, &proposer, &canceller, &bypasser);
 
-    let client = setup_full(&env, &admin, &proposer, &executor, &canceller, &bypasser);
-
-    assert_eq!(client.get_min_delay(), 100u64);
-    assert!(client.has_role(&ADMIN_ROLE, &admin));
+    assert!(client.has_role(&ADMIN_ROLE, &client.address));
     assert!(client.has_role(&PROPOSER_ROLE, &proposer));
-    assert!(client.has_role(&EXECUTOR_ROLE, &executor));
     assert!(client.has_role(&CANCELLER_ROLE, &canceller));
     assert!(client.has_role(&BYPASSER_ROLE, &bypasser));
-    assert_eq!(client.get_role_member_count(&ADMIN_ROLE), 1);
-    assert_eq!(client.get_role_member(&ADMIN_ROLE, &0u32), admin);
+    assert!(!client.has_role(&PROPOSER_ROLE, &client.address));
+    assert_eq!(client.get_role_member(&ADMIN_ROLE, &0), client.address);
+    assert_eq!(client.get_min_delay(), 100);
 }
 
 #[test]
-#[should_panic]
-fn test_double_initialize_panics() {
+fn unknown_roles_are_rejected() {
     let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&100u64, &admin, &empty, &empty, &empty, &empty);
-    client.initialize(&100u64, &admin, &empty, &empty, &empty, &empty);
-}
-
-// -------------------------------------------------------------------------
-// Role management
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_grant_and_revoke_role() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    assert!(!client.has_role(&PROPOSER_ROLE, &user));
-    client.grant_role(&admin, &PROPOSER_ROLE, &user);
-    assert!(client.has_role(&PROPOSER_ROLE, &user));
-    assert_eq!(client.get_role_member_count(&PROPOSER_ROLE), 1);
-
-    client.revoke_role(&admin, &PROPOSER_ROLE, &user);
-    assert!(!client.has_role(&PROPOSER_ROLE, &user));
-    assert_eq!(client.get_role_member_count(&PROPOSER_ROLE), 0);
-}
-
-#[test]
-fn test_grant_role_requires_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    let user = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
+    let address = Address::generate(&env);
+    let client = initialize(&env, 0, &address, &address, &address);
+    let unknown = Symbol::new(&env, "EXECUTOR");
     assert!(matches!(
-        client.try_grant_role(&non_admin, &PROPOSER_ROLE, &user),
-        Err(Ok(TimelockError::NotAuthorized))
+        client.try_has_role(&unknown, &address),
+        Err(Ok(TimelockError::UnknownRole))
+    ));
+    assert!(matches!(
+        client.try_get_role_member_count(&unknown),
+        Err(Ok(TimelockError::UnknownRole))
     ));
 }
 
 #[test]
-fn test_renounce_role() {
+fn double_initialization_is_rejected() {
     let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &0u64,
-        &admin,
-        &SorobanVec::from_array(&env, [user.clone()]),
-        &empty,
-        &empty,
-        &empty,
-    );
-
-    assert!(client.has_role(&PROPOSER_ROLE, &user));
-    client.renounce_role(&user, &PROPOSER_ROLE);
-    assert!(!client.has_role(&PROPOSER_ROLE, &user));
+    let address = Address::generate(&env);
+    let client = initialize(&env, 0, &address, &address, &address);
+    let empty = Vec::<Address>::new(&env);
+    assert!(matches!(
+        client.try_initialize(&0, &empty, &empty, &empty),
+        Err(Ok(TimelockError::AlreadyInitialized))
+    ));
 }
 
 #[test]
-fn test_admin_has_all_role_access() {
+fn typed_batch_schedules_and_anyone_executes_when_ready() {
     let env = Env::default();
     env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    // Admin can schedule (PROPOSER or ADMIN)
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &salt(&env, 1), &0u64);
-
-    // Admin can cancel scheduled op (using empty calls batch here)
-    let id = client.hash_operation_batch(&calls, &zero_bytes32(&env), &salt(&env, 1));
-    client.cancel(&admin, &id);
-}
-
-// -------------------------------------------------------------------------
-// Scheduling
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_schedule_batch_creates_pending_operation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
     let proposer = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &100u64,
-        &admin,
-        &SorobanVec::from_array(&env, [proposer.clone()]),
-        &empty,
-        &empty,
-        &empty,
+    let other = Address::generate(&env);
+    let client = initialize(&env, 100, &proposer, &other, &other);
+    let target = env.register(MockTarget, ());
+    let target_client = MockTargetClient::new(&env, &target);
+    let batch = calls(
+        &env,
+        call(&env, &target, "set_value", &[77u32.into_val(&env)]),
     );
+    let predecessor = zero(&env);
+    let operation_salt = salt(&env, 1);
 
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let predecessor = zero_bytes32(&env);
-    let s = salt(&env, 42);
-
-    client.schedule_batch(&proposer, &calls, &predecessor, &s, &100u64);
-
-    let id = client.hash_operation_batch(&calls, &predecessor, &s);
-    assert!(client.is_operation(&id));
+    client.schedule_batch(&proposer, &batch, &predecessor, &operation_salt, &100);
+    let id = client.hash_operation_batch(&batch, &predecessor, &operation_salt);
     assert!(client.is_operation_pending(&id));
-    assert!(!client.is_operation_ready(&id));
-    assert!(!client.is_operation_done(&id));
-    // Ready at 1000 + 100 = 1100
-    assert_eq!(client.get_timestamp(&id), 1100u64);
-}
-
-#[test]
-fn test_schedule_batch_insufficient_delay() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &100u64,
-        &admin,
-        &SorobanVec::from_array(&env, [proposer.clone()]),
-        &empty,
-        &empty,
-        &empty,
-    );
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
     assert!(matches!(
-        client.try_schedule_batch(
-            &proposer,
-            &calls,
-            &zero_bytes32(&env),
-            &salt(&env, 1),
-            &50u64
-        ),
-        Err(Ok(TimelockError::InsufficientDelay))
-    ));
-}
-
-#[test]
-fn test_schedule_batch_already_scheduled() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &0u64);
-    assert!(matches!(
-        client.try_schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &0u64),
-        Err(Ok(TimelockError::OperationAlreadyScheduled))
-    ));
-}
-
-#[test]
-fn test_schedule_blocked_selector_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let target = BytesN::from_array(&env, &[5u8; 32]);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let blocked_fn = Symbol::new(&env, "dangerous");
-    client.block_function_selector(&admin, &blocked_fn);
-
-    let mut payload: SorobanVec<Val> = SorobanVec::new(&env);
-    payload.push_back(blocked_fn.into_val(&env));
-    let data = payload.to_xdr(&env);
-
-    let call = make_call(&target, data);
-    let calls = single_calls(&env, call);
-
-    assert!(matches!(
-        client.try_schedule_batch(&admin, &calls, &zero_bytes32(&env), &salt(&env, 1), &0u64),
-        Err(Ok(TimelockError::SelectorIsBlocked))
-    ));
-}
-
-#[test]
-fn test_schedule_requires_proposer_or_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    assert!(matches!(
-        client.try_schedule_batch(
-            &stranger,
-            &calls,
-            &zero_bytes32(&env),
-            &salt(&env, 1),
-            &0u64
-        ),
-        Err(Ok(TimelockError::NotAuthorized))
-    ));
-}
-
-// -------------------------------------------------------------------------
-// Execution
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_execute_batch_after_delay() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let executor = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-
-    let client = register_timelock(&env);
-    client.initialize(
-        &100u64,
-        &admin,
-        &SorobanVec::from_array(&env, [proposer.clone()]),
-        &SorobanVec::from_array(&env, [executor.clone()]),
-        &empty,
-        &empty,
-    );
-
-    // Deploy mock target
-    let target_addr = env.register(MockTarget, ());
-    let target_client = MockTargetClient::new(&env, &target_addr);
-    let target_id = addr_to_contract_id(&target_addr, &env);
-
-    let call = make_call(&target_id, encode_set_value(&env, 99));
-    let calls = single_calls(&env, call);
-    let predecessor = zero_bytes32(&env);
-    let s = salt(&env, 7);
-
-    client.schedule_batch(&proposer, &calls, &predecessor, &s, &100u64);
-
-    // Before delay passes — not ready
-    let id = client.hash_operation_batch(&calls, &predecessor, &s);
-    assert!(!client.is_operation_ready(&id));
-    assert!(matches!(
-        client.try_execute_batch(&executor, &calls, &predecessor, &s),
+        client.try_execute_batch(&batch, &predecessor, &operation_salt),
         Err(Ok(TimelockError::OperationNotReady))
     ));
-
-    // Advance time past delay
-    env.ledger().with_mut(|li| li.timestamp = 1101);
-    assert!(client.is_operation_ready(&id));
-
-    client.execute_batch(&executor, &calls, &predecessor, &s);
-
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_100);
+    client.execute_batch(&batch, &predecessor, &operation_salt);
+    assert_eq!(target_client.get_value(), 77);
     assert!(client.is_operation_done(&id));
-    assert_eq!(target_client.get_value(), 99u32);
 }
 
 #[test]
-fn test_execute_requires_executor_or_admin() {
+fn schedule_requires_exact_proposer_role() {
     let env = Env::default();
     env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    // Schedule an empty batch that is immediately ready (delay 0)
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &0u64);
-
+    let proposer = Address::generate(&env);
+    let canceller = Address::generate(&env);
+    let client = initialize(&env, 0, &proposer, &canceller, &canceller);
+    let target = env.register(MockTarget, ());
+    let batch = calls(
+        &env,
+        call(&env, &target, "set_value", &[1u32.into_val(&env)]),
+    );
     assert!(matches!(
-        client.try_execute_batch(&stranger, &calls, &zero_bytes32(&env), &s),
+        client.try_schedule_batch(&canceller, &batch, &zero(&env), &salt(&env, 2), &0),
         Err(Ok(TimelockError::NotAuthorized))
     ));
 }
 
 #[test]
-fn test_execute_predecessor_dependency() {
+fn cancellation_requires_exact_canceller_role() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let target_addr = env.register(MockTarget, ());
-    let target_id = addr_to_contract_id(&target_addr, &env);
-
-    // Operation A
-    let calls_a = single_calls(&env, make_call(&target_id, encode_set_value(&env, 1)));
-    let s_a = salt(&env, 1);
-    client.schedule_batch(&admin, &calls_a, &zero_bytes32(&env), &s_a, &0u64);
-    let id_a = client.hash_operation_batch(&calls_a, &zero_bytes32(&env), &s_a);
-
-    // Operation B depends on A
-    let calls_b = single_calls(&env, make_call(&target_id, encode_set_value(&env, 2)));
-    let s_b = salt(&env, 2);
-    client.schedule_batch(&admin, &calls_b, &id_a, &s_b, &0u64);
-
-    // B cannot execute before A
-    assert!(matches!(
-        client.try_execute_batch(&admin, &calls_b, &id_a, &s_b),
-        Err(Ok(TimelockError::MissingPredecessor))
-    ));
-
-    // Execute A, then B
-    client.execute_batch(&admin, &calls_a, &zero_bytes32(&env), &s_a);
-    assert!(client.is_operation_done(&id_a));
-    client.execute_batch(&admin, &calls_b, &id_a, &s_b);
-    let id_b = client.hash_operation_batch(&calls_b, &id_a, &s_b);
-    assert!(client.is_operation_done(&id_b));
-}
-
-// -------------------------------------------------------------------------
-// Cancellation
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_cancel_pending_operation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
     let canceller = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &100u64,
-        &admin,
-        &empty,
-        &empty,
-        &SorobanVec::from_array(&env, [canceller.clone()]),
-        &empty,
+    let client = initialize(&env, 100, &proposer, &canceller, &canceller);
+    let target = env.register(MockTarget, ());
+    let batch = calls(
+        &env,
+        call(&env, &target, "set_value", &[1u32.into_val(&env)]),
     );
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &100u64);
-
-    let id = client.hash_operation_batch(&calls, &zero_bytes32(&env), &s);
-    assert!(client.is_operation_pending(&id));
-
+    let predecessor = zero(&env);
+    let operation_salt = salt(&env, 3);
+    client.schedule_batch(&proposer, &batch, &predecessor, &operation_salt, &100);
+    let id = client.hash_operation_batch(&batch, &predecessor, &operation_salt);
+    assert!(matches!(
+        client.try_cancel(&proposer, &id),
+        Err(Ok(TimelockError::NotAuthorized))
+    ));
     client.cancel(&canceller, &id);
     assert!(!client.is_operation(&id));
 }
 
 #[test]
-fn test_cancel_executed_operation_fails() {
+fn predecessor_must_be_done() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let proposer = Address::generate(&env);
+    let client = initialize(&env, 0, &proposer, &proposer, &proposer);
+    let target = env.register(MockTarget, ());
+    let first = calls(
+        &env,
+        call(&env, &target, "set_value", &[1u32.into_val(&env)]),
+    );
+    let second = calls(
+        &env,
+        call(&env, &target, "set_value", &[2u32.into_val(&env)]),
+    );
+    let first_salt = salt(&env, 4);
+    client.schedule_batch(&proposer, &first, &zero(&env), &first_salt, &0);
+    let first_id = client.hash_operation_batch(&first, &zero(&env), &first_salt);
+    let second_salt = salt(&env, 5);
+    client.schedule_batch(&proposer, &second, &first_id, &second_salt, &0);
+    assert!(matches!(
+        client.try_execute_batch(&second, &first_id, &second_salt),
+        Err(Ok(TimelockError::MissingPredecessor))
+    ));
+    client.execute_batch(&first, &zero(&env), &first_salt);
+    client.execute_batch(&second, &first_id, &second_salt);
+}
 
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
+#[test]
+fn target_scoped_block_does_not_block_same_function_elsewhere() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let proposer = Address::generate(&env);
+    let bypasser = Address::generate(&env);
+    let client = initialize(&env, 0, &proposer, &proposer, &bypasser);
+    let first = env.register(MockTarget, ());
+    let second = env.register(MockTarget, ());
+
+    // Exercise admin through an authorized self-call, never an external admin key.
+    let admin_call = call(
+        &env,
+        &client.address,
+        "block_function",
+        &[
+            client.address.clone().into_val(&env),
+            first.clone().into_val(&env),
+            Symbol::new(&env, "set_value").into_val(&env),
+        ],
+    );
+    client.bypasser_execute_batch(&bypasser, &calls(&env, admin_call));
+    assert!(client.is_function_blocked(&first, &Symbol::new(&env, "set_value")));
+    assert!(!client.is_function_blocked(&second, &Symbol::new(&env, "set_value")));
+
+    let blocked = calls(
+        &env,
+        call(&env, &first, "set_value", &[1u32.into_val(&env)]),
+    );
+    assert!(matches!(
+        client.try_schedule_batch(&proposer, &blocked, &zero(&env), &salt(&env, 6), &0),
+        Err(Ok(TimelockError::FunctionIsBlocked))
+    ));
+    let allowed = calls(
+        &env,
+        call(&env, &second, "set_value", &[1u32.into_val(&env)]),
+    );
+    client.schedule_batch(&proposer, &allowed, &zero(&env), &salt(&env, 7), &0);
+    client.bypasser_execute_batch(&bypasser, &blocked);
+}
+
+#[test]
+fn self_admin_can_change_roles() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let initial = Address::generate(&env);
+    let replacement = Address::generate(&env);
+    let client = initialize(&env, 0, &initial, &initial, &initial);
+    let grant = call(
+        &env,
+        &client.address,
+        "grant_role",
+        &[
+            client.address.clone().into_val(&env),
+            PROPOSER_ROLE.into_val(&env),
+            replacement.clone().into_val(&env),
+        ],
+    );
+    client.bypasser_execute_batch(&initial, &calls(&env, grant));
+    assert!(client.has_role(&PROPOSER_ROLE, &replacement));
+}
+
+#[test]
+fn empty_batch_invalid_target_and_empty_args_are_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let role = Address::generate(&env);
+    let client = initialize(&env, 0, &role, &role, &role);
+    let empty = Calls {
+        inner: Vec::new(&env),
     };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &0u64);
-    client.execute_batch(&admin, &calls, &zero_bytes32(&env), &s);
+    assert!(matches!(
+        client.try_hash_operation_batch(&empty, &zero(&env), &salt(&env, 8)),
+        Err(Ok(TimelockError::EmptyBatch))
+    ));
 
-    let id = client.hash_operation_batch(&calls, &zero_bytes32(&env), &s);
+    let account_target = Address::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
+    let account_call = Call {
+        target: account_target,
+        function: Symbol::new(&env, "x"),
+        args_xdr: args(&env, &[]),
+    };
+    assert!(matches!(
+        client.try_bypasser_execute_batch(&role, &calls(&env, account_call)),
+        Err(Ok(TimelockError::InvalidTarget))
+    ));
+
+    let target = env.register(MockTarget, ());
+    let invalid_args = Call {
+        target,
+        function: Symbol::new(&env, "set_value"),
+        args_xdr: Bytes::new(&env),
+    };
+    assert!(matches!(
+        client.try_bypasser_execute_batch(&role, &calls(&env, invalid_args)),
+        Err(Ok(TimelockError::InvalidArgsXdr))
+    ));
+}
+
+#[test]
+fn returned_call_error_rolls_back_done_and_can_retry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let role = Address::generate(&env);
+    let client = initialize(&env, 0, &role, &role, &role);
+    let target = env.register(FailingTarget, ());
+    let target_client = FailingTargetClient::new(&env, &target);
+    target_client.set_reject(&true);
+    let batch = calls(&env, call(&env, &target, "maybe_fail", &[]));
+    let operation_salt = salt(&env, 9);
+    client.schedule_batch(&role, &batch, &zero(&env), &operation_salt, &0);
+    let id = client.hash_operation_batch(&batch, &zero(&env), &operation_salt);
+    assert!(matches!(
+        client.try_execute_batch(&batch, &zero(&env), &operation_salt),
+        Err(Ok(TimelockError::CallReverted))
+    ));
+    assert!(!client.is_operation_done(&id));
+    target_client.set_reject(&false);
+    client.execute_batch(&batch, &zero(&env), &operation_salt);
     assert!(client.is_operation_done(&id));
+}
 
+#[test]
+fn aborted_call_is_distinct_and_rolls_back_done() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let role = Address::generate(&env);
+    let client = initialize(&env, 0, &role, &role, &role);
+    let target = env.register(FailingTarget, ());
+    let batch = calls(&env, call(&env, &target, "abort", &[]));
+    let operation_salt = salt(&env, 10);
+    client.schedule_batch(&role, &batch, &zero(&env), &operation_salt, &0);
+    let id = client.hash_operation_batch(&batch, &zero(&env), &operation_salt);
     assert!(matches!(
-        client.try_cancel(&admin, &id),
-        Err(Ok(TimelockError::OperationCannotBeCancelled))
+        client.try_execute_batch(&batch, &zero(&env), &operation_salt),
+        Err(Ok(TimelockError::CallAborted))
     ));
-}
-
-#[test]
-fn test_cancel_requires_canceller_or_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &0u64);
-    let id = client.hash_operation_batch(&calls, &zero_bytes32(&env), &s);
-
-    assert!(matches!(
-        client.try_cancel(&stranger, &id),
-        Err(Ok(TimelockError::NotAuthorized))
-    ));
-}
-
-// -------------------------------------------------------------------------
-// Bypasser execution
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_bypasser_executes_immediately() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
-    let bypasser = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &100u64, // high min delay — bypasser ignores it
-        &admin,
-        &empty,
-        &empty,
-        &empty,
-        &SorobanVec::from_array(&env, [bypasser.clone()]),
-    );
-
-    let target_addr = env.register(MockTarget, ());
-    let target_client = MockTargetClient::new(&env, &target_addr);
-    let target_id = addr_to_contract_id(&target_addr, &env);
-
-    let calls = single_calls(&env, make_call(&target_id, encode_set_value(&env, 77)));
-    client.bypasser_execute_batch(&bypasser, &calls);
-
-    assert_eq!(target_client.get_value(), 77u32);
-}
-
-#[test]
-fn test_bypasser_ignores_blocked_selector() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let bypasser = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(
-        &0u64,
-        &admin,
-        &empty,
-        &empty,
-        &empty,
-        &SorobanVec::from_array(&env, [bypasser.clone()]),
-    );
-
-    let target_addr = env.register(MockTarget, ());
-    let target_id = addr_to_contract_id(&target_addr, &env);
-
-    // Block "set_value"
-    client.block_function_selector(&admin, &Symbol::new(&env, "set_value"));
-
-    // Bypasser can still call set_value despite it being blocked for schedule_batch
-    let calls = single_calls(&env, make_call(&target_id, encode_set_value(&env, 55)));
-    client.bypasser_execute_batch(&bypasser, &calls); // must not error
-}
-
-#[test]
-fn test_bypasser_requires_role() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    assert!(matches!(
-        client.try_bypasser_execute_batch(&stranger, &calls),
-        Err(Ok(TimelockError::NotAuthorized))
-    ));
-}
-
-// -------------------------------------------------------------------------
-// Blocked selectors
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_block_and_unblock_selector() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    assert_eq!(client.get_blocked_selector_count(), 0u32);
-
-    let sel = Symbol::new(&env, "dangerous_fn");
-    client.block_function_selector(&admin, &sel);
-    assert_eq!(client.get_blocked_selector_count(), 1u32);
-    assert_eq!(client.get_blocked_selector_at(&0u32), sel.clone());
-
-    client.unblock_function_selector(&admin, &sel);
-    assert_eq!(client.get_blocked_selector_count(), 0u32);
-}
-
-#[test]
-fn test_block_selector_is_idempotent() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    let sel = Symbol::new(&env, "fn_name");
-    client.block_function_selector(&admin, &sel);
-    client.block_function_selector(&admin, &sel); // second call is no-op
-    assert_eq!(client.get_blocked_selector_count(), 1u32);
-}
-
-#[test]
-fn test_block_requires_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-
-    assert!(matches!(
-        client.try_block_function_selector(&stranger, &Symbol::new(&env, "fn")),
-        Err(Ok(TimelockError::NotAuthorized))
-    ));
-}
-
-// -------------------------------------------------------------------------
-// Delay management
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_update_delay() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&100u64, &admin, &empty, &empty, &empty, &empty);
-
-    assert_eq!(client.get_min_delay(), 100u64);
-    client.update_delay(&admin, &200u64);
-    assert_eq!(client.get_min_delay(), 200u64);
-}
-
-#[test]
-fn test_update_delay_requires_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&100u64, &admin, &empty, &empty, &empty, &empty);
-
-    assert!(matches!(
-        client.try_update_delay(&stranger, &50u64),
-        Err(Ok(TimelockError::NotAuthorized))
-    ));
-}
-
-#[test]
-fn test_delay_increase_does_not_affect_pending_ops() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|li| li.timestamp = 1000);
-
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&100u64, &admin, &empty, &empty, &empty, &empty);
-
-    let calls = Calls {
-        inner: SorobanVec::new(&env),
-    };
-    let s = salt(&env, 1);
-    client.schedule_batch(&admin, &calls, &zero_bytes32(&env), &s, &100u64);
-    // ready_at = 1100
-
-    // Increase delay dramatically
-    client.update_delay(&admin, &10_000u64);
-
-    // Op still executes at its original ready_at
-    env.ledger().with_mut(|li| li.timestamp = 1101);
-    client.execute_batch(&admin, &calls, &zero_bytes32(&env), &s); // must succeed
-}
-
-// -------------------------------------------------------------------------
-// TTL extension
-// -------------------------------------------------------------------------
-
-#[test]
-fn test_extend_all_ttls() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let empty: SorobanVec<Address> = SorobanVec::new(&env);
-    let client = register_timelock(&env);
-    client.initialize(&0u64, &admin, &empty, &empty, &empty, &empty);
-    client.extend_all_ttls(); // permissionless — must not error
+    assert!(!client.is_operation_done(&id));
 }

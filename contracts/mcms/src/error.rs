@@ -42,14 +42,19 @@ pub enum McmsError {
     InvalidInvokeData = 50,
     NonZeroValue = 51,
     MissingRootMetadata = 52,
-    /// `valid_until` exceeds the effective max validity (the smaller of
-    /// [`crate::constants::MAX_ROOT_VALIDITY_SECS`] and the dynamic cap derived from
-    /// `LEDGER_BUMP * min_secs_per_ledger - SEEN_TTL_SAFETY_MARGIN_SECS`).
+    /// `valid_until` exceeds the fixed maximum root-validity policy.
     ValidUntilExceedsMaximum = 53,
-    /// `set_min_secs_per_ledger` was called with a value outside
-    /// [[`crate::constants::MIN_SECS_PER_LEDGER_LOWER_BOUND`],
-    /// [`crate::constants::MIN_SECS_PER_LEDGER_UPPER_BOUND`]].
+    /// Reserved v1 error code. V2 has no seconds-per-ledger policy input.
     InvalidMinSecsPerLedger = 54,
+    /// The downstream invocation aborted before returning a typed contract result.
+    /// This includes host-level invocation failures and callee panics/traps.
+    CallAborted = 55,
+    UnsupportedEncodingVersion = 56,
+    ConfigVersionMismatch = 57,
+    InvalidTarget = 58,
+    InvalidMultisig = 59,
+    InvalidArgsXdr = 60,
+    ConfigVersionOverflow = 61,
 }
 
 impl From<common_error::CCIPError> for McmsError {

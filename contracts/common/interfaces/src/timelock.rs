@@ -10,7 +10,7 @@ pub trait TimelockInterface {
         env: soroban_sdk::Env,
         role: soroban_sdk::Symbol,
         account: soroban_sdk::Address,
-    ) -> bool;
+    ) -> Result<bool, TimelockError>;
     fn grant_role(
         env: soroban_sdk::Env,
         caller: soroban_sdk::Address,
@@ -20,9 +20,7 @@ pub trait TimelockInterface {
     fn initialize(
         env: soroban_sdk::Env,
         min_delay: u64,
-        admin: soroban_sdk::Address,
         proposers: soroban_sdk::Vec<soroban_sdk::Address>,
-        executors: soroban_sdk::Vec<soroban_sdk::Address>,
         cancellers: soroban_sdk::Vec<soroban_sdk::Address>,
         bypassers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), TimelockError>;
@@ -40,7 +38,6 @@ pub trait TimelockInterface {
     ) -> Result<(), TimelockError>;
     fn execute_batch(
         env: soroban_sdk::Env,
-        caller: soroban_sdk::Address,
         calls: Calls,
         predecessor: soroban_sdk::BytesN<32>,
         salt: soroban_sdk::BytesN<32>,
@@ -51,6 +48,12 @@ pub trait TimelockInterface {
         env: soroban_sdk::Env,
         account: soroban_sdk::Address,
         role: soroban_sdk::Symbol,
+    ) -> Result<(), TimelockError>;
+    fn block_function(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        target: soroban_sdk::Address,
+        function: soroban_sdk::Symbol,
     ) -> Result<(), TimelockError>;
     fn schedule_batch(
         env: soroban_sdk::Env,
@@ -66,40 +69,44 @@ pub trait TimelockInterface {
         role: soroban_sdk::Symbol,
         index: u32,
     ) -> Result<soroban_sdk::Address, TimelockError>;
+    fn unblock_function(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        target: soroban_sdk::Address,
+        function: soroban_sdk::Symbol,
+    ) -> Result<(), TimelockError>;
     fn is_operation_done(env: soroban_sdk::Env, id: soroban_sdk::BytesN<32>) -> bool;
     fn extend_op_time_ttl(
         env: soroban_sdk::Env,
         id: soroban_sdk::BytesN<32>,
     ) -> Result<(), TimelockError>;
     fn is_operation_ready(env: soroban_sdk::Env, id: soroban_sdk::BytesN<32>) -> bool;
+    fn is_function_blocked(
+        env: soroban_sdk::Env,
+        target: soroban_sdk::Address,
+        function: soroban_sdk::Symbol,
+    ) -> Result<bool, TimelockError>;
     fn hash_operation_batch(
         env: soroban_sdk::Env,
         calls: Calls,
         predecessor: soroban_sdk::BytesN<32>,
         salt: soroban_sdk::BytesN<32>,
-    ) -> soroban_sdk::BytesN<32>;
+    ) -> Result<soroban_sdk::BytesN<32>, TimelockError>;
     fn is_operation_pending(env: soroban_sdk::Env, id: soroban_sdk::BytesN<32>) -> bool;
-    fn get_role_member_count(env: soroban_sdk::Env, role: soroban_sdk::Symbol) -> u32;
+    fn get_role_member_count(
+        env: soroban_sdk::Env,
+        role: soroban_sdk::Symbol,
+    ) -> Result<u32, TimelockError>;
     fn bypasser_execute_batch(
         env: soroban_sdk::Env,
         caller: soroban_sdk::Address,
         calls: Calls,
     ) -> Result<(), TimelockError>;
-    fn block_function_selector(
-        env: soroban_sdk::Env,
-        caller: soroban_sdk::Address,
-        selector: soroban_sdk::Symbol,
-    ) -> Result<(), TimelockError>;
-    fn get_blocked_selector_at(
+    fn get_blocked_function_at(
         env: soroban_sdk::Env,
         index: u32,
-    ) -> Result<soroban_sdk::Symbol, TimelockError>;
-    fn unblock_function_selector(
-        env: soroban_sdk::Env,
-        caller: soroban_sdk::Address,
-        selector: soroban_sdk::Symbol,
-    ) -> Result<(), TimelockError>;
-    fn get_blocked_selector_count(env: soroban_sdk::Env) -> u32;
+    ) -> Result<BlockedFunction, TimelockError>;
+    fn get_blocked_function_count(env: soroban_sdk::Env) -> u32;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -140,8 +147,9 @@ pub struct StellarToAnyMessage {
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Call {
-    pub data: soroban_sdk::Bytes,
-    pub to: soroban_sdk::BytesN<32>,
+    pub args_xdr: soroban_sdk::Bytes,
+    pub function: soroban_sdk::Symbol,
+    pub target: soroban_sdk::Address,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -150,8 +158,17 @@ pub struct Calls {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct BlockedFunction {
+    pub function: soroban_sdk::Symbol,
+    pub target: soroban_sdk::Address,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TimelockDataKey {
     OpTime(soroban_sdk::BytesN<32>),
+    RoleMember(soroban_sdk::Symbol, soroban_sdk::Address),
+    RoleMembers(soroban_sdk::Symbol),
+    BlockedFunction(soroban_sdk::Address, soroban_sdk::Symbol),
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -281,13 +298,19 @@ pub enum TimelockError {
     NotAuthorized = 3,
     OperationAlreadyScheduled = 20,
     InsufficientDelay = 21,
-    SelectorIsBlocked = 22,
+    FunctionIsBlocked = 22,
     OperationNotReady = 30,
     MissingPredecessor = 31,
     CallReverted = 32,
+    CallAborted = 33,
     OperationCannotBeCancelled = 40,
     InvalidInvokeData = 50,
     IndexOutOfBounds = 51,
+    UnknownRole = 52,
+    InvalidTarget = 53,
+    InvalidArgsXdr = 54,
+    EmptyBatch = 55,
+    UnsupportedSelfCall = 56,
 }
 #[soroban_sdk::contractevent(topics = ["tl_Cancelled"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -313,16 +336,18 @@ pub struct RoleRevokedEvent {
 pub struct CallExecutedEvent {
     pub id: soroban_sdk::BytesN<32>,
     pub index: u32,
-    pub to: soroban_sdk::BytesN<32>,
-    pub data: soroban_sdk::Bytes,
+    pub target: soroban_sdk::Address,
+    pub function: soroban_sdk::Symbol,
+    pub args_hash: soroban_sdk::BytesN<32>,
 }
 #[soroban_sdk::contractevent(topics = ["tl_CallScheduled"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallScheduledEvent {
     pub id: soroban_sdk::BytesN<32>,
     pub index: u32,
-    pub to: soroban_sdk::BytesN<32>,
-    pub data: soroban_sdk::Bytes,
+    pub target: soroban_sdk::Address,
+    pub function: soroban_sdk::Symbol,
+    pub args_hash: soroban_sdk::BytesN<32>,
     pub predecessor: soroban_sdk::BytesN<32>,
     pub salt: soroban_sdk::BytesN<32>,
     pub delay: u64,
@@ -333,20 +358,23 @@ pub struct MinDelayChangeEvent {
     pub old_duration: u64,
     pub new_duration: u64,
 }
+#[soroban_sdk::contractevent(topics = ["tl_FnBlocked"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FunctionBlockedEvent {
+    pub target: soroban_sdk::Address,
+    pub function: soroban_sdk::Symbol,
+}
+#[soroban_sdk::contractevent(topics = ["tl_FnUnblocked"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FunctionUnblockedEvent {
+    pub target: soroban_sdk::Address,
+    pub function: soroban_sdk::Symbol,
+}
 #[soroban_sdk::contractevent(topics = ["tl_BypCallExec"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BypasserCallExecutedEvent {
     pub index: u32,
-    pub to: soroban_sdk::BytesN<32>,
-    pub data: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contractevent(topics = ["tl_SelBlocked"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct FunctionSelectorBlockedEvent {
-    pub selector: soroban_sdk::Symbol,
-}
-#[soroban_sdk::contractevent(topics = ["tl_SelUnblock"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct FunctionSelectorUnblockedEvent {
-    pub selector: soroban_sdk::Symbol,
+    pub target: soroban_sdk::Address,
+    pub function: soroban_sdk::Symbol,
+    pub args_hash: soroban_sdk::BytesN<32>,
 }

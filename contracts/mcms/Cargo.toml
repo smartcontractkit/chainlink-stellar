@@ -10,7 +10,6 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true, features = ["hazmat-address"] }
-stellar-strkey = { workspace = true }
 common-authorization = { workspace = true }
 common-error = { workspace = true }
 common-guard = { workspace = true }
@@ -23,3 +22,4 @@ timelock = { path = "../timelock" }
 k256 = { workspace = true }
 sha3 = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
+stellar-strkey = { workspace = true }

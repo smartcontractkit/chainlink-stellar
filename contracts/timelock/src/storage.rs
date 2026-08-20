@@ -1,119 +1,166 @@
-//! Storage keys and TTL management for RBACTimelock.
+//! Sharded persistent storage and explicit TTL management for timelock v2.
 
-use crate::types::TimelockDataKey;
-use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use crate::types::{
+    BlockedFunction, TimelockDataKey, ADMIN_ROLE, BYPASSER_ROLE, CANCELLER_ROLE, PROPOSER_ROLE,
+};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, Symbol, Vec};
 
-/// Minimum delay between scheduling and execution (seconds). Stored in instance storage.
 pub const MIN_DELAY: Symbol = symbol_short!("MNDELAY");
-
-/// Role membership map: `Symbol (role) → Vec<Address>` — persistent.
-pub const ROLES_KEY: Symbol = symbol_short!("ROLES");
-
-/// Blocked function selectors (Soroban Symbols) — persistent.
-pub const BLK_SEL: Symbol = symbol_short!("BLKSEL");
-
-/// If a persistent entry's TTL falls below this count (~1 week at 5 s/ledger),
-/// proactively extend to [`LEDGER_BUMP`].
+pub const BLOCKED_FUNCTIONS: Symbol = symbol_short!("BLKFUNCS");
 pub const LEDGER_THRESHOLD: u32 = 120_960;
-
-/// Target TTL after proactive extension (~1 year at 5 s/ledger).
 pub const LEDGER_BUMP: u32 = 6_307_200;
 
-// --- Role storage ---
-
-pub fn get_roles_map(env: &Env) -> Map<Symbol, Vec<Address>> {
-    env.storage()
-        .persistent()
-        .get(&ROLES_KEY)
-        .unwrap_or(Map::new(env))
-}
-
-pub fn set_roles_map(env: &Env, roles: &Map<Symbol, Vec<Address>>) {
-    env.storage().persistent().set(&ROLES_KEY, roles);
-}
-
-// --- Operation timestamp storage ---
-//
-// Each operation id uses its own persistent entry (`TimelockDataKey::OpTime(id)`), matching
-// Solidity's `mapping(bytes32 => uint256) _timestamps` (no monolithic map growth).
-
-fn op_time_key(id: &BytesN<32>) -> TimelockDataKey {
-    TimelockDataKey::OpTime(id.clone())
-}
-
-/// Refresh TTL for a single operation timestamp entry (if present).
-pub fn extend_op_time_entry_ttl(env: &Env, id: &BytesN<32>) {
-    let key = op_time_key(id);
+fn extend_if_present(env: &Env, key: &impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     let st = env.storage().persistent();
-    if st.has(&key) {
-        st.extend_ttl(&key, LEDGER_THRESHOLD, LEDGER_BUMP);
+    if st.has(key) {
+        st.extend_ttl(key, LEDGER_THRESHOLD, LEDGER_BUMP);
     }
 }
 
 pub fn get_op_timestamp(env: &Env, id: &BytesN<32>) -> u64 {
-    let key = op_time_key(id);
-    let st = env.storage().persistent();
-    if !st.has(&key) {
-        return 0;
-    }
-    st.extend_ttl(&key, LEDGER_THRESHOLD, LEDGER_BUMP);
-    st.get(&key).unwrap()
+    env.storage()
+        .persistent()
+        .get(&TimelockDataKey::OpTime(id.clone()))
+        .unwrap_or(0)
 }
 
 pub fn set_op_timestamp(env: &Env, id: &BytesN<32>, ts: u64) {
-    let key = op_time_key(id);
-    let st = env.storage().persistent();
-    st.set(&key, &ts);
-    st.extend_ttl(&key, LEDGER_THRESHOLD, LEDGER_BUMP);
+    let key = TimelockDataKey::OpTime(id.clone());
+    env.storage().persistent().set(&key, &ts);
+    extend_if_present(env, &key);
 }
 
 pub fn delete_op_timestamp(env: &Env, id: &BytesN<32>) {
-    let key = op_time_key(id);
-    env.storage().persistent().remove(&key);
-}
-
-// --- Blocked selector storage ---
-
-pub fn get_blocked_selectors(env: &Env) -> Vec<Symbol> {
     env.storage()
         .persistent()
-        .get(&BLK_SEL)
+        .remove(&TimelockDataKey::OpTime(id.clone()));
+}
+
+pub fn extend_op_time_entry_ttl(env: &Env, id: &BytesN<32>) {
+    extend_if_present(env, &TimelockDataKey::OpTime(id.clone()));
+}
+
+pub fn has_role_member(env: &Env, role: &Symbol, account: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .has(&TimelockDataKey::RoleMember(role.clone(), account.clone()))
+}
+
+pub fn get_role_members(env: &Env, role: &Symbol) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&TimelockDataKey::RoleMembers(role.clone()))
         .unwrap_or(Vec::new(env))
 }
 
-pub fn set_blocked_selectors(env: &Env, selectors: &Vec<Symbol>) {
-    env.storage().persistent().set(&BLK_SEL, selectors);
+pub fn set_role_member(env: &Env, role: &Symbol, account: &Address, present: bool) {
+    let membership = TimelockDataKey::RoleMember(role.clone(), account.clone());
+    let list_key = TimelockDataKey::RoleMembers(role.clone());
+    let mut members = get_role_members(env, role);
+    if present {
+        if !env.storage().persistent().has(&membership) {
+            env.storage().persistent().set(&membership, &true);
+            members.push_back(account.clone());
+            env.storage().persistent().set(&list_key, &members);
+        }
+    } else if env.storage().persistent().has(&membership) {
+        env.storage().persistent().remove(&membership);
+        let mut next = Vec::new(env);
+        for member in members.iter() {
+            if member != *account {
+                next.push_back(member);
+            }
+        }
+        env.storage().persistent().set(&list_key, &next);
+    }
+    extend_if_present(env, &membership);
+    extend_if_present(env, &list_key);
 }
 
-// --- Min delay ---
+pub fn is_function_blocked(env: &Env, target: &Address, function: &Symbol) -> bool {
+    env.storage()
+        .persistent()
+        .has(&TimelockDataKey::BlockedFunction(
+            target.clone(),
+            function.clone(),
+        ))
+}
+
+pub fn get_blocked_functions(env: &Env) -> Vec<BlockedFunction> {
+    env.storage()
+        .persistent()
+        .get(&BLOCKED_FUNCTIONS)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn set_function_blocked(env: &Env, target: &Address, function: &Symbol, blocked: bool) {
+    let key = TimelockDataKey::BlockedFunction(target.clone(), function.clone());
+    let mut entries = get_blocked_functions(env);
+    if blocked {
+        if !env.storage().persistent().has(&key) {
+            env.storage().persistent().set(&key, &true);
+            entries.push_back(BlockedFunction {
+                target: target.clone(),
+                function: function.clone(),
+            });
+            env.storage().persistent().set(&BLOCKED_FUNCTIONS, &entries);
+        }
+    } else if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+        let mut next = Vec::new(env);
+        for entry in entries.iter() {
+            if entry.target != *target || entry.function != *function {
+                next.push_back(entry);
+            }
+        }
+        env.storage().persistent().set(&BLOCKED_FUNCTIONS, &next);
+    }
+    extend_if_present(env, &key);
+    extend_if_present(env, &BLOCKED_FUNCTIONS);
+}
 
 pub fn get_min_delay(env: &Env) -> u64 {
     env.storage().instance().get(&MIN_DELAY).unwrap_or(0)
 }
-
 pub fn set_min_delay(env: &Env, delay: u64) {
     env.storage().instance().set(&MIN_DELAY, &delay);
 }
 
-// --- TTL management ---
-
-/// Bump TTLs for instance storage and fixed persistent keys (`ROLES`, blocked selectors).
+/// Fixed-key and sharded-key maintenance. Extends instance storage, the blocked-functions list,
+/// the per-role member list and each membership key (the four roles are a fixed known set), and
+/// each per-target-function block key (enumerable via [`BLOCKED_FUNCTIONS`]). Called at the end of
+/// every successful mutation and by `extend_all_ttls`; read-only queries never mutate rent state.
 ///
-/// Per-operation timestamps live in separate entries; each is extended when read or
-/// written (`get_op_timestamp` / `set_op_timestamp`), or via [`extend_op_time_entry_ttl`].
-/// Called at the end of every successful mutation. Also used by `extend_all_ttls`.
+/// Keys that have already archived are skipped (their `has` check is false); protocol-23
+/// restoration handles them on the next touch. The purpose is to keep live sharded keys from
+/// archiving during normal operation, so authorization/blocking reads never need a restore.
 pub fn bump_ttls(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(LEDGER_THRESHOLD, LEDGER_BUMP);
-    if env.storage().persistent().has(&ROLES_KEY) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&ROLES_KEY, LEDGER_THRESHOLD, LEDGER_BUMP);
+    extend_if_present(env, &BLOCKED_FUNCTIONS);
+
+    // Sharded role membership: the four roles are a fixed known set. Keep the per-role member
+    // list and each individual membership key alive so `has_role_member` reads never touch
+    // archived entries during normal operation. Guard with `has` so a list that has already
+    // archived is skipped rather than panicking here.
+    for role in [PROPOSER_ROLE, CANCELLER_ROLE, BYPASSER_ROLE, ADMIN_ROLE] {
+        let list_key = TimelockDataKey::RoleMembers(role.clone());
+        if env.storage().persistent().has(&list_key) {
+            for member in get_role_members(env, &role).iter() {
+                extend_if_present(env, &TimelockDataKey::RoleMember(role.clone(), member));
+            }
+            extend_if_present(env, &list_key);
+        }
     }
-    if env.storage().persistent().has(&BLK_SEL) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&BLK_SEL, LEDGER_THRESHOLD, LEDGER_BUMP);
+
+    // Per-target-function block keys are enumerable via the BLOCKED_FUNCTIONS list.
+    if env.storage().persistent().has(&BLOCKED_FUNCTIONS) {
+        for entry in get_blocked_functions(env).iter() {
+            extend_if_present(
+                env,
+                &TimelockDataKey::BlockedFunction(entry.target.clone(), entry.function.clone()),
+            );
+        }
     }
 }
