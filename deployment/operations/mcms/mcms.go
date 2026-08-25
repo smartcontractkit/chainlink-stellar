@@ -3,6 +3,7 @@ package mcms
 import (
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
+
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
@@ -26,10 +27,11 @@ var Initialize = cldfops.NewOperation(
 	stellarops.ContractDeploymentVersion,
 	"Initializes MCMS with owner and chain network id",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := mcmsbindings.NewMcmsClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.ChainNetworkID); err != nil {
-			return stellarops.Void{}, err
-		}
+		// TODO changes broke this, but keep for when CCIP picks up stellar again
+		//c := mcmsbindings.NewMcmsClient(d.Invoker, in.ContractID)
+		//if err := c.Initialize(b.GetContext(), in.Owner, in.ChainNetworkID); err != nil {
+		//return stellarops.Void{}, err
+		//}
 		return stellarops.Void{}, nil
 	},
 )
