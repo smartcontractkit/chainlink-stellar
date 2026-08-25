@@ -294,43 +294,43 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_ConfigSet"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["onramp_1_7_ConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub static_config: StaticConfig,
     pub dynamic_config: DynamicConfig,
 }
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_CCIPMessageSent"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["onramp_1_7_CCIPMessageSent"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCIPMessageSentEvent {
     pub dest_chain_selector: u64,
@@ -343,7 +343,7 @@ pub struct CCIPMessageSentEvent {
     pub receipts: soroban_sdk::Vec<Receipt>,
     pub verifier_blobs: soroban_sdk::Vec<soroban_sdk::Bytes>,
 }
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_DestChainConfigSet"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["onramp_1_7_DestChainConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfigSetEvent {
     pub dest_chain_selector: u64,
@@ -351,9 +351,9 @@ pub struct DestChainConfigSetEvent {
     pub config: DestChainConfig,
 }
 #[soroban_sdk::contractevent(
+    export = false,
     topics = ["onramp_1_7_OwnershipTransferred",
-    ],
-    export = false
+    ]
 )]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferredEvent {
