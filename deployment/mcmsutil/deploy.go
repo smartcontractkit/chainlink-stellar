@@ -7,6 +7,7 @@ import (
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/cre"
 
 	stellarmcms "github.com/smartcontractkit/mcms/sdk/stellar"
 	"github.com/smartcontractkit/mcms/types"
@@ -20,7 +21,6 @@ func DeployMCMS(
 	chainNetworkID [32]byte,
 	config *types.Config,
 	instanceLabel string,
-	wasm []byte,
 	salt [32]byte,
 ) (string, error) {
 	if deployer == nil {
@@ -35,14 +35,16 @@ func DeployMCMS(
 	if instanceLabel == "" {
 		return "", fmt.Errorf("instance label is empty")
 	}
-	if len(wasm) == 0 {
-		return "", fmt.Errorf("mcms wasm is empty")
-	}
 
 	signerAddresses, signerGroups, groupQuorums, groupParents, err :=
 		stellarmcms.ConfigToSetConfigInputs(config)
 	if err != nil {
 		return "", fmt.Errorf("convert mcms config: %w", err)
+	}
+
+	wasm, err := cre.Artifact(cre.MCMSWasm)
+	if err != nil {
+		return "", fmt.Errorf("artifact wasm: %w", err)
 	}
 
 	contractID, err := deployer.DeployContractBytes(ctx, wasm, salt)
