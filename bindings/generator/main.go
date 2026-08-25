@@ -54,6 +54,7 @@ func main() {
 	pkg := flag.String("pkg", "", "Go package name for generated code")
 	out := flag.String("out", "", "Output directory for generated files")
 	events := flag.String("events", "", "Optional path to Rust events source file (e.g., contracts/onramp/src/events.rs)")
+	specJSON := flag.Bool("spec-json", false, "Read the contract spec as JSON from stdin (stellar contract info interface --output json-formatted) instead of Rust bindings text")
 	readonly := flag.String("readonly", "", "Optional comma-separated list of read-only contract functions (generated as simulations, not transactions). When provided it is authoritative and replaces the name-based heuristic; every listed function must exist in the contract.")
 	includeVoid := flag.String("include-void", "", "Optional comma-separated list of void contract functions (no return type) to generate methods for. Void functions not listed are omitted from the client, preserving historical behavior; every listed function must exist in the contract and be void.")
 	flag.Parse()
@@ -64,11 +65,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Read Rust bindings from stdin
+	// Read Rust bindings text or spec JSON from stdin
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read input: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *specJSON {
+		contract, err := ParseSpecJSON(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to parse spec JSON: %v\n", err)
+			os.Exit(1)
+		}
+		contract.Name = *name
+		finishGeneration(contract, *name, *pkg, *out, *events, *readonly, *includeVoid)
+		return
 	}
 
 	// Parse the Rust bindings
@@ -78,7 +90,10 @@ func main() {
 		os.Exit(1)
 	}
 	contract.Name = *name
+	finishGeneration(contract, *name, *pkg, *out, *events, *readonly, *includeVoid)
+}
 
+func finishGeneration(contract *Contract, name, pkg, out, events, readonly, includeVoid string) {
 	allFns := make(map[string]bool, len(contract.Functions))
 	voidFns := make(map[string]bool)
 	for _, fn := range contract.Functions {
@@ -87,8 +102,8 @@ func main() {
 			voidFns[fn.Name] = true
 		}
 	}
-	readOnlyFns := parseFnSet("readonly", *readonly, allFns, *name)
-	includeVoidFns := parseFnSet("include-void", *includeVoid, voidFns, *name)
+	readOnlyFns := parseFnSet("readonly", readonly, allFns, name)
+	includeVoidFns := parseFnSet("include-void", includeVoid, voidFns, name)
 
 	functions := contract.Functions[:0]
 	for _, fn := range contract.Functions {
@@ -107,8 +122,8 @@ func main() {
 	contract.Functions = functions
 
 	// Optionally parse events from Rust source file
-	if *events != "" {
-		eventsSource, err := os.ReadFile(*events)
+	if events != "" {
+		eventsSource, err := os.ReadFile(events)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read events file: %v\n", err)
 			os.Exit(1)
@@ -126,17 +141,17 @@ func main() {
 			byName[ev.Name] = len(contract.Events)
 			contract.Events = append(contract.Events, ev)
 		}
-		fmt.Printf("Parsed %d events from %s\n", len(parsedEvents), *events)
+		fmt.Printf("Parsed %d events from %s\n", len(parsedEvents), events)
 	}
 
 	// Create output directory
-	if err := os.MkdirAll(*out, 0755); err != nil {
+	if err := os.MkdirAll(out, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create output directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	writeGoFile(*out, "types.go", GenerateTypes(*pkg, contract))
-	writeGoFile(*out, "client.go", GenerateClient(*pkg, contract))
+	writeGoFile(out, "types.go", GenerateTypes(pkg, contract))
+	writeGoFile(out, "client.go", GenerateClient(pkg, contract))
 
-	fmt.Printf("Successfully generated Go bindings for %s\n", *name)
+	fmt.Printf("Successfully generated Go bindings for %s\n", name)
 }

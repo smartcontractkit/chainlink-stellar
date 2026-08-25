@@ -966,6 +966,19 @@ type RoleRevokedEvent struct {
 // RoleRevokedEventTopic is the event topic identifier.
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
+// OwnershipTransferredEvent represents the OwnershipTransferredEvent event.
+// Topics: [auth_OwnerTransferred]
+type OwnershipTransferredEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferredEventTopic is the event topic identifier.
+const OwnershipTransferredEventTopic = "auth_OwnerTransferred"
+
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
 // Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {

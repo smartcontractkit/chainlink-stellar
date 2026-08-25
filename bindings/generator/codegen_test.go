@@ -276,3 +276,64 @@ func TestGenerateClient_UnknownDataFormatPanics(t *testing.T) {
 	}}}
 	GenerateClient("x", c)
 }
+
+func TestParseSpecJSON_EventAndTypes(t *testing.T) {
+	src := `[
+  {"event_v0": {"name": "ReportProcessedEvent", "prefix_topics": ["forwarder_ReportProcessed"],
+    "params": [
+      {"name": "receiver", "type_": "address", "location": "topic_list"},
+      {"name": "workflow_execution_id", "type_": {"bytes_n": {"n": 32}}, "location": "topic_list"},
+      {"name": "success", "type_": "bool", "location": "data"}
+    ],
+    "data_format": "single_value"}},
+  {"function_v0": {"name": "get_owner", "inputs": [], "outputs": [{"option": {"value_type": "address"}}]}},
+  {"function_v0": {"name": "__constructor", "inputs": [{"name": "owner", "type_": "address"}], "outputs": []}},
+  {"udt_struct_v0": {"name": "RoundData", "fields": [
+      {"name": "answer", "type_": "i256"},
+      {"name": "ids", "type_": {"vec": {"element_type": {"bytes_n": {"n": 32}}}}}
+  ]}},
+  {"udt_enum_v0": {"name": "Bound", "cases": [{"name": "AtOrBefore", "value": 0}, {"name": "AtOrAfter", "value": 1}]}},
+  {"udt_union_v0": {"name": "Cfg", "cases": [{"tuple_v0": {"name": "Failure", "type_": ["u32"]}}]}},
+  {"udt_error_enum_v0": {"name": "CacheError", "cases": [{"name": "MalformedReport", "value": 100}]}}
+]`
+	c, err := ParseSpecJSON([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Events) != 1 || c.Events[0].DataFormat != "single-value" {
+		t.Fatalf("event data format not mapped: %+v", c.Events)
+	}
+	if !c.Events[0].Fields[0].Topic || c.Events[0].Fields[2].Topic {
+		t.Fatal("topic locations not mapped")
+	}
+	if c.Events[0].Fields[1].Type != "soroban_sdk::BytesN<32>" {
+		t.Fatalf("bytes_n type = %q", c.Events[0].Fields[1].Type)
+	}
+	if len(c.Functions) != 1 || c.Functions[0].Returns != "Option<soroban_sdk::Address>" {
+		t.Fatalf("functions = %+v", c.Functions)
+	}
+	if c.Structs[0].Fields[0].Type != "soroban_sdk::I256" ||
+		c.Structs[0].Fields[1].Type != "soroban_sdk::Vec<soroban_sdk::BytesN<32>>" {
+		t.Fatalf("struct types = %+v", c.Structs[0].Fields)
+	}
+	if !c.Enums[0].IsUnit() || c.Enums[1].IsUnit() {
+		t.Fatal("enum kinds not mapped")
+	}
+	if c.Errors[0].Variants[0].Value != 100 {
+		t.Fatal("error enum not mapped")
+	}
+}
+
+func TestParseSpecJSON_AllVoidUnionIsSymbolEncoded(t *testing.T) {
+	src := `[{"udt_union_v0": {"name": "MessageDirection", "cases": [{"void_v0": {"name": "Outbound"}}, {"void_v0": {"name": "Inbound"}}]}}]`
+	c, err := ParseSpecJSON([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Enums[0].IsUnit() {
+		t.Fatal("spec union must not take the u32 C-enum path: fieldless discriminant-less Rust enums are symbol unions on the wire")
+	}
+	out := GenerateTypes("pool", c)
+	mustNotContain(t, out, "type MessageDirection uint32")
+	mustContain(t, out, "MessageDirection")
+}

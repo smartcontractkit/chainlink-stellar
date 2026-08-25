@@ -61,11 +61,21 @@ const (
 type Enum struct {
 	Name     string
 	Variants []EnumVariant
+	// Union forces the symbol-discriminated encoding even when every variant
+	// is a unit variant. The wasm spec distinguishes u32 enums
+	// (udt_enum_v0: Rust enums with explicit `= N` discriminants) from
+	// symbol unions (udt_union_v0: everything else, including fieldless
+	// enums without discriminants); Rust-text parsing cannot, and previously
+	// mis-emitted fieldless discriminant-less enums as u32.
+	Union bool
 }
 
-// IsUnit reports whether every variant is a unit (C-style) variant.
-// Mixed enums (any tuple/struct variant) require the discriminated-union encoding.
+// IsUnit reports whether the enum uses the C-style ScVal::U32 encoding:
+// every variant is a unit variant and the type is not a spec-declared union.
 func (e Enum) IsUnit() bool {
+	if e.Union {
+		return false
+	}
 	for _, v := range e.Variants {
 		if v.Kind != EnumVariantUnit {
 			return false
