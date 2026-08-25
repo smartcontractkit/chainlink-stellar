@@ -2,7 +2,6 @@ package operations
 
 import (
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
-
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
@@ -15,23 +14,6 @@ func NewDeployOperation(id, description string) *cldfops.Operation[DeployInput, 
 		description,
 		func(b cldfops.Bundle, d stellardeps.StellarDeps, in DeployInput) (DeployOutput, error) {
 			cid, err := d.Deploy.DeployContract(b.GetContext(), in.WasmPath, in.Salt)
-			if err != nil {
-				return DeployOutput{}, err
-			}
-			return DeployOutput{ContractID: cid}, nil
-		},
-	)
-}
-
-// NewDeployBytesOperation returns a CLDF operation that uploads caller-supplied
-// WASM bytes and creates the contract with the supplied salt.
-func NewDeployBytesOperation(id, description string) *cldfops.Operation[DeployBytesInput, DeployOutput, stellardeps.StellarDeps] {
-	return cldfops.NewOperation(
-		id,
-		ContractDeploymentVersion,
-		description,
-		func(b cldfops.Bundle, d stellardeps.StellarDeps, in DeployBytesInput) (DeployOutput, error) {
-			cid, err := d.Deploy.DeployContractBytes(b.GetContext(), in.Wasm, in.Salt)
 			if err != nil {
 				return DeployOutput{}, err
 			}

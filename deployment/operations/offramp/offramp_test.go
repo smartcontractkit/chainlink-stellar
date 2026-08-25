@@ -29,13 +29,6 @@ func (f *fakeDeployer) DeployContract(ctx context.Context, wasmPath string, salt
 	return "COFFRAMPFAKE000000000000000000000000000000000000000000", nil
 }
 
-func (f *fakeDeployer) DeployContractBytes(ctx context.Context, wasm []byte, salt [32]byte) (string, error) {
-	_ = ctx
-	f.lastWasm = string(wasm)
-	f.lastSalt = salt
-	return "COFFRAMPFAKE000000000000000000000000000000000000000000", nil
-}
-
 type invokeRecord struct {
 	contractID string
 	fn         string

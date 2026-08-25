@@ -10,8 +10,8 @@ import (
 // ContractType labels Timelock.
 const ContractType = "Timelock"
 
-// Deploy uploads caller-supplied timelock.wasm bytes.
-var Deploy = stellarops.NewDeployBytesOperation("timelock:deploy", "Deploys the Timelock Soroban contract from WASM bytes")
+// Deploy uploads timelock.wasm.
+var Deploy = stellarops.NewDeployOperation("timelock:deploy", "Deploys the Timelock Soroban contract from WASM")
 
 // InitializeInput configures timelock roles and minimum delay.
 type InitializeInput struct {
