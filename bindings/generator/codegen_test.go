@@ -213,3 +213,66 @@ func mustNotContain(t *testing.T, s string, needles ...string) {
 		}
 	}
 }
+
+func TestParseEvents_DataFormat(t *testing.T) {
+	src := `
+#[contractevent(topics = ["forwarder_ReportProcessed"], data_format = "single-value")]
+#[derive(Clone)]
+pub struct ReportProcessedEvent {
+    #[topic]
+    pub receiver: Address,
+    pub success: bool,
+}
+
+#[contractevent(topics = ["forwarder_ConfigSet"])]
+#[derive(Clone)]
+pub struct ConfigSetEvent {
+    pub f: u32,
+}
+`
+	events := parseEvents(src)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].DataFormat != "single-value" {
+		t.Errorf("ReportProcessedEvent DataFormat = %q, want single-value", events[0].DataFormat)
+	}
+	if events[1].DataFormat != "" {
+		t.Errorf("ConfigSetEvent DataFormat = %q, want empty (map default)", events[1].DataFormat)
+	}
+}
+
+func TestGenerateClient_SingleValueEventParser(t *testing.T) {
+	c := &Contract{Name: "Forwarder", Events: []Event{{
+		Name:       "ReportProcessedEvent",
+		Topics:     []string{"forwarder_ReportProcessed"},
+		DataFormat: "single-value",
+		Fields: []Field{
+			{Name: "receiver", Type: "soroban_sdk::Address", Topic: true},
+			{Name: "workflow_execution_id", Type: "soroban_sdk::BytesN<32>", Topic: true},
+			{Name: "success", Type: "bool"},
+		},
+	}}}
+	out := GenerateClient("cre", c)
+	mustContain(t, out,
+		"func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, error)",
+		"v, ok := eventVal.GetB()",
+		"result.Success = v",
+	)
+	mustNotContain(t, out, "event is not a map")
+}
+
+func TestGenerateClient_UnknownDataFormatPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for unknown data_format")
+		}
+	}()
+	c := &Contract{Name: "X", Events: []Event{{
+		Name:       "E",
+		Topics:     []string{"t"},
+		DataFormat: "vec",
+		Fields:     []Field{{Name: "a", Type: "u32"}},
+	}}}
+	GenerateClient("x", c)
+}

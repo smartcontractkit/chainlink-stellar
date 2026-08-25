@@ -494,6 +494,15 @@ func generateEventHelpers(b *strings.Builder, contract *Contract) {
 }
 
 func generateEventParser(b *strings.Builder, event Event) {
+	switch event.DataFormat {
+	case "", "map":
+	case "single-value":
+		generateSingleValueEventParser(b, event)
+		return
+	default:
+		panic(fmt.Sprintf("event %s: unsupported contractevent data_format %q (supported: map, single-value)", event.Name, event.DataFormat))
+	}
+
 	b.WriteString(fmt.Sprintf("func Parse%s(e protocolrpc.EventInfo) (*%s, error) {\n", event.Name, event.Name))
 	b.WriteString("\tvar eventVal xdr.ScVal\n")
 	b.WriteString("\tif err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {\n")
@@ -535,6 +544,50 @@ func generateEventParser(b *strings.Builder, event Event) {
 	b.WriteString("\t}\n\n")
 	b.WriteString("\treturn result, nil\n")
 	b.WriteString("}\n\n")
+}
+
+func generateSingleValueEventParser(b *strings.Builder, event Event) {
+	var dataFields []Field
+	for _, f := range event.Fields {
+		if !f.Topic {
+			dataFields = append(dataFields, f)
+		}
+	}
+	if len(dataFields) != 1 {
+		panic(fmt.Sprintf("event %s: data_format single-value requires exactly one non-topic field, found %d", event.Name, len(dataFields)))
+	}
+
+	b.WriteString(fmt.Sprintf("func Parse%s(e protocolrpc.EventInfo) (*%s, error) {\n", event.Name, event.Name))
+	b.WriteString("\tvar eventVal xdr.ScVal\n")
+	b.WriteString("\tif err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {\n")
+	b.WriteString("\t\treturn nil, fmt.Errorf(\"failed to decode event: %w\", err)\n")
+	b.WriteString("\t}\n\n")
+	b.WriteString(fmt.Sprintf("\tresult := &%s{\n", event.Name))
+	b.WriteString("\t\tLedger: uint32(e.Ledger),\n")
+	b.WriteString("\t\tTxHash: e.TransactionHash,\n")
+	b.WriteString("\t}\n\n")
+
+	topicIdx := 1
+	for _, f := range event.Fields {
+		if f.Topic {
+			generateTopicFieldParsing(b, f, "result."+snakeToPascal(f.Name), topicIdx)
+			topicIdx++
+		}
+	}
+
+	f := dataFields[0]
+	generateBareValueFieldParsing(b, f, "result."+snakeToPascal(f.Name))
+	b.WriteString("\n\treturn result, nil\n")
+	b.WriteString("}\n\n")
+}
+
+func generateBareValueFieldParsing(b *strings.Builder, f Field, target string) {
+	var tmp strings.Builder
+	generateEventFieldParsing(&tmp, f, target)
+	code := strings.ReplaceAll(tmp.String(), "entry.Val", "eventVal")
+	code = strings.ReplaceAll(code, "\n\t\t\t", "\n\t")
+	code = strings.TrimPrefix(code, "\t\t")
+	b.WriteString(code)
 }
 
 func generateTopicFieldParsing(b *strings.Builder, f Field, target string, idx int) {

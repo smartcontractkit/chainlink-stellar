@@ -114,7 +114,18 @@ func main() {
 			os.Exit(1)
 		}
 		parsedEvents := parseEvents(string(eventsSource))
-		contract.Events = append(contract.Events, parsedEvents...)
+		byName := make(map[string]int, len(contract.Events))
+		for i, ev := range contract.Events {
+			byName[ev.Name] = i
+		}
+		for _, ev := range parsedEvents {
+			if i, ok := byName[ev.Name]; ok {
+				contract.Events[i].DataFormat = ev.DataFormat
+				continue
+			}
+			byName[ev.Name] = len(contract.Events)
+			contract.Events = append(contract.Events, ev)
+		}
 		fmt.Printf("Parsed %d events from %s\n", len(parsedEvents), *events)
 	}
 

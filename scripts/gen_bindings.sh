@@ -47,7 +47,10 @@ CONTRACTS=(
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"
   "mcms|Mcms|mcms|0"
   "timelock|Timelock|timelock|0|"
-  "forwarder|Forwarder|cre|0|"
+  # forwarder passes its events source explicitly: ReportProcessedEvent uses
+  # data_format = "single-value", which `stellar contract bindings rust`
+  # drops from the interface, so only the source file carries it.
+  "forwarder|Forwarder|cre|0|contracts/cre/forwarder/src/events.rs"
   "data_feeds_cache|DataFeedsCache|data_feeds_cache|0||latest_round,get_round,round_range,find_round,decimals,description,get_feed_permissions,has_permission,is_feed_admin,is_frozen,is_configured,version,type_and_version,get_owner|upgrade,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership"
   "data_feeds_proxy|DataFeedsProxy|data_feeds_proxy|0||latest_round,get_round,decimals,description,version,type_and_version,get_owner|upgrade,set_cache,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership"
 )

@@ -92,9 +92,10 @@ type ErrorVariant struct {
 
 // Event represents a contract event.
 type Event struct {
-	Name   string
-	Topics []string
-	Fields []Field
+	Name       string
+	Topics     []string
+	Fields     []Field
+	DataFormat string
 }
 
 // ParseRustBindings parses Rust bindings output from stellar-cli.
@@ -477,6 +478,7 @@ func parseEvents(input string) []Event {
 	// Match both source-level #[contractevent(...)] and generated #[soroban_sdk::contractevent(...)]
 	eventRe := regexp.MustCompile(`(?s)#\[(?:soroban_sdk::)?contractevent\s*\(([^)]*)\)\s*\]\s*(?:#\[derive[^\]]*\]\s*)*pub struct (\w+)\s*\{([^}]+)\}`)
 	topicsListRe := regexp.MustCompile(`topics\s*=\s*\[([^\]]+)\]`)
+	dataFormatRe := regexp.MustCompile(`data_format\s*=\s*"([^"]+)"`)
 	fieldRe := regexp.MustCompile(`pub (\w+):\s*([^,]+),`)
 	topicRe := regexp.MustCompile(`"([^"]+)"`)
 
@@ -509,10 +511,16 @@ func parseEvents(input string) []Event {
 			prevEnd = ix[1]
 		}
 
+		dataFormat := ""
+		if m := dataFormatRe.FindStringSubmatch(attrs); m != nil {
+			dataFormat = m[1]
+		}
+
 		events = append(events, Event{
-			Name:   name,
-			Topics: topics,
-			Fields: fields,
+			Name:       name,
+			Topics:     topics,
+			Fields:     fields,
+			DataFormat: dataFormat,
 		})
 	}
 
