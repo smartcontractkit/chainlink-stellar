@@ -54,6 +54,7 @@ func main() {
 	pkg := flag.String("pkg", "", "Go package name for generated code")
 	out := flag.String("out", "", "Output directory for generated files")
 	events := flag.String("events", "", "Optional path to Rust events source file (e.g., contracts/onramp/src/events.rs)")
+	eventsSpec := flag.String("events-spec", "", "Optional path to a contract spec JSON file (stellar contract info interface --output json-formatted); events found in both the interface and the spec are replaced by the spec definition, which carries attributes the Rust rendering drops (data_format)")
 	readonly := flag.String("readonly", "", "Optional comma-separated list of read-only contract functions (generated as simulations, not transactions). When provided it is authoritative and replaces the name-based heuristic; every listed function must exist in the contract.")
 	includeVoid := flag.String("include-void", "", "Optional comma-separated list of void contract functions (no return type) to generate methods for. Void functions not listed are omitted from the client, preserving historical behavior; every listed function must exist in the contract and be void.")
 	flag.Parse()
@@ -116,6 +117,36 @@ func main() {
 		parsedEvents := parseEvents(string(eventsSource))
 		contract.Events = append(contract.Events, parsedEvents...)
 		fmt.Printf("Parsed %d events from %s\n", len(parsedEvents), *events)
+	}
+
+	// Optionally correct events against the wasm's contract spec. The spec is
+	// the deployed truth and carries the event data format, which the Rust
+	// interface rendering drops. Only events already present in the interface
+	// are replaced; spec-only events are not added, so the generated surface
+	// is unchanged apart from the corrected wire formats.
+	if *eventsSpec != "" {
+		specSource, err := os.ReadFile(*eventsSpec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read events spec file: %v\n", err)
+			os.Exit(1)
+		}
+		specEvents, err := ParseSpecEvents(specSource)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to parse events spec: %v\n", err)
+			os.Exit(1)
+		}
+		byName := make(map[string]Event, len(specEvents))
+		for _, ev := range specEvents {
+			byName[ev.Name] = ev
+		}
+		replaced := 0
+		for i, ev := range contract.Events {
+			if specEv, ok := byName[ev.Name]; ok {
+				contract.Events[i] = specEv
+				replaced++
+			}
+		}
+		fmt.Printf("Replaced %d events from spec %s\n", replaced, *eventsSpec)
 	}
 
 	// Create output directory

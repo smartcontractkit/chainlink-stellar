@@ -907,11 +907,6 @@ func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, 
 		return nil, fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
 	result := &ReportProcessedEvent{
 		Ledger: uint32(e.Ledger),
 		TxHash: e.TransactionHash,
@@ -944,19 +939,9 @@ func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, 
 		}
 	}
 
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "success":
-			v, ok := entry.Val.GetB()
-			if ok {
-				result.Success = v
-			}
-		}
+	v, ok := eventVal.GetB()
+	if ok {
+		result.Success = v
 	}
 
 	return result, nil

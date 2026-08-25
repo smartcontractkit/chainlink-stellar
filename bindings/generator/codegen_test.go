@@ -213,3 +213,79 @@ func mustNotContain(t *testing.T, s string, needles ...string) {
 		}
 	}
 }
+
+func TestParseSpecEvents(t *testing.T) {
+	src := `[
+  {"event_v0": {"name": "ReportProcessedEvent", "prefix_topics": ["forwarder_ReportProcessed"],
+    "params": [
+      {"name": "receiver", "type_": "address", "location": "topic_list"},
+      {"name": "workflow_execution_id", "type_": {"bytes_n": {"n": 32}}, "location": "topic_list"},
+      {"name": "success", "type_": "bool", "location": "data"}
+    ],
+    "data_format": "single_value"}},
+  {"function_v0": {"name": "report", "inputs": [], "outputs": []}},
+  {"event_v0": {"name": "ConfigSetEvent", "prefix_topics": ["forwarder_ConfigSet"],
+    "params": [
+      {"name": "f", "type_": "u32", "location": "data"},
+      {"name": "signers", "type_": {"vec": {"element_type": {"bytes_n": {"n": 32}}}}, "location": "data"}
+    ],
+    "data_format": "map"}}
+]`
+	events, err := ParseSpecEvents([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].DataFormat != "single-value" {
+		t.Errorf("ReportProcessedEvent DataFormat = %q, want single-value", events[0].DataFormat)
+	}
+	if !events[0].Fields[0].Topic || events[0].Fields[2].Topic {
+		t.Fatal("topic locations not mapped")
+	}
+	if events[0].Fields[1].Type != "soroban_sdk::BytesN<32>" {
+		t.Fatalf("bytes_n type = %q", events[0].Fields[1].Type)
+	}
+	if events[1].DataFormat != "" {
+		t.Errorf("ConfigSetEvent DataFormat = %q, want empty (map default)", events[1].DataFormat)
+	}
+	if events[1].Fields[1].Type != "soroban_sdk::Vec<soroban_sdk::BytesN<32>>" {
+		t.Fatalf("vec type = %q", events[1].Fields[1].Type)
+	}
+}
+
+func TestGenerateClient_SingleValueEventParser(t *testing.T) {
+	c := &Contract{Name: "Forwarder", Events: []Event{{
+		Name:       "ReportProcessedEvent",
+		Topics:     []string{"forwarder_ReportProcessed"},
+		DataFormat: "single-value",
+		Fields: []Field{
+			{Name: "receiver", Type: "soroban_sdk::Address", Topic: true},
+			{Name: "workflow_execution_id", Type: "soroban_sdk::BytesN<32>", Topic: true},
+			{Name: "success", Type: "bool"},
+		},
+	}}}
+	out := GenerateClient("cre", c)
+	mustContain(t, out,
+		"func ParseReportProcessedEvent(e protocolrpc.EventInfo) (*ReportProcessedEvent, error)",
+		"v, ok := eventVal.GetB()",
+		"result.Success = v",
+	)
+	mustNotContain(t, out, "event is not a map")
+}
+
+func TestGenerateClient_UnknownDataFormatPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for unknown data_format")
+		}
+	}()
+	c := &Contract{Name: "X", Events: []Event{{
+		Name:       "E",
+		Topics:     []string{"t"},
+		DataFormat: "vec",
+		Fields:     []Field{{Name: "a", Type: "u32"}},
+	}}}
+	GenerateClient("x", c)
+}

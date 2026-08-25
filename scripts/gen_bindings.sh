@@ -19,7 +19,7 @@ INTERFACES_DIR="$REPO_ROOT/contracts/common/interfaces/src"
 BINDINGS_DIR="$REPO_ROOT/bindings"
 CONTRACTS_DIR="$BINDINGS_DIR/contracts"
 
-# Contract config: "interface_module|PascalCaseName|go_package|use_common_message|events_file|readonly_fns|include_void_fns"
+# Contract config: "interface_module|PascalCaseName|go_package|use_common_message|events_file|readonly_fns|include_void_fns|events_spec_wasm"
 # use_common_message=1 when the interface uses StellarToAnyMessage/TokenAmount from common_message
 # (fee_quoter, onramp have these structs removed by gen_interfaces; we prepend them from committee_verifier)
 # committee_verifier must come before fee_quoter and onramp (they need its TokenAmount/StellarToAnyMessage)
@@ -28,6 +28,9 @@ CONTRACTS_DIR="$BINDINGS_DIR/contracts"
 # all others submit transactions; when empty the name heuristic (get_*/is_*/owner/balance) applies
 # include_void_fns: optional comma-separated -include-void list; listed void fns (no return
 # type) get generated methods, unlisted ones are omitted
+# events_spec_wasm: optional path (relative to REPO_ROOT) to a committed wasm
+# whose embedded contract spec corrects the interface-derived events (the spec
+# carries the event data_format, which the Rust interface rendering drops)
 CONTRACTS=(
   "committee_verifier|CommitteeVerifier|committee_verifier|0|"
   "fee_quoter|FeeQuoter|fee_quoter|1|"
@@ -47,9 +50,9 @@ CONTRACTS=(
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"
   "mcms|Mcms|mcms|0"
   "timelock|Timelock|timelock|0|"
-  "forwarder|Forwarder|cre|0|"
-  "data_feeds_cache|DataFeedsCache|data_feeds_cache|0||latest_round,get_round,round_range,find_round,decimals,description,get_feed_permissions,has_permission,is_feed_admin,is_frozen,is_configured,version,type_and_version,get_owner|upgrade,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership"
-  "data_feeds_proxy|DataFeedsProxy|data_feeds_proxy|0||latest_round,get_round,decimals,description,version,type_and_version,get_owner|upgrade,set_cache,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership"
+  "forwarder|Forwarder|cre|0||||deployment/cre/artifacts/forwarder.wasm"
+  "data_feeds_cache|DataFeedsCache|data_feeds_cache|0||latest_round,get_round,round_range,find_round,decimals,description,get_feed_permissions,has_permission,is_feed_admin,is_frozen,is_configured,version,type_and_version,get_owner|upgrade,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership|deployment/data-feeds/artifacts/data_feeds_cache.wasm"
+  "data_feeds_proxy|DataFeedsProxy|data_feeds_proxy|0||latest_round,get_round,decimals,description,version,type_and_version,get_owner|upgrade,set_cache,recover_tokens,accept_ownership,renounce_ownership,transfer_ownership|deployment/data-feeds/artifacts/data_feeds_proxy.wasm"
 )
 
 # Extract TokenAmount and StellarToAnyMessage structs from committee_verifier for contracts that use common_message
@@ -98,7 +101,7 @@ fi
 mkdir -p "$CONTRACTS_DIR"
 
 for entry in "${CONTRACTS[@]}"; do
-  IFS='|' read -r iface_module pascal_name pkg use_common_msg events_file readonly_fns include_void_fns <<< "$entry"
+  IFS='|' read -r iface_module pascal_name pkg use_common_msg events_file readonly_fns include_void_fns events_spec_wasm <<< "$entry"
   iface_path="$INTERFACES_DIR/${iface_module}.rs"
   out_dir="$CONTRACTS_DIR/$pkg"
 
@@ -122,8 +125,15 @@ for entry in "${CONTRACTS[@]}"; do
     void_flag="-include-void $include_void_fns"
   fi
 
+  events_spec_flag=""
+  if [[ -n "${events_spec_wasm:-}" ]]; then
+    spec_json="$(mktemp)"
+    stellar contract info interface --wasm "$REPO_ROOT/$events_spec_wasm" --output json-formatted > "$spec_json" 2>/dev/null
+    events_spec_flag="-events-spec $spec_json"
+  fi
+
   echo "Generating Go bindings for $pascal_name..."
-  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir" $events_flag $readonly_flag $void_flag)
+  prepend_common_message "${use_common_msg:-0}" < "$iface_path" | (cd "$BINDINGS_DIR" && go run ./generator -name "$pascal_name" -pkg "$pkg" -out "$out_dir" $events_flag $events_spec_flag $readonly_flag $void_flag)
 done
 
 echo ""
