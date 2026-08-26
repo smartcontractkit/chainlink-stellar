@@ -1,5 +1,10 @@
 use crate::interface::types::Bound;
 
+/// Binary search over `lo..=hi` for the entry closest to `target` on the given side.
+///
+/// `probe` must be monotonic across the range: timestamps must not decrease as the
+/// index rises, and any entry it cannot return must form an unbroken run at the low
+/// end. A gap in the middle breaks the search and it may return the wrong entry.
 pub(crate) fn boundary<T>(
     lo: u64,
     hi: u64,
@@ -23,6 +28,9 @@ pub(crate) fn boundary<T>(
             }
         }
         if matches!(bound, Bound::AtOrAfter) == accept {
+            if mid == 0 {
+                break;
+            }
             hi = mid - 1;
         } else {
             lo = mid + 1;
@@ -39,6 +47,24 @@ mod tests {
         let head = ts.len() as u64 - 1;
         let at = |rid: u64| ts.get(rid as usize).copied().flatten().map(|t| (t, rid));
         boundary(1, head, target, bound, at)
+    }
+
+    #[test]
+    fn a_zero_lower_bound_narrows_without_underflowing() {
+        let at = |rid: u64| Some((rid * 10 + 10, rid));
+
+        assert_eq!(boundary(0, 0, 5, Bound::AtOrBefore, at), None);
+        assert_eq!(boundary(0, 0, 5, Bound::AtOrAfter, at), Some(0));
+        assert_eq!(boundary(0, 1, 5, Bound::AtOrAfter, at), Some(0));
+    }
+
+    #[test]
+    fn a_zero_midpoint_still_searches_upwards() {
+        let at = |rid: u64| Some((rid * 10 + 10, rid));
+
+        assert_eq!(boundary(0, 1, 15, Bound::AtOrBefore, at), Some(0));
+        assert_eq!(boundary(0, 1, 20, Bound::AtOrBefore, at), Some(1));
+        assert_eq!(boundary(0, 1, 15, Bound::AtOrAfter, at), Some(1));
     }
 
     #[test]
