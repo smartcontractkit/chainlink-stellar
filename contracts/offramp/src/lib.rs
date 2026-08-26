@@ -103,7 +103,7 @@ impl OffRampContract {
     }
 
     pub fn type_and_version(_env: Env) -> soroban_sdk::String {
-        soroban_sdk::String::from_str(&_env, "OffRamp 2.0.0")
+        soroban_sdk::String::from_str(&_env, "OffRamp-dev 2.0.0")
     }
 
     // ========================================

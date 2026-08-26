@@ -312,26 +312,26 @@ pub enum TimelockError {
     EmptyBatch = 55,
     UnsupportedSelfCall = 56,
 }
-#[soroban_sdk::contractevent(topics = ["tl_Cancelled"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_Cancelled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CancelledEvent {
     pub id: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["tl_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tl_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_RoleRevoked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tl_CallExecuted"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_CallExecuted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallExecutedEvent {
     pub id: soroban_sdk::BytesN<32>,
@@ -340,7 +340,7 @@ pub struct CallExecutedEvent {
     pub function: soroban_sdk::Symbol,
     pub args_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["tl_CallScheduled"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_CallScheduled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallScheduledEvent {
     pub id: soroban_sdk::BytesN<32>,
@@ -352,25 +352,25 @@ pub struct CallScheduledEvent {
     pub salt: soroban_sdk::BytesN<32>,
     pub delay: u64,
 }
-#[soroban_sdk::contractevent(topics = ["tl_MinDelay"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_MinDelay"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MinDelayChangeEvent {
     pub old_duration: u64,
     pub new_duration: u64,
 }
-#[soroban_sdk::contractevent(topics = ["tl_FnBlocked"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_FnBlocked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FunctionBlockedEvent {
     pub target: soroban_sdk::Address,
     pub function: soroban_sdk::Symbol,
 }
-#[soroban_sdk::contractevent(topics = ["tl_FnUnblocked"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_FnUnblocked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FunctionUnblockedEvent {
     pub target: soroban_sdk::Address,
     pub function: soroban_sdk::Symbol,
 }
-#[soroban_sdk::contractevent(topics = ["tl_BypCallExec"], export = false)]
+#[soroban_sdk::contractevent(export = false, topics = ["tl_BypCallExec"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BypasserCallExecutedEvent {
     pub index: u32,

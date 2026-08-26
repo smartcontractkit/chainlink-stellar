@@ -61,7 +61,7 @@ impl LockReleaseTokenPoolContract {
     }
 
     pub fn type_and_version(_env: Env) -> soroban_sdk::String {
-        soroban_sdk::String::from_str(&_env, "LockReleaseTokenPool 2.0.0")
+        soroban_sdk::String::from_str(&_env, "LockReleaseTokenPool-dev 2.0.0")
     }
 
     // ------------------------------------------------------------------
