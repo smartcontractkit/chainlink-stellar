@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"strconv"
 
+	gotoml "github.com/pelletier/go-toml/v2"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-common/pkg/chains"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 
 	frameworkmetrics "github.com/smartcontractkit/chainlink-framework/metrics"
 	"github.com/smartcontractkit/chainlink-framework/multinode"
 
+	common "github.com/smartcontractkit/chainlink-common/pkg/chains"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-common/pkg/monitoring/balance"
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
@@ -65,6 +68,48 @@ type chain struct {
 	txm            *txm.StellarTxm
 	multiNode      *multinode.MultiNode[multinode.StringID, *MultiNodeClient]
 	balanceMonitor services.Service
+}
+
+func (c *chain) ListNodeStatuses(_ context.Context, pageSize int32, pageToken string) (stats []types.NodeStatus, nextPageToken string, total int, err error) {
+	return chains.ListNodeStatuses(int(pageSize), pageToken, c.listNodeStatuses)
+}
+
+func (c *chain) listNodeStatuses(start, end int) ([]types.NodeStatus, int, error) {
+	nodes := c.cfg.Nodes
+	total := len(nodes)
+	if start >= total {
+		return nil, total, common.ErrOutOfRange
+	}
+	if end > total {
+		end = total
+	}
+	stats := make([]types.NodeStatus, 0)
+
+	states := c.multiNode.NodeStates()
+	for _, n := range nodes[start:end] {
+		var nodeState string
+		toml, err := gotoml.Marshal(n)
+		if err != nil {
+			return nil, -1, err
+		}
+		if states == nil {
+			nodeState = "Unknown"
+		} else {
+			// The node is in the DB and the chain is enabled but it's not running
+			nodeState = "NotLoaded"
+			s, exists := states[*n.Name]
+			if exists {
+				nodeState = s
+			}
+		}
+		stats = append(stats, types.NodeStatus{
+			ChainID: c.chainInfo.ChainID,
+			Name:    *n.Name,
+			Config:  string(toml),
+			State:   nodeState,
+		})
+	}
+	return stats, total, nil
 }
 
 // Opts are the external dependencies required to construct a Chain.
