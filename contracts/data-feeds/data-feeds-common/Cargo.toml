@@ -1,0 +1,22 @@
+[package]
+name = "data-feeds-common"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+stellar-access = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+testutils = ["soroban-sdk/testutils"]
