@@ -195,7 +195,7 @@ func TestStellarTxm_DoubleStart(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	err = txm.Start(t.Context())
 	require.Error(t, err)
@@ -745,7 +745,7 @@ func TestStellarTxm_BroadcastLoop_ProcessesTx(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -797,7 +797,7 @@ func TestStellarTxm_ConfirmLoop_FinalizesSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -850,7 +850,7 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -912,7 +912,7 @@ func TestStellarTxm_EnqueueAndWait(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -964,7 +964,7 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
@@ -1259,7 +1259,7 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -1342,10 +1342,10 @@ func TestStellarTxm_PruneTerminal_OnlyEvictsTerminalPastCutoff(t *testing.T) {
 
 	inject("inflight-pending", commontypes.Pending, time.Time{})
 	inject("inflight-unconfirmed", commontypes.Unconfirmed, time.Time{})
-	inject("terminal-no-time", commontypes.Finalized, time.Time{})                      // TerminalTime unset — must not be pruned
-	inject("terminal-fresh", commontypes.Finalized, now.Add(-twoHours/2))               // within window
+	inject("terminal-no-time", commontypes.Finalized, time.Time{})                              // TerminalTime unset — must not be pruned
+	inject("terminal-fresh", commontypes.Finalized, now.Add(-twoHours/2))                       // within window
 	inject("terminal-expired-finalized", commontypes.Finalized, now.Add(-twoHours-time.Second)) // past window
-	inject("terminal-expired-failed", commontypes.Failed, now.Add(-twoHours-time.Second))     // past window
+	inject("terminal-expired-failed", commontypes.Failed, now.Add(-twoHours-time.Second))       // past window
 
 	txm.pruneTerminal()
 
@@ -1451,7 +1451,7 @@ func TestStellarTxm_PruneLoop_RunsWhenIntervalPositive(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	tx := &StellarTx{
 		ID:   "prune-loop-tx",
@@ -1524,7 +1524,7 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -1567,7 +1567,7 @@ func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockRPCClient{}
-	txm, err := New(logger.Test(t), &mockKeystore{}, Config{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 
 	const numTxs = 20

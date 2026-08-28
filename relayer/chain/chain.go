@@ -224,7 +224,7 @@ func (c *chain) Ready() error {
 }
 
 func (c *chain) HealthReport() map[string]error {
-	report := map[string]error{c.Name(): c.StateMachine.Healthy()}
+	report := map[string]error{c.Name(): c.Healthy()}
 	services.CopyHealth(report, c.multiNode.HealthReport())
 	services.CopyHealth(report, c.txm.HealthReport())
 	services.CopyHealth(report, c.balanceMonitor.HealthReport())
