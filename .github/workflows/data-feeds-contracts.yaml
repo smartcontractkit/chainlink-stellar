@@ -1,0 +1,116 @@
+name: Data Feeds Contracts
+
+on:
+  merge_group:
+  pull_request:
+    paths:
+      - contracts/data-feeds/**
+      - .github/workflows/data-feeds-contracts.yaml
+      - .github/actions/setup-rust-toolchain/**
+      - .github/actions/setup-stellar-cli/**
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  test:
+    name: Unit Tests
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/data-feeds
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust-toolchain
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          workspaces: contracts/data-feeds
+
+      - name: Install Just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Run tests
+        run: just test
+
+  lint:
+    name: Lint and Format
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/data-feeds
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust-toolchain
+        with:
+          toolchain: "1.96.0"
+          rustfmt: "true"
+          clippy: "true"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          workspaces: contracts/data-feeds
+
+      - name: Install Just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Check formatting
+        run: just fmt-check
+
+      - name: Run clippy
+        run: just lint
+
+  build-wasm:
+    name: Build WASM
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/data-feeds
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust-toolchain
+        with:
+          toolchain: "1.96.0"
+          wasm32-target: "true"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          workspaces: contracts/data-feeds
+
+      - name: Install Just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Install Stellar CLI
+        uses: ./.github/actions/setup-stellar-cli
+        with:
+          version: "27.0.0"
+          shasum: "357bf712f6353c28cd33c794402a3c87231757a5b305e6ef1604365af4fdd556"
+
+      - name: Build contract WASMs
+        run: just build

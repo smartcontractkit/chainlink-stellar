@@ -4,8 +4,10 @@
 package scval
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 
@@ -66,49 +68,19 @@ func BytesToScVal(b []byte) xdr.ScVal {
 }
 
 // Bytes2ToScVal converts a [2]byte to an xdr.ScVal.
-func Bytes2ToScVal(b [2]byte) xdr.ScVal {
-	bytes := xdr.ScBytes(b[:])
-	return xdr.ScVal{
-		Type:  xdr.ScValTypeScvBytes,
-		Bytes: &bytes,
-	}
-}
+func Bytes2ToScVal(b [2]byte) xdr.ScVal { return BytesToScVal(b[:]) }
 
 // Bytes4ToScVal converts a [4]byte to an xdr.ScVal (for BytesN<4>).
-func Bytes4ToScVal(b [4]byte) xdr.ScVal {
-	bytes := xdr.ScBytes(b[:])
-	return xdr.ScVal{
-		Type:  xdr.ScValTypeScvBytes,
-		Bytes: &bytes,
-	}
-}
+func Bytes4ToScVal(b [4]byte) xdr.ScVal { return BytesToScVal(b[:]) }
 
 // Bytes16ToScVal converts a [16]byte to an xdr.ScVal.
-func Bytes16ToScVal(b [16]byte) xdr.ScVal {
-	bytes := xdr.ScBytes(b[:])
-	return xdr.ScVal{
-		Type:  xdr.ScValTypeScvBytes,
-		Bytes: &bytes,
-	}
-}
+func Bytes16ToScVal(b [16]byte) xdr.ScVal { return BytesToScVal(b[:]) }
 
 // Bytes32ToScVal converts a [32]byte to an xdr.ScVal.
-func Bytes32ToScVal(b [32]byte) xdr.ScVal {
-	bytes := xdr.ScBytes(b[:])
-	return xdr.ScVal{
-		Type:  xdr.ScValTypeScvBytes,
-		Bytes: &bytes,
-	}
-}
+func Bytes32ToScVal(b [32]byte) xdr.ScVal { return BytesToScVal(b[:]) }
 
 // Bytes64ToScVal converts a [64]byte to an xdr.ScVal.
-func Bytes64ToScVal(b [64]byte) xdr.ScVal {
-	bytes := xdr.ScBytes(b[:])
-	return xdr.ScVal{
-		Type:  xdr.ScValTypeScvBytes,
-		Bytes: &bytes,
-	}
-}
+func Bytes64ToScVal(b [64]byte) xdr.ScVal { return BytesToScVal(b[:]) }
 
 // AddressToScVal converts a Stellar address string (G... or C...) to an xdr.ScVal.
 func AddressToScVal(addr string) xdr.ScVal {
@@ -192,6 +164,17 @@ func StringFromScVal(val xdr.ScVal) (string, error) {
 		return "", fmt.Errorf("not a string type: %v", val.Type)
 	}
 	return string(s), nil
+}
+
+func OptionalStringFromScVal(val xdr.ScVal) (*string, error) {
+	if val.Type == xdr.ScValTypeScvVoid {
+		return nil, nil
+	}
+	s, err := StringFromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // BuildStructScVal builds a struct xdr.ScVal from a map of field names to values.
@@ -314,6 +297,17 @@ func Uint32FromScVal(val xdr.ScVal) (uint32, error) {
 	return uint32(u32), nil
 }
 
+func OptionalUint32FromScVal(val xdr.ScVal) (*uint32, error) {
+	if val.Type == xdr.ScValTypeScvVoid {
+		return nil, nil
+	}
+	u, err := Uint32FromScVal(val)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
 // BytesFromScVal extracts a byte slice from an xdr.ScVal containing Bytes.
 func BytesFromScVal(val xdr.ScVal) ([]byte, error) {
 	bytes, ok := val.GetBytes()
@@ -323,74 +317,72 @@ func BytesFromScVal(val xdr.ScVal) ([]byte, error) {
 	return []byte(bytes), nil
 }
 
-// Bytes2FromScVal extracts a [2]byte from an xdr.ScVal containing BytesN<2>.
-func Bytes2FromScVal(val xdr.ScVal) ([2]byte, error) {
+// bytesNFromScVal extracts exactly len(dst) bytes from an xdr.ScVal into dst.
+func bytesNFromScVal(val xdr.ScVal, dst []byte) error {
 	bytes, ok := val.GetBytes()
 	if !ok {
-		return [2]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
+		return fmt.Errorf("not a bytes type: %v", val.Type)
 	}
-	if len(bytes) != 2 {
-		return [2]byte{}, fmt.Errorf("expected 2 bytes, got %d", len(bytes))
+	if len(bytes) != len(dst) {
+		return fmt.Errorf("expected %d bytes, got %d", len(dst), len(bytes))
 	}
-	var result [2]byte
-	copy(result[:], bytes)
-	return result, nil
+	copy(dst, bytes)
+	return nil
+}
+
+// Bytes2FromScVal extracts a [2]byte from an xdr.ScVal containing BytesN<2>.
+func Bytes2FromScVal(val xdr.ScVal) ([2]byte, error) {
+	var r [2]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
 }
 
 // Bytes4FromScVal extracts a [4]byte from an xdr.ScVal containing BytesN<4>.
 func Bytes4FromScVal(val xdr.ScVal) ([4]byte, error) {
-	bytes, ok := val.GetBytes()
-	if !ok {
-		return [4]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
-	}
-	if len(bytes) != 4 {
-		return [4]byte{}, fmt.Errorf("expected 4 bytes, got %d", len(bytes))
-	}
-	var result [4]byte
-	copy(result[:], bytes)
-	return result, nil
+	var r [4]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
 }
 
 // Bytes16FromScVal extracts a [16]byte from an xdr.ScVal containing BytesN<16>.
 func Bytes16FromScVal(val xdr.ScVal) ([16]byte, error) {
-	bytes, ok := val.GetBytes()
-	if !ok {
-		return [16]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
-	}
-	if len(bytes) != 16 {
-		return [16]byte{}, fmt.Errorf("expected 16 bytes, got %d", len(bytes))
-	}
-	var result [16]byte
-	copy(result[:], bytes)
-	return result, nil
+	var r [16]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
+}
+
+// Bytes10ToScVal converts a [10]byte to an xdr.ScVal.
+func Bytes10ToScVal(b [10]byte) xdr.ScVal { return BytesToScVal(b[:]) }
+
+// Bytes10FromScVal extracts a [10]byte from an xdr.ScVal containing BytesN<10>.
+func Bytes10FromScVal(val xdr.ScVal) ([10]byte, error) {
+	var r [10]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
+}
+
+// Bytes20ToScVal converts a [20]byte to an xdr.ScVal.
+func Bytes20ToScVal(b [20]byte) xdr.ScVal { return BytesToScVal(b[:]) }
+
+// Bytes20FromScVal extracts a [20]byte from an xdr.ScVal containing BytesN<20>.
+func Bytes20FromScVal(val xdr.ScVal) ([20]byte, error) {
+	var r [20]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
 }
 
 // Bytes32FromScVal extracts a [32]byte from an xdr.ScVal containing BytesN<32>.
 func Bytes32FromScVal(val xdr.ScVal) ([32]byte, error) {
-	bytes, ok := val.GetBytes()
-	if !ok {
-		return [32]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
-	}
-	if len(bytes) != 32 {
-		return [32]byte{}, fmt.Errorf("expected 32 bytes, got %d", len(bytes))
-	}
-	var result [32]byte
-	copy(result[:], bytes)
-	return result, nil
+	var r [32]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
 }
 
 // Bytes64FromScVal extracts a [64]byte from an xdr.ScVal containing BytesN<64>.
 func Bytes64FromScVal(val xdr.ScVal) ([64]byte, error) {
-	bytes, ok := val.GetBytes()
-	if !ok {
-		return [64]byte{}, fmt.Errorf("not a bytes type: %v", val.Type)
-	}
-	if len(bytes) != 64 {
-		return [64]byte{}, fmt.Errorf("expected 64 bytes, got %d", len(bytes))
-	}
-	var result [64]byte
-	copy(result[:], bytes)
-	return result, nil
+	var r [64]byte
+	err := bytesNFromScVal(val, r[:])
+	return r, err
 }
 
 // I128FromScVal extracts an int64 from an xdr.ScVal containing i128.
@@ -428,6 +420,66 @@ func U128FromScVal(val xdr.ScVal) (U128, error) {
 		return U128{}, fmt.Errorf("not a u128 type: %v", val.Type)
 	}
 	return U128(u128), nil
+}
+
+var (
+	maxI256   = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1))
+	minI256   = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 255))
+	twoPow256 = new(big.Int).Lsh(big.NewInt(1), 256)
+)
+
+// I256ToScVal converts a *big.Int to an ScvI256 ScVal.
+func I256ToScVal(v *big.Int) (xdr.ScVal, error) {
+	if v == nil {
+		v = new(big.Int)
+	}
+	if v.Cmp(maxI256) > 0 || v.Cmp(minI256) < 0 {
+		return xdr.ScVal{}, fmt.Errorf("value %s out of i256 range", v)
+	}
+	tc := new(big.Int).Set(v)
+	if tc.Sign() < 0 {
+		tc.Add(tc, twoPow256) // two's complement
+	}
+	var buf [32]byte
+	tc.FillBytes(buf[:])
+	parts := xdr.Int256Parts{
+		HiHi: xdr.Int64(int64(binary.BigEndian.Uint64(buf[0:8]))),
+		HiLo: xdr.Uint64(binary.BigEndian.Uint64(buf[8:16])),
+		LoHi: xdr.Uint64(binary.BigEndian.Uint64(buf[16:24])),
+		LoLo: xdr.Uint64(binary.BigEndian.Uint64(buf[24:32])),
+	}
+	return xdr.ScVal{Type: xdr.ScValTypeScvI256, I256: &parts}, nil
+}
+
+// I256FromScVal parses an ScvI256 ScVal into a *big.Int.
+func I256FromScVal(val xdr.ScVal) (*big.Int, error) {
+	parts, ok := val.GetI256()
+	if !ok {
+		return nil, fmt.Errorf("expected i256 ScVal, got %v", val.Type)
+	}
+	var buf [32]byte
+	binary.BigEndian.PutUint64(buf[0:8], uint64(parts.HiHi))
+	binary.BigEndian.PutUint64(buf[8:16], uint64(parts.HiLo))
+	binary.BigEndian.PutUint64(buf[16:24], uint64(parts.LoHi))
+	binary.BigEndian.PutUint64(buf[24:32], uint64(parts.LoLo))
+	v := new(big.Int).SetBytes(buf[:])
+	if buf[0]&0x80 != 0 { // sign bit set → negative
+		v.Sub(v, twoPow256)
+	}
+	return v, nil
+}
+
+// I256SliceToScVal converts a slice of *big.Int to an xdr.ScVal vector (for Vec<I256>).
+func I256SliceToScVal(items []*big.Int) (xdr.ScVal, error) {
+	scVals := make([]xdr.ScVal, len(items))
+	for i, item := range items {
+		v, err := I256ToScVal(item)
+		if err != nil {
+			return xdr.ScVal{}, err
+		}
+		scVals[i] = v
+	}
+	return VecToScVal(scVals), nil
 }
 
 // MustToScVal panics if ToScVal returns an error.

@@ -6,7 +6,7 @@ WASM_DIR := target/wasm32v1-none/release
 # lives elsewhere, e.g. `make docker-ccv-dev CCV_REPO=$HOME/code/chainlink-ccv`.
 CCV_REPO ?= ../chainlink-ccv
 
-.PHONY: build test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
+.PHONY: build test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts update-data-feeds-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
 
 build:
 	stellar contract build
@@ -18,6 +18,13 @@ build:
 # one canonical build environment. Requires docker.
 update-cre-artifacts:
 	./scripts/update_cre_artifacts.sh
+
+# Same contract for the data feeds contracts, whose blobs live under
+# deployment/data-feeds/artifacts/ (served via deployment/data-feeds.Artifact).
+# Separate from update-cre-artifacts because the nested contracts/data-feeds
+# workspace pins its own rust and stellar-cli versions. Requires docker.
+update-data-feeds-artifacts:
+	./scripts/update_data_feeds_artifacts.sh
 
 test-e2e:
 	go test -v -timeout 30m ./tests/e2e/...
