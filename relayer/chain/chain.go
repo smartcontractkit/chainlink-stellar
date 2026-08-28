@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"strconv"
 
+	gotoml "github.com/pelletier/go-toml/v2"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-common/pkg/chains"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 
 	frameworkmetrics "github.com/smartcontractkit/chainlink-framework/metrics"
@@ -65,6 +67,43 @@ type chain struct {
 	txm            *txm.StellarTxm
 	multiNode      *multinode.MultiNode[multinode.StringID, *MultiNodeClient]
 	balanceMonitor services.Service
+}
+
+func (c *chain) ListNodeStatuses(_ context.Context, pageSize int32, pageToken string) (stats []types.NodeStatus, nextPageToken string, total int, err error) {
+	return chains.ListNodeStatuses(int(pageSize), pageToken, c.listNodeStatuses)
+}
+
+func (c *chain) listNodeStatuses(start, end int) ([]types.NodeStatus, int, error) {
+	nodes := c.cfg.Nodes
+	total := len(nodes)
+	if start >= total {
+		return nil, total, chains.ErrOutOfRange
+	}
+	if end > total {
+		end = total
+	}
+
+	states := c.multiNode.NodeStates()
+	stats := make([]types.NodeStatus, 0, end-start)
+
+	for _, node := range nodes[start:end] {
+		nodeConfig, err := gotoml.Marshal(node)
+		if err != nil {
+			return nil, -1, err
+		}
+
+		nodeState, exists := states[*node.Name]
+		if !exists {
+			nodeState = "Unknown"
+		}
+		stats = append(stats, types.NodeStatus{
+			ChainID: c.chainInfo.ChainID,
+			Name:    *node.Name,
+			Config:  string(nodeConfig),
+			State:   nodeState,
+		})
+	}
+	return stats, total, nil
 }
 
 // Opts are the external dependencies required to construct a Chain.
