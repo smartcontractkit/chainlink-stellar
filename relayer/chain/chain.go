@@ -15,7 +15,6 @@ import (
 	frameworkmetrics "github.com/smartcontractkit/chainlink-framework/metrics"
 	"github.com/smartcontractkit/chainlink-framework/multinode"
 
-	common "github.com/smartcontractkit/chainlink-common/pkg/chains"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-common/pkg/monitoring/balance"
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
@@ -78,34 +77,29 @@ func (c *chain) listNodeStatuses(start, end int) ([]types.NodeStatus, int, error
 	nodes := c.cfg.Nodes
 	total := len(nodes)
 	if start >= total {
-		return nil, total, common.ErrOutOfRange
+		return nil, total, chains.ErrOutOfRange
 	}
 	if end > total {
 		end = total
 	}
-	stats := make([]types.NodeStatus, 0)
 
 	states := c.multiNode.NodeStates()
-	for _, n := range nodes[start:end] {
-		var nodeState string
-		toml, err := gotoml.Marshal(n)
+	stats := make([]types.NodeStatus, 0, end-start)
+
+	for _, node := range nodes[start:end] {
+		nodeConfig, err := gotoml.Marshal(node)
 		if err != nil {
 			return nil, -1, err
 		}
-		if states == nil {
+
+		nodeState, exists := states[*node.Name]
+		if !exists {
 			nodeState = "Unknown"
-		} else {
-			// The node is in the DB and the chain is enabled but it's not running
-			nodeState = "NotLoaded"
-			s, exists := states[*n.Name]
-			if exists {
-				nodeState = s
-			}
 		}
 		stats = append(stats, types.NodeStatus{
 			ChainID: c.chainInfo.ChainID,
-			Name:    *n.Name,
-			Config:  string(toml),
+			Name:    *node.Name,
+			Config:  string(nodeConfig),
 			State:   nodeState,
 		})
 	}
