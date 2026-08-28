@@ -120,11 +120,9 @@ func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolr
 			return nil, 0, fmt.Errorf("failed to decode soroban data: %w", err)
 		}
 
-		// Apply the resource fee buffer here, inside the SorobanData, so
-		// txnbuild picks it up correctly when computing the envelope fee.
+		// Set the resource fee inside SorobanData so txnbuild computes the envelope fee correctly.
 		resourceFee = sim.MinResourceFee + s.feeStrat.ResourceFeeBuffer
-		// Enforce the per-transaction resource-fee cap before baking the fee into the
-		// SorobanData and signing.
+		// Enforce the tighter of the configured and per-request resource-fee caps.
 		effectiveCap := s.feeStrat.MaxResourceFee
 		if perRequestMaxResourceFee > 0 {
 			if effectiveCap == 0 || int64(perRequestMaxResourceFee) < effectiveCap {
