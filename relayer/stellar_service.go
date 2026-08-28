@@ -62,9 +62,7 @@ func (s *stellarService) GetLedgerEntries(ctx context.Context, req stellartypes.
 	}
 
 	keys := make([]string, len(req.Keys))
-	for i, k := range req.Keys {
-		keys[i] = k
-	}
+	copy(keys, req.Keys)
 
 	resp, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys})
 	if err != nil {
@@ -374,6 +372,7 @@ func (s *stellarService) SubmitTransaction(ctx context.Context, req stellartypes
 		FromAddress:        req.FromAddress,
 		Operations:         []txnbuild.Operation{op},
 		LedgerBoundsOffset: req.LedgerBoundsOffset,
+		MaxResourceFee:     req.MaxResourceFee,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("submit transaction: %w", err)

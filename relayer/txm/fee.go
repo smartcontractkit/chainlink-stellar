@@ -18,6 +18,7 @@ type FeeStrategy struct {
 	MaxInclusionFee   int64
 	BumpMultiplier    float64
 	ResourceFeeBuffer int64
+	MaxResourceFee int64
 }
 
 // NewFeeStrategyFromConfig constructs a FeeStrategy from the resolved Config.
@@ -27,6 +28,7 @@ func NewFeeStrategyFromConfig(cfg config.TxManagerConfig) FeeStrategy {
 		MaxInclusionFee:   *cfg.MaxInclusionFee,
 		BumpMultiplier:    *cfg.FeeBumpMultiplier,
 		ResourceFeeBuffer: *cfg.ResourceFeeBuffer,
+		MaxResourceFee:    *cfg.MaxResourceFee,
 	}
 }
 

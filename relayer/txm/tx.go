@@ -22,6 +22,7 @@ type StellarTx struct {
 
 	Operations         []txnbuild.Operation
 	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
+	MaxResourceFee uint64
 
 	Attempt       atomic.Uint64
 	InfraAttempts atomic.Uint64
@@ -51,6 +52,7 @@ type TxRequest struct {
 	Operations         []txnbuild.Operation // the Stellar operations to execute
 	LedgerBoundsOffset uint32               // per-tx override (0 = use config default)
 	Metadata           *commontypes.TxMeta  // optional; carries WorkflowExecutionID and other node-level context
+	MaxResourceFee uint64 // optional; per-tx override (0 = use config default)
 }
 
 // TxResult is returned by EnqueueAndWait and Simulate with the outcome of a transaction.

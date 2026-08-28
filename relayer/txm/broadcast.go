@@ -103,7 +103,7 @@ func (s *StellarTxm) isRetryableSimulationError(ctx context.Context, err error) 
 // with feeTracker percentiles); it must NOT include
 // the resource fee — txnbuild computes the envelope fee as BaseFee*numOps + sorobanData.ResourceFee,
 // so folding resource fee into BaseFee would double-count it.
-func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, inclusionFee int64, maxLedger uint32) (*txnbuild.Transaction, int64, error) {
+func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, inclusionFee int64, maxLedger uint32, perRequestMaxResourceFee uint64) (*txnbuild.Transaction, int64, error) {
 	if tx == nil {
 		return nil, 0, errors.New("assembleTransaction: tx is nil")
 	}
@@ -123,6 +123,18 @@ func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolr
 		// Apply the resource fee buffer here, inside the SorobanData, so
 		// txnbuild picks it up correctly when computing the envelope fee.
 		resourceFee = sim.MinResourceFee + s.feeStrat.ResourceFeeBuffer
+		// Enforce the per-transaction resource-fee cap before baking the fee into the
+		// SorobanData and signing.
+		effectiveCap := s.feeStrat.MaxResourceFee
+		if perRequestMaxResourceFee > 0 {
+			if effectiveCap == 0 || int64(perRequestMaxResourceFee) < effectiveCap {
+				effectiveCap = int64(perRequestMaxResourceFee)
+			}
+		}
+		if effectiveCap > 0 && resourceFee > effectiveCap {
+			return nil, 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (sim.MinResourceFee=%d, buffer=%d)",
+				resourceFee, effectiveCap, sim.MinResourceFee, s.feeStrat.ResourceFeeBuffer)
+		}
 		sorobanData.ResourceFee = xdr.Int64(resourceFee)
 
 		if ihf, ok := ops[0].(*txnbuild.InvokeHostFunction); ok {

@@ -62,6 +62,10 @@ func (c *TxManagerConfig) SetFrom(f *TxManagerConfig) {
 		v := *f.MaxInclusionFee
 		c.MaxInclusionFee = &v
 	}
+	if f.MaxResourceFee != nil {
+		v := *f.MaxResourceFee
+		c.MaxResourceFee = &v
+	}
 	if f.FeeBumpMultiplier != nil {
 		v := *f.FeeBumpMultiplier
 		c.FeeBumpMultiplier = &v
