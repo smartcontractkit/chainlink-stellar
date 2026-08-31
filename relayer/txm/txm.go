@@ -17,6 +17,7 @@ import (
 
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-common/pkg/services"
+	"github.com/smartcontractkit/chainlink-common/pkg/timeutil"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 	"github.com/smartcontractkit/chainlink-common/pkg/types/core"
 	commonutils "github.com/smartcontractkit/chainlink-common/pkg/utils"
@@ -186,6 +187,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		FromAddress:        fromAddr,
 		Operations:         req.Operations,
 		LedgerBoundsOffset: req.LedgerBoundsOffset,
+		MaxResourceFee:     req.MaxResourceFee,
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
@@ -574,11 +576,11 @@ func (s *StellarTxm) broadcastLoop() {
 func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *StellarTx) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 	client, err := s.getClient(ctx)
-    if err != nil {
-        ctxLogger.Errorw("failed to get RPC client", "error", err)
-        s.retryGetClientOrFail(ctx, tx, ctxLogger)
-        return
-    }
+	if err != nil {
+		ctxLogger.Errorw("failed to get RPC client", "error", err)
+		s.retryGetClientOrFail(ctx, tx, ctxLogger)
+		return
+	}
 
 	txStore := s.accountStore.GetTxStore(tx.FromAddress)
 	if txStore == nil {
@@ -662,7 +664,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		tx.MinResourceFee = simResult.MinResourceFee
 
-		assembledTx, totalFee, err := s.assembleTransaction(prelimTx, simResult, inclusionFee, maxLedger)
+		assembledTx, totalFee, err := s.assembleTransaction(prelimTx, simResult, inclusionFee, maxLedger, tx.MaxResourceFee)
 		if err != nil {
 			ctxLogger.Errorw("failed to assemble transaction", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonAssembly)
@@ -868,7 +870,7 @@ func (s *StellarTxm) confirmLoop() {
 
 			remaining := pollDuration - time.Since(start)
 			if remaining > 0 {
-				tick = time.After(commonutils.WithJitter(remaining))
+				tick = time.After(timeutil.JitterPct(0.1).Apply(remaining))
 			} else {
 				tick = time.After(0)
 			}
@@ -1232,34 +1234,34 @@ func (s *StellarTxm) resyncSequence(ctx context.Context, client RPCClient, tx *S
 // legitimate post-submit lifecycle failures (RetryReasonTimedOut,
 // RetryReasonResourceExhaustion).
 func (s *StellarTxm) retryGetClientOrFail(ctx context.Context, tx *StellarTx, ctxLogger logger.Logger) {
-    s.incrementInfraAttempts(tx)
-    attempts := s.getInfraAttempts(tx)
+	s.incrementInfraAttempts(tx)
+	attempts := s.getInfraAttempts(tx)
 
-    maxRetries := uint64(0)
-    if s.config.MaxGetClientRetryAttempts != nil {
-        maxRetries = *s.config.MaxGetClientRetryAttempts
-    }
+	maxRetries := uint64(0)
+	if s.config.MaxGetClientRetryAttempts != nil {
+		maxRetries = *s.config.MaxGetClientRetryAttempts
+	}
 
-    if attempts < maxRetries {
-        select {
-        case <-time.After(s.config.SubmitRetryDelay.Duration()):
-        case <-ctx.Done():
-            return
-        }
-        select {
-        case s.broadcastChan <- tx:
-            ctxLogger.Debugw("re-enqueuing tx after getClient failure",
-                "infraAttempts", attempts, "maxGetClientRetries", maxRetries)
-        default:
-            ctxLogger.Errorw("broadcast channel full, cannot re-enqueue after getClient failure",
-                "infraAttempts", attempts)
-            s.metrics.IncrementDroppedTxs(ctx, DropReasonChannelFullNewRejected)
-        }
-        return
-    }
+	if attempts < maxRetries {
+		select {
+		case <-time.After(s.config.SubmitRetryDelay.Duration()):
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case s.broadcastChan <- tx:
+			ctxLogger.Debugw("re-enqueuing tx after getClient failure",
+				"infraAttempts", attempts, "maxGetClientRetries", maxRetries)
+		default:
+			ctxLogger.Errorw("broadcast channel full, cannot re-enqueue after getClient failure",
+				"infraAttempts", attempts)
+			s.metrics.IncrementDroppedTxs(ctx, DropReasonChannelFullNewRejected)
+		}
+		return
+	}
 
-    ctxLogger.Errorw("getClient retries exhausted, failing tx",
-        "infraAttempts", attempts, "maxGetClientRetries", maxRetries)
-    s.metrics.IncrementMaxAttemptsReached(ctx, RetryBudgetInfra)
-    s.markTxFailed(ctx, tx, ErrorReasonClientUnavailable)
+	ctxLogger.Errorw("getClient retries exhausted, failing tx",
+		"infraAttempts", attempts, "maxGetClientRetries", maxRetries)
+	s.metrics.IncrementMaxAttemptsReached(ctx, RetryBudgetInfra)
+	s.markTxFailed(ctx, tx, ErrorReasonClientUnavailable)
 }

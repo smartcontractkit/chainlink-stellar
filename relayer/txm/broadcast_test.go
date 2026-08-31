@@ -49,7 +49,7 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -108,7 +108,7 @@ func TestStellarTxm_BroadcastPipeline_SimulateError(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -167,7 +167,7 @@ func TestStellarTxm_BroadcastPipeline_SimulateRPCErrorRetriesThenSucceeds(t *tes
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestStellarTxm_BroadcastPipeline_TryAgainLater(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -304,7 +304,7 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -362,7 +362,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -429,7 +429,7 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -464,7 +464,7 @@ func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -520,7 +520,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -553,7 +553,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleInvalidXDRFails(t *testing.
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -597,7 +597,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
@@ -621,7 +621,7 @@ func TestStellarTxm_BroadcastPipeline_SigningError(t *testing.T) {
 	txm, err := New(logger.Test(t), ks, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -652,7 +652,7 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsThenRetries(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -681,7 +681,7 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailsUntilRetryBudgetExhausted(t 
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -711,7 +711,7 @@ func TestStellarTxm_BroadcastPipeline_DUPLICATE(t *testing.T) {
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -870,40 +870,40 @@ func TestStellarTxm_BuildPreliminaryTx_SeqZero_DoesNotProduceNegativeSequence(t 
 // failures followed by a successful broadcast, the tx must still have the
 // full MaxTxRetryAttempts budget available for post-submit lifecycle retries.
 func TestStellarTxm_BroadcastPipeline_GetClientFailuresDoNotStealLifecycleBudget(t *testing.T) {
-    t.Parallel()
-    accountXDR := buildAccountEntryXDR(t, testAddress, 100)
-    mock := &mockRPCClient{
-        getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
-        getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
-        simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
-        sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
-    }
-    c := newTestClient(mock)
-    var getClientCalls atomic.Int32
-    getClient := func(context.Context) (RPCClient, error) {
-        // Fail the first 3 getClient calls (infra), then succeed.
-        if getClientCalls.Add(1) <= 3 {
-            return nil, fmt.Errorf("no rpc")
-        }
-        return c, nil
-    }
-    cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
-    txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
-    require.NoError(t, err)
-    require.NoError(t, txm.Start(t.Context()))
-    defer txm.Close()
-    txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
-    require.NoError(t, err)
-    require.Eventually(t, func() bool {
-        st, e := txm.GetStatus(txID)
-        require.NoError(t, e)
-        return st == commontypes.Unconfirmed
-    }, 5*time.Second, 50*time.Millisecond)
+	t.Parallel()
+	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountXDR}}},
+		getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:         protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
+		sendTransactionResp:  protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
+	}
+	c := newTestClient(mock)
+	var getClientCalls atomic.Int32
+	getClient := func(context.Context) (RPCClient, error) {
+		// Fail the first 3 getClient calls (infra), then succeed.
+		if getClientCalls.Add(1) <= 3 {
+			return nil, fmt.Errorf("no rpc")
+		}
+		return c, nil
+	}
+	cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, getClient, chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		st, e := txm.GetStatus(txID)
+		require.NoError(t, e)
+		return st == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond)
 
-    txm.transactionsMapLock.RLock()
-    tracked := txm.transactions[txID]
-    txm.transactionsMapLock.RUnlock()
-    require.NotNil(t, tracked)
-    assert.Equal(t, uint64(3), tracked.InfraAttempts.Load(), "3 getClient failures must increment InfraAttempts to 3")
-    assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must be 0 — no post-submit retry happened yet")
+	txm.transactionsMapLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsMapLock.RUnlock()
+	require.NotNil(t, tracked)
+	assert.Equal(t, uint64(3), tracked.InfraAttempts.Load(), "3 getClient failures must increment InfraAttempts to 3")
+	assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must be 0 — no post-submit retry happened yet")
 }

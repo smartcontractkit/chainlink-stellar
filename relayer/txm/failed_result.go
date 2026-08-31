@@ -25,30 +25,27 @@ func classifyFailedTransactionResult(resultXDR string) failedTxClassification {
 		return failedTxClassification{resultCode: resultCode}
 	}
 
-	for _, opResult := range results {
-		if opResult.Code != xdr.OperationResultCodeOpInner {
-			return failedTxClassification{
-				resultCode: ErrorReason(opResult.Code.String()),
-				retryable:  opResult.Code == xdr.OperationResultCodeOpExceededWorkLimit,
-			}
+	opResult := results[0]
+	if opResult.Code != xdr.OperationResultCodeOpInner {
+		return failedTxClassification{
+			resultCode: ErrorReason(opResult.Code.String()),
+			retryable:  opResult.Code == xdr.OperationResultCodeOpExceededWorkLimit,
 		}
-
-		tr, ok := opResult.GetTr()
-		if !ok {
-			return failedTxClassification{resultCode: ErrorReason(opResult.Code.String())}
-		}
-
-		if invokeResult, ok := tr.GetInvokeHostFunctionResult(); ok {
-			return failedTxClassification{
-				resultCode: ErrorReason(invokeResult.Code.String()),
-				retryable:  isRetryableInvokeHostFunctionResult(invokeResult.Code),
-			}
-		}
-
-		return failedTxClassification{resultCode: ErrorReason(tr.Type.String())}
 	}
 
-	return failedTxClassification{resultCode: resultCode}
+	tr, ok := opResult.GetTr()
+	if !ok {
+		return failedTxClassification{resultCode: ErrorReason(opResult.Code.String())}
+	}
+
+	if invokeResult, ok := tr.GetInvokeHostFunctionResult(); ok {
+		return failedTxClassification{
+			resultCode: ErrorReason(invokeResult.Code.String()),
+			retryable:  isRetryableInvokeHostFunctionResult(invokeResult.Code),
+		}
+	}
+
+	return failedTxClassification{resultCode: ErrorReason(tr.Type.String())}
 }
 
 func isRetryableInvokeHostFunctionResult(code xdr.InvokeHostFunctionResultCode) bool {

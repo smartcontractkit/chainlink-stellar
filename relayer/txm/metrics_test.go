@@ -13,13 +13,10 @@ import (
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
-
-	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
-
-const testChainID = "stellar:testnet"
 
 func TestNoopStellarTxmMetrics(t *testing.T) {
 	ctx := t.Context()
@@ -65,7 +62,7 @@ func TestStellarTxm_Metrics_BroadcastIncrementsCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
@@ -109,7 +106,7 @@ func TestStellarTxm_Metrics_ConfirmIncrementsSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, txm.Start(t.Context()))
-	defer txm.Close()
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
 
 	txID, err := txm.Enqueue(t.Context(), TxRequest{
 		FromAddress: testAddress,
