@@ -24,8 +24,13 @@ type Struct struct {
 
 // Field represents a struct field.
 type Field struct {
-	Name  string
-	Type  string
+	Name string
+	Type string
+}
+
+// EventField represents an event member
+type EventField struct {
+	Field
 	Topic bool
 }
 
@@ -94,7 +99,7 @@ type ErrorVariant struct {
 type Event struct {
 	Name   string
 	Topics []string
-	Fields []Field
+	Fields []EventField
 }
 
 // ParseRustBindings parses Rust bindings output from stellar-cli.
@@ -498,12 +503,14 @@ func parseEvents(input string) []Event {
 			topics = append(topics, tm[1])
 		}
 
-		var fields []Field
+		var fields []EventField
 		prevEnd := 0
 		for _, ix := range fieldRe.FindAllStringSubmatchIndex(body, -1) {
-			fields = append(fields, Field{
-				Name:  body[ix[2]:ix[3]],
-				Type:  qualifySorobanType(strings.TrimSpace(body[ix[4]:ix[5]])),
+			fields = append(fields, EventField{
+				Field: Field{
+					Name: body[ix[2]:ix[3]],
+					Type: qualifySorobanType(strings.TrimSpace(body[ix[4]:ix[5]])),
+				},
 				Topic: strings.Contains(body[prevEnd:ix[0]], "#[topic]"),
 			})
 			prevEnd = ix[1]

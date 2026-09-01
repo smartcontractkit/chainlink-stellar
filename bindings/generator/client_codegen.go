@@ -511,7 +511,7 @@ func generateEventParser(b *strings.Builder, event Event) {
 	topicIdx := 1
 	for _, f := range event.Fields {
 		if f.Topic {
-			generateTopicFieldParsing(b, f, "result."+snakeToPascal(f.Name), topicIdx)
+			generateTopicFieldParsing(b, f.Field, "result."+snakeToPascal(f.Name), topicIdx)
 			topicIdx++
 		}
 	}
@@ -528,7 +528,7 @@ func generateEventParser(b *strings.Builder, event Event) {
 			continue
 		}
 		b.WriteString(fmt.Sprintf("\t\tcase \"%s\":\n", f.Name))
-		generateEventFieldParsing(b, f, "result."+snakeToPascal(f.Name))
+		generateEventFieldParsing(b, f.Field, "result."+snakeToPascal(f.Name))
 	}
 
 	b.WriteString("\t\t}\n")

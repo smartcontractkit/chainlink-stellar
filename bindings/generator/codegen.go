@@ -38,7 +38,9 @@ func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, nee
 		fields = append(fields, s.Fields...)
 	}
 	for _, e := range contract.Events {
-		fields = append(fields, e.Fields...)
+		for _, f := range e.Fields {
+			fields = append(fields, f.Field)
+		}
 	}
 	for _, f := range fields {
 		if strings.Contains(rustTypeToGo(f.Type), "scval.") {
