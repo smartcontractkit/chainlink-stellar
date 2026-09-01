@@ -21,6 +21,9 @@ func GenerateClient(pkg string, contract *Contract) string {
 	b.WriteString("import (\n")
 	b.WriteString("\t\"context\"\n")
 	b.WriteString("\t\"fmt\"\n")
+	if requiresBigIntImport(contract) {
+		b.WriteString("\t\"math/big\"\n")
+	}
 	if len(contract.Events) > 0 {
 		b.WriteString("\t\"time\"\n")
 	}
@@ -48,6 +51,20 @@ func GenerateClient(pkg string, contract *Contract) string {
 	generateEventHelpers(&b, contract)
 
 	return b.String()
+}
+
+func requiresBigIntImport(contract *Contract) bool {
+	for _, fn := range contract.Functions {
+		if strings.Contains(fn.Returns, "soroban_sdk::I256") {
+			return true
+		}
+		for _, in := range fn.Inputs {
+			if strings.Contains(in.Type, "soroban_sdk::I256") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func generateClientStruct(b *strings.Builder, contract *Contract) {
@@ -78,7 +95,7 @@ func generateMethod(b *strings.Builder, contract *Contract, fn Function) {
 	methodName := snakeToPascal(fn.Name)
 
 	// Determine if this is a read-only method (getter) or a state-changing method
-	isReadOnly := isReadOnlyFunction(fn)
+	isReadOnly := fn.ReadOnly
 
 	// Parse return type
 	returnType, returnsValue := parseReturnType(fn.Returns)
@@ -185,6 +202,8 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\t\treturn 0, err\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
+	case returnType == "soroban_sdk::I256":
+		b.WriteString("\treturn scval.I256FromScVal(*result)\n")
 	case returnType == "bool":
 		b.WriteString("\tv, ok := result.GetB()\n")
 		b.WriteString("\tif !ok {\n")
@@ -207,20 +226,23 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 		b.WriteString("\treturn scval.StringFromScVal(*result)\n")
 	case returnType == "soroban_sdk::Symbol":
 		b.WriteString("\treturn scval.SymbolFromScVal(*result)\n")
-	case strings.HasPrefix(returnType, "Option<") && strings.Contains(returnType, "soroban_sdk::Address"):
-		b.WriteString("\tv, err := scval.OptionalAddressFromScVal(*result)\n")
-		b.WriteString("\tif err != nil {\n")
-		b.WriteString("\t\treturn nil, err\n")
-		b.WriteString("\t}\n")
-		b.WriteString("\treturn v, nil\n")
 	case strings.HasPrefix(returnType, "Option<"):
 		innerType := strings.TrimSuffix(strings.TrimPrefix(returnType, "Option<"), ">")
 		innerType = strings.TrimSpace(innerType)
-		structName := extractStructName(innerType)
-		b.WriteString("\tif result.Type == xdr.ScValTypeScvVoid {\n")
-		b.WriteString("\t\treturn nil, nil\n")
-		b.WriteString("\t}\n")
-		b.WriteString(fmt.Sprintf("\tv, err := %sFromScVal(*result)\n", structName))
+		switch innerType {
+		case "soroban_sdk::Address":
+			b.WriteString("\tv, err := scval.OptionalAddressFromScVal(*result)\n")
+		case "u32":
+			b.WriteString("\tv, err := scval.OptionalUint32FromScVal(*result)\n")
+		case "soroban_sdk::String":
+			b.WriteString("\tv, err := scval.OptionalStringFromScVal(*result)\n")
+		default:
+			structName := extractStructName(innerType)
+			b.WriteString("\tif result.Type == xdr.ScValTypeScvVoid {\n")
+			b.WriteString("\t\treturn nil, nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString(fmt.Sprintf("\tv, err := %sFromScVal(*result)\n", structName))
+		}
 		b.WriteString("\tif err != nil {\n")
 		b.WriteString("\t\treturn nil, err\n")
 		b.WriteString("\t}\n")
@@ -282,6 +304,50 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 			b.WriteString("\t\tout[i] = []byte(v)\n")
 			b.WriteString("\t}\n")
 			b.WriteString("\treturn out, nil\n")
+		} else if strings.HasPrefix(innerType, "Option<") {
+			optInner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(innerType, "Option<"), ">"))
+			b.WriteString("\tvec, ok := result.GetVec()\n")
+			b.WriteString("\tif !ok || vec == nil {\n")
+			b.WriteString("\t\treturn nil, fmt.Errorf(\"expected vec return type\")\n")
+			b.WriteString("\t}\n")
+			switch optInner {
+			case "u32":
+				b.WriteString("\tout := make([]*uint32, len(*vec))\n")
+				b.WriteString("\tfor i, item := range *vec {\n")
+				b.WriteString("\t\tv, err := scval.OptionalUint32FromScVal(item)\n")
+			case "soroban_sdk::String":
+				b.WriteString("\tout := make([]*string, len(*vec))\n")
+				b.WriteString("\tfor i, item := range *vec {\n")
+				b.WriteString("\t\tv, err := scval.OptionalStringFromScVal(item)\n")
+			default:
+				structName := extractStructName(optInner)
+				b.WriteString(fmt.Sprintf("\tout := make([]*%s, len(*vec))\n", structName))
+				b.WriteString("\tfor i, item := range *vec {\n")
+				b.WriteString("\t\tif item.Type == xdr.ScValTypeScvVoid {\n")
+				b.WriteString("\t\t\tcontinue\n")
+				b.WriteString("\t\t}\n")
+				b.WriteString(fmt.Sprintf("\t\tv, err := %sFromScVal(item)\n", structName))
+			}
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString("\t\t\treturn nil, err\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tout[i] = v\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn out, nil\n")
+		} else if innerType == "bool" {
+			b.WriteString("\tvec, ok := result.GetVec()\n")
+			b.WriteString("\tif !ok || vec == nil {\n")
+			b.WriteString("\t\treturn nil, fmt.Errorf(\"expected vec return type\")\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tout := make([]bool, len(*vec))\n")
+			b.WriteString("\tfor i, item := range *vec {\n")
+			b.WriteString("\t\tv, ok := item.GetB()\n")
+			b.WriteString("\t\tif !ok {\n")
+			b.WriteString("\t\t\treturn nil, fmt.Errorf(\"vec item is not bool\")\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tout[i] = bool(v)\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn out, nil\n")
 		} else if innerType == "u64" {
 			b.WriteString("\tvec, ok := result.GetVec()\n")
 			b.WriteString("\tif !ok || vec == nil {\n")
@@ -290,6 +356,20 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 			b.WriteString("\tout := make([]uint64, len(*vec))\n")
 			b.WriteString("\tfor i, item := range *vec {\n")
 			b.WriteString("\t\tv, err := scval.Uint64FromScVal(item)\n")
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString("\t\t\treturn nil, err\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tout[i] = v\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn out, nil\n")
+		} else if innerType == "soroban_sdk::I256" {
+			b.WriteString("\tvec, ok := result.GetVec()\n")
+			b.WriteString("\tif !ok || vec == nil {\n")
+			b.WriteString("\t\treturn nil, fmt.Errorf(\"expected vec return type\")\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tout := make([]*big.Int, len(*vec))\n")
+			b.WriteString("\tfor i, item := range *vec {\n")
+			b.WriteString("\t\tv, err := scval.I256FromScVal(item)\n")
 			b.WriteString("\t\tif err != nil {\n")
 			b.WriteString("\t\t\treturn nil, err\n")
 			b.WriteString("\t\t}\n")
@@ -427,6 +507,15 @@ func generateEventParser(b *strings.Builder, event Event) {
 	b.WriteString("\t\tLedger: uint32(e.Ledger),\n")
 	b.WriteString("\t\tTxHash: e.TransactionHash,\n")
 	b.WriteString("\t}\n\n")
+
+	topicIdx := 1
+	for _, f := range event.Fields {
+		if f.Topic {
+			generateTopicFieldParsing(b, f.Field, "result."+snakeToPascal(f.Name), topicIdx)
+			topicIdx++
+		}
+	}
+
 	b.WriteString("\tfor _, entry := range *scMap {\n")
 	b.WriteString("\t\tkey, ok := entry.Key.GetSym()\n")
 	b.WriteString("\t\tif !ok {\n")
@@ -435,14 +524,47 @@ func generateEventParser(b *strings.Builder, event Event) {
 	b.WriteString("\t\tswitch string(key) {\n")
 
 	for _, f := range event.Fields {
+		if f.Topic {
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\t\tcase \"%s\":\n", f.Name))
-		generateEventFieldParsing(b, f, "result."+snakeToPascal(f.Name))
+		generateEventFieldParsing(b, f.Field, "result."+snakeToPascal(f.Name))
 	}
 
 	b.WriteString("\t\t}\n")
 	b.WriteString("\t}\n\n")
 	b.WriteString("\treturn result, nil\n")
 	b.WriteString("}\n\n")
+}
+
+func generateTopicFieldParsing(b *strings.Builder, f Field, target string, idx int) {
+	var decode string
+	switch {
+	case f.Type == "u64":
+		decode = "scval.Uint64FromScVal(tv)"
+	case f.Type == "u32":
+		decode = "scval.Uint32FromScVal(tv)"
+	case f.Type == "i128":
+		decode = "scval.I128FromScVal(tv)"
+	case f.Type == "soroban_sdk::I256":
+		decode = "scval.I256FromScVal(tv)"
+	case f.Type == "soroban_sdk::Address":
+		decode = "scval.AddressFromScVal(tv)"
+	case f.Type == "soroban_sdk::String":
+		decode = "scval.StringFromScVal(tv)"
+	case strings.HasPrefix(f.Type, "soroban_sdk::BytesN<"):
+		decode = fmt.Sprintf("scval.Bytes%dFromScVal(tv)", extractBytesNSize(f.Type))
+	default:
+		return
+	}
+	b.WriteString(fmt.Sprintf("\tif len(e.TopicXDR) > %d {\n", idx))
+	b.WriteString("\t\tvar tv xdr.ScVal\n")
+	b.WriteString(fmt.Sprintf("\t\tif xdr.SafeUnmarshalBase64(e.TopicXDR[%d], &tv) == nil {\n", idx))
+	b.WriteString(fmt.Sprintf("\t\t\tif v, err := %s; err == nil {\n", decode))
+	b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+	b.WriteString("\t\t\t}\n")
+	b.WriteString("\t\t}\n")
+	b.WriteString("\t}\n\n")
 }
 
 func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
@@ -467,6 +589,11 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
+	case f.Type == "soroban_sdk::I256":
+		b.WriteString("\t\t\tv, err := scval.I256FromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
 	case f.Type == "bool":
 		b.WriteString("\t\t\tv, ok := entry.Val.GetB()\n")
 		b.WriteString("\t\t\tif ok {\n")
@@ -484,6 +611,11 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\t}\n")
 	case f.Type == "soroban_sdk::Symbol":
 		b.WriteString("\t\t\tv, err := scval.SymbolFromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
+	case f.Type == "soroban_sdk::String":
+		b.WriteString("\t\t\tv, err := scval.StringFromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
@@ -574,14 +706,6 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 }
 
 // Helper functions
-
-func isReadOnlyFunction(fn Function) bool {
-	name := strings.ToLower(fn.Name)
-	return strings.HasPrefix(name, "get_") ||
-		strings.HasPrefix(name, "is_") ||
-		name == "owner" ||
-		name == "balance"
-}
 
 func parseReturnType(returnStr string) (string, bool) {
 	returnStr = strings.TrimSpace(returnStr)
@@ -677,6 +801,8 @@ func getArgConverter(rustType, varName string) string {
 		return fmt.Sprintf("scval.MustToScVal((%s).ToScVal())", varName)
 	case "i128":
 		return fmt.Sprintf("scval.I128ToScVal(%s)", varName)
+	case "soroban_sdk::I256":
+		return fmt.Sprintf("scval.MustToScVal(scval.I256ToScVal(%s))", varName)
 	case "bool":
 		return fmt.Sprintf("scval.BoolToScVal(%s)", varName)
 	case "soroban_sdk::Address":
@@ -713,6 +839,9 @@ func getArgConverter(rustType, varName string) string {
 		if n := extractBytesNSize(innerType); n > 0 {
 			return fmt.Sprintf("scval.Bytes%dSliceToScVal(%s)", n, varName)
 		}
+		if innerType == "soroban_sdk::I256" {
+			return fmt.Sprintf("scval.MustToScVal(scval.I256SliceToScVal(%s))", varName)
+		}
 		return fmt.Sprintf("scval.StructSliceToScVal(%s)", varName)
 	}
 
@@ -734,6 +863,8 @@ func zeroValue(rustType string) string {
 		return "0"
 	case "u128":
 		return "scval.U128{}"
+	case "soroban_sdk::I256":
+		return "nil"
 	case "bool":
 		return "false"
 	case "soroban_sdk::Address", "soroban_sdk::String", "soroban_sdk::Symbol":
@@ -784,6 +915,11 @@ func generateTupleElementParsing(b *strings.Builder, rustType string, idx int, z
 		b.WriteString("\t}\n\n")
 	case rustType == "i128":
 		b.WriteString(fmt.Sprintf("\t%s, err := scval.I128FromScVal(%s)\n", v, elem))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
+		b.WriteString("\t}\n\n")
+	case rustType == "soroban_sdk::I256":
+		b.WriteString(fmt.Sprintf("\t%s, err := scval.I256FromScVal(%s)\n", v, elem))
 		b.WriteString("\tif err != nil {\n")
 		b.WriteString(fmt.Sprintf("\t\treturn %s, fmt.Errorf(\"tuple[%d]: %%w\", err)\n", zeros, idx))
 		b.WriteString("\t}\n\n")

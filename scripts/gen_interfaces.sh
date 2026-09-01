@@ -53,6 +53,8 @@ CONTRACTS=(
   "mcms|mcms|Mcms|0"
   "timelock|timelock|Timelock|0"
   "forwarder|forwarder|cre|0"
+  "data_feeds_cache|data_feeds_cache|DataFeedsCache|0"
+  "data_feeds_proxy|data_feeds_proxy|DataFeedsProxy|0"
 )
 
 # Remove the WASM const block from generated output (interfaces don't need it)
@@ -253,6 +255,7 @@ cd "$REPO_ROOT"
 if [[ "$do_build" == true ]]; then
   echo "Building contracts..."
   stellar contract build
+  (cd "$REPO_ROOT/contracts/data-feeds" && CARGO_TARGET_DIR="$REPO_ROOT/target" stellar contract build)
 fi
 
 for entry in "${CONTRACTS[@]}"; do
@@ -261,8 +264,8 @@ for entry in "${CONTRACTS[@]}"; do
   out_path="$INTERFACES_DIR/${output_module}.rs"
 
   if [[ ! -f "$wasm_path" ]]; then
-    echo "Skipping $output_module: $wasm_path not found"
-    continue
+    echo "ERROR: $wasm_path not found for $output_module" >&2
+    exit 1
   fi
 
   echo "Generating interface for $output_module..."

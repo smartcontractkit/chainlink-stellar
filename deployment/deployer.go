@@ -241,11 +241,16 @@ func NewDeployerFromChain(ch cldfstellar.Chain, opts ...DeployerOption) (*Deploy
 // 1. Upload the WASM code (installContractCode)
 // 2. Deploy a contract instance (createContract)
 func (d *Deployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
+	return d.DeployContractWithArgs(ctx, wasmPath, salt, nil)
+}
+
+// DeployContractWithArgs deploys a Soroban contract whose __constructor takes arguments.
+func (d *Deployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read WASM file: %w", err)
 	}
-	return d.DeployContractBytes(ctx, wasmBytes, salt)
+	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, ctorArgs)
 }
 
 // DeployContractBytes uploads the given WASM bytes and instantiates a contract,
@@ -253,18 +258,40 @@ func (d *Deployer) DeployContract(ctx context.Context, wasmPath string, salt [32
 // (e.g. go:embed) rather than read from disk; DeployContract is the file-path
 // wrapper around it.
 func (d *Deployer) DeployContractBytes(ctx context.Context, wasmBytes []byte, salt [32]byte) (string, error) {
+	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, nil)
+}
+
+// DeployContractBytesWithArgs uploads the given WASM bytes and instantiates a
+// contract, passing ctorArgs to its __constructor when non-empty.
+func (d *Deployer) DeployContractBytesWithArgs(ctx context.Context, wasmBytes []byte, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	wasmHash, err := d.uploadWASM(ctx, wasmBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload WASM: %w", err)
 	}
 
-	// Create contract instance
-	contractID, err := d.createContractInstance(ctx, wasmHash, salt)
+	contractID, err := d.createContractInstance(ctx, wasmHash, salt, ctorArgs)
 	if err != nil {
 		return "", fmt.Errorf("failed to create contract instance: %w", err)
 	}
 
 	return contractID, nil
+}
+
+// UploadContractWASM uploads a WASM file and returns its code hash.
+func (d *Deployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr.Hash, error) {
+	wasmBytes, err := os.ReadFile(wasmPath)
+	if err != nil {
+		return xdr.Hash{}, fmt.Errorf("failed to read WASM file: %w", err)
+	}
+	return d.UploadContractWASMBytes(ctx, wasmBytes)
+}
+
+// UploadContractWASMBytes uploads the given WASM bytes and returns their code
+// hash, without instantiating a contract: the hash is what an upgrade points an
+// existing instance at. Use this when the WASM is embedded in the binary (e.g.
+// go:embed); UploadContractWASM is the file-path wrapper around it.
+func (d *Deployer) UploadContractWASMBytes(ctx context.Context, wasmBytes []byte) (xdr.Hash, error) {
+	return d.uploadWASM(ctx, wasmBytes)
 }
 
 // uploadWASM uploads WASM code to the network and returns the code hash.
@@ -299,8 +326,44 @@ func (d *Deployer) uploadWASM(ctx context.Context, wasmBytes []byte) (xdr.Hash, 
 	return wasmHash, nil
 }
 
+// buildCreateContractHostFunction builds the CreateContract host function for a
+// deployer-address preimage: CreateContractV2 with ctorArgs, legacy V1 without.
+func buildCreateContractHostFunction(pubKey256 xdr.Uint256, wasmHash xdr.Hash, salt [32]byte, ctorArgs []xdr.ScVal) xdr.HostFunction {
+	preimage := xdr.ContractIdPreimage{
+		Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+		FromAddress: &xdr.ContractIdPreimageFromAddress{
+			Address: xdr.ScAddress{
+				Type: xdr.ScAddressTypeScAddressTypeAccount,
+				AccountId: &xdr.AccountId{
+					Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+					Ed25519: &pubKey256,
+				},
+			},
+			Salt: xdr.Uint256(salt),
+		},
+	}
+	executable := xdr.ContractExecutable{
+		Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+		WasmHash: &wasmHash,
+	}
+	if len(ctorArgs) == 0 {
+		return xdr.HostFunction{
+			Type:           xdr.HostFunctionTypeHostFunctionTypeCreateContract,
+			CreateContract: &xdr.CreateContractArgs{ContractIdPreimage: preimage, Executable: executable},
+		}
+	}
+	return xdr.HostFunction{
+		Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+		CreateContractV2: &xdr.CreateContractArgsV2{
+			ContractIdPreimage: preimage,
+			Executable:         executable,
+			ConstructorArgs:    ctorArgs,
+		},
+	}
+}
+
 // createContractInstance creates a new contract instance from uploaded WASM code.
-func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash, salt [32]byte) (string, error) {
+func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	// Get source account
 	sourceAccount, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -317,28 +380,7 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 
 	// Build create contract operation
 	createOp := &txnbuild.InvokeHostFunction{
-		HostFunction: xdr.HostFunction{
-			Type: xdr.HostFunctionTypeHostFunctionTypeCreateContract,
-			CreateContract: &xdr.CreateContractArgs{
-				ContractIdPreimage: xdr.ContractIdPreimage{
-					Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
-					FromAddress: &xdr.ContractIdPreimageFromAddress{
-						Address: xdr.ScAddress{
-							Type: xdr.ScAddressTypeScAddressTypeAccount,
-							AccountId: &xdr.AccountId{
-								Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-								Ed25519: &pubKey256,
-							},
-						},
-						Salt: xdr.Uint256(salt),
-					},
-				},
-				Executable: xdr.ContractExecutable{
-					Type:     xdr.ContractExecutableTypeContractExecutableWasm,
-					WasmHash: &wasmHash,
-				},
-			},
-		},
+		HostFunction:  buildCreateContractHostFunction(pubKey256, wasmHash, salt, ctorArgs),
 		SourceAccount: d.signer.Address(),
 	}
 
@@ -347,8 +389,6 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 	if err != nil {
 		return "", err
 	}
-
-	fmt.Printf("createContractInstance result: %+v\n", resultMeta)
 
 	// Extract contract ID from result
 	contractID, err := extractContractID(resultMeta)
@@ -882,6 +922,14 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 		return tx, nil
 	}
 
+	var bump int64
+	if sim.MinResourceFee > 0 {
+		bump = feeBumpExtra(sim.MinResourceFee, d.feeBumpFactor)
+		if bump < minFeeBuffer {
+			bump = minFeeBuffer
+		}
+	}
+
 	if sim.TransactionDataXDR != "" {
 		var sorobanData xdr.SorobanTransactionData
 		if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
@@ -889,6 +937,7 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 		}
 
 		if ihf, ok := ops[0].(*txnbuild.InvokeHostFunction); ok {
+			sorobanData.ResourceFee += xdr.Int64(bump)
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
@@ -906,13 +955,8 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 		}
 	}
 
-	minFee := sim.MinResourceFee
-	if minFee > 0 {
-		bump := feeBumpExtra(minFee, d.feeBumpFactor)
-		if bump < minFeeBuffer {
-			bump = minFeeBuffer
-		}
-		newFee := minFee + bump
+	if sim.MinResourceFee > 0 {
+		newFee := sim.MinResourceFee + bump
 
 		sourceAccount, err := d.getSourceAccount(ctx)
 		if err != nil {

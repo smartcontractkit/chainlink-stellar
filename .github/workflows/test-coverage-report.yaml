@@ -57,6 +57,10 @@ jobs:
         run: |
           just test-coverage coverage.out short
 
+      - name: Run bindings tests
+        run: |
+          just test-go-bindings
+
       - name: Coverage on target branch
         if: github.event_name == 'pull_request'
         run: |

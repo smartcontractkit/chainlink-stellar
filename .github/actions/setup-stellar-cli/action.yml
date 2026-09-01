@@ -1,10 +1,20 @@
 # Install Stellar CLI from official GitHub releases (Linux x86_64 tarball).
 # The tarball is verified against a pinned SHA256 before extraction
 # (trust-on-first-use — stellar-cli publishes no per-asset checksums).
-# Bump VERSION and SHASUM together when upgrading; keep them aligned with
-# scripts/update_cre_artifacts.sh.
+# The version/shasum pair can be overridden per workflow, but must always be
+# bumped together; keep the defaults aligned with scripts/update_cre_artifacts.sh.
 name: Setup Stellar CLI
 description: Install stellar-cli for CI (Linux x86_64).
+
+inputs:
+  version:
+    description: stellar-cli version
+    required: false
+    default: "25.1.0"
+  shasum:
+    description: SHA256 of the release tarball for the requested version
+    required: false
+    default: "e6fac619b2ae9b3ecb843a9e8e3bfc94dce79e0b73c63cb1cbbd08682bb0a0ba"
 
 runs:
   using: composite
@@ -13,8 +23,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        VERSION="25.1.0"
-        SHASUM="e6fac619b2ae9b3ecb843a9e8e3bfc94dce79e0b73c63cb1cbbd08682bb0a0ba"
+        VERSION="${{ inputs.version }}"
+        SHASUM="${{ inputs.shasum }}"
         echo "Installing Stellar CLI ${VERSION}"
         URL="https://github.com/stellar/stellar-cli/releases/download/v${VERSION}/stellar-cli-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
         curl --fail --silent --show-error --location \

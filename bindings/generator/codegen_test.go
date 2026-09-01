@@ -13,7 +13,7 @@ func TestGenerateTypes_eventsOnlyNoImports(t *testing.T) {
 		{
 			Name:   "CursedEvent",
 			Topics: []string{"rmn_Cursed"},
-			Fields: []Field{{Name: "subjects", Type: "soroban_sdk::Vec<soroban_sdk::BytesN<16>>"}},
+			Fields: []EventField{{Field: Field{Name: "subjects", Type: "soroban_sdk::Vec<soroban_sdk::BytesN<16>>"}}},
 		},
 	}}
 	out := GenerateTypes("rmn_remote", c)
