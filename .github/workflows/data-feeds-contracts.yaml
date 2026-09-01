@@ -31,11 +31,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Install Rust toolchain
-        uses: ./.github/actions/setup-rust-toolchain
-        with:
-          toolchain: "1.96.0"
-
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
@@ -58,13 +53,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Install Rust toolchain
-        uses: ./.github/actions/setup-rust-toolchain
-        with:
-          toolchain: "1.96.0"
-          rustfmt: "true"
-          clippy: "true"
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
@@ -91,12 +79,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Install Rust toolchain
-        uses: ./.github/actions/setup-rust-toolchain
-        with:
-          toolchain: "1.96.0"
-          wasm32-target: "true"
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
