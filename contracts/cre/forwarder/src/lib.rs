@@ -249,10 +249,7 @@ impl Forwarder {
             &signatures,
         );
 
-        // Authorize the transmitter against the forwarder registry. The previous
-        // design relied on a self-call to `route()` for this check, but Soroban
-        // forbids contract re-entry, so we do the check inline and dispatch
-        // directly via the helper.
+        // Only registered transmitters may pay for and attempt delivery.
         require_valid_forwarder(&env, &transmitter)?;
         let dispatch_result = dispatch_to_receiver(
             &env,
@@ -272,29 +269,6 @@ impl Forwarder {
         .publish(&env);
 
         Ok(())
-    }
-
-    pub fn route(
-        env: Env,
-        transmission_id: BytesN<32>,
-        transmitter: Address,
-        receiver: Address,
-        metadata: Bytes,
-        validated_report: Bytes,
-    ) -> Result<bool, ForwarderError> {
-        <Forwarder as Initializable>::require_initialized(&env)?;
-        transmitter.require_auth();
-        require_valid_forwarder(&env, &transmitter)?;
-
-        dispatch_to_receiver(
-            &env,
-            transmission_id,
-            transmitter,
-            &receiver,
-            &metadata,
-            &validated_report,
-        )?;
-        Ok(true)
     }
 
     // ========================================
@@ -460,17 +434,17 @@ fn get_transmission_id(
     env.crypto().sha256(&data).into()
 }
 
-/// Common dispatch path shared by `report()` and the public `route()` entry.
-/// Soroban forbids contract re-entry, so the two cannot self-call each other;
-/// they both invoke this helper directly. Caller is responsible for the
-/// is_forwarder_impl + auth + ensure_initialized checks before calling.
+/// Delivery + transmission-state machine. Internal only: the sole caller is
+/// `report()`, which has already derived `transmission_id` from the report and
+/// verified the DON quorum. A public entrypoint here would let any registered
+/// transmitter deliver unverified bytes under a caller-chosen replay key.
 fn dispatch_to_receiver(
     env: &Env,
     transmission_id: BytesN<32>,
     transmitter: Address,
     receiver: &Address,
     metadata: &Bytes,
-    validated_report: &Bytes,
+    payload: &Bytes,
 ) -> Result<bool, ForwarderError> {
     let key = DataKey::Transmission(transmission_id);
 
@@ -491,7 +465,7 @@ fn dispatch_to_receiver(
         let args = (
             env.current_contract_address(),
             metadata.clone(),
-            validated_report.clone(),
+            payload.clone(),
         )
             .into_val(env);
         let call =

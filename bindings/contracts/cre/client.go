@@ -51,32 +51,6 @@ func (c *ForwarderClient) Owner(ctx context.Context) (*string, error) {
 	return v, nil
 }
 
-// Route calls the route function on the contract.
-func (c *ForwarderClient) Route(ctx context.Context, transmissionId [32]byte, transmitter string, receiver string, metadata []byte, validatedReport []byte) (bool, error) {
-	args := []xdr.ScVal{
-		scval.Bytes32ToScVal(transmissionId),
-		scval.AddressToScVal(transmitter),
-		scval.AddressToScVal(receiver),
-		scval.BytesToScVal(metadata),
-		scval.BytesToScVal(validatedReport),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "route", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call route: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from route")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
 // Report calls the report function on the contract.
 func (c *ForwarderClient) Report(ctx context.Context, transmitter string, receiver string, rawReport []byte, reportContext []byte, signatures []Ed25519Signature) error {
 	args := []xdr.ScVal{

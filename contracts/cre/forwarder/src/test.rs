@@ -125,9 +125,9 @@ pub(crate) mod mocks {
     }
 
     /// `Err(Err(_))` arm — Wasm contract that doesn't expose `on_report`.
-    /// Should map to `TransmissionState::InvalidReceiver` (terminal) per the
-    /// M2 refinement of `route()` — distinguishes "receiver doesn't implement
-    /// the protocol" from "receiver rejected this specific report".
+    /// Should map to `TransmissionState::InvalidReceiver` (terminal) —
+    /// distinguishes "receiver doesn't implement the protocol" from
+    /// "receiver rejected this specific report".
     #[contract]
     pub struct WrongSymbolReceiver;
 
@@ -877,11 +877,12 @@ fn test_accept_ownership_no_pending_owner_fails() {
 // ============================================================================
 // Forwarder registry
 //
-// Registry tracks authorized *transmitter* addresses. report()
-// passes its `transmitter` arg through to route(), which checks the registry
-// before dispatching to the receiver. So an address must be added via
-// add_forwarder() before it can submit reports (the contract's own address
-// is auto-registered in initialize()).
+// Registry tracks authorized *transmitter* addresses. report() checks the
+// registry after signature verification and before dispatching to the
+// receiver, so an address must be added via add_forwarder() before it can
+// submit reports (the contract's own address is auto-registered in
+// initialize()). Registry membership grants nothing beyond the right to
+// submit a *quorum-signed* report: there is no unverified delivery path.
 // ============================================================================
 
 #[test]
@@ -946,8 +947,6 @@ fn test_remove_forwarder_not_owner_fails() {
 #[should_panic(expected = "Error(Contract, #20)")]
 fn test_cannot_remove_self_panics() {
     // owner removing the contract's own self-address → CannotRemoveSelf code 20.
-    // Self-removal would lock the contract out of its own report() → route() self-call
-    // (route() requires the caller to be in the registry).
     let env = Env::default();
     let fx = setup(&env);
     fx.client.remove_forwarder(&fx.contract_addr);
@@ -955,8 +954,7 @@ fn test_cannot_remove_self_panics() {
 
 #[test]
 fn test_self_is_in_registry_after_initialize() {
-    // initialize() auto-registers the contract's own address so that
-    // report() → route() self-call passes the is_forwarder check. Matches EVM's
+    // initialize() auto-registers the contract's own address. Matches EVM's
     // constructor at Forwarder.sol:90 (`s_forwarders[address(this)] = true`).
     let env = Env::default();
     let fx = setup(&env);
@@ -967,50 +965,38 @@ fn test_self_is_in_registry_after_initialize() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #17)")]
-fn test_unauthorized_route_panics() {
-    // a transmitter not in the forwarder registry calling route()
-    // directly → UnauthorizedForwarder code 17.
+fn test_report_from_unregistered_transmitter_panics() {
+    // A fully quorum-signed report from a transmitter that is not in the
+    // registry → UnauthorizedForwarder code 17, and nothing is delivered.
     let env = Env::default();
-    let fx = setup(&env);
-    let stranger = Address::generate(&env);
+    let fx = setup_with_config(&env, 1, 4);
     let receiver_addr = env.register(mocks::CooperativeReceiver, ());
-
-    let transmission_id = soroban_sdk::BytesN::from_array(&env, &[0xAB; 32]);
-    let metadata = soroban_sdk::Bytes::from_slice(&env, &[0u8; 64]);
-    let validated_report = soroban_sdk::Bytes::from_slice(&env, &[0u8; 16]);
-
-    fx.client.route(
-        &transmission_id,
-        &stranger,
-        &receiver_addr,
-        &metadata,
-        &validated_report,
-    );
+    let (raw, ctx, sigs) = build_signed_report(&fx, &ReportBuilder::default(), 2);
+    fx.client
+        .report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
 }
 
 #[test]
-fn test_route_from_registered_forwarder_succeeds() {
-    // add a transmitter to the registry, call route() directly with it
-    // as the transmitter arg → succeeds (CooperativeReceiver returns Ok(())).
-    // Bypasses report()'s signature path to isolate registry + route behavior.
+fn test_unregistered_transmitter_writes_no_transmission_state() {
+    // The registry check is a pre-dispatch failure: it must not leave a
+    // transmission record behind (only real delivery attempts write state).
     let env = Env::default();
-    let fx = setup(&env);
-    let transmitter = Address::generate(&env);
-    fx.client.add_forwarder(&transmitter);
-
+    let fx = setup_with_config(&env, 1, 4);
     let receiver_addr = env.register(mocks::CooperativeReceiver, ());
-    let transmission_id = soroban_sdk::BytesN::from_array(&env, &[0xCD; 32]);
-    let metadata = soroban_sdk::Bytes::from_slice(&env, &[0u8; 64]);
-    let validated_report = soroban_sdk::Bytes::from_slice(&env, &[0u8; 16]);
+    let report = ReportBuilder::default();
+    let (raw, ctx, sigs) = build_signed_report(&fx, &report, 2);
+    let res = fx
+        .client
+        .try_report(&fx.transmitter, &receiver_addr, &raw, &ctx, &sigs);
+    assert!(res.is_err());
 
-    let ok = fx.client.route(
-        &transmission_id,
-        &transmitter,
+    let info = fx.client.get_transmission_info(
         &receiver_addr,
-        &metadata,
-        &validated_report,
+        &soroban_sdk::BytesN::from_array(&env, &report.workflow_execution_id),
+        &soroban_sdk::BytesN::from_array(&env, &report.report_id),
     );
-    assert!(ok, "route should succeed with a cooperative receiver");
+    assert_eq!(info.state, TransmissionState::NotAttempted);
+    assert_eq!(info.transmitter, None);
 }
 
 // ============================================================================
@@ -1018,7 +1004,7 @@ fn test_route_from_registered_forwarder_succeeds() {
 //
 // These tests exercise the full report() pipeline end-to-end:
 //   length checks → parse → AlreadyProcessed check → load_config →
-//   signature verification → self-call route() → receiver dispatch.
+//   signature verification → registry check → receiver dispatch.
 //
 // The `transmitter` arg to report() must be in the
 // forwarder registry, so each test calls add_forwarder(transmitter) first.
@@ -1520,7 +1506,7 @@ fn test_report_different_report_id_not_blocked() {
 // ============================================================================
 // report — receiver behavior matrix
 //
-// Exercises every arm of route()
+// Exercises every arm of the receiver dispatch
 //   Ok(Ok(()))                — Succeeded
 //   Ok(Err(_)) | Err(Ok(_))   — Failed       (retryable)
 //   Err(Err(_))               — InvalidReceiver (terminal)

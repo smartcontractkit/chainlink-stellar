@@ -2,14 +2,6 @@
 #[soroban_sdk::contractclient(name = "creClient")]
 pub trait creInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn route(
-        env: soroban_sdk::Env,
-        transmission_id: soroban_sdk::BytesN<32>,
-        transmitter: soroban_sdk::Address,
-        receiver: soroban_sdk::Address,
-        metadata: soroban_sdk::Bytes,
-        validated_report: soroban_sdk::Bytes,
-    ) -> Result<bool, ForwarderError>;
     fn report(
         env: soroban_sdk::Env,
         transmitter: soroban_sdk::Address,
