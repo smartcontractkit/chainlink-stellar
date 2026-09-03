@@ -18,6 +18,26 @@ fn assert_read_extends_ttl(read: impl Fn(&Proxy)) {
     );
 }
 
+fn assert_read_repins_min_decimals_ttl(read: impl Fn(&Proxy)) {
+    let p = Proxy::deploy();
+    p.inject(&[(1, 1_000_000_000_000_000_000, 5)]);
+    p.set_latest((1, 1_000_000_000_000_000_000, 5));
+    p.client().set_min_decimals(&p.data_id(), &8);
+    let key = DataKey::MinDecimals(p.data_id());
+    let full = network_max_ttl(&p.env);
+    let ttl = || {
+        p.env
+            .as_contract(&p.id, || p.env.storage().persistent().get_ttl(&key))
+    };
+    age_ttl(&p.env);
+    assert!(
+        ttl() < full,
+        "aging the ledger drops the entry TTL below max"
+    );
+    read(&p);
+    assert_eq!(ttl(), full, "the call re-pins the entry TTL back to max");
+}
+
 mod constructor {
     use super::*;
 
@@ -57,7 +77,7 @@ mod latest_round {
     fn no_rounds_is_no_data_present() {
         let p = Proxy::deploy();
         assert!(matches!(
-            p.client().try_latest_round(&p.data_id()),
+            p.client().try_latest_round(&p.data_id(), &DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -66,6 +86,13 @@ mod latest_round {
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
             p.latest_round();
+        });
+    }
+
+    #[test]
+    fn extends_min_decimals_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
+            p.latest_round_at(8);
         });
     }
 
@@ -94,7 +121,7 @@ mod get_round {
     fn exact_round_projected() {
         let p = Proxy::deploy();
         p.inject(&[(6, 600, 60), (5, 500, 50)]);
-        let r = p.client().get_round(&p.data_id(), &5);
+        let r = p.client().get_round(&p.data_id(), &5, &DECIMALS);
         assert_eq!(r.round_id, 5, "exact id 5, not the newer round 6");
         assert_eq!(r.answer, I256::from_i128(&p.env, 500));
         assert_eq!(r.timestamp, 50);
@@ -105,7 +132,7 @@ mod get_round {
         let p = Proxy::deploy();
         p.inject(&[(5, 5, 50)]);
         assert!(matches!(
-            p.client().try_get_round(&p.data_id(), &9u64),
+            p.client().try_get_round(&p.data_id(), &9u64, &DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
     }
@@ -113,7 +140,14 @@ mod get_round {
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
-            p.client().get_round(&p.data_id(), &1u64);
+            p.client().get_round(&p.data_id(), &1u64, &DECIMALS);
+        });
+    }
+
+    #[test]
+    fn extends_min_decimals_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
+            p.client().get_round(&p.data_id(), &1u64, &8);
         });
     }
 
@@ -124,7 +158,7 @@ mod get_round {
         p.inject(&[(3, 300, 30)]);
         p.freeze();
 
-        p.client().get_round(&p.data_id(), &3);
+        p.client().get_round(&p.data_id(), &3, &DECIMALS);
     }
 }
 
@@ -132,14 +166,21 @@ mod decimals {
     use super::*;
 
     #[test]
-    fn decimals_is_always_eighteen() {
+    fn decimals_matches_the_cache_precision() {
         let p = Proxy::deploy();
-        assert_eq!(p.client().decimals(&p.data_id()), 18);
+        assert_eq!(p.client().decimals(&p.data_id()), DECIMALS);
     }
 
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
+            p.client().decimals(&p.data_id());
+        });
+    }
+
+    #[test]
+    fn extends_min_decimals_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
             p.client().decimals(&p.data_id());
         });
     }
@@ -168,6 +209,13 @@ mod description {
     #[test]
     fn extends_instance_ttl() {
         assert_read_extends_ttl(|p| {
+            p.client().description(&p.data_id());
+        });
+    }
+
+    #[test]
+    fn extends_min_decimals_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
             p.client().description(&p.data_id());
         });
     }
@@ -231,6 +279,319 @@ mod set_cache {
     }
 }
 
+mod get_min_decimals {
+    use super::*;
+
+    #[test]
+    fn returns_the_configured_min() {
+        let p = Proxy::deploy();
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert_eq!(p.client().get_min_decimals(&p.data_id()), 8);
+    }
+
+    #[test]
+    fn extends_instance_ttl() {
+        assert_read_extends_ttl(|p| {
+            p.client().get_min_decimals(&p.data_id());
+        });
+    }
+
+    #[test]
+    fn extends_min_decimals_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
+            p.client().get_min_decimals(&p.data_id());
+        });
+    }
+}
+
+mod get_cache {
+    use super::*;
+
+    #[test]
+    fn returns_the_configured_cache() {
+        let p = Proxy::deploy();
+        assert_eq!(p.client().get_cache(), p.mock);
+    }
+
+    #[test]
+    fn extends_instance_ttl() {
+        assert_read_extends_ttl(|p| {
+            p.client().get_cache();
+        });
+    }
+}
+
+mod set_min_decimals {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Error(Auth, InvalidAction)")]
+    fn set_min_decimals_by_non_owner_host_fails() {
+        let p = Proxy::deploy_no_auth();
+        let attacker = new_address(&p.env);
+        authorize(
+            &p.env,
+            &p.id,
+            &attacker,
+            "set_min_decimals",
+            (p.data_id(), 8u32),
+        );
+        p.client().set_min_decimals(&p.data_id(), &8);
+    }
+
+    #[test]
+    fn min_above_cache_precision_is_rejected() {
+        let p = Proxy::deploy();
+        assert!(matches!(
+            p.client()
+                .try_set_min_decimals(&p.data_id(), &(DECIMALS + 1)),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+    }
+
+    #[test]
+    fn sets_entry_ttl_on_init() {
+        let p = Proxy::deploy();
+        p.client().set_min_decimals(&p.data_id(), &8);
+        let ttl = p.env.as_contract(&p.id, || {
+            p.env
+                .storage()
+                .persistent()
+                .get_ttl(&DataKey::MinDecimals(p.data_id()))
+        });
+        assert_eq!(
+            ttl,
+            network_max_ttl(&p.env),
+            "the first write pins the entry TTL to max"
+        );
+    }
+
+    #[test]
+    fn update_repins_entry_ttl() {
+        assert_read_repins_min_decimals_ttl(|p| {
+            p.client().set_min_decimals(&p.data_id(), &10);
+        });
+    }
+
+    #[test]
+    fn extends_instance_ttl() {
+        assert_read_extends_ttl(|p| {
+            p.client().set_min_decimals(&p.data_id(), &8);
+        });
+    }
+
+    #[test]
+    fn setting_min_decimals_emits() {
+        let p = Proxy::deploy();
+        p.client().set_min_decimals(&p.data_id(), &8);
+        p.assert_event(MinDecimalsSet {
+            data_id: p.data_id(),
+            min: 8,
+        });
+    }
+
+    #[test]
+    fn restoring_cache_precision_relocks_the_feed() {
+        let p = Proxy::deploy();
+        p.set_latest((1, 1_000_000_000_000_000_000, 5));
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert_eq!(
+            p.latest_round_at(8).answer,
+            I256::from_i128(&p.env, 100_000_000)
+        );
+        p.client().set_min_decimals(&p.data_id(), &DECIMALS);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &8),
+            Err(Ok(ProxyReadError::InvalidDecimals)),
+        ));
+    }
+}
+
+mod precision {
+    use super::*;
+
+    const ANSWER: i128 = 1_999_999_999_999_999_999;
+
+    #[test]
+    fn unset_min_locks_reads_to_full_precision() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        assert_eq!(p.client().get_min_decimals(&p.data_id()), DECIMALS);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &(DECIMALS - 1)),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &(DECIMALS + 1)),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+        assert_eq!(p.latest_round().answer, I256::from_i128(&p.env, ANSWER));
+    }
+
+    #[test]
+    fn reads_scale_down_to_the_requested_precision() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert_eq!(
+            p.latest_round_at(8).answer,
+            I256::from_i128(&p.env, 199_999_999),
+            "truncates, never rounds up"
+        );
+        assert_eq!(
+            p.latest_round_at(14).answer,
+            I256::from_i128(&p.env, 199_999_999_999_999)
+        );
+        assert_eq!(p.latest_round().answer, I256::from_i128(&p.env, ANSWER));
+    }
+
+    #[test]
+    fn below_the_configured_min_is_rejected() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &7),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+        assert!(matches!(
+            p.client().try_get_round(&p.data_id(), &1u64, &7),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+    }
+
+    #[test]
+    fn above_cache_precision_is_rejected() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &(DECIMALS + 1)),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+        assert!(matches!(
+            p.client()
+                .try_get_round(&p.data_id(), &1u64, &(DECIMALS + 1)),
+            Err(Ok(ProxyReadError::InvalidDecimals))
+        ));
+    }
+
+    #[test]
+    fn zero_decimals_truncates_to_the_integer_part() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.client().set_min_decimals(&p.data_id(), &0);
+        assert_eq!(
+            p.latest_round_at(0).answer,
+            I256::from_i128(&p.env, 1),
+            "1.999... at full precision reads as 1 at zero decimals"
+        );
+    }
+
+    #[test]
+    fn negative_answers_truncate_toward_zero() {
+        let p = Proxy::deploy();
+        p.set_latest((1, -ANSWER, 5));
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert_eq!(
+            p.latest_round_at(8).answer,
+            I256::from_i128(&p.env, -199_999_999)
+        );
+    }
+
+    #[test]
+    fn non_zero_answer_scaling_to_zero_fails() {
+        let p = Proxy::deploy();
+        p.set_latest((1, 5, 5));
+        p.client().set_min_decimals(&p.data_id(), &0);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &0),
+            Err(Ok(ProxyReadError::RoundsToZero))
+        ));
+    }
+
+    #[test]
+    fn negative_answer_scaling_to_zero_fails() {
+        let p = Proxy::deploy();
+        p.set_latest((1, -5, 5));
+        p.client().set_min_decimals(&p.data_id(), &0);
+        assert!(matches!(
+            p.client().try_latest_round(&p.data_id(), &0),
+            Err(Ok(ProxyReadError::RoundsToZero))
+        ));
+    }
+
+    #[test]
+    fn a_genuine_zero_answer_passes_at_any_precision() {
+        let p = Proxy::deploy();
+        p.set_latest((1, 0, 5));
+        p.client().set_min_decimals(&p.data_id(), &0);
+        assert_eq!(p.latest_round_at(0).answer, I256::from_i128(&p.env, 0));
+    }
+
+    #[test]
+    fn get_round_scales_like_latest_round() {
+        let p = Proxy::deploy();
+        p.inject(&[(1, ANSWER, 5)]);
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert_eq!(
+            p.client().get_round(&p.data_id(), &1, &8).answer,
+            I256::from_i128(&p.env, 199_999_999)
+        );
+    }
+
+    #[test]
+    fn configured_min_without_data_is_no_data_present() {
+        let p = Proxy::deploy();
+        p.client().set_min_decimals(&p.data_id(), &8);
+        assert!(
+            matches!(
+                p.client().try_latest_round(&p.data_id(), &8),
+                Err(Ok(ProxyReadError::NoDataPresent))
+            ),
+            "passing precision validation does not invent data"
+        );
+        assert!(matches!(
+            p.client().try_get_round(&p.data_id(), &1u64, &8),
+            Err(Ok(ProxyReadError::NoDataPresent))
+        ));
+    }
+
+    #[test]
+    fn reads_do_not_create_a_min_decimals_entry() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.latest_round();
+        p.client().decimals(&p.data_id());
+        p.client().description(&p.data_id());
+        p.client().get_min_decimals(&p.data_id());
+        let absent = p.env.as_contract(&p.id, || {
+            !p.env
+                .storage()
+                .persistent()
+                .has(&DataKey::MinDecimals(p.data_id()))
+        });
+        assert!(
+            absent,
+            "reads of an unconfigured feed leave storage untouched"
+        );
+    }
+
+    #[test]
+    fn invalid_precision_fails_before_the_cache_read() {
+        let p = Proxy::deploy();
+        p.set_latest((1, ANSWER, 5));
+        p.freeze();
+        assert!(
+            matches!(
+                p.client().try_latest_round(&p.data_id(), &(DECIMALS + 1)),
+                Err(Ok(ProxyReadError::InvalidDecimals))
+            ),
+            "the range check precedes the frozen-feed cross-call"
+        );
+    }
+}
+
 mod invariants {
     use super::*;
 
@@ -241,10 +602,16 @@ mod invariants {
             stellar_access::ownable::OwnableError::TransferInProgress as u32,
             stellar_access::ownable::OwnableError::OwnerAlreadySet as u32,
         ];
-        let proxy = [ProxyReadError::NoDataPresent];
+        let proxy = [
+            ProxyReadError::NoDataPresent,
+            ProxyReadError::InvalidDecimals,
+            ProxyReadError::RoundsToZero,
+        ];
         for e in proxy {
             let expected = match e {
                 ProxyReadError::NoDataPresent => 50,
+                ProxyReadError::InvalidDecimals => 51,
+                ProxyReadError::RoundsToZero => 52,
             };
             let code = e as u32;
             assert_eq!(code, expected, "discriminant matches its wire value");
