@@ -75,7 +75,7 @@ pub(crate) mod crypto {
 
 pub(crate) mod mocks {
     use soroban_sdk::{
-        contract, contracterror, contractimpl, panic_with_error, Address, Bytes, Env,
+        contract, contracterror, contractimpl, panic_with_error, Address, Bytes, BytesN, Env,
     };
 
     #[contracterror]
@@ -201,6 +201,70 @@ pub(crate) mod mocks {
             env.storage()
                 .instance()
                 .get(&soroban_sdk::symbol_short!("sender"))
+        }
+    }
+
+    /// Self-verifying receiver for the `relay()` path: exposes `on_relay` and
+    /// records what it got. Deliberately has no `on_report`.
+    #[contract]
+    pub struct RelayReceiver;
+
+    #[contractimpl]
+    impl RelayReceiver {
+        pub fn on_relay(env: Env, sender: Address, execution_id: BytesN<32>, payload: Bytes) {
+            sender.require_auth();
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("sender"), &sender);
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("exec"), &execution_id);
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("payload"), &payload);
+            let n: u32 = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("count"))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("count"), &(n + 1));
+        }
+
+        pub fn last_sender(env: Env) -> Option<Address> {
+            env.storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("sender"))
+        }
+
+        pub fn last_payload(env: Env) -> Option<Bytes> {
+            env.storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("payload"))
+        }
+
+        pub fn count(env: Env) -> u32 {
+            env.storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("count"))
+                .unwrap_or(0)
+        }
+    }
+
+    /// `on_relay` that returns a typed error → `Failed` (retryable).
+    #[contract]
+    pub struct RejectingRelayReceiver;
+
+    #[contractimpl]
+    impl RejectingRelayReceiver {
+        pub fn on_relay(
+            _env: Env,
+            _sender: Address,
+            _execution_id: BytesN<32>,
+            _payload: Bytes,
+        ) -> Result<(), ReceiverError> {
+            Err(ReceiverError::Rejected)
         }
     }
 }
@@ -997,6 +1061,280 @@ fn test_unregistered_transmitter_writes_no_transmission_state() {
     );
     assert_eq!(info.state, TransmissionState::NotAttempted);
     assert_eq!(info.transmitter, None);
+}
+
+// ============================================================================
+// relay — unverified, self-verified-payload delivery path
+//
+// relay() performs no signature verification by design. The properties under
+// test are the ones that make that safe: a separate allowlist, an on-chain
+// derived replay key that includes the payload hash, dispatch to `on_relay`
+// (never `on_report`), no state written for non-contract receivers, the real
+// result returned, and one event per state transition.
+// ============================================================================
+
+pub(crate) mod relay {
+    use super::*;
+    use soroban_sdk::{Bytes, BytesN};
+
+    pub fn payload(env: &Env, b: u8) -> Bytes {
+        Bytes::from_slice(env, &[b; 40])
+    }
+
+    pub fn payload_hash(env: &Env, p: &Bytes) -> BytesN<32> {
+        env.crypto().sha256(p).into()
+    }
+
+    pub fn exec_id(env: &Env, b: u8) -> BytesN<32> {
+        BytesN::from_array(env, &[b; 32])
+    }
+
+    pub fn events_from_last_call(env: &Env, contract: &Address) -> usize {
+        env.events()
+            .all()
+            .filter_by_contract(contract)
+            .events()
+            .len()
+    }
+}
+
+#[test]
+fn test_add_relayer_is_owner_only_and_independent_of_forwarder_list() {
+    let env = Env::default();
+    let fx = setup(&env);
+    let relayer = Address::generate(&env);
+
+    fx.client.add_relayer(&relayer);
+    env.as_contract(&fx.contract_addr, || {
+        assert!(crate::require_valid_relayer(&env, &relayer).is_ok());
+        // Being a relayer grants nothing on the report() transmitter list...
+        assert!(require_valid_forwarder(&env, &relayer).is_err());
+    });
+    // ...and vice versa.
+    fx.client.add_forwarder(&fx.transmitter);
+    env.as_contract(&fx.contract_addr, || {
+        assert!(crate::require_valid_relayer(&env, &fx.transmitter).is_err());
+    });
+
+    fx.client.remove_relayer(&relayer);
+    env.as_contract(&fx.contract_addr, || {
+        assert!(crate::require_valid_relayer(&env, &relayer).is_err());
+    });
+}
+
+#[test]
+#[should_panic] // host-level auth panic
+fn test_add_relayer_not_owner_fails() {
+    let env = Env::default();
+    let fx = setup(&env);
+    env.set_auths(&[]);
+    fx.client.add_relayer(&Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #21)")]
+fn test_relay_from_unregistered_relayer_panics() {
+    // A report() transmitter that is not on the relayer list → UnauthorizedRelayer.
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_forwarder(&fx.transmitter);
+    let receiver = env.register(mocks::RelayReceiver, ());
+    fx.client.relay(
+        &fx.transmitter,
+        &receiver,
+        &relay::exec_id(&env, 1),
+        &relay::payload(&env, 0xA1),
+    );
+}
+
+#[test]
+fn test_relay_succeeds_and_records_state() {
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::RelayReceiver, ());
+    let rc = mocks::RelayReceiverClient::new(&env, &receiver);
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+    let ph = relay::payload_hash(&env, &p);
+
+    let before = fx.client.get_relay_info(&receiver, &exec, &ph);
+    assert_eq!(before.state, TransmissionState::NotAttempted);
+    assert_eq!(before.transmitter, None);
+
+    let ok = fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    assert!(ok);
+    // Exactly one RelayProcessed event for the call (events() is scoped to the
+    // most recent top-level invocation, so read it before any other call).
+    assert_eq!(relay::events_from_last_call(&env, &fx.contract_addr), 1);
+
+    // Receiver saw the forwarder as sender and got the exact payload.
+    assert_eq!(rc.last_sender(), Some(fx.contract_addr.clone()));
+    assert_eq!(rc.last_payload(), Some(p.clone()));
+    assert_eq!(rc.count(), 1);
+
+    let after = fx.client.get_relay_info(&receiver, &exec, &ph);
+    assert_eq!(after.state, TransmissionState::Succeeded);
+    assert_eq!(after.transmitter, Some(fx.transmitter.clone()));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_relay_same_payload_twice_is_already_processed() {
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::RelayReceiver, ());
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+    fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+}
+
+#[test]
+fn test_relay_replay_does_not_reach_receiver() {
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::RelayReceiver, ());
+    let rc = mocks::RelayReceiverClient::new(&env, &receiver);
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+    fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    let res = fx.client.try_relay(&fx.transmitter, &receiver, &exec, &p);
+    assert!(res.is_err());
+    assert_eq!(rc.count(), 1, "replay must not be delivered a second time");
+}
+
+#[test]
+fn test_relay_different_payload_same_execution_id_is_not_blocked() {
+    // Key-derivation property: a relayer cannot pre-occupy a key for a payload it
+    // has not delivered, because the key includes sha256(payload).
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::RelayReceiver, ());
+    let rc = mocks::RelayReceiverClient::new(&env, &receiver);
+    let exec = relay::exec_id(&env, 1);
+    let p1 = relay::payload(&env, 0xA1);
+    let p2 = relay::payload(&env, 0xA2);
+
+    assert!(fx.client.relay(&fx.transmitter, &receiver, &exec, &p1));
+    assert!(fx.client.relay(&fx.transmitter, &receiver, &exec, &p2));
+    assert_eq!(rc.count(), 2);
+
+    let i1 = fx
+        .client
+        .get_relay_info(&receiver, &exec, &relay::payload_hash(&env, &p1));
+    let i2 = fx
+        .client
+        .get_relay_info(&receiver, &exec, &relay::payload_hash(&env, &p2));
+    assert_eq!(i1.state, TransmissionState::Succeeded);
+    assert_eq!(i2.state, TransmissionState::Succeeded);
+}
+
+#[test]
+fn test_relay_non_contract_receiver_is_rejected_without_state_or_event() {
+    // Pre-dispatch failure: error, no persistent write, no event. A relayer
+    // cannot use a bad receiver to occupy a key.
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let account = Address::generate(&env);
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+
+    let err = fx
+        .client
+        .try_relay(&fx.transmitter, &account, &exec, &p)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, crate::error::ForwarderError::InvalidReceiver);
+    assert_eq!(relay::events_from_last_call(&env, &fx.contract_addr), 0);
+}
+
+#[test]
+fn test_relay_cannot_reach_on_report_receiver() {
+    // Isolation property: a relayer cannot forge a "verified" report. A receiver
+    // that only implements on_report (e.g. DataFeedsCache) has no on_relay, so
+    // the host invocation fails, the receiver never runs, and the attempt is
+    // recorded as Failed (same classification the report path gives a
+    // receiver without on_report).
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::SenderRecordingReceiver, ());
+    let rc = mocks::SenderRecordingReceiverClient::new(&env, &receiver);
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+
+    let ok = fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    assert!(!ok, "relay to an on_report-only receiver must not succeed");
+    assert_eq!(relay::events_from_last_call(&env, &fx.contract_addr), 1);
+    assert_eq!(
+        rc.last_sender(),
+        None,
+        "on_report must never be invoked by relay"
+    );
+
+    let info = fx
+        .client
+        .get_relay_info(&receiver, &exec, &relay::payload_hash(&env, &p));
+    assert_eq!(info.state, TransmissionState::Failed);
+}
+
+#[test]
+fn test_relay_rejecting_receiver_marks_failed_and_is_retryable() {
+    let env = Env::default();
+    let fx = setup(&env);
+    fx.client.add_relayer(&fx.transmitter);
+    let receiver = env.register(mocks::RejectingRelayReceiver, ());
+    let exec = relay::exec_id(&env, 1);
+    let p = relay::payload(&env, 0xA1);
+    let ph = relay::payload_hash(&env, &p);
+
+    let ok = fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    assert!(!ok, "relay must return the real dispatch result");
+    assert_eq!(relay::events_from_last_call(&env, &fx.contract_addr), 1);
+    assert_eq!(
+        fx.client.get_relay_info(&receiver, &exec, &ph).state,
+        TransmissionState::Failed
+    );
+
+    // Failed is non-terminal: a retry is accepted (and fails again here).
+    let ok2 = fx.client.relay(&fx.transmitter, &receiver, &exec, &p);
+    assert!(!ok2);
+    assert_eq!(relay::events_from_last_call(&env, &fx.contract_addr), 1);
+}
+
+#[test]
+fn test_relay_and_report_key_spaces_are_independent() {
+    // A relay to (receiver, exec_id) must not block a report for the same
+    // receiver and workflow_execution_id, and vice versa.
+    let env = Env::default();
+    let fx = setup_with_config(&env, 1, 4);
+    fx.client.add_forwarder(&fx.transmitter);
+    fx.client.add_relayer(&fx.transmitter);
+
+    let report = ReportBuilder::default();
+    let receiver = env.register(mocks::CooperativeReceiver, ());
+    let exec = soroban_sdk::BytesN::from_array(&env, &report.workflow_execution_id);
+
+    // Relay first: CooperativeReceiver has no on_relay → terminal InvalidReceiver
+    // in the *relay* key space.
+    let p = relay::payload(&env, 0xA1);
+    assert!(!fx.client.relay(&fx.transmitter, &receiver, &exec, &p));
+
+    // The signed report for the same receiver/execution id still goes through.
+    let (raw, ctx, sigs) = build_signed_report(&fx, &report, 2);
+    fx.client
+        .report(&fx.transmitter, &receiver, &raw, &ctx, &sigs);
+    let info = fx.client.get_transmission_info(
+        &receiver,
+        &exec,
+        &soroban_sdk::BytesN::from_array(&env, &report.report_id),
+    );
+    assert_eq!(info.state, TransmissionState::Succeeded);
 }
 
 // ============================================================================

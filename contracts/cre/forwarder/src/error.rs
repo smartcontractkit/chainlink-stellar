@@ -25,6 +25,7 @@ pub enum ForwarderError {
     InvalidReceiver = 18,
     InvalidSigner = 19,
     CannotRemoveSelf = 20,
+    UnauthorizedRelayer = 21,
 }
 
 impl From<CCIPError> for ForwarderError {

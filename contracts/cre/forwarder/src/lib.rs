@@ -11,14 +11,17 @@ use error::ForwarderError;
 use soroban_sdk::{
     address_payload::AddressPayload, contract, contractimpl, crypto::Hash, panic_with_error,
     symbol_short, Address, Bytes, BytesN, Env, Executable, IntoVal, InvokeError, String, Symbol,
-    TryFromVal, Vec,
+    TryFromVal, Val, Vec,
 };
 
 use common_signature::{
     config::{SignatureConfigManager, SignatureVerificationConfig},
     Ed25519, SignatureConfig, SignatureScheme,
 };
-use events::{ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, ReportProcessedEvent};
+use events::{
+    ConfigSetEvent, ForwarderAddedEvent, ForwarderRemovedEvent, RelayProcessedEvent,
+    RelayerAddedEvent, RelayerRemovedEvent, ReportProcessedEvent,
+};
 use types::{DataKey, Ed25519Signature, Transmission, TransmissionInfo, TransmissionState};
 
 use crate::types::ParsedReport;
@@ -140,6 +143,33 @@ impl Forwarder {
             .remove(&DataKey::Forwarder(forwarder.clone()));
 
         ForwarderRemovedEvent { forwarder }.publish(&env);
+        Ok(())
+    }
+
+    /// Allow `relayer` to deliver self-verified payloads through `relay()`.
+    /// This list is independent from the `report()` transmitter registry: an
+    /// address on one list gains nothing on the other.
+    pub fn add_relayer(env: Env, relayer: Address) -> Result<(), ForwarderError> {
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Relayer(relayer.clone()), &true);
+
+        RelayerAddedEvent { relayer }.publish(&env);
+        Ok(())
+    }
+
+    pub fn remove_relayer(env: Env, relayer: Address) -> Result<(), ForwarderError> {
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        <Forwarder as Ownable>::require_owner(&env)?;
+
+        env.storage()
+            .instance()
+            .remove(&DataKey::Relayer(relayer.clone()));
+
+        RelayerRemovedEvent { relayer }.publish(&env);
         Ok(())
     }
 
@@ -271,6 +301,72 @@ impl Forwarder {
         Ok(())
     }
 
+    /// Deliver a self-verified payload to `receiver.on_relay(sender,
+    /// execution_id, payload)` without OCR signature verification.
+    ///
+    /// The forwarder does not vouch for the payload; the receiver must verify
+    /// it. What the forwarder provides is the same replay protection and
+    /// observable transmission state that `report()` provides, so a DON can
+    /// coordinate a write schedule for payloads that carry their own proof
+    /// (Streams reports, ZK proofs, ...).
+    ///
+    /// Safety properties:
+    /// - only addresses on the relayer list may call this;
+    /// - the replay key is derived on-chain from
+    ///   `sha256(receiver ‖ execution_id ‖ sha256(payload))`, so a relayer can
+    ///   neither choose the key nor block a different payload;
+    /// - it dispatches to `on_relay`, never `on_report`, so a receiver that
+    ///   trusts `on_report` as proof of DON quorum is unreachable from here;
+    /// - a non-contract receiver is rejected with an error and writes no state.
+    pub fn relay(
+        env: Env,
+        transmitter: Address,
+        receiver: Address,
+        execution_id: BytesN<32>,
+        payload: Bytes,
+    ) -> Result<bool, ForwarderError> {
+        transmitter.require_auth();
+        <Forwarder as Initializable>::require_initialized(&env)?;
+        require_valid_relayer(&env, &transmitter)?;
+
+        // Pre-dispatch validation: a receiver that is not a Wasm contract can
+        // never become valid for this key, and rejecting it here (instead of
+        // writing a terminal state) means no relayer can occupy a key without
+        // a real delivery attempt.
+        if !matches!(receiver.executable(), Some(Executable::Wasm(_))) {
+            return Err(ForwarderError::InvalidReceiver);
+        }
+
+        let payload_hash: BytesN<32> = env.crypto().sha256(&payload).into();
+        let relay_id = get_relay_id(&env, &receiver, &execution_id, &payload_hash);
+        let key = DataKey::Relay(relay_id);
+
+        let args = (
+            env.current_contract_address(),
+            execution_id.clone(),
+            payload,
+        )
+            .into_val(&env);
+        let state = deliver(
+            &env,
+            &key,
+            transmitter,
+            &receiver,
+            &symbol_short!("on_relay"),
+            args,
+        );
+
+        RelayProcessedEvent {
+            receiver,
+            execution_id,
+            payload_hash,
+            state,
+        }
+        .publish(&env);
+
+        Ok(state == TransmissionState::Succeeded)
+    }
+
     // ========================================
     // Query Functions
     // ========================================
@@ -306,6 +402,31 @@ impl Forwarder {
             }),
         }
     }
+
+    /// State of a `relay()` delivery. `payload_hash` is `sha256(payload)`, as
+    /// carried in `RelayProcessedEvent`.
+    pub fn get_relay_info(
+        env: Env,
+        receiver: Address,
+        execution_id: BytesN<32>,
+        payload_hash: BytesN<32>,
+    ) -> Result<TransmissionInfo, ForwarderError> {
+        <Forwarder as Initializable>::require_initialized(&env)?;
+
+        let relay_id = get_relay_id(&env, &receiver, &execution_id, &payload_hash);
+        let key = DataKey::Relay(relay_id);
+
+        match env.storage().persistent().get::<_, Transmission>(&key) {
+            Some(t) => Ok(TransmissionInfo {
+                state: t.state,
+                transmitter: Some(t.transmitter),
+            }),
+            None => Ok(TransmissionInfo {
+                state: TransmissionState::NotAttempted,
+                transmitter: None,
+            }),
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,6 +437,14 @@ fn require_valid_forwarder(env: &Env, forwarder: &Address) -> Result<(), Forward
     let key = DataKey::Forwarder(forwarder.clone());
     if !env.storage().instance().has(&key) {
         return Err(ForwarderError::UnauthorizedForwarder);
+    }
+    Ok(())
+}
+
+fn require_valid_relayer(env: &Env, relayer: &Address) -> Result<(), ForwarderError> {
+    let key = DataKey::Relayer(relayer.clone());
+    if !env.storage().instance().has(&key) {
+        return Err(ForwarderError::UnauthorizedRelayer);
     }
     Ok(())
 }
@@ -434,10 +563,25 @@ fn get_transmission_id(
     env.crypto().sha256(&data).into()
 }
 
-/// Delivery + transmission-state machine. Internal only: the sole caller is
-/// `report()`, which has already derived `transmission_id` from the report and
-/// verified the DON quorum. A public entrypoint here would let any registered
-/// transmitter deliver unverified bytes under a caller-chosen replay key.
+/// `sha256(contract_id(receiver) ‖ execution_id ‖ sha256(payload))`. Including
+/// the payload hash means a relayer can only ever "pre-occupy" a key by
+/// actually delivering that exact payload to that exact receiver.
+fn get_relay_id(
+    env: &Env,
+    receiver: &Address,
+    execution_id: &BytesN<32>,
+    payload_hash: &BytesN<32>,
+) -> BytesN<32> {
+    let mut data = receiver_contract_id_bytes(env, receiver);
+    data.extend_from_array(&execution_id.to_array());
+    data.extend_from_array(&payload_hash.to_array());
+    env.crypto().sha256(&data).into()
+}
+
+/// `report()` delivery: `receiver.on_report(sender, metadata, payload)` under
+/// the report-derived `transmission_id`. Internal only; the caller has already
+/// verified the DON quorum. Unverified payloads go through `relay()`, which
+/// uses a different receiver method and a different key space.
 fn dispatch_to_receiver(
     env: &Env,
     transmission_id: BytesN<32>,
@@ -448,18 +592,16 @@ fn dispatch_to_receiver(
 ) -> Result<bool, ForwarderError> {
     let key = DataKey::Transmission(transmission_id);
 
-    match env.storage().persistent().get::<_, Transmission>(&key) {
-        Some(t)
-            if t.state == TransmissionState::Succeeded
-                || t.state == TransmissionState::InvalidReceiver =>
-        {
-            panic_with_error!(env, ForwarderError::AlreadyProcessed);
-        }
-        _ => {}
-    }
-
     let state = if !matches!(receiver.executable(), Some(Executable::Wasm(_))) {
-        // Not a Wasm contract — terminal; AlreadyProcessed above blocks retries.
+        // The DON signed off on this receiver, so a non-contract address is a
+        // terminal outcome for the transmission: record it so retries are
+        // rejected with AlreadyProcessed.
+        require_not_terminal(env, &key);
+        let tx = Transmission {
+            state: TransmissionState::InvalidReceiver,
+            transmitter,
+        };
+        write_transmission(env, &key, &tx);
         TransmissionState::InvalidReceiver
     } else {
         let args = (
@@ -468,22 +610,64 @@ fn dispatch_to_receiver(
             payload.clone(),
         )
             .into_val(env);
-        let call =
-            env.try_invoke_contract::<(), InvokeError>(receiver, &symbol_short!("on_report"), args);
-        match call {
-            Ok(Ok(())) => TransmissionState::Succeeded,
-            Ok(Err(_)) | Err(Ok(_)) => TransmissionState::Failed,
-            Err(Err(_)) => TransmissionState::InvalidReceiver,
-        }
+        deliver(
+            env,
+            &key,
+            transmitter,
+            receiver,
+            &symbol_short!("on_report"),
+            args,
+        )
+    };
+
+    Ok(state == TransmissionState::Succeeded)
+}
+
+/// Shared transmission state machine for `report()` and `relay()`:
+/// reject terminal keys, invoke `receiver.<function>(args)`, classify the
+/// outcome, persist it under `key`. The caller has already confirmed that
+/// `receiver` is a Wasm contract.
+fn deliver(
+    env: &Env,
+    key: &DataKey,
+    transmitter: Address,
+    receiver: &Address,
+    function: &Symbol,
+    args: Vec<Val>,
+) -> TransmissionState {
+    require_not_terminal(env, key);
+
+    let call = env.try_invoke_contract::<(), InvokeError>(receiver, function, args);
+    let state = match call {
+        Ok(Ok(())) => TransmissionState::Succeeded,
+        // Receiver returned Err, panicked, or the host could not complete the
+        // invocation (e.g. `function` is not exported): a real attempt that
+        // may succeed on retry (retryable).
+        Ok(Err(_)) | Err(Ok(_)) => TransmissionState::Failed,
+        // Return value could not be converted: the receiver does not speak the
+        // protocol (terminal).
+        Err(Err(_)) => TransmissionState::InvalidReceiver,
     };
 
     let tx = Transmission { state, transmitter };
-    env.storage().persistent().set(&key, &tx);
+    write_transmission(env, key, &tx);
+    state
+}
+
+fn require_not_terminal(env: &Env, key: &DataKey) {
+    if let Some(t) = env.storage().persistent().get::<_, Transmission>(key) {
+        if t.state == TransmissionState::Succeeded || t.state == TransmissionState::InvalidReceiver
+        {
+            panic_with_error!(env, ForwarderError::AlreadyProcessed);
+        }
+    }
+}
+
+fn write_transmission(env: &Env, key: &DataKey, tx: &Transmission) {
+    env.storage().persistent().set(key, tx);
     env.storage()
         .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTENSION);
-
-    Ok(state == TransmissionState::Succeeded)
+        .extend_ttl(key, TTL_THRESHOLD, TTL_EXTENSION);
 }
 
 #[cfg(test)]
