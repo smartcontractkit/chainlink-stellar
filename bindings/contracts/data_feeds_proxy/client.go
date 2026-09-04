@@ -88,6 +88,26 @@ func (c *DataFeedsProxyClient) Decimals(ctx context.Context, dataId [32]byte) (u
 	return uint32(v), nil
 }
 
+// GetCache calls the get_cache function on the contract.
+func (c *DataFeedsProxyClient) GetCache(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_cache", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to call get_cache: %w", err)
+	}
+
+	if result == nil {
+		return "", fmt.Errorf("no return value from get_cache")
+	}
+
+	v, err := scval.AddressFromScVal(*result)
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
 // GetOwner calls the get_owner function on the contract.
 func (c *DataFeedsProxyClient) GetOwner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -109,10 +129,11 @@ func (c *DataFeedsProxyClient) GetOwner(ctx context.Context) (*string, error) {
 }
 
 // GetRound calls the get_round function on the contract.
-func (c *DataFeedsProxyClient) GetRound(ctx context.Context, dataId [32]byte, roundId uint64) (*Round, error) {
+func (c *DataFeedsProxyClient) GetRound(ctx context.Context, dataId [32]byte, roundId uint64, decimals uint32) (*Round, error) {
 	args := []xdr.ScVal{
 		scval.Bytes32ToScVal(dataId),
 		scval.Uint64ToScVal(roundId),
+		scval.Uint32ToScVal(decimals),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_round", args)
@@ -161,9 +182,10 @@ func (c *DataFeedsProxyClient) Description(ctx context.Context, dataId [32]byte)
 }
 
 // LatestRound calls the latest_round function on the contract.
-func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId [32]byte) (*Round, error) {
+func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId [32]byte, decimals uint32) (*Round, error) {
 	args := []xdr.ScVal{
 		scval.Bytes32ToScVal(dataId),
+		scval.Uint32ToScVal(decimals),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "latest_round", args)
@@ -202,6 +224,44 @@ func (c *DataFeedsProxyClient) AcceptOwnership(ctx context.Context) error {
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "accept_ownership", args)
 	if err != nil {
 		return fmt.Errorf("failed to call accept_ownership: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetMinDecimals calls the get_min_decimals function on the contract.
+func (c *DataFeedsProxyClient) GetMinDecimals(ctx context.Context, dataId [32]byte) (uint32, error) {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(dataId),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_min_decimals", args)
+	if err != nil {
+		return 0, fmt.Errorf("failed to call get_min_decimals: %w", err)
+	}
+
+	if result == nil {
+		return 0, fmt.Errorf("no return value from get_min_decimals")
+	}
+
+	v, ok := result.GetU32()
+	if !ok {
+		return 0, fmt.Errorf("expected u32 return type")
+	}
+	return uint32(v), nil
+}
+
+// SetMinDecimals calls the set_min_decimals function on the contract.
+func (c *DataFeedsProxyClient) SetMinDecimals(ctx context.Context, dataId [32]byte, min uint32) error {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(dataId),
+		scval.Uint32ToScVal(min),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_min_decimals", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_min_decimals: %w", err)
 	}
 
 	_ = result // void return
@@ -318,6 +378,82 @@ func ParseCacheSet(e protocolrpc.EventInfo) (*CacheSet, error) {
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
 				result.NewCache = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForMinDecimalsSet waits for a MinDecimalsSet event.
+func (c *DataFeedsProxyClient) WaitForMinDecimalsSet(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*MinDecimalsSet) bool) (*MinDecimalsSet, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{MinDecimalsSetTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseMinDecimalsSet(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseMinDecimalsSet(e protocolrpc.EventInfo) (*MinDecimalsSet, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &MinDecimalsSet{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	if len(e.TopicXDR) > 1 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
+				result.DataId = v
+			}
+		}
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "min":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.Min = uint32(v)
 			}
 		}
 	}

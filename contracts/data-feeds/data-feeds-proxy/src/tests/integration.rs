@@ -71,19 +71,52 @@ mod cache_reader_client {
         let s = ProxyWithCache::deploy(&[(12345, 7)]);
         let c = s.client();
 
-        let latest = c.latest_round(&s.did);
+        let latest = c.latest_round(&s.did, &DECIMALS);
         assert_eq!(latest.answer, I256::from_i128(&s.env, 12345));
         assert_eq!(latest.timestamp, 7);
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &DECIMALS).answer,
             I256::from_i128(&s.env, 12345),
             "historical round resolves through the proxy"
         );
-        assert_eq!(c.decimals(&s.did), 18, "decimals are a constant 18");
+        assert_eq!(
+            c.decimals(&s.did),
+            DECIMALS,
+            "decimals track the cache's fixed precision"
+        );
         assert_eq!(
             c.description(&s.did),
             String::from_str(&s.env, DEFAULT_DESC),
             "description comes from the real cache's feed config"
+        );
+    }
+
+    #[test]
+    fn proxy_scales_real_cache_answers() {
+        let s = ProxyWithCache::deploy(&[(1_234_500_000_000_000_000, 7)]);
+        let c = s.client();
+        c.set_min_decimals(&s.did, &8);
+        assert_eq!(
+            c.latest_round(&s.did, &8).answer,
+            I256::from_i128(&s.env, 123_450_000)
+        );
+        assert_eq!(
+            c.get_round(&s.did, &1, &10).answer,
+            I256::from_i128(&s.env, 12_345_000_000)
+        );
+    }
+
+    #[test]
+    fn configured_feed_without_rounds_is_no_data_present_below_full_precision() {
+        let s = ProxyWithCache::deploy(&[]);
+        let c = s.client();
+        c.set_min_decimals(&s.did, &8);
+        assert!(
+            matches!(
+                c.try_latest_round(&s.did, &8),
+                Err(Ok(ProxyReadError::NoDataPresent))
+            ),
+            "a configured-but-unwritten feed is absence, not a precision error"
         );
     }
 
@@ -94,11 +127,11 @@ mod cache_reader_client {
         let c = s.client();
 
         assert!(matches!(
-            c.try_latest_round(&unknown),
+            c.try_latest_round(&unknown, &DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
         assert!(matches!(
-            c.try_get_round(&unknown, &1),
+            c.try_get_round(&unknown, &1, &DECIMALS),
             Err(Ok(ProxyReadError::NoDataPresent))
         ));
         assert_eq!(
@@ -121,7 +154,10 @@ mod lifecycle {
         let s = ProxyWithCache::deploy(&[(100, 5)]);
         let id_before = s.proxy.clone();
         let c = s.client();
-        assert_eq!(c.latest_round(&s.did).answer, I256::from_i128(&s.env, 100));
+        assert_eq!(
+            c.latest_round(&s.did, &DECIMALS).answer,
+            I256::from_i128(&s.env, 100)
+        );
 
         let hash = s.env.deployer().upload_contract_wasm(PROXY_SELF_WASM);
         c.upgrade(&hash);
@@ -131,7 +167,7 @@ mod lifecycle {
             "proxy address is stable across the upgrade"
         );
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &DECIMALS).answer,
             I256::from_i128(&s.env, 100),
             "reader interface and cache routing survive the upgrade"
         );
@@ -141,7 +177,10 @@ mod lifecycle {
     fn cache_is_upgradable() {
         let s = ProxyWithCache::deploy(&[(100, 5), (110, 6)]);
         let c = s.client();
-        assert_eq!(c.latest_round(&s.did).answer, I256::from_i128(&s.env, 110));
+        assert_eq!(
+            c.latest_round(&s.did, &DECIMALS).answer,
+            I256::from_i128(&s.env, 110)
+        );
 
         let cache_id_before = s.cache.clone();
         let hash = s.env.deployer().upload_contract_wasm(CACHE_SELF_WASM);
@@ -152,19 +191,19 @@ mod lifecycle {
             "cache address is stable across the upgrade"
         );
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &DECIMALS).answer,
             I256::from_i128(&s.env, 110),
             "latest round survives the cache upgrade"
         );
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &DECIMALS).answer,
             I256::from_i128(&s.env, 100),
             "historical round survives the cache upgrade"
         );
 
         seed_round(&s.env, &s.cache, &s.did, &s.sender, 250, 9);
         assert_eq!(
-            c.latest_round(&s.did).answer,
+            c.latest_round(&s.did, &DECIMALS).answer,
             I256::from_i128(&s.env, 250),
             "the upgraded cache keeps operating end-to-end"
         );
@@ -176,7 +215,7 @@ mod lifecycle {
         let cache_b = s.deploy_secondary_cache(&[(999, 90)]);
         let id_before = s.proxy.clone();
         let c = s.client();
-        let before = c.latest_round(&s.did);
+        let before = c.latest_round(&s.did, &DECIMALS);
         assert_eq!(before.answer, I256::from_i128(&s.env, 100));
         assert_eq!(before.timestamp, 5);
 
@@ -186,7 +225,7 @@ mod lifecycle {
             s.proxy, id_before,
             "proxy address is stable across the swap"
         );
-        let after = c.latest_round(&s.did);
+        let after = c.latest_round(&s.did, &DECIMALS);
         assert_eq!(
             after.answer,
             I256::from_i128(&s.env, 999),
@@ -203,16 +242,19 @@ mod lifecycle {
         let s = ProxyWithCache::deploy(&[(100, 5), (110, 6)]);
         let cache2 = s.deploy_secondary_cache(&[(200, 5)]);
         let c = s.client();
-        assert_eq!(c.get_round(&s.did, &2).answer, I256::from_i128(&s.env, 110));
+        assert_eq!(
+            c.get_round(&s.did, &2, &DECIMALS).answer,
+            I256::from_i128(&s.env, 110)
+        );
         c.set_cache(&cache2);
         assert_eq!(
-            c.get_round(&s.did, &1).answer,
+            c.get_round(&s.did, &1, &DECIMALS).answer,
             I256::from_i128(&s.env, 200),
             "round 1 now resolves from the new cache"
         );
         assert!(
             matches!(
-                c.try_get_round(&s.did, &2),
+                c.try_get_round(&s.did, &2, &DECIMALS),
                 Err(Ok(ProxyReadError::NoDataPresent))
             ),
             "old cache's round 2 is unreachable — round history never spans caches"

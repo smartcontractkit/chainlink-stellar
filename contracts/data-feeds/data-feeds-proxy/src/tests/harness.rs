@@ -1,4 +1,5 @@
 pub(crate) use soroban_sdk::{
+    testutils::storage::Persistent as _,
     token::{StellarAssetClient, TokenClient},
     Address, Env, String, Vec, I256,
 };
@@ -8,10 +9,11 @@ pub(crate) use data_feeds_common::test_utils::{
 };
 
 pub(crate) use data_feeds_cache::test_utils::mock_feed_id;
-pub(crate) use data_feeds_cache::{CacheError, RoundData};
+pub(crate) use data_feeds_cache::{CacheError, RoundData, DECIMALS};
 
 pub(crate) use super::mock_cache::{mock_round_data, MockCache, MockCacheClient};
-pub(crate) use crate::events::CacheSet;
+pub(crate) use crate::events::{CacheSet, MinDecimalsSet};
+pub(crate) use crate::storage::DataKey;
 pub(crate) use crate::{DataFeedsProxy, DataFeedsProxyClient, DataId, ProxyReadError, Round};
 
 pub(crate) const DUMMY_MOCK_FEED_ID: u8 = 1;
@@ -83,6 +85,10 @@ impl Proxy {
     }
 
     pub(crate) fn latest_round(&self) -> Round {
-        self.client().latest_round(&self.data_id())
+        self.latest_round_at(DECIMALS)
+    }
+
+    pub(crate) fn latest_round_at(&self, decimals: u32) -> Round {
+        self.client().latest_round(&self.data_id(), &decimals)
     }
 }

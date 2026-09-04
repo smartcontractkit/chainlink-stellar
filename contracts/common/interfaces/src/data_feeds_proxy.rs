@@ -7,11 +7,13 @@ pub trait DataFeedsProxyInterface {
         env: soroban_sdk::Env,
         data_id: soroban_sdk::BytesN<32>,
     ) -> Result<u32, ProxyReadError>;
+    fn get_cache(env: soroban_sdk::Env) -> soroban_sdk::Address;
     fn get_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_round(
         env: soroban_sdk::Env,
         data_id: soroban_sdk::BytesN<32>,
         round_id: u64,
+        decimals: u32,
     ) -> Result<Round, ProxyReadError>;
     fn set_cache(env: soroban_sdk::Env, cache: soroban_sdk::Address);
     fn description(
@@ -21,6 +23,7 @@ pub trait DataFeedsProxyInterface {
     fn latest_round(
         env: soroban_sdk::Env,
         data_id: soroban_sdk::BytesN<32>,
+        decimals: u32,
     ) -> Result<Round, ProxyReadError>;
     fn __constructor(
         env: soroban_sdk::Env,
@@ -34,6 +37,12 @@ pub trait DataFeedsProxyInterface {
         amount: i128,
     );
     fn accept_ownership(env: soroban_sdk::Env);
+    fn get_min_decimals(env: soroban_sdk::Env, data_id: soroban_sdk::BytesN<32>) -> u32;
+    fn set_min_decimals(
+        env: soroban_sdk::Env,
+        data_id: soroban_sdk::BytesN<32>,
+        min: u32,
+    ) -> Result<(), ProxyReadError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn renounce_ownership(env: soroban_sdk::Env);
     fn transfer_ownership(
@@ -53,6 +62,8 @@ pub struct Round {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProxyReadError {
     NoDataPresent = 50,
+    InvalidDecimals = 51,
+    RoundsToZero = 52,
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -89,6 +100,13 @@ pub enum OwnableError {
 pub struct CacheSet {
     pub old_cache: soroban_sdk::Address,
     pub new_cache: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["MinDecimalsSet"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct MinDecimalsSet {
+    #[topic]
+    pub data_id: soroban_sdk::BytesN<32>,
+    pub min: u32,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["Upgraded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
