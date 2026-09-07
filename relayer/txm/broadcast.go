@@ -216,6 +216,7 @@ func (s *StellarTxm) handleSendResult(
 	seq int64,
 	txStore *TxStore,
 	maxLedger uint32,
+	maxTime int64,
 ) (accepted bool, fatalErr bool, retryReason ErrorReason) {
 	if tx == nil {
 		s.baseLogger.Errorw("handleSendResult: tx is nil")
@@ -234,7 +235,7 @@ func (s *StellarTxm) handleSendResult(
 			return false, true, ErrorReasonNoHash
 		}
 
-		err := txStore.AddUnconfirmed(seq, submitResult.Hash, maxLedger, tx)
+		err := txStore.AddUnconfirmed(seq, submitResult.Hash, maxLedger, maxTime, tx)
 		if err != nil {
 			ctxLogger.Errorw("failed to add unconfirmed tx", "error", err)
 			return false, true, ErrorReasonStoreAdd

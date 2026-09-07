@@ -679,6 +679,8 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		s.metrics.ObserveResourceFee(ctx, resourceFee)
 		s.updateTransactionFee(tx, big.NewInt(totalFee))
 
+		maxTime := assembledTx.Timebounds().MaxTime
+
 		signedTx, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
 		if err != nil {
 			ctxLogger.Errorw("failed to sign transaction", "error", err)
@@ -711,7 +713,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger)
+		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime)
 		if accepted {
 			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", submitResult.Hash)
 			s.markBroadcastAt(tx)
@@ -962,31 +964,25 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-			// NOT_FOUND or transient RPC error: check ledger expiry.
+			// NOT_FOUND or transient RPC error. Check expiry against chain state only: the
+			// sequence may be recycled once the network can no longer include this envelope,
+			// i.e. the latest ledger is past LedgerBounds.MaxLedger or its close time is past
+			// TimeBounds.MaxTime. Recycling earlier lets a second envelope on the same
+			// sequence land alongside the first. Without chain state the tx stays pending.
 			latestLedger, ledgerErr := client.GetLatestLedger(ctx)
-
-			txTimeout := time.Duration(*s.config.TxTimeoutSecs) * time.Second
-			wallClockExpired := time.Since(utx.Tx.Timestamp) > txTimeout
-
 			if ledgerErr != nil {
 				ctxLogger.Errorw("couldn't fetch latest ledger for expiry check", "error", ledgerErr)
-				if !wallClockExpired {
-					totalPending++
-					continue
-				}
-				// Wall-clock expired while ledger check is unavailable — expire the tx.
-				ctxLogger.Warnw("tx wall-clock expired while ledger fetch failed, expiring", "hash", hash)
-			} else {
-				ledgerExpired := latestLedger.Sequence > utx.MaxLedger
-				if !ledgerExpired && !wallClockExpired {
-					totalPending++
-					ctxLogger.Debugw("tx still pending", "hash", hash, "currentLedger", latestLedger.Sequence, "maxLedger", utx.MaxLedger)
-					continue
-				}
-				if wallClockExpired && !ledgerExpired {
-					ctxLogger.Warnw("tx expired via wall-clock fallback", "hash", hash,
-						"age", time.Since(utx.Tx.Timestamp).Round(time.Second))
-				}
+				totalPending++
+				continue
+			}
+			ledgerExpired := latestLedger.Sequence > utx.MaxLedger
+			timeExpired := utx.MaxTime > 0 && latestLedger.LedgerCloseTime > utx.MaxTime
+			if !ledgerExpired && !timeExpired {
+				totalPending++
+				ctxLogger.Debugw("tx still pending", "hash", hash,
+					"currentLedger", latestLedger.Sequence, "maxLedger", utx.MaxLedger,
+					"ledgerCloseTime", latestLedger.LedgerCloseTime, "maxTime", utx.MaxTime)
+				continue
 			}
 
 			// Expired: confirm as failed, recycle the sequence.

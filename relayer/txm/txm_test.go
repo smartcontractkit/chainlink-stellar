@@ -2,6 +2,7 @@ package txm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"sync"
@@ -1680,5 +1681,111 @@ func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
 	for i, tx := range txs {
 		assert.Equal(t, uint64(writerIterations), tx.Attempt.Load(),
 			"tx %d Attempt should be exactly %d after concurrent increments", i, writerIterations)
+	}
+}
+
+// seedUnconfirmed registers one unconfirmed tx at seq for testAddress, as if it had
+// been broadcast earlier, and returns the store and tx for assertions.
+func seedUnconfirmed(t *testing.T, txm *StellarTxm, seq int64, maxLedger uint32, maxTime int64, enqueuedAt time.Time) (*TxStore, *StellarTx) {
+	t.Helper()
+	store, err := txm.accountStore.CreateTxStore(testAddress, seq)
+	require.NoError(t, err)
+	tx := &StellarTx{
+		ID:          "seeded",
+		FromAddress: testAddress,
+		Timestamp:   enqueuedAt,
+		Status:      commontypes.Unconfirmed,
+		Done:        make(chan struct{}),
+	}
+	txm.transactionsMapLock.Lock()
+	txm.transactions[tx.ID] = tx
+	txm.transactionsMapLock.Unlock()
+	require.NoError(t, store.AddUnconfirmed(seq, "seeded-hash", maxLedger, maxTime, tx))
+	return store, tx
+}
+
+// A sequence may only be recycled once chain state proves the envelope can no longer
+// be included: the latest ledger is past LedgerBounds.MaxLedger, or its close time is
+// past TimeBounds.MaxTime. Enqueue age alone is not evidence, and without chain state
+// the tx stays pending.
+func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclude(t *testing.T) {
+	t.Parallel()
+
+	const seq = int64(101)
+	const maxLedger = uint32(1050)
+	const maxTime = int64(1_700_000_300)
+	longAgo := time.Now().Add(-time.Hour) // far past TxTimeoutSecs
+
+	cases := []struct {
+		name         string
+		latestLedger protocolrpc.GetLatestLedgerResponse
+		latestErr    error
+		wantNextSeq  int64
+		wantInflight int
+		wantTxStatus commontypes.TransactionStatus
+	}{
+		{
+			name:         "enqueue age past TxTimeoutSecs but bounds not reached keeps tx pending",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime - 100},
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "ledger past MaxLedger recycles the sequence",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 2000, LedgerCloseTime: maxTime - 100},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "ledger close time past MaxTime recycles the sequence",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime + 1},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "ledger close time unavailable falls back to MaxLedger only",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "ledger unavailable keeps tx pending regardless of age",
+			latestErr:    errors.New("rpc down"),
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockRPCClient{
+				getLatestLedgerResp: tc.latestLedger,
+				getLatestLedgerErr:  tc.latestErr,
+				getTransactionResp: protocolrpc.GetTransactionResponse{
+					TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+				},
+			}
+			cfg := config.TxManagerConfig{
+				TxTimeoutSecs:      ptr(int64(300)),
+				MaxTxRetryAttempts: ptr(uint64(0)), // expiry goes straight to Failed, which makes recycling observable
+			}
+			txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+			require.NoError(t, err)
+			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, maxTime, longAgo)
+
+			txm.checkUnconfirmed(t.Context())
+
+			assert.Equal(t, tc.wantInflight, store.InflightCount())
+			assert.Equal(t, tc.wantNextSeq, store.GetNextSequence())
+			status, err := txm.GetStatus(tx.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTxStatus, status)
+		})
 	}
 }
