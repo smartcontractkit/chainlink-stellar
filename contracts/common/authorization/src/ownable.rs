@@ -158,12 +158,25 @@ pub trait Ownable: Initializable {
 
     /// A method to transfer ownership without waiting for the new owner to accept.
     ///
+    /// Publishes `OwnershipTransferredEvent` so that off-chain monitors observe
+    /// one-step transfers exactly as they observe the two-step flow.
+    ///
+    /// # Errors
+    /// * `NotOwner` - Owner has not been set in storage
+    ///
     /// # Panics
     ///
     /// If the current owner did not authorize this invocation (`require_auth`).
     fn set_new_owner(env: &Env, new_owner: &Address) -> Result<(), CCIPError> {
-        Self::require_owner(env)?;
+        let previous_owner = Self::require_owner(env)?;
         env.storage().instance().set(&Self::OWNER, new_owner);
+
+        OwnershipTransferredEvent {
+            previous_owner,
+            new_owner: new_owner.clone(),
+        }
+        .publish(env);
+
         Ok(())
     }
 }

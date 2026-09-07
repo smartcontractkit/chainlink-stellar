@@ -2,7 +2,11 @@
 
 use super::*;
 use common_error::CCIPError;
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl,
+    testutils::{Address as _, Events as _},
+    Address, Env, Event, Symbol, Vec,
+};
 
 // ============================================================
 // Test Contract
@@ -45,6 +49,10 @@ impl TestAuthContract {
 
     pub fn cancel_transfer(env: Env) -> Result<(), CCIPError> {
         DefaultOwnable::cancel_ownership_transfer(&env)
+    }
+
+    pub fn set_new_owner(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        DefaultOwnable::set_new_owner(&env, &new_owner)
     }
 
     // ---- AuthorizedCallers ----
@@ -131,6 +139,18 @@ fn setup_env() -> (Env, Address) {
     (env, contract_id)
 }
 
+/// Assert that the most recent event published by `contract_id` is `ev`.
+fn assert_latest_event<E: Event>(env: &Env, contract_id: &Address, ev: E) {
+    let want = ev.to_xdr(env, contract_id);
+    let evs = env.events().all().filter_by_contract(contract_id);
+    assert_eq!(
+        evs.events().last(),
+        Some(&want),
+        "{} was not the most recent event emitted",
+        core::any::type_name::<E>()
+    );
+}
+
 // ============================================================
 // Ownable Tests
 // ============================================================
@@ -196,6 +216,83 @@ fn test_ownable_two_step_transfer() {
     client.accept_ownership();
     assert_eq!(client.get_owner(), Some(new_owner.clone()));
     assert_eq!(client.get_pending_owner(), None);
+}
+
+#[test]
+fn test_ownable_two_step_transfer_publishes_events() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+
+    client.init_owner(&owner);
+
+    client.transfer_ownership(&new_owner);
+    assert_latest_event(
+        &env,
+        &contract_id,
+        OwnershipTransferStartedEvent {
+            previous_owner: owner.clone(),
+            new_owner: new_owner.clone(),
+        },
+    );
+
+    client.accept_ownership();
+    assert_latest_event(
+        &env,
+        &contract_id,
+        OwnershipTransferredEvent {
+            previous_owner: owner,
+            new_owner,
+        },
+    );
+}
+
+#[test]
+fn test_ownable_set_new_owner() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+
+    client.init_owner(&owner);
+    client.set_new_owner(&new_owner);
+
+    assert_eq!(client.get_owner(), Some(new_owner.clone()));
+    assert!(client.is_owner(&new_owner));
+    assert!(!client.is_owner(&owner));
+    assert_eq!(client.get_pending_owner(), None);
+}
+
+#[test]
+fn test_ownable_set_new_owner_publishes_event() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+
+    client.init_owner(&owner);
+    client.set_new_owner(&new_owner);
+
+    // One-step transfers must be as observable as the two-step flow.
+    assert_latest_event(
+        &env,
+        &contract_id,
+        OwnershipTransferredEvent {
+            previous_owner: owner,
+            new_owner,
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_ownable_set_new_owner_not_initialized() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let new_owner = Address::generate(&env);
+
+    client.set_new_owner(&new_owner);
 }
 
 #[test]
