@@ -79,7 +79,7 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 	txm.transactionsMapLock.RUnlock()
 
 	tx.mu.RLock()
-	assert.Equal(t, "test-hash", tx.TxHash)
+	assert.Equal(t, lastSendRequestHash(t, mock), tx.TxHash, "tracked hash is the locally computed envelope hash, not the rpc string")
 	assert.NotNil(t, tx.Fee)
 	assert.True(t, tx.Fee.Cmp(big.NewInt(0)) > 0)
 	tx.mu.RUnlock()
@@ -415,7 +415,10 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget
 	assert.Equal(t, 0, store.InflightCount())
 }
 
-func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
+// A PENDING response with no hash means the node accepted the envelope but sent a
+// malformed reply. The envelope may be in the mempool, so the TXM must keep the
+// sequence reserved and track the tx under the hash it computed itself.
+func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashTracksLocalHash(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
 	mock := &mockRPCClient{
@@ -425,6 +428,7 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending},
+		getTransactionResp:  protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}},
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -436,13 +440,14 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 	require.Eventually(t, func() bool {
 		st, err := txm.GetStatus(txID)
 		require.NoError(t, err)
-		return st == commontypes.Failed
+		return st == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond)
 
 	store := txm.accountStore.GetTxStore(testAddress)
 	require.NotNil(t, store)
-	assert.Equal(t, int64(101), store.GetNextSequence())
-	assert.Equal(t, 0, store.InflightCount())
+	assert.Equal(t, int64(102), store.GetNextSequence(), "sequence 101 stays reserved for the accepted envelope")
+	require.Equal(t, 1, store.InflightCount())
+	assert.Equal(t, lastSendRequestHash(t, mock), store.GetUnconfirmed()[0].Hash)
 }
 
 func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
@@ -499,15 +504,19 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 		}
 		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
 	}
-	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	// The TXM polls the hash it computed for the restore envelope, so the hook has to
+	// recognise that hash rather than a fixed string.
+	var restoreHash atomic.Pointer[string]
+	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		hash := sendRequestHash(t, req)
 		if sendCalls.Add(1) == 1 {
+			restoreHash.Store(&hash)
 			mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
 		}
-		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "original-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: hash}, nil
 	}
 	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
-		if req.Hash == "restore-hash" {
+		if h := restoreHash.Load(); h != nil && req.Hash == *h {
 			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
 		}
 		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
@@ -581,16 +590,15 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 			RestorePreamble: &preamble,
 		},
 	}
-	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	// Every send in this test is a restore (the invoke never gets past its second
+	// simulation), so any polled hash is a restore hash and confirms successfully.
+	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		sendCalls.Add(1)
 		mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: sendRequestHash(t, req)}, nil
 	}
-	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
-		if req.Hash == "restore-hash" {
-			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
-		}
-		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
+	mock.getTransactionHook = func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
 	}
 
 	cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}

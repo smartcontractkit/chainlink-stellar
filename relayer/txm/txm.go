@@ -143,13 +143,25 @@ func (s *StellarTxm) Start(_ context.Context) error {
 	})
 }
 
+// Close stops the loops. broadcastChan is deliberately left open: broadcastLoop exits
+// on s.stop, and closing the channel would turn any late Enqueue/maybeRetry send into a
+// panic that takes the whole LOOP plugin down. Enqueue refuses work once s.stop is closed.
 func (s *StellarTxm) Close() error {
 	return s.starter.StopOnce(s.Name(), func() error {
 		close(s.stop)
 		s.done.Wait()
-		close(s.broadcastChan)
 		return nil
 	})
+}
+
+// stopped reports whether Close has begun.
+func (s *StellarTxm) stopped() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
+	}
 }
 
 // --- Enqueue ---
@@ -181,6 +193,11 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		return "", fmt.Errorf("invalid FromAddress %q: %w", fromAddr, err)
 	}
 
+	fingerprint, err := txFingerprint(fromAddr, req.Operations, req.LedgerBoundsOffset, req.MaxResourceFee)
+	if err != nil {
+		return "", fmt.Errorf("invalid operations: %w", err)
+	}
+
 	tx := &StellarTx{
 		ID:                 txID,
 		Timestamp:          time.Now(),
@@ -188,6 +205,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		Operations:         req.Operations,
 		LedgerBoundsOffset: req.LedgerBoundsOffset,
 		MaxResourceFee:     req.MaxResourceFee,
+		Fingerprint:        fingerprint,
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
@@ -244,17 +262,29 @@ func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 }
 
 // enqueueTransaction stores the tx and pushes it to broadcastChan.
-// If tx.ID is already present (after prune), returns that id with a nil error and does not
-// enqueue again (idempotent, matching EVM TxMgr CreateTransaction with IdempotencyKey).
+// If tx.ID is already present with the same payload fingerprint, returns that id with a
+// nil error and does not enqueue again (idempotent, matching EVM TxMgr CreateTransaction
+// with IdempotencyKey). If the ID is present with a different fingerprint the request is
+// rejected with ErrIdempotencyKeyPayloadMismatch: the caller asked for different
+// operations than the ones already tracked, and returning the earlier tx's hash would
+// report success for work that was never submitted.
 // On backpressure it drops the oldest queued tx (not the new one): the oldest has
 // the stalest simulation data and the nearest LedgerBounds expiry, so the newer tx's
 // intent takes priority.
 func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (string, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, nil)
 
+	if s.stopped() {
+		return "", ErrTxmStopped
+	}
+
 	s.transactionsMapLock.Lock()
-	if _, exists := s.transactions[tx.ID]; exists {
+	if existing, exists := s.transactions[tx.ID]; exists {
 		s.transactionsMapLock.Unlock()
+		if existing.Fingerprint != tx.Fingerprint {
+			ctxLogger.Errorw("enqueue rejected: tx id already present with a different payload", "txID", tx.ID)
+			return "", fmt.Errorf("%w: id %s", ErrIdempotencyKeyPayloadMismatch, tx.ID)
+		}
 		ctxLogger.Debugw("enqueue idempotent: tx id already present, not re-enqueueing", "txID", tx.ID)
 		s.closeDone(tx)
 		return tx.ID, nil
@@ -681,7 +711,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		maxTime := assembledTx.Timebounds().MaxTime
 
-		signedTx, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
+		signedTx, localHash, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
 		if err != nil {
 			ctxLogger.Errorw("failed to sign transaction", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSigning)
@@ -713,9 +743,9 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime)
+		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime, localHash)
 		if accepted {
-			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", submitResult.Hash)
+			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", localHash)
 			s.markBroadcastAt(tx)
 			s.metrics.IncrementBroadcastedTxs(ctx)
 			s.updateTransactionStatus(tx, commontypes.Unconfirmed)

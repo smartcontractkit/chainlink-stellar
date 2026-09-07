@@ -1,6 +1,10 @@
 package txm
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -11,18 +15,29 @@ import (
 	commontypes "github.com/smartcontractkit/chainlink-common/pkg/types"
 )
 
+var (
+	// ErrTxmStopped is returned by Enqueue/EnqueueAndWait once Close has begun.
+	ErrTxmStopped = errors.New("txm stopped")
+	// ErrIdempotencyKeyPayloadMismatch is returned when a TxRequest reuses an ID that is
+	// already tracked but carries a different payload (operations, source account, bounds
+	// or fee cap). Silently returning the earlier tx would drop the new operations while
+	// reporting success.
+	ErrIdempotencyKeyPayloadMismatch = errors.New("idempotency key already used with a different payload")
+)
+
 // StellarTx represents a single transaction tracked by the TXM from enqueue to confirmation.
-// ID/Metadata/Timestamp/FromAddress/Operations/LedgerBoundsOffset are immutable after
-// enqueue (safe to read without a lock). mu guards the mutable fields below it.
+// ID/Metadata/Timestamp/FromAddress/Operations/LedgerBoundsOffset/MaxResourceFee/Fingerprint
+// are immutable after enqueue (safe to read without a lock). mu guards the mutable fields below it.
 type StellarTx struct {
 	ID          string
 	Metadata    *commontypes.TxMeta
 	Timestamp   time.Time // when the tx was enqueued; zero if unset
-	FromAddress string // G... strkey: source account and signer for this TXM
+	FromAddress string    // G... strkey: source account and signer for this TXM
 
 	Operations         []txnbuild.Operation
 	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
-	MaxResourceFee uint64
+	MaxResourceFee     uint64
+	Fingerprint        [32]byte // payload digest bound to ID; see txFingerprint
 
 	Attempt       atomic.Uint64
 	InfraAttempts atomic.Uint64
@@ -45,6 +60,39 @@ type StellarTx struct {
 	doneOnce sync.Once
 }
 
+// txFingerprint digests everything about a request that changes the envelope the TXM
+// would sign: source account, operations (as XDR), ledger-bounds override and the
+// per-request resource-fee cap. Two requests with the same ID must have the same
+// fingerprint to be treated as the same submission.
+func txFingerprint(fromAddress string, ops []txnbuild.Operation, ledgerBoundsOffset uint32, maxResourceFee uint64) ([32]byte, error) {
+	h := sha256.New()
+	h.Write([]byte(fromAddress))
+	var scratch [8]byte
+	binary.BigEndian.PutUint32(scratch[:4], ledgerBoundsOffset)
+	h.Write(scratch[:4])
+	binary.BigEndian.PutUint64(scratch[:], maxResourceFee)
+	h.Write(scratch[:])
+	for i, op := range ops {
+		if op == nil {
+			return [32]byte{}, fmt.Errorf("operation %d is nil", i)
+		}
+		xdrOp, err := op.BuildXDR()
+		if err != nil {
+			return [32]byte{}, fmt.Errorf("operation %d: build xdr: %w", i, err)
+		}
+		b, err := xdrOp.MarshalBinary()
+		if err != nil {
+			return [32]byte{}, fmt.Errorf("operation %d: marshal xdr: %w", i, err)
+		}
+		binary.BigEndian.PutUint64(scratch[:], uint64(len(b)))
+		h.Write(scratch[:])
+		h.Write(b)
+	}
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out, nil
+}
+
 // TxRequest is the input accepted by Enqueue / EnqueueAndWait.
 type TxRequest struct {
 	ID                 string               // idempotency key (auto-generated if empty)
@@ -52,7 +100,7 @@ type TxRequest struct {
 	Operations         []txnbuild.Operation // the Stellar operations to execute
 	LedgerBoundsOffset uint32               // per-tx override (0 = use config default)
 	Metadata           *commontypes.TxMeta  // optional; carries WorkflowExecutionID and other node-level context
-	MaxResourceFee uint64 // optional; per-tx override (0 = use config default)
+	MaxResourceFee     uint64               // optional; per-tx override (0 = use config default)
 }
 
 // TxResult is returned by EnqueueAndWait and Simulate with the outcome of a transaction.
