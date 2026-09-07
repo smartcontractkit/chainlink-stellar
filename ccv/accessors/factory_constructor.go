@@ -34,45 +34,12 @@ func loadStellarFileConfig(path string) (*common.Config, error) {
 	return &cfg, nil
 }
 
-func mergeReaderConfig(base, overlay sourcereader.ReaderConfig) sourcereader.ReaderConfig {
-	out := base
-	if overlay.NetworkPassphrase != "" {
-		out.NetworkPassphrase = overlay.NetworkPassphrase
-	}
-	if overlay.OnRampContractID != "" {
-		out.OnRampContractID = overlay.OnRampContractID
-	}
-	if overlay.RMNRemoteContractID != "" {
-		out.RMNRemoteContractID = overlay.RMNRemoteContractID
-	}
-	if overlay.SorobanRPCURL != "" {
-		out.SorobanRPCURL = overlay.SorobanRPCURL
-	}
-	return out
-}
-
 // stellarConfigPath returns STELLAR_CONFIG_PATH or the default bind-mount path.
 func stellarConfigPath() string {
 	if p, ok := os.LookupEnv(StellarConfigPathEnv); ok {
 		return p
 	}
 	return common.DefaultStellarConfigPath
-}
-
-// mergeFileAndJobReaderConfigs starts from file-backed reader_configs and merges
-// each Stellar chain's blockchain_infos entry from the job spec (non-empty job fields win).
-func mergeFileAndJobReaderConfigs(
-	file map[string]sourcereader.ReaderConfig,
-	job chainaccess.Infos[sourcereader.ReaderConfig],
-) map[string]sourcereader.ReaderConfig {
-	out := make(map[string]sourcereader.ReaderConfig)
-	if file != nil {
-		maps.Copy(out, file)
-	}
-	for sel, jobCfg := range job {
-		out[sel] = mergeReaderConfig(out[sel], jobCfg)
-	}
-	return out
 }
 
 // applyOnRampRMNHexOverrides fills empty OnRampContractID / RMNRemoteContractID from
@@ -104,34 +71,6 @@ func applyOnRampRMNHexOverrides(
 		readerConfigs[sel] = rc
 	}
 	return nil
-}
-
-func loadStellarJobReaderInfos(genericConfig chainaccess.GenericConfig) (chainaccess.Infos[sourcereader.ReaderConfig], error) {
-	var jobInfos chainaccess.Infos[sourcereader.ReaderConfig]
-	if err := genericConfig.GetAllConcreteConfig(chainsel.FamilyStellar, &jobInfos); err != nil {
-		return nil, fmt.Errorf("get stellar blockchain_infos: %w", err)
-	}
-	return jobInfos, nil
-}
-
-// buildStellarReaderConfigs loads the Stellar file, merges job blockchain_infos for
-// FamilyStellar, then applies on-ramp / RMN remote hex overrides from genericConfig.
-func buildStellarReaderConfigs(configPath string, genericConfig chainaccess.GenericConfig) (map[string]sourcereader.ReaderConfig, error) {
-	stellarFileCfg, err := loadStellarFileConfig(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("load stellar config: %w", err)
-	}
-
-	jobInfos, err := loadStellarJobReaderInfos(genericConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	readerConfigs := mergeFileAndJobReaderConfigs(stellarFileCfg.ReaderConfigs, jobInfos)
-	if err := applyOnRampRMNHexOverrides(readerConfigs, genericConfig.OnRampAddresses, genericConfig.RMNRemoteAddresses); err != nil {
-		return nil, err
-	}
-	return readerConfigs, nil
 }
 
 // buildStellarDestConfigs builds the per-chain destinationConfig map used by
@@ -226,11 +165,16 @@ func buildStellarDestConfigs(
 }
 
 // CreateStellarAccessorFactory is registered with chainaccess.Register for the Stellar family.
-// It merges per-chain reader settings from the Stellar TOML file, Stellar sections under
-// blockchain_infos in the job spec, and on-ramp / RMN remote hex addresses from GenericConfig
-// (same behavior as the legacy committee-verifier bootstrap callback). When the GenericConfig
-// also carries an executor ChainConfiguration, the Stellar accessor additionally exposes
-// DestinationReader and ContractTransmitter capabilities for those chains.
+// Per-chain reader settings (RPC URL, network passphrase) come from the bind-mounted Stellar
+// TOML written by the devenv modifiers; on-ramp / RMN remote hex addresses come from the job
+// spec via GenericConfig. When the GenericConfig also carries an executor ChainConfiguration,
+// the Stellar accessor additionally exposes DestinationReader and ContractTransmitter
+// capabilities for those chains.
+//
+// The job spec no longer carries a Stellar blockchain_infos section (removed upstream in
+// chainlink-ccv changelog/2026-07-14_blockchain_infos_removal.md). Nothing is lost: it only
+// ever duplicated network_passphrase and soroban_rpc_url, both of which the modifiers already
+// write into the mounted TOML.
 func CreateStellarAccessorFactory(lggr logger.Logger, genericConfig chainaccess.GenericConfig) (chainaccess.AccessorFactory, error) {
 	configPath := stellarConfigPath()
 	stellarFileCfg, err := loadStellarFileConfig(configPath)
@@ -238,11 +182,8 @@ func CreateStellarAccessorFactory(lggr logger.Logger, genericConfig chainaccess.
 		return nil, fmt.Errorf("load stellar config: %w", err)
 	}
 
-	jobInfos, err := loadStellarJobReaderInfos(genericConfig)
-	if err != nil {
-		return nil, err
-	}
-	readerConfigs := mergeFileAndJobReaderConfigs(stellarFileCfg.ReaderConfigs, jobInfos)
+	readerConfigs := make(map[string]sourcereader.ReaderConfig, len(stellarFileCfg.ReaderConfigs))
+	maps.Copy(readerConfigs, stellarFileCfg.ReaderConfigs)
 	if err := applyOnRampRMNHexOverrides(readerConfigs, genericConfig.OnRampAddresses, genericConfig.RMNRemoteAddresses); err != nil {
 		return nil, err
 	}
