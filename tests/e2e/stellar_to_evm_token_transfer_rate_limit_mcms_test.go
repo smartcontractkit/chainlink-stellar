@@ -91,9 +91,6 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 	poolClient := lrpbindings.NewLockReleasePoolClient(env.Deployer, poolContractID)
 	l.Info().Str("poolContractID", poolContractID).Msg("Using lock-release token pool")
 
-	poolRaw, err := helpers.ContractIDToBytes32(poolContractID)
-	require.NoError(t, err)
-
 	senderAddr, err := stellarChain.GetSenderAddress()
 	require.NoError(t, err)
 
@@ -115,7 +112,7 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		saltTransfer[31] = 3
 		helpers.CleanupMCMSTestPool(
 			t, context.Background(), env, gov,
-			poolContractID, poolRaw, evmDetails.ChainSelector,
+			poolContractID, evmDetails.ChainSelector,
 			env.DeployerKP.Address(),
 			timelockPredecessor, saltTransfer,
 		)
@@ -200,14 +197,14 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		require.NotNil(t, pending)
 		require.Equal(t, gov.TimelockID, *pending)
 
-		acceptData, err := helpers.EncodeTimelockInvokePayload("accept_ownership", nil)
+		acceptArgs, err := helpers.EncodeTimelockCallArgs(nil)
 		require.NoError(t, err)
 
 		var saltAccept [32]byte
 		saltAccept[31] = 1
 		callsAccept := timelockbindings.Calls{
 			Inner: []timelockbindings.Call{
-				{To: poolRaw, Data: acceptData},
+				{Target: poolContractID, Function: "accept_ownership", ArgsXdr: acceptArgs},
 			},
 		}
 
@@ -231,7 +228,7 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		}
 		inbound := lrpbindings.RateLimitConfig{}
 
-		rateLimitData, err := helpers.EncodeTimelockInvokePayload("set_rate_limit_config", []xdr.ScVal{
+		rateLimitArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{
 			scval.Uint64ToScVal(evmDetails.ChainSelector),
 			scval.MustToScVal(outbound.ToScVal()),
 			scval.MustToScVal(inbound.ToScVal()),
@@ -243,7 +240,7 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		saltRateLimit[31] = 2
 		callsRateLimit := timelockbindings.Calls{
 			Inner: []timelockbindings.Call{
-				{To: poolRaw, Data: rateLimitData},
+				{Target: poolContractID, Function: "set_rate_limit_config", ArgsXdr: rateLimitArgs},
 			},
 		}
 

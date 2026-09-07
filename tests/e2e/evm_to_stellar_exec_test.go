@@ -156,9 +156,9 @@ func TestEVMToStellarExecutionHappyPath(t *testing.T) {
 		require.Equalf(
 			t,
 			cciptestinterfaces.ExecutionStateSuccess,
-			execEvent.State,
+			execEvent.Event.State,
 			"message should have been successfully executed, return data: %x",
-			execEvent.ReturnData,
+			execEvent.Event.ReturnData,
 		)
 
 		l.Info().
@@ -306,9 +306,9 @@ func TestEVMToStellarExecutionCursedSource(t *testing.T) {
 		require.Equalf(
 			t,
 			cciptestinterfaces.ExecutionStateSuccess,
-			execEventRetried.State,
+			execEventRetried.Event.State,
 			"stuck message should have been successfully executed after uncurse, return data: %x",
-			execEventRetried.ReturnData,
+			execEventRetried.Event.ReturnData,
 		)
 
 		l.Info().
@@ -342,9 +342,9 @@ func TestEVMToStellarExecutionCursedSource(t *testing.T) {
 		require.Equalf(
 			t,
 			cciptestinterfaces.ExecutionStateSuccess,
-			execEvent2.State,
+			execEvent2.Event.State,
 			"new message should have been successfully executed after uncurse, return data: %x",
-			execEvent2.ReturnData,
+			execEvent2.Event.ReturnData,
 		)
 
 		l.Info().
@@ -450,15 +450,15 @@ func TestEVMToStellarExecutionInvalidReceiver(t *testing.T) {
 		require.Equalf(
 			t,
 			cciptestinterfaces.ExecutionStateFailure,
-			execEvent.State,
+			execEvent.Event.State,
 			"execution should fail because the receiver does not exist on Stellar, return data: %x",
-			execEvent.ReturnData,
+			execEvent.Event.ReturnData,
 		)
 
 		// Verify the return data contains the ReceiverDoesNotExist error code (114).
 		const ccipErrorReceiverDoesNotExist uint32 = 114
-		require.GreaterOrEqual(t, len(execEvent.ReturnData), 4, "return data should contain at least 4 bytes for error code")
-		errorCode := binary.BigEndian.Uint32(execEvent.ReturnData[:4])
+		require.GreaterOrEqual(t, len(execEvent.Event.ReturnData), 4, "return data should contain at least 4 bytes for error code")
+		errorCode := binary.BigEndian.Uint32(execEvent.Event.ReturnData[:4])
 		require.Equal(t, ccipErrorReceiverDoesNotExist, errorCode,
 			"return data should encode CCIPError::ReceiverDoesNotExist (114)")
 
@@ -582,8 +582,8 @@ func runEVMToStellarV3Scenario(
 	if err != nil {
 		return fmt.Errorf("confirm exec on dest: %w", err)
 	}
-	if execEvent.State != cciptestinterfaces.ExecutionStateSuccess {
-		return fmt.Errorf("unexpected execution state %s, return data: %x", execEvent.State, execEvent.ReturnData)
+	if execEvent.Event.State != cciptestinterfaces.ExecutionStateSuccess {
+		return fmt.Errorf("unexpected execution state %s, return data: %x", execEvent.Event.State, execEvent.Event.ReturnData)
 	}
 	return nil
 }

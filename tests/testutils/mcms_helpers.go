@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 )
@@ -43,71 +44,93 @@ func ChainNetworkIDFromHex(chainIDHex string) ([32]byte, error) {
 	return out, nil
 }
 
-func appendUint40(buf *bytes.Buffer, v uint64) error {
-	if v >= 1<<40 {
+// mcmsEncodingVersion matches contracts/mcms/src/constants.rs ENCODING_VERSION.
+const mcmsEncodingVersion uint32 = 1
+
+// mcmsUint40Limit matches contracts/mcms/src/encoding.rs UINT40_LIMIT.
+const mcmsUint40Limit uint64 = 1 << 40
+
+func appendU32BE(buf *bytes.Buffer, v uint32) {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], v)
+	buf.Write(b[:])
+}
+
+func appendU64BE(buf *bytes.Buffer, v uint64) error {
+	if v >= mcmsUint40Limit {
 		return fmt.Errorf("value overflows uint40: %d", v)
 	}
-	var w [32]byte
-	be := make([]byte, 8)
-	binary.BigEndian.PutUint64(be, v)
-	copy(w[27:], be[3:8])
-	buf.Write(w[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], v)
+	buf.Write(b[:])
 	return nil
 }
 
-func appendABIBytes(buf *bytes.Buffer, data []byte) {
-	ln := uint64(len(data))
-	var lenWord [32]byte
-	lb := make([]byte, 8)
-	binary.BigEndian.PutUint64(lb, ln)
-	copy(lenWord[24:], lb)
-	buf.Write(lenWord[:])
-	buf.Write(data)
-	pad := (32 - (len(data) % 32)) % 32
-	for i := 0; i < pad; i++ {
-		buf.WriteByte(0)
-	}
-}
-
-// HashRootMetadata returns keccak256(abi.encode(D_META, StellarRootMetadata)) per contracts/mcms/src/abi_encoding.rs.
+// HashRootMetadata returns keccak256(encode_root_metadata(m)) per contracts/mcms/src/encoding.rs.
 func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
+	if m.EncodingVersion != mcmsEncodingVersion {
+		return [32]byte{}, fmt.Errorf("unsupported encoding version %d, want %d", m.EncodingVersion, mcmsEncodingVersion)
+	}
+	multisig, err := ContractIDToBytes32(m.Multisig)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("decode multisig contract id: %w", err)
+	}
 	var buf bytes.Buffer
 	buf.Write(domainMetaStellar[:])
-	buf.Write(m.ChainId[:])
-	buf.Write(m.Multisig[:])
-	if err := appendUint40(&buf, m.PreOpCount); err != nil {
+	appendU32BE(&buf, m.EncodingVersion)
+	buf.Write(m.NetworkId[:])
+	buf.Write(multisig[:])
+	if err := appendU64BE(&buf, m.PreOpCount); err != nil {
 		return [32]byte{}, err
 	}
-	if err := appendUint40(&buf, m.PostOpCount); err != nil {
+	if err := appendU64BE(&buf, m.PostOpCount); err != nil {
 		return [32]byte{}, err
 	}
-	var boolWord [32]byte
 	if m.OverridePreviousRoot {
-		boolWord[31] = 1
+		buf.WriteByte(1)
+	} else {
+		buf.WriteByte(0)
 	}
-	buf.Write(boolWord[:])
+	var cv [8]byte
+	binary.BigEndian.PutUint64(cv[:], m.ConfigVersion)
+	buf.Write(cv[:])
 	h := crypto.Keccak256(buf.Bytes())
 	var digest [32]byte
 	copy(digest[:], h)
 	return digest, nil
 }
 
-// HashStellarOp returns keccak256(abi.encode(D_OP, StellarOp)) per contracts/mcms/src/abi_encoding.rs.
+// HashStellarOp returns keccak256(encode_stellar_op(op)) per contracts/mcms/src/encoding.rs.
+// The function field is encoded as its Soroban Symbol XDR (length-prefixed string).
 func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
+	if op.EncodingVersion != mcmsEncodingVersion {
+		return [32]byte{}, fmt.Errorf("unsupported encoding version %d, want %d", op.EncodingVersion, mcmsEncodingVersion)
+	}
+	multisig, err := ContractIDToBytes32(op.Multisig)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("decode multisig contract id: %w", err)
+	}
+	target, err := ContractIDToBytes32(op.Target)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("decode target contract id: %w", err)
+	}
+	fnXDR, err := xdr.ScSymbol(op.Function).MarshalBinary()
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("marshal function symbol %q: %w", op.Function, err)
+	}
 	var buf bytes.Buffer
 	buf.Write(domainOpStellar[:])
-	buf.Write(op.ChainId[:])
-	buf.Write(op.Multisig[:])
-	if err := appendUint40(&buf, op.Nonce); err != nil {
+	appendU32BE(&buf, op.EncodingVersion)
+	buf.Write(op.NetworkId[:])
+	buf.Write(multisig[:])
+	if err := appendU64BE(&buf, op.Nonce); err != nil {
 		return [32]byte{}, err
 	}
-	buf.Write(op.To[:])
-	buf.Write(op.Value[:])
-	var off [32]byte
-	off[30] = 0
-	off[31] = 192
-	buf.Write(off[:])
-	appendABIBytes(&buf, op.Data)
+	buf.Write(target[:])
+	appendU32BE(&buf, uint32(len(fnXDR)))
+	buf.Write(fnXDR)
+	appendU32BE(&buf, uint32(len(op.ArgsXdr)))
+	buf.Write(op.ArgsXdr)
 	h := crypto.Keccak256(buf.Bytes())
 	var digest [32]byte
 	copy(digest[:], h)

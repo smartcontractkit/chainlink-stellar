@@ -41,3 +41,33 @@ func TestEncodeSorobanMCMSInvokePayload_transferOwnership(t *testing.T) {
 		t.Fatalf("expected 2-element vec, got %v", vec)
 	}
 }
+
+func TestEncodeSorobanInvokeArgs_empty(t *testing.T) {
+	b, err := EncodeSorobanInvokeArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vec xdr.ScVec
+	if err := vec.UnmarshalBinary(b); err != nil {
+		t.Fatalf("unmarshal roundtrip: %v", err)
+	}
+	if len(vec) != 0 {
+		t.Fatalf("expected empty vec, got %d elements", len(vec))
+	}
+}
+
+func TestEncodeSorobanInvokeArgs_transferOwnership(t *testing.T) {
+	b, err := EncodeSorobanInvokeArgs([]xdr.ScVal{
+		scval.AddressToScVal("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vec xdr.ScVec
+	if err := vec.UnmarshalBinary(b); err != nil {
+		t.Fatalf("unmarshal roundtrip: %v", err)
+	}
+	if len(vec) != 1 {
+		t.Fatalf("expected 1-element vec, got %d", len(vec))
+	}
+}

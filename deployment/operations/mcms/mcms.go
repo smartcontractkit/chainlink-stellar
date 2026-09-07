@@ -14,24 +14,32 @@ const ContractType = "MCMS"
 // Deploy uploads mcms.wasm.
 var Deploy = stellarops.NewDeployOperation("mcms:deploy", "Deploys the MCMS Soroban contract from WASM")
 
-// InitializeInput configures MCMS owner and chain network id.
+// InitializeInput configures MCMS owner, chain network id, and the initial signer config.
+// The on-chain `initialize` applies the signer config atomically (contracts/mcms/src/lib.rs),
+// so no separate set_config is needed for a fresh deploy.
 type InitializeInput struct {
-	ContractID     string   `json:"contract_id"`
-	Owner          string   `json:"owner"`
-	ChainNetworkID [32]byte `json:"chain_network_id"`
+	ContractID      string                       `json:"contract_id"`
+	Owner           string                       `json:"owner"`
+	ChainNetworkID  [32]byte                     `json:"chain_network_id"`
+	SignerAddresses mcmsbindings.SignerAddresses `json:"signer_addresses"`
+	SignerGroups    mcmsbindings.SignerGroups    `json:"signer_groups"`
+	GroupQuorums    [32]byte                     `json:"group_quorums"`
+	GroupParents    [32]byte                     `json:"group_parents"`
+	// InstanceLabel is the introspection-only role label (e.g. "PROPOSER"); never an
+	// authorization primitive and never part of leaf hashes.
+	InstanceLabel string `json:"instance_label"`
 }
 
 // Initialize calls MCMS `initialize`.
 var Initialize = cldfops.NewOperation(
 	"mcms:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes MCMS with owner and chain network id",
+	"Initializes MCMS with owner, chain network id, and initial signer config",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		// TODO changes broke this, but keep for when CCIP picks up stellar again
-		//c := mcmsbindings.NewMcmsClient(d.Invoker, in.ContractID)
-		//if err := c.Initialize(b.GetContext(), in.Owner, in.ChainNetworkID); err != nil {
-		//return stellarops.Void{}, err
-		//}
+		c := mcmsbindings.NewMcmsClient(d.Invoker, in.ContractID)
+		if err := c.Initialize(b.GetContext(), in.Owner, in.ChainNetworkID, in.SignerAddresses, in.SignerGroups, in.GroupQuorums, in.GroupParents, in.InstanceLabel); err != nil {
+			return stellarops.Void{}, err
+		}
 		return stellarops.Void{}, nil
 	},
 )

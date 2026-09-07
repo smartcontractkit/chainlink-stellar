@@ -8,7 +8,9 @@ import (
 
 	fqopstype "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/fee_quoter"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/fees"
+	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
+	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
@@ -47,8 +49,7 @@ func TestStellarFeeAdapter_GetDefaultDestChainConfig(t *testing.T) {
 
 func TestStellarFeeAdapter_GetFeeContractRef_emptyDatastore(t *testing.T) {
 	a := &StellarFeeAdapter{}
-	env := envWithDatastore(newSealedDatastore())
-	_, err := a.GetFeeContractRef(env, testFQRef(), 42, 0)
+	_, err := a.GetFeeContractRef(cldf_ops.Bundle{}, cldf_chain.NewBlockChains(nil), newSealedDatastore(), testFQRef(), 42, 0)
 	require.Error(t, err)
 }
 
@@ -66,8 +67,7 @@ func TestStellarFeeAdapter_GetFeeContractRef_found(t *testing.T) {
 		Address:       hexAddr,
 	}
 	require.NoError(t, ds.Addresses().Upsert(ref))
-	env := envWithDatastore(ds.Seal())
-	got, err := a.GetFeeContractRef(env, testFQRef(), 42, 0)
+	got, err := a.GetFeeContractRef(cldf_ops.Bundle{}, cldf_chain.NewBlockChains(nil), ds.Seal(), testFQRef(), 42, 0)
 	require.NoError(t, err)
 	require.Equal(t, hexAddr, got.Address)
 
@@ -78,15 +78,13 @@ func TestStellarFeeAdapter_GetFeeContractRef_found(t *testing.T) {
 
 func TestStellarFeeAdapter_SetTokenTransferFee_nonNil(t *testing.T) {
 	a := &StellarFeeAdapter{}
-	env := envWithDatastore(newSealedDatastore())
-	seq := a.SetTokenTransferFee(env, testFQRef())
+	seq := a.SetTokenTransferFee(newSealedDatastore(), testFQRef())
 	require.NotNil(t, seq)
 }
 
 func TestStellarFeeAdapter_ApplyDestChainConfigUpdates_nonNil(t *testing.T) {
 	a := &StellarFeeAdapter{}
-	env := envWithDatastore(newSealedDatastore())
-	seq := a.ApplyDestChainConfigUpdates(env, testFQRef())
+	seq := a.ApplyDestChainConfigUpdates(newSealedDatastore(), testFQRef())
 	require.NotNil(t, seq)
 }
 

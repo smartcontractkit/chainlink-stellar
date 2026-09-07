@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	chainsel "github.com/smartcontractkit/chain-selectors"
 
+	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -21,9 +22,10 @@ import (
 // and execute_batch after min delay (Go Merkle + EIP-191).
 //
 // Caller identity matches EVM-style wiring: the ManyChainMultiSig contract invokes the timelock, so
-// msg.sender-style authority is the multisig contract. On Soroban, schedule_batch and execute_batch
-// pass caller = MCMS contract address; MCMS holds PROPOSER and EXECUTOR on the timelock so nested
-// require_auth() succeeds when MCMS.execute invokes the timelock (see contracts/timelock roles.rs).
+// msg.sender-style authority is the multisig contract. On Soroban, schedule_batch passes
+// caller = MCMS contract address and MCMS holds PROPOSER on the timelock so nested
+// require_auth() succeeds when MCMS.execute invokes the timelock; execute_batch is
+// permissionless once the op is ready (see contracts/timelock/src/lib.rs).
 func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -58,42 +60,29 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 	mcmsClient := mcmsbindings.NewMcmsClient(deployer, mcmsID)
 	tlClient := timelockbindings.NewTimelockClient(deployer, tlID)
 
-	if err := mcmsClient.Initialize(ctx, deployerKP.Address(), chainNetID); err != nil {
-		t.Fatalf("MCMS Initialize: %v", err)
-	}
-
 	var groupQuorums [32]byte
 	groupQuorums[0] = 1
 	var groupParents [32]byte
-	if err := mcmsClient.SetConfig(ctx,
+	if err := mcmsClient.Initialize(ctx, deployerKP.Address(), chainNetID,
 		mcmsbindings.SignerAddresses{Inner: [][32]byte{paddedSigner}},
 		mcmsbindings.SignerGroups{Inner: []uint32{0}},
 		groupQuorums,
 		groupParents,
-		false,
+		"PROPOSER",
 	); err != nil {
-		t.Fatalf("MCMS SetConfig: %v", err)
+		t.Fatalf("MCMS Initialize: %v", err)
 	}
 
 	const minDelaySec uint64 = 3
-	// Admin is deployer; MCMS is both proposer and executor so MCMS-mediated ops authenticate (same
-	// logical caller as ManyChainMultiSig calling RBACTimelock on EVM).
-	if err := tlClient.Initialize(ctx, minDelaySec, deployerKP.Address(),
-		[]string{mcmsID},
+	// MCMS is proposer so MCMS-mediated ops authenticate (same logical caller as
+	// ManyChainMultiSig calling RBACTimelock on EVM). The timelock grants ADMIN_ROLE only to
+	// itself and execute_batch is permissionless; there is no admin/executor wiring.
+	if err := tlClient.Initialize(ctx, minDelaySec,
 		[]string{mcmsID},
 		[]string{},
 		[]string{},
 	); err != nil {
 		t.Fatalf("Timelock Initialize: %v", err)
-	}
-
-	mcmsRaw, err := helpers.ContractIDToBytes32(mcmsID)
-	if err != nil {
-		t.Fatalf("mcms id bytes: %v", err)
-	}
-	tlRaw, err := helpers.ContractIDToBytes32(tlID)
-	if err != nil {
-		t.Fatalf("timelock id bytes: %v", err)
 	}
 
 	var predecessor [32]byte
@@ -102,7 +91,7 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 
 	emptyCalls := timelockbindings.Calls{Inner: []timelockbindings.Call{}}
 
-	scheduleData, err := helpers.SorobanScheduleBatch(mcmsID, emptyCalls, predecessor, saltSched, minDelaySec)
+	scheduleArgs, err := helpers.SorobanScheduleBatch(mcmsID, emptyCalls, predecessor, saltSched, minDelaySec)
 	if err != nil {
 		t.Fatalf("encode schedule_batch: %v", err)
 	}
@@ -112,20 +101,28 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 		t.Fatalf("mcms valid_until: %v", err)
 	}
 
+	configVersion, err := mcmsClient.GetConfigVersion(ctx)
+	if err != nil {
+		t.Fatalf("mcms get_config_version: %v", err)
+	}
+
 	opSchedule := mcmsbindings.StellarOp{
-		ChainId:  chainNetID,
-		Multisig: mcmsRaw,
-		Nonce:    0,
-		To:       tlRaw,
-		Value:    [32]byte{},
-		Data:     scheduleData,
+		NetworkId:       chainNetID,
+		Multisig:        mcmsID,
+		Nonce:           0,
+		Target:          tlID,
+		Function:        "schedule_batch",
+		ArgsXdr:         scheduleArgs,
+		EncodingVersion: bindings.SorobanInvokeEncodingVersion,
 	}
 	meta1 := mcmsbindings.StellarRootMetadata{
-		ChainId:              chainNetID,
-		Multisig:             mcmsRaw,
+		NetworkId:            chainNetID,
+		Multisig:             mcmsID,
 		PreOpCount:           0,
 		PostOpCount:          1,
 		OverridePreviousRoot: false,
+		ConfigVersion:        configVersion,
+		EncodingVersion:      bindings.SorobanInvokeEncodingVersion,
 	}
 
 	metaLeaf1, err := helpers.HashRootMetadata(meta1)
@@ -178,25 +175,28 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 		t.Fatalf("scheduled op never became ready: ready=%v err=%v", okReady, err)
 	}
 
-	execData, err := helpers.SorobanExecuteBatch(mcmsID, emptyCalls, predecessor, saltSched)
+	execArgs, err := helpers.SorobanExecuteBatch(emptyCalls, predecessor, saltSched)
 	if err != nil {
 		t.Fatalf("encode execute_batch: %v", err)
 	}
 
 	opExec := mcmsbindings.StellarOp{
-		ChainId:  chainNetID,
-		Multisig: mcmsRaw,
-		Nonce:    1,
-		To:       tlRaw,
-		Value:    [32]byte{},
-		Data:     execData,
+		NetworkId:       chainNetID,
+		Multisig:        mcmsID,
+		Nonce:           1,
+		Target:          tlID,
+		Function:        "execute_batch",
+		ArgsXdr:         execArgs,
+		EncodingVersion: bindings.SorobanInvokeEncodingVersion,
 	}
 	meta2 := mcmsbindings.StellarRootMetadata{
-		ChainId:              chainNetID,
-		Multisig:             mcmsRaw,
+		NetworkId:            chainNetID,
+		Multisig:             mcmsID,
 		PreOpCount:           1,
 		PostOpCount:          2,
 		OverridePreviousRoot: false,
+		ConfigVersion:        configVersion,
+		EncodingVersion:      bindings.SorobanInvokeEncodingVersion,
 	}
 
 	metaLeaf2, err := helpers.HashRootMetadata(meta2)

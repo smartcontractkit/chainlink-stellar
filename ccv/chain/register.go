@@ -36,6 +36,7 @@ func RegisterStellarDevenvComponents() {
 	registerOnce.Do(func() {
 		chainreg.Register(chainsel.FamilyStellar, chainreg.Registration{
 			ImplFactory:       NewImplFactory(),
+			ExecutorInfo:      NewImplFactory(),
 			CLDFProvider:      NewCLDFProviderFactory(),
 			ChainConfigLoader: StellarChainConfigLoader,
 			VerifierModifier:  modifier.StellarVerifierModifier,

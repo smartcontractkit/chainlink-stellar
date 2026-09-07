@@ -1,6 +1,6 @@
 module github.com/smartcontractkit/chainlink-stellar/bindings
 
-go 1.26.2
+go 1.26.6
 
 require (
 	github.com/stellar/go-stellar-sdk v0.5.0

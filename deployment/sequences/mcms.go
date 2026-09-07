@@ -50,7 +50,8 @@ var DeployStellarMCMS = cldfops.NewSequence(
 		deps := stellardeps.FromDeployer(dep)
 
 		contractID, _ := mcmsutil.FindExistingStellarMCMS(in.ExistingAddresses, in.ChainSelector, qual)
-		if contractID == "" {
+		freshDeploy := contractID == ""
+		if freshDeploy {
 			wasmPath, err := mcmsutil.ResolveMCMSWasmPath()
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
@@ -61,26 +62,33 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy: %w", err)
 			}
 			contractID = depOut.Output.ContractID
+			// initialize applies the signer config atomically (config_version 1).
 			_, err = cldfops.ExecuteOperation(b, mcmsops.Initialize, deps, mcmsops.InitializeInput{
-				ContractID:     contractID,
-				Owner:          ch.Signer.Address(),
-				ChainNetworkID: mcmsutil.ChainNetworkID(ch.NetworkPassphrase),
+				ContractID:      contractID,
+				Owner:           ch.Signer.Address(),
+				ChainNetworkID:  mcmsutil.ChainNetworkID(ch.NetworkPassphrase),
+				SignerAddresses: signerAddrs,
+				SignerGroups:    signerGroups,
+				GroupQuorums:    gq,
+				GroupParents:    gp,
+				InstanceLabel:   "PROPOSER",
 			})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms initialize: %w", err)
 			}
-		}
-
-		_, err = cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
-			ContractID:      contractID,
-			SignerAddresses: signerAddrs,
-			SignerGroups:    signerGroups,
-			GroupQuorums:    gq,
-			GroupParents:    gp,
-			ClearRoot:       true,
-		})
-		if err != nil {
-			return seqcore.OnChainOutput{}, fmt.Errorf("mcms set_config: %w", err)
+		} else {
+			// Pre-existing instance: re-apply the config via set_config (initialize would revert).
+			_, err = cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
+				ContractID:      contractID,
+				SignerAddresses: signerAddrs,
+				SignerGroups:    signerGroups,
+				GroupQuorums:    gq,
+				GroupParents:    gp,
+				ClearRoot:       true,
+			})
+			if err != nil {
+				return seqcore.OnChainOutput{}, fmt.Errorf("mcms set_config: %w", err)
+			}
 		}
 
 		mcmsRefs := mcmsutil.StellarMCMSDatastoreRefs(in.ChainSelector, qual, contractID)
