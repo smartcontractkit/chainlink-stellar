@@ -128,24 +128,33 @@ func (a *StellarChainFamilyAdapter) GetChainFamilySelector() [4]byte {
 	return stellarFeeQuoterChainFamilySelector
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig() ccvadapters.FeeQuoterDestChainConfig {
-	return ccvadapters.FeeQuoterDestChainConfig{
-		IsEnabled:                   true,
-		MaxDataBytes:                50_000,
-		MaxPerMsgGasLimit:           4_000_000,
-		DestGasOverhead:             350_000,
-		DestGasPerPayloadByteBase:   16,
-		ChainFamilySelector:         stellarFeeQuoterChainFamilySelector,
-		DefaultTokenFeeUSDCents:     50,
-		DefaultTokenDestGasOverhead: 50_000,
-		DefaultTxGasLimit:           200_000,
-		NetworkFeeUSDCents:          100,
-		LinkFeeMultiplierPercent:    90,
+func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig(
+	_, _ uint64, chainFamilySelector [4]byte,
+) ccvadapters.FeeQuoterDestChainConfigOverrides {
+	// FeeQuoterDestChainConfigOverrides uses pointer fields so a nil means "leave the
+	// existing on-chain value alone". These are Stellar's defaults, so every field is set.
+	// The caller passes the destination's family selector; fall back to Stellar's own when
+	// it is unset so a zero-value call still produces a usable config.
+	if chainFamilySelector == ([4]byte{}) {
+		chainFamilySelector = stellarFeeQuoterChainFamilySelector
+	}
+	return ccvadapters.FeeQuoterDestChainConfigOverrides{
+		IsEnabled:                   ptr(true),
+		MaxDataBytes:                ptr(uint32(50_000)),
+		MaxPerMsgGasLimit:           ptr(uint32(4_000_000)),
+		DestGasOverhead:             ptr(uint32(350_000)),
+		DestGasPerPayloadByteBase:   ptr(uint8(16)),
+		ChainFamilySelector:         chainFamilySelector,
+		DefaultTokenFeeUSDCents:     ptr(uint16(50)),
+		DefaultTokenDestGasOverhead: ptr(uint32(50_000)),
+		DefaultTxGasLimit:           ptr(uint32(200_000)),
+		NetworkFeeUSDCents:          ptr(uint16(100)),
+		LinkFeeMultiplierPercent:    ptr(uint8(90)),
 		USDPerUnitGas:               big.NewInt(1e6),
 	}
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig() ccvadapters.RemoteChainDefaults {
+func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig(_, _ uint64) ccvadapters.RemoteChainDefaults {
 	return ccvadapters.RemoteChainDefaults{
 		AllowTrafficFrom:          true,
 		ExecutorDestChainConfig:   ccvadapters.ExecutorDestChainConfig{USDCentsFee: 0, Enabled: true},
@@ -172,3 +181,16 @@ func (a *StellarChainFamilyAdapter) GetDefaultFinalityConfig() finality.Config {
 		BlockDepth:      1,
 	}
 }
+
+// ValidateNOPsTopology accepts any NOP count for Stellar.
+//
+// The EVM adapter enforces a production floor (minProductionChainNOPs). Stellar has no such
+// requirement agreed yet, and the devenv runs far fewer NOPs than EVM's floor, so copying that
+// constant would fail every local and CI environment. Revisit when Stellar has a production
+// committee-size policy.
+func (a *StellarChainFamilyAdapter) ValidateNOPsTopology(_ string, _ int) error {
+	return nil
+}
+
+// ptr returns a pointer to v, for the pointer-valued override fields above.
+func ptr[T any](v T) *T { return &v }

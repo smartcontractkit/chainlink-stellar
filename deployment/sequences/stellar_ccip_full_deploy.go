@@ -11,7 +11,6 @@ import (
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/executor"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/fee_quoter"
@@ -814,8 +813,8 @@ func RunStellarCCIPFullDeploy(
 	}
 	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
 		Address:       rmnRemoteHex,
-		Type:          datastore.ContractType(rmn_remote.ContractType),
-		Version:       semver.MustParse(rmn_remote.Deploy.Version()),
+		Type:          datastore.ContractType(stellarccip.RMNRemoteContractType),
+		Version:       semver.MustParse(stellarccip.RMNRemoteContractVersion),
 		ChainSelector: selector,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, err

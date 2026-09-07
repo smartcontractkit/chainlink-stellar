@@ -3,7 +3,6 @@ package sequences
 import (
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
 	cldfchain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -22,13 +21,6 @@ import (
 
 func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer, error) {
 	return stellardeployment.NewDeployerFromChain(ch)
-}
-
-func stellarTimelockAdmin(in deploy.MCMSDeploymentConfigPerChainWithAddress, ch cldfstellar.Chain) (string, error) {
-	if in.TimelockAdmin == (common.Address{}) {
-		return ch.Signer.Address(), nil
-	}
-	return "", fmt.Errorf("timelockAdmin must be the zero address for Stellar RBACTimelock deploy (use chain signer); non-zero EVM addresses are not supported")
 }
 
 // DeployStellarMCMS deploys a single Soroban MCMS instance and applies the merged signer config.
@@ -105,10 +97,6 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
 			}
 			tlID = tlOut.Output.ContractID
-			admin, err := stellarTimelockAdmin(in, ch)
-			if err != nil {
-				return seqcore.OnChainOutput{}, err
-			}
 			var minDelay uint64
 			if in.TimelockMinDelay != nil {
 				if !in.TimelockMinDelay.IsUint64() {
@@ -120,9 +108,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			_, err = cldfops.ExecuteOperation(b, timelockops.Initialize, deps, timelockops.InitializeInput{
 				ContractID: tlID,
 				MinDelay:   minDelay,
-				Admin:      admin,
 				Proposers:  roleHolders,
-				Executors:  []string{},
 				Cancellers: roleHolders,
 				Bypassers:  roleHolders,
 			})

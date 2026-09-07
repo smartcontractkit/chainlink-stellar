@@ -188,9 +188,7 @@ func DeployMCMSAndTimelock(
 	_, err = cldfops.ExecuteOperation(bundle, timelockops.Initialize, deps, timelockops.InitializeInput{
 		ContractID: tlID,
 		MinDelay:   minDelay,
-		Admin:      env.DeployerKP.Address(),
 		Proposers:  []string{mcmsID},
-		Executors:  []string{mcmsID},
 		Cancellers: []string{},
 		Bypassers:  []string{},
 	})
