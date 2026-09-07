@@ -11,12 +11,23 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// handleRestore submits a RestoreFootprint transaction for the archived entries named
+// in preamble and waits for it to be included. inclusionFee is the bid the caller
+// already seeded for this broadcast; the restore reuses it so both envelopes compete
+// in the fee market the same way.
+//
+// Fee construction mirrors assembleTransaction: the resource fee (preamble minimum plus
+// RestoreFeeBuffer, bounded by the resource-fee cap) is written into SorobanData and
+// only the inclusion bid is passed as BaseFee. txnbuild computes the envelope fee as
+// BaseFee*numOps + SorobanData.ResourceFee, so putting the resource fee in BaseFee as
+// well would declare it twice.
 func (s *StellarTxm) handleRestore(
 	ctx context.Context,
 	client RPCClient,
 	tx *StellarTx,
 	preamble protocolrpc.RestorePreamble,
 	seq int64,
+	inclusionFee int64,
 ) error {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 
@@ -24,6 +35,12 @@ func (s *StellarTxm) handleRestore(
 	if err := xdr.SafeUnmarshalBase64(preamble.TransactionDataXDR, &sorobanData); err != nil {
 		return fmt.Errorf("failed to decode restore preamble soroban data: %w", err)
 	}
+
+	resourceFee, err := s.feeStrat.ResourceFee(preamble.MinResourceFee, *s.config.RestoreFeeBuffer, tx.MaxResourceFee)
+	if err != nil {
+		return fmt.Errorf("restore preamble fee rejected: %w", err)
+	}
+	sorobanData.ResourceFee = xdr.Int64(resourceFee)
 
 	restoreOp := &txnbuild.RestoreFootprint{
 		SourceAccount: tx.FromAddress,
@@ -39,12 +56,11 @@ func (s *StellarTxm) handleRestore(
 	// buildPreliminaryTx).
 	currentSequence := max(int64(0), seq-1)
 	sourceAccount := txnbuild.NewSimpleAccount(tx.FromAddress, currentSequence)
-	restoreFee := s.feeStrat.CalculateRestoreFee(preamble.MinResourceFee, *s.config.RestoreFeeBuffer)
 	restoreTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        &sourceAccount,
 		IncrementSequenceNum: true,
 		Operations:           []txnbuild.Operation{restoreOp},
-		BaseFee:              restoreFee,
+		BaseFee:              inclusionFee,
 		Preconditions: txnbuild.Preconditions{
 			TimeBounds: txnbuild.NewTimeout(*s.config.TxTimeoutSecs),
 		},
@@ -57,6 +73,8 @@ func (s *StellarTxm) handleRestore(
 	if err != nil {
 		return fmt.Errorf("failed to sign restore transaction: %w", err)
 	}
+	s.metrics.ObserveInclusionFee(ctx, inclusionFee)
+	s.metrics.ObserveResourceFee(ctx, resourceFee)
 
 	signedXDR, err := signedTx.Base64()
 	if err != nil {

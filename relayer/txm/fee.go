@@ -1,6 +1,7 @@
 package txm
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
@@ -18,7 +19,7 @@ type FeeStrategy struct {
 	MaxInclusionFee   int64
 	BumpMultiplier    float64
 	ResourceFeeBuffer int64
-	MaxResourceFee int64
+	MaxResourceFee    int64
 }
 
 // NewFeeStrategyFromConfig constructs a FeeStrategy from the resolved Config.
@@ -41,10 +42,38 @@ func (f *FeeStrategy) Calculate(minResourceFee int64, attempt uint64) int64 {
 	return inclusionFee + resourceFee
 }
 
-// CalculateRestoreFee returns the fee for a RestoreFootprint transaction.
-// Restore fees are deterministic (no fee competition), so no geometric bumping.
-func (f *FeeStrategy) CalculateRestoreFee(preambleMinResourceFee int64, restoreFeeBuffer int64) int64 {
-	return preambleMinResourceFee + restoreFeeBuffer
+// effectiveResourceFeeCap returns the tighter of the configured MaxResourceFee and a
+// per-request cap. 0 means uncapped.
+func (f *FeeStrategy) effectiveResourceFeeCap(perRequestMaxResourceFee uint64) int64 {
+	capFee := f.MaxResourceFee
+	if perRequestMaxResourceFee > 0 && perRequestMaxResourceFee <= math.MaxInt64 {
+		if capFee == 0 || int64(perRequestMaxResourceFee) < capFee {
+			capFee = int64(perRequestMaxResourceFee)
+		}
+	}
+	return capFee
+}
+
+// ResourceFee returns the resource fee (in stroops) to write into SorobanData for an
+// invoke or restore envelope: the RPC-reported minimum plus a flat buffer, bounded by
+// effectiveResourceFeeCap. minResourceFee comes from an untrusted RPC response, so a
+// non-positive value or a value over the cap is rejected instead of signed.
+func (f *FeeStrategy) ResourceFee(minResourceFee int64, buffer int64, perRequestMaxResourceFee uint64) (int64, error) {
+	if minResourceFee <= 0 {
+		return 0, fmt.Errorf("rpc reported non-positive MinResourceFee %d", minResourceFee)
+	}
+	if buffer < 0 {
+		return 0, fmt.Errorf("negative resource fee buffer %d", buffer)
+	}
+	if minResourceFee > math.MaxInt64-buffer {
+		return 0, fmt.Errorf("resource fee overflow: MinResourceFee=%d buffer=%d", minResourceFee, buffer)
+	}
+	fee := minResourceFee + buffer
+	if capFee := f.effectiveResourceFeeCap(perRequestMaxResourceFee); capFee > 0 && fee > capFee {
+		return 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (MinResourceFee=%d, buffer=%d)",
+			fee, capFee, minResourceFee, buffer)
+	}
+	return fee, nil
 }
 
 // InclusionFee returns the inclusion fee for the given attempt number.
