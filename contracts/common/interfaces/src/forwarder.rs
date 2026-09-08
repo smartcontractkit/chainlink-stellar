@@ -67,13 +67,13 @@ pub trait creInterface {
     ) -> Result<TransmissionInfo, ForwarderError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListEntry {
     pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
     pub allowlist_enabled: bool,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListUpdate {
     pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
@@ -81,13 +81,13 @@ pub struct AllowListUpdate {
     pub dest_chain_selector: u64,
     pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenAmount {
     pub amount: i128,
     pub token: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct GenericExtraArgsV3 {
     pub block_confirmations: u32,
@@ -99,7 +99,7 @@ pub struct GenericExtraArgsV3 {
     pub token_args: soroban_sdk::Bytes,
     pub token_receiver: soroban_sdk::Bytes,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
     pub data: soroban_sdk::Bytes,
@@ -108,7 +108,7 @@ pub struct AnyToStellarMessage {
     pub sender: soroban_sdk::Bytes,
     pub source_chain_selector: u64,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StellarToAnyMessage {
     pub data: soroban_sdk::Bytes,
@@ -117,50 +117,50 @@ pub struct StellarToAnyMessage {
     pub receiver: soroban_sdk::Bytes,
     pub token_amounts: soroban_sdk::Vec<TokenAmount>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SignatureConfig {
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
     pub verification: SignatureVerificationConfig,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Config {
     pub f: u32,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Transmission {
     pub state: TransmissionState,
     pub transmitter: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ed25519Signature {
     pub public_key: soroban_sdk::BytesN<32>,
     pub signature: soroban_sdk::BytesN<64>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TransmissionInfo {
     pub state: TransmissionState,
     pub transmitter: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum SignatureVerificationConfig {
     Threshold(u32),
     Failure(u32),
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DataKey {
     Forwarder(soroban_sdk::Address),
     Config(u64),
     Transmission(soroban_sdk::BytesN<32>),
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TransmissionState {
     NotAttempted = 0,
@@ -168,7 +168,7 @@ pub enum TransmissionState {
     InvalidReceiver = 2,
     Failed = 3,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -288,7 +288,7 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ForwarderError {
     AlreadyInitialized = 1,
@@ -312,37 +312,37 @@ pub enum ForwarderError {
     InvalidSigner = 19,
     CannotRemoveSelf = 20,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["forwarder_ConfigSet"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     #[topic]
@@ -352,12 +352,12 @@ pub struct ConfigSetEvent {
     pub f: u32,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["forwarder_ForwarderAdded"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderAddedEvent {
     pub forwarder: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["forwarder_ReportProcessed"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReportProcessedEvent {
     #[topic]
@@ -368,7 +368,7 @@ pub struct ReportProcessedEvent {
     pub report_id: soroban_sdk::BytesN<2>,
     pub success: bool,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["forwarder_ForwarderRemoved"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderRemovedEvent {
     pub forwarder: soroban_sdk::Address,

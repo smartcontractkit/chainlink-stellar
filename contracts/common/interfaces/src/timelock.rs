@@ -108,13 +108,13 @@ pub trait TimelockInterface {
     ) -> Result<BlockedFunction, TimelockError>;
     fn get_blocked_function_count(env: soroban_sdk::Env) -> u32;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenAmount {
     pub amount: i128,
     pub token: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct GenericExtraArgsV3 {
     pub block_confirmations: u32,
@@ -126,7 +126,7 @@ pub struct GenericExtraArgsV3 {
     pub token_args: soroban_sdk::Bytes,
     pub token_receiver: soroban_sdk::Bytes,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
     pub data: soroban_sdk::Bytes,
@@ -135,7 +135,7 @@ pub struct AnyToStellarMessage {
     pub sender: soroban_sdk::Bytes,
     pub source_chain_selector: u64,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StellarToAnyMessage {
     pub data: soroban_sdk::Bytes,
@@ -144,25 +144,25 @@ pub struct StellarToAnyMessage {
     pub receiver: soroban_sdk::Bytes,
     pub token_amounts: soroban_sdk::Vec<TokenAmount>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Call {
     pub args_xdr: soroban_sdk::Bytes,
     pub function: soroban_sdk::Symbol,
     pub target: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Calls {
     pub inner: soroban_sdk::Vec<Call>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BlockedFunction {
     pub function: soroban_sdk::Symbol,
     pub target: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TimelockDataKey {
     OpTime(soroban_sdk::BytesN<32>),
@@ -170,7 +170,7 @@ pub enum TimelockDataKey {
     RoleMembers(soroban_sdk::Symbol),
     BlockedFunction(soroban_sdk::Address, soroban_sdk::Symbol),
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -290,7 +290,7 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TimelockError {
     NotInitialized = 1,
@@ -312,26 +312,26 @@ pub enum TimelockError {
     EmptyBatch = 55,
     UnsupportedSelfCall = 56,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_Cancelled"])]
+#[soroban_sdk::contractevent(topics = ["tl_Cancelled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CancelledEvent {
     pub id: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["tl_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["tl_RoleRevoked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_CallExecuted"])]
+#[soroban_sdk::contractevent(topics = ["tl_CallExecuted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallExecutedEvent {
     pub id: soroban_sdk::BytesN<32>,
@@ -340,7 +340,7 @@ pub struct CallExecutedEvent {
     pub function: soroban_sdk::Symbol,
     pub args_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_CallScheduled"])]
+#[soroban_sdk::contractevent(topics = ["tl_CallScheduled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallScheduledEvent {
     pub id: soroban_sdk::BytesN<32>,
@@ -352,25 +352,25 @@ pub struct CallScheduledEvent {
     pub salt: soroban_sdk::BytesN<32>,
     pub delay: u64,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_MinDelay"])]
+#[soroban_sdk::contractevent(topics = ["tl_MinDelay"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MinDelayChangeEvent {
     pub old_duration: u64,
     pub new_duration: u64,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_FnBlocked"])]
+#[soroban_sdk::contractevent(topics = ["tl_FnBlocked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FunctionBlockedEvent {
     pub target: soroban_sdk::Address,
     pub function: soroban_sdk::Symbol,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_FnUnblocked"])]
+#[soroban_sdk::contractevent(topics = ["tl_FnUnblocked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FunctionUnblockedEvent {
     pub target: soroban_sdk::Address,
     pub function: soroban_sdk::Symbol,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["tl_BypCallExec"])]
+#[soroban_sdk::contractevent(topics = ["tl_BypCallExec"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BypasserCallExecutedEvent {
     pub index: u32,

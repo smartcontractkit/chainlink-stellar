@@ -72,43 +72,27 @@ pub trait ExampleCcipReceiverInterface {
         unused: soroban_sdk::Bytes,
     ) -> Result<CcvsAndFinalityConfig, CCIPError>;
 }
-
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CcvConfigUpdate {
-    pub source_chain_selector: u64,
-    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_threshold: u32,
+pub struct AllowListEntry {
+    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CcvChainConfig {
-    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_threshold: u32,
+pub struct AllowListUpdate {
+    pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub allowlist_enabled: bool,
+    pub dest_chain_selector: u64,
+    pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RemoteChainConfig {
-    pub extra_args: soroban_sdk::Bytes,
-    pub allowed_finality_config: u32,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CcvsAndFinalityConfig {
-    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub optional_threshold: u32,
-    pub allowed_finality_config: u32,
-}
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenAmount {
     pub amount: i128,
     pub token: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct GenericExtraArgsV3 {
     pub block_confirmations: u32,
@@ -120,7 +104,7 @@ pub struct GenericExtraArgsV3 {
     pub token_args: soroban_sdk::Bytes,
     pub token_receiver: soroban_sdk::Bytes,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AnyToStellarMessage {
     pub data: soroban_sdk::Bytes,
@@ -129,7 +113,7 @@ pub struct AnyToStellarMessage {
     pub sender: soroban_sdk::Bytes,
     pub source_chain_selector: u64,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StellarToAnyMessage {
     pub data: soroban_sdk::Bytes,
@@ -138,7 +122,7 @@ pub struct StellarToAnyMessage {
     pub receiver: soroban_sdk::Bytes,
     pub token_amounts: soroban_sdk::Vec<TokenAmount>,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -258,7 +242,7 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_CcvCfg"])]
+#[soroban_sdk::contractevent(topics = ["example_CcvCfg"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipCcvConfigSetEvent {
     pub source_chain_selector: u64,
@@ -266,7 +250,7 @@ pub struct CcipCcvConfigSetEvent {
     pub optional_len: u32,
     pub optional_threshold: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_CcipMessageReceived"])]
+#[soroban_sdk::contractevent(topics = ["example_CcipMessageReceived"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipMessageReceivedEvent {
     pub message_id: soroban_sdk::BytesN<32>,
@@ -275,38 +259,38 @@ pub struct CcipMessageReceivedEvent {
     pub sender_len: u32,
     pub dest_token_transfers: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_RemChCfg"])]
+#[soroban_sdk::contractevent(topics = ["example_RemChCfg"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipRemoteChainConfiguredEvent {
     pub dest_chain_selector: u64,
     pub extra_args_len: u32,
     pub allowed_finality_config: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
