@@ -3,6 +3,7 @@ package txm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -68,6 +69,10 @@ func (s *StellarTxm) handleRestore(
 	if err != nil {
 		return fmt.Errorf("failed to sign restore transaction: %w", err)
 	}
+	localHash, err := signedTx.HashHex(s.networkPassphrase)
+	if err != nil {
+		return fmt.Errorf("failed to hash restore transaction: %w", err)
+	}
 
 	signedXDR, err := signedTx.Base64()
 	if err != nil {
@@ -92,12 +97,15 @@ func (s *StellarTxm) handleRestore(
 
 		switch submitResult.Status {
 		case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
-			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", submitResult.Hash)
+			if !strings.EqualFold(submitResult.Hash, localHash) {
+				ctxLogger.Errorw("rpc hash does not match signed restore envelope", "rpcHash", submitResult.Hash, "localHash", localHash)
+			}
+			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", localHash)
 
-			resp, err := s.pollRestoreTransaction(ctx, client, submitResult.Hash)
+			resp, err := s.pollRestoreTransaction(ctx, client, localHash)
 			if err != nil {
 				lastErr = fmt.Errorf("restore transaction polling failed: %w", err)
-				ctxLogger.Warnw("restore poll failed, retrying", "attempt", attempt, "hash", submitResult.Hash, "error", err)
+				ctxLogger.Warnw("restore poll failed, retrying", "attempt", attempt, "hash", localHash, "error", err)
 				if !s.sleepBeforeRestoreRetry(ctx) {
 					return ctx.Err()
 				}
@@ -105,7 +113,7 @@ func (s *StellarTxm) handleRestore(
 			}
 			if resp.Status == protocolrpc.TransactionStatusSuccess {
 				s.metrics.IncrementRestore(ctx, RestoreOutcomeSuccess)
-				ctxLogger.Infow("restore transaction confirmed", "seq", seq, "hash", submitResult.Hash)
+				ctxLogger.Infow("restore transaction confirmed", "seq", seq, "hash", localHash)
 				if err := s.resyncSequence(ctx, client, tx); err != nil {
 					return fmt.Errorf("failed to resync sequence after restore: %w", err)
 				}

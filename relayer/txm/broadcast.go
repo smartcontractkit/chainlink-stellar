@@ -210,6 +210,7 @@ func (s *StellarTxm) handleSendResult(
 	txStore *TxStore,
 	maxLedger uint32,
 	maxTime int64,
+	localHash string,
 ) (accepted bool, fatalErr bool, retryReason ErrorReason) {
 	if tx == nil {
 		s.baseLogger.Errorw("handleSendResult: tx is nil")
@@ -223,17 +224,22 @@ func (s *StellarTxm) handleSendResult(
 
 	switch submitResult.Status {
 	case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
-		if submitResult.Hash == "" {
-			ctxLogger.Errorw("accepted transaction response missing hash", "status", submitResult.Status)
+		if localHash == "" {
+			ctxLogger.Errorw("accepted transaction has no local hash", "status", submitResult.Status)
 			return false, true, ErrorReasonNoHash
 		}
+		// The envelope may already be in the mempool, so a missing or different rpc hash
+		// must not release the sequence; the tx is tracked under the local hash.
+		if !strings.EqualFold(submitResult.Hash, localHash) {
+			ctxLogger.Errorw("rpc hash does not match signed envelope", "status", submitResult.Status, "rpcHash", submitResult.Hash, "localHash", localHash)
+		}
 
-		err := txStore.AddUnconfirmed(seq, submitResult.Hash, maxLedger, maxTime, tx)
+		err := txStore.AddUnconfirmed(seq, localHash, maxLedger, maxTime, tx)
 		if err != nil {
 			ctxLogger.Errorw("failed to add unconfirmed tx", "error", err)
 			return false, true, ErrorReasonStoreAdd
 		}
-		s.updateTransactionHash(tx, submitResult.Hash)
+		s.updateTransactionHash(tx, localHash)
 		s.updateTransactionResultXDR(tx, "")
 		s.updateTransactionResultMeta(tx, "")
 		s.updateTransactionResultCode(tx, "")

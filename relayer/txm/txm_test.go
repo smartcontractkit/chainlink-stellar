@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -68,6 +69,7 @@ type mockRPCClient struct {
 	getFeeStatsErr       error
 
 	getTransactionCalls atomic.Int32
+	lastSendReq         atomic.Pointer[protocolrpc.SendTransactionRequest]
 
 	// getLatestLedgerHook, when set, is used instead of getLatestLedgerResp (avoids
 	// racy test updates to getLatestLedgerResp after Start).
@@ -85,6 +87,7 @@ func (m *mockRPCClient) SimulateTransaction(_ context.Context, req protocolrpc.S
 	return m.simulateResp, m.simulateErr
 }
 func (m *mockRPCClient) SendTransaction(_ context.Context, req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	m.lastSendReq.Store(&req)
 	if m.sendHook != nil {
 		return m.sendHook(req)
 	}
@@ -148,6 +151,28 @@ func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
 	b64, err := xdr.MarshalBase64(data)
 	require.NoError(t, err)
 	return b64
+}
+
+// sendRequestHash returns the testnet hash of the signed envelope in req, which is what the TXM tracks and polls.
+func sendRequestHash(t *testing.T, req protocolrpc.SendTransactionRequest) string {
+	t.Helper()
+	gtx, err := txnbuild.TransactionFromXDR(req.Transaction)
+	require.NoError(t, err)
+	tx, ok := gtx.Transaction()
+	require.True(t, ok, "expected a plain (non fee-bump) transaction envelope")
+	passphrase, err := chainsel.StellarPassphraseFromChainId(chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	hash, err := tx.HashHex(passphrase)
+	require.NoError(t, err)
+	return hash
+}
+
+// lastSendRequestHash returns sendRequestHash for the last SendTransaction the mock received.
+func lastSendRequestHash(t *testing.T, mock *mockRPCClient) string {
+	t.Helper()
+	req := mock.lastSendReq.Load()
+	require.NotNil(t, req, "mock never received a SendTransaction")
+	return sendRequestHash(t, *req)
 }
 
 func newTestClient(mock *mockRPCClient) RPCClient {
@@ -1293,7 +1318,7 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
-	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, lastSendRequestHash(t, mock), result.Hash)
 	assert.Equal(t, commontypes.Finalized, result.Status)
 	assert.Equal(t, big.NewInt(40_200), result.Fee)
 	assert.Equal(t, int64(1_700_000_000), result.LedgerCloseTime)
@@ -1547,7 +1572,7 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
-	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, lastSendRequestHash(t, mock), result.Hash)
 	assert.Equal(t, commontypes.Failed, result.Status)
 	assert.Equal(t, int64(1_700_000_001), result.LedgerCloseTime)
 	assert.Equal(t, resultB64, result.ResultXDR)
@@ -1784,4 +1809,142 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			assert.Equal(t, tc.wantTxStatus, status)
 		})
 	}
+}
+
+func TestStellarTxm_Enqueue_IdempotencyKeyBindsPayload(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	// Not started, so broadcastLoop never drains the channel.
+
+	base := TxRequest{ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}}
+	id, err := txm.Enqueue(t.Context(), base)
+	require.NoError(t, err)
+	require.Equal(t, "key", id)
+
+	txm.transactionsMapLock.RLock()
+	first := txm.transactions["key"]
+	txm.transactionsMapLock.RUnlock()
+	require.NotNil(t, first)
+
+	t.Run("same payload is idempotent", func(t *testing.T) {
+		id, err := txm.Enqueue(t.Context(), base)
+		require.NoError(t, err)
+		assert.Equal(t, "key", id)
+	})
+
+	otherOp := testInvokeNoopOp()
+	otherOp.HostFunction.InvokeContract.FunctionName = xdr.ScSymbol("other")
+
+	mismatches := map[string]TxRequest{
+		"different operation":     {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{otherOp}},
+		"different ledger bounds": {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}, LedgerBoundsOffset: 7},
+		"different fee cap":       {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}, MaxResourceFee: 1},
+	}
+	for name, req := range mismatches {
+		t.Run(name+" is rejected", func(t *testing.T) {
+			_, err := txm.Enqueue(t.Context(), req)
+			require.ErrorIs(t, err, ErrIdempotencyKeyPayloadMismatch)
+		})
+	}
+
+	txm.transactionsMapLock.RLock()
+	assert.Same(t, first, txm.transactions["key"], "the tracked tx is untouched by rejected requests")
+	txm.transactionsMapLock.RUnlock()
+	assert.Equal(t, 1, len(txm.broadcastChan), "only the first request was queued")
+}
+
+func Test_txFingerprint(t *testing.T) {
+	t.Parallel()
+
+	op := testInvokeNoopOp()
+	base, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 0, 0)
+	require.NoError(t, err)
+
+	same, err := txFingerprint(testAddress, []txnbuild.Operation{testInvokeNoopOp()}, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, base, same, "deterministic for equal inputs")
+
+	otherOp := testInvokeNoopOp()
+	otherOp.HostFunction.InvokeContract.FunctionName = xdr.ScSymbol("other")
+	diffOp, err := txFingerprint(testAddress, []txnbuild.Operation{otherOp}, 0, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffOp)
+
+	diffOffset, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 1, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffOffset)
+
+	diffCap, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 0, 1)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffCap)
+
+	diffFrom, err := txFingerprint("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", []txnbuild.Operation{op}, 0, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffFrom)
+
+	_, err = txFingerprint(testAddress, []txnbuild.Operation{nil}, 0, 0)
+	require.Error(t, err)
+}
+
+func TestStellarTxm_Enqueue_AfterCloseReturnsErrTxmStopped(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	require.NoError(t, txm.Close())
+
+	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
+
+	_, err = txm.EnqueueAndWait(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
+
+	// maybeRetry also sends on broadcastChan and must not panic after Close.
+	require.NotPanics(t, func() {
+		txm.maybeRetry(t.Context(), &UnconfirmedTx{Tx: &StellarTx{ID: "late-retry", Done: make(chan struct{})}, Hash: "h"}, RetryReasonTimedOut)
+	})
+}
+
+func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+
+	const producers = 8
+	var wg sync.WaitGroup
+	var unexpected atomic.Int32
+	stopProducing := make(chan struct{})
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stopProducing:
+					return
+				default:
+				}
+				_, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+				// Backpressure is expected when hammering the queue; anything else is not.
+				if err != nil && !errors.Is(err, ErrTxmStopped) && !strings.Contains(err.Error(), "broadcast channel full") {
+					unexpected.Add(1)
+				}
+			}
+		}()
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, txm.Close())
+	time.Sleep(20 * time.Millisecond) // keep producing after Close so late sends are exercised
+	close(stopProducing)
+	wg.Wait()
+
+	assert.Equal(t, int32(0), unexpected.Load(), "every Enqueue returned nil, backpressure or ErrTxmStopped")
+	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
 }

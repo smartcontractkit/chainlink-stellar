@@ -1,6 +1,7 @@
 package txm
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
+
+// testLocalHash stands in for the hash signTransaction computes over the envelope.
+const testLocalHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func Test_parseSubmitErrorResult(t *testing.T) {
 	t.Parallel()
@@ -81,14 +85,14 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("nil tx", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, nil, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, nil, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h"}, 1, store, 9, 0, testLocalHash)
 		assert.False(t, acc)
 		assert.True(t, fatal)
 		assert.Equal(t, ErrorReasonNilTx, reason)
 	})
 	t.Run("nil txStore", func(t *testing.T) {
 		t.Parallel()
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h"}, 1, nil, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h"}, 1, nil, 9, 0, testLocalHash)
 		assert.False(t, acc)
 		assert.True(t, fatal)
 		assert.Equal(t, ErrorReasonNilTxStore, reason)
@@ -97,7 +101,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run(stellarcore.TXStatusPending, func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "a1"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "a1"}, 1, store, 9, 0, testLocalHash)
 		require.True(t, acc)
 		require.False(t, fatal)
 		require.Empty(t, reason)
@@ -115,7 +119,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		retriedTx.ResultMetaXDR = "old-meta"
 		retriedTx.ResultCode = "old-code"
 		retriedTx.mu.Unlock()
-		acc, fatal, reason := s.handleSendResult(ctx, retriedTx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "a1"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, retriedTx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "a1"}, 1, store, 9, 0, testLocalHash)
 		require.True(t, acc)
 		require.False(t, fatal)
 		require.Empty(t, reason)
@@ -129,26 +133,62 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run(stellarcore.TXStatusDuplicate, func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "a2"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate, Hash: "a2"}, 1, store, 9, 0, testLocalHash)
 		require.True(t, acc)
 		require.False(t, fatal)
 		require.Empty(t, reason)
 	})
 
-	t.Run("PENDING without hash is fatal", func(t *testing.T) {
+	t.Run("PENDING without rpc hash tracks local hash", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, 1, store, 9, 0)
-		require.False(t, acc)
-		require.True(t, fatal)
-		assert.Equal(t, ErrorReasonNoHash, reason)
-		assert.Equal(t, 0, store.InflightCount())
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, 1, store, 9, 0, testLocalHash)
+		require.True(t, acc)
+		require.False(t, fatal)
+		require.Empty(t, reason)
+		require.Equal(t, 1, store.InflightCount())
+		assert.Equal(t, testLocalHash, store.GetUnconfirmed()[0].Hash)
 	})
 
-	t.Run("DUPLICATE without hash is fatal", func(t *testing.T) {
+	t.Run("DUPLICATE without rpc hash tracks local hash", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusDuplicate}, 1, store, 9, 0, testLocalHash)
+		require.True(t, acc)
+		require.False(t, fatal)
+		require.Empty(t, reason)
+		require.Equal(t, 1, store.InflightCount())
+		assert.Equal(t, testLocalHash, store.GetUnconfirmed()[0].Hash)
+	})
+
+	t.Run("PENDING with mismatching rpc hash tracks local hash", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		local := &StellarTx{ID: "local", FromAddress: testAddress}
+		acc, fatal, reason := s.handleSendResult(ctx, local, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "not-the-envelope-hash"}, 1, store, 9, 0, testLocalHash)
+		require.True(t, acc)
+		require.False(t, fatal)
+		require.Empty(t, reason)
+		assert.Equal(t, testLocalHash, store.GetUnconfirmed()[0].Hash, "TxStore polls the local hash")
+		local.mu.RLock()
+		assert.Equal(t, testLocalHash, local.TxHash, "caller-visible hash is the local hash")
+		local.mu.RUnlock()
+	})
+
+	t.Run("PENDING with uppercase rpc hash is the same hash", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: strings.ToUpper(testLocalHash)}, 1, store, 9, 0, testLocalHash)
+		require.True(t, acc)
+		require.False(t, fatal)
+		require.Empty(t, reason)
+		assert.Equal(t, testLocalHash, store.GetUnconfirmed()[0].Hash)
+	})
+
+	t.Run("PENDING without local hash is fatal", func(t *testing.T) {
+		t.Parallel()
+		store := NewTxStore(1)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: testLocalHash}, 1, store, 9, 0, "")
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReasonNoHash, reason)
@@ -158,7 +198,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run(stellarcore.TXStatusTryAgainLater, func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusTryAgainLater}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusTryAgainLater}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.False(t, fatal)
 		require.Equal(t, ErrorReasonTryAgainLater, reason)
@@ -167,7 +207,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("ERROR bad_seq", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badSeqXDR}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badSeqXDR}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.False(t, fatal)
 		require.Equal(t, ErrorReasonBadSeq, reason)
@@ -176,7 +216,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("ERROR insufficient balance", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insuffXDR}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insuffXDR}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReason(xdr.TransactionResultCodeTxInsufficientBalance.String()), reason)
@@ -185,7 +225,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("ERROR bad auth", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badAuthXDR}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badAuthXDR}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReason(xdr.TransactionResultCodeTxBadAuth.String()), reason)
@@ -194,7 +234,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("ERROR tx_no_account is fatal", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: noAccountXDR}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: noAccountXDR}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReason(xdr.TransactionResultCodeTxNoAccount.String()), reason)
@@ -203,7 +243,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 	t.Run("unknown status", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: "WEIRD"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: "WEIRD"}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReasonUnknownSubmit, reason)
@@ -214,7 +254,7 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		store := NewTxStore(1)
 		first := &StellarTx{ID: "first"}
 		require.NoError(t, store.AddUnconfirmed(1, "h0", 9, 0, first))
-		acc, fatal, reason := s.handleSendResult(ctx, &StellarTx{ID: "second"}, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h1"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, &StellarTx{ID: "second"}, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "h1"}, 1, store, 9, 0, testLocalHash)
 		require.False(t, acc)
 		require.True(t, fatal)
 		assert.Equal(t, ErrorReasonStoreAdd, reason)
@@ -278,7 +318,7 @@ func TestStellarTxm_handleSendResult_UndecodableErrorXDRIsFatal(t *testing.T) {
 	t.Run("empty ErrorResultXDR is fatal", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: ""}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: ""}, 1, store, 9, 0, testLocalHash)
 		assert.False(t, acc)
 		assert.True(t, fatal)
 		assert.Equal(t, ErrorReasonSubmitErrorUndecoded, reason)
@@ -287,7 +327,7 @@ func TestStellarTxm_handleSendResult_UndecodableErrorXDRIsFatal(t *testing.T) {
 	t.Run("undecodable ErrorResultXDR is fatal", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)
-		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: "not-valid-base64-xdr-!!!"}, 1, store, 9, 0)
+		acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: "not-valid-base64-xdr-!!!"}, 1, store, 9, 0, testLocalHash)
 		assert.False(t, acc)
 		assert.True(t, fatal)
 		assert.Equal(t, ErrorReasonSubmitErrorUndecoded, reason)
@@ -315,7 +355,7 @@ func TestStellarTxm_handleSendResult_InsufficientFeeMapsToFeeBumpReason(t *testi
 	require.NoError(t, err)
 
 	store := NewTxStore(1)
-	acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insuffFeeXDR}, 1, store, 9, 0)
+	acc, fatal, reason := s.handleSendResult(ctx, tx, protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insuffFeeXDR}, 1, store, 9, 0, testLocalHash)
 	assert.False(t, acc)
 	assert.False(t, fatal)
 	assert.Equal(t, ErrorReasonInsufficientFee, reason)
