@@ -415,9 +415,6 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget
 	assert.Equal(t, 0, store.InflightCount())
 }
 
-// A PENDING response with no hash means the node accepted the envelope but sent a
-// malformed reply. The envelope may be in the mempool, so the TXM must keep the
-// sequence reserved and track the tx under the hash it computed itself.
 func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashTracksLocalHash(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
@@ -504,8 +501,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 		}
 		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
 	}
-	// The TXM polls the hash it computed for the restore envelope, so the hook has to
-	// recognise that hash rather than a fixed string.
+	// The TXM polls the hash it computed for the restore envelope, not a fixed string.
 	var restoreHash atomic.Pointer[string]
 	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		hash := sendRequestHash(t, req)
@@ -590,8 +586,7 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 			RestorePreamble: &preamble,
 		},
 	}
-	// Every send in this test is a restore (the invoke never gets past its second
-	// simulation), so any polled hash is a restore hash and confirms successfully.
+	// Every send here is a restore (the invoke never passes its second simulation), so any polled hash confirms.
 	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		sendCalls.Add(1)
 		mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}

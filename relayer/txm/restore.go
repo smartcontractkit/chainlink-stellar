@@ -65,9 +65,13 @@ func (s *StellarTxm) handleRestore(
 		return fmt.Errorf("failed to build restore transaction: %w", err)
 	}
 
-	signedTx, localHash, err := s.signTransaction(ctx, restoreTx, tx.FromAddress)
+	signedTx, err := s.signTransaction(ctx, restoreTx, tx.FromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to sign restore transaction: %w", err)
+	}
+	localHash, err := signedTx.HashHex(s.networkPassphrase)
+	if err != nil {
+		return fmt.Errorf("failed to hash restore transaction: %w", err)
 	}
 
 	signedXDR, err := signedTx.Base64()
@@ -94,8 +98,7 @@ func (s *StellarTxm) handleRestore(
 		switch submitResult.Status {
 		case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
 			if !strings.EqualFold(submitResult.Hash, localHash) {
-				ctxLogger.Errorw("rpc reported a restore hash that does not match the signed envelope; polling local hash",
-					"rpcHash", submitResult.Hash, "localHash", localHash)
+				ctxLogger.Errorw("rpc hash does not match signed restore envelope", "rpcHash", submitResult.Hash, "localHash", localHash)
 			}
 			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", localHash)
 

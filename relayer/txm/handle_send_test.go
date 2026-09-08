@@ -139,9 +139,6 @@ func TestStellarTxm_handleSendResult(t *testing.T) {
 		require.Empty(t, reason)
 	})
 
-	// The RPC accepted the envelope, so it may be in the mempool: a missing or wrong
-	// node hash must not release the sequence. The tx is tracked under the hash the
-	// TXM computed when signing.
 	t.Run("PENDING without rpc hash tracks local hash", func(t *testing.T) {
 		t.Parallel()
 		store := NewTxStore(1)

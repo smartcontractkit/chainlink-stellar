@@ -143,9 +143,8 @@ func (s *StellarTxm) Start(_ context.Context) error {
 	})
 }
 
-// Close stops the loops. broadcastChan is deliberately left open: broadcastLoop exits
-// on s.stop, and closing the channel would turn any late Enqueue/maybeRetry send into a
-// panic that takes the whole LOOP plugin down. Enqueue refuses work once s.stop is closed.
+// Close stops the loops. broadcastChan stays open: nothing ranges over it, and closing it
+// would make a late Enqueue or maybeRetry send panic.
 func (s *StellarTxm) Close() error {
 	return s.starter.StopOnce(s.Name(), func() error {
 		close(s.stop)
@@ -154,22 +153,13 @@ func (s *StellarTxm) Close() error {
 	})
 }
 
-// stopped reports whether Close has begun.
-func (s *StellarTxm) stopped() bool {
-	select {
-	case <-s.stop:
-		return true
-	default:
-		return false
-	}
-}
-
 // --- Enqueue ---
 
 // Enqueue submits a Soroban transaction request for asynchronous processing.
 // Returns the transaction ID (auto-generated if TxRequest.ID is empty).
-// If TxRequest.ID is already in flight or tracked, returns that same id with a nil error
-// and does not enqueue again (idempotent, aligned with EVM TxMgr idempotency key behavior).
+// If TxRequest.ID is already in flight or tracked with the same payload, returns that same id
+// with a nil error and does not enqueue again (idempotent, aligned with EVM TxMgr idempotency
+// key behavior); a different payload is rejected with ErrIdempotencyKeyPayloadMismatch.
 func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error) {
 	txID := req.ID
 	if txID == "" {
@@ -262,20 +252,19 @@ func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 }
 
 // enqueueTransaction stores the tx and pushes it to broadcastChan.
-// If tx.ID is already present with the same payload fingerprint, returns that id with a
-// nil error and does not enqueue again (idempotent, matching EVM TxMgr CreateTransaction
-// with IdempotencyKey). If the ID is present with a different fingerprint the request is
-// rejected with ErrIdempotencyKeyPayloadMismatch: the caller asked for different
-// operations than the ones already tracked, and returning the earlier tx's hash would
-// report success for work that was never submitted.
+// If tx.ID is already present (after prune) with the same fingerprint, returns that id with a
+// nil error and does not enqueue again (idempotent, matching EVM TxMgr CreateTransaction with
+// IdempotencyKey). A different fingerprint is rejected with ErrIdempotencyKeyPayloadMismatch.
 // On backpressure it drops the oldest queued tx (not the new one): the oldest has
 // the stalest simulation data and the nearest LedgerBounds expiry, so the newer tx's
 // intent takes priority.
 func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (string, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, nil)
 
-	if s.stopped() {
+	select {
+	case <-s.stop:
 		return "", ErrTxmStopped
+	default:
 	}
 
 	s.transactionsMapLock.Lock()
@@ -711,9 +700,16 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		maxTime := assembledTx.Timebounds().MaxTime
 
-		signedTx, localHash, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
+		signedTx, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
 		if err != nil {
 			ctxLogger.Errorw("failed to sign transaction", "error", err)
+			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSigning)
+			return
+		}
+
+		localHash, err := signedTx.HashHex(s.networkPassphrase)
+		if err != nil {
+			ctxLogger.Errorw("failed to hash signed transaction", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSigning)
 			return
 		}

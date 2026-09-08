@@ -18,10 +18,8 @@ import (
 var (
 	// ErrTxmStopped is returned by Enqueue/EnqueueAndWait once Close has begun.
 	ErrTxmStopped = errors.New("txm stopped")
-	// ErrIdempotencyKeyPayloadMismatch is returned when a TxRequest reuses an ID that is
-	// already tracked but carries a different payload (operations, source account, bounds
-	// or fee cap). Silently returning the earlier tx would drop the new operations while
-	// reporting success.
+	// ErrIdempotencyKeyPayloadMismatch is returned when a TxRequest reuses a tracked ID with a
+	// different payload; see txFingerprint.
 	ErrIdempotencyKeyPayloadMismatch = errors.New("idempotency key already used with a different payload")
 )
 
@@ -60,10 +58,8 @@ type StellarTx struct {
 	doneOnce sync.Once
 }
 
-// txFingerprint digests everything about a request that changes the envelope the TXM
-// would sign: source account, operations (as XDR), ledger-bounds override and the
-// per-request resource-fee cap. Two requests with the same ID must have the same
-// fingerprint to be treated as the same submission.
+// txFingerprint digests the parts of a request that change the signed envelope: source
+// account, operations (as XDR), ledger-bounds override and resource-fee cap.
 func txFingerprint(fromAddress string, ops []txnbuild.Operation, ledgerBoundsOffset uint32, maxResourceFee uint64) ([32]byte, error) {
 	h := sha256.New()
 	h.Write([]byte(fromAddress))
@@ -88,9 +84,7 @@ func txFingerprint(fromAddress string, ops []txnbuild.Operation, ledgerBoundsOff
 		h.Write(scratch[:])
 		h.Write(b)
 	}
-	var out [32]byte
-	copy(out[:], h.Sum(nil))
-	return out, nil
+	return [32]byte(h.Sum(nil)), nil
 }
 
 // TxRequest is the input accepted by Enqueue / EnqueueAndWait.

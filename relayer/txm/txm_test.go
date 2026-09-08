@@ -153,8 +153,7 @@ func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
 	return b64
 }
 
-// sendRequestHash returns the canonical (testnet) hash of the signed envelope in req —
-// the value the TXM tracks and polls regardless of what the RPC reports.
+// sendRequestHash returns the testnet hash of the signed envelope in req, which is what the TXM tracks and polls.
 func sendRequestHash(t *testing.T, req protocolrpc.SendTransactionRequest) string {
 	t.Helper()
 	gtx, err := txnbuild.TransactionFromXDR(req.Transaction)
@@ -1812,14 +1811,12 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 	}
 }
 
-// A reused idempotency key must carry the same payload. Returning the earlier tx for a
-// request with different operations would report success for work never submitted.
 func TestStellarTxm_Enqueue_IdempotencyKeyBindsPayload(t *testing.T) {
 	t.Parallel()
 
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
-	// Not started: requests sit in the buffered broadcast channel, which is all this test needs.
+	// Not started, so broadcastLoop never drains the channel.
 
 	base := TxRequest{ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}}
 	id, err := txm.Enqueue(t.Context(), base)
@@ -1891,8 +1888,6 @@ func Test_txFingerprint(t *testing.T) {
 	require.Error(t, err)
 }
 
-// After Close the broadcast channel stays open (nothing ranges over it), so late
-// producers get ErrTxmStopped instead of a send-on-closed-channel panic.
 func TestStellarTxm_Enqueue_AfterCloseReturnsErrTxmStopped(t *testing.T) {
 	t.Parallel()
 
@@ -1907,7 +1902,7 @@ func TestStellarTxm_Enqueue_AfterCloseReturnsErrTxmStopped(t *testing.T) {
 	_, err = txm.EnqueueAndWait(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.ErrorIs(t, err, ErrTxmStopped)
 
-	// The confirm-loop retry path also sends on the channel; it must not panic after Close.
+	// maybeRetry also sends on broadcastChan and must not panic after Close.
 	require.NotPanics(t, func() {
 		txm.maybeRetry(t.Context(), &UnconfirmedTx{Tx: &StellarTx{ID: "late-retry", Done: make(chan struct{})}, Hash: "h"}, RetryReasonTimedOut)
 	})
@@ -1935,8 +1930,7 @@ func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
 				default:
 				}
 				_, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
-				// Backpressure ("broadcast channel full") is the expected outcome of
-				// hammering a 100-slot queue; anything else is unexpected.
+				// Backpressure is expected when hammering the queue; anything else is not.
 				if err != nil && !errors.Is(err, ErrTxmStopped) && !strings.Contains(err.Error(), "broadcast channel full") {
 					unexpected.Add(1)
 				}

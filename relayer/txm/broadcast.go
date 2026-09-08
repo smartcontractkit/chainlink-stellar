@@ -2,7 +2,6 @@ package txm
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -169,28 +168,24 @@ func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolr
 	return assembledTx, inclusionFee + resourceFee, nil
 }
 
-// signTransaction signs tx with the keystore and returns the signed envelope together
-// with the hex-encoded transaction hash. The hash is computed locally over the network
-// passphrase and the envelope; signatures are not part of it, so it is the canonical
-// identity of what was signed regardless of what the RPC later reports.
-func (s *StellarTxm) signTransaction(ctx context.Context, tx *txnbuild.Transaction, fromAddress string) (*txnbuild.Transaction, string, error) {
+func (s *StellarTxm) signTransaction(ctx context.Context, tx *txnbuild.Transaction, fromAddress string) (*txnbuild.Transaction, error) {
 	if tx == nil {
-		return nil, "", errors.New("signTransaction: tx is nil")
+		return nil, errors.New("signTransaction: tx is nil")
 	}
 	hash, err := tx.Hash(s.networkPassphrase)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to hash transaction: %w", err)
+		return nil, fmt.Errorf("failed to hash transaction: %w", err)
 	}
 
 	signature, err := s.keystore.Sign(ctx, fromAddress, hash[:])
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to sign transaction: %w", err)
+		return nil, fmt.Errorf("failed to sign transaction: %w", err)
 	}
 
 	var hint [4]byte
 	addr, err := xdr.AddressToAccountId(fromAddress)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse fromAddress for hint: %w", err)
+		return nil, fmt.Errorf("failed to parse fromAddress for hint: %w", err)
 	}
 	copy(hint[:], addr.Ed25519[28:])
 
@@ -201,17 +196,12 @@ func (s *StellarTxm) signTransaction(ctx context.Context, tx *txnbuild.Transacti
 
 	signedTx, err := tx.AddSignatureDecorated(decoratedSig)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to add signature: %w", err)
+		return nil, fmt.Errorf("failed to add signature: %w", err)
 	}
 
-	return signedTx, hex.EncodeToString(hash[:]), nil
+	return signedTx, nil
 }
 
-// handleSendResult classifies a SendTransaction response. localHash is the hash the
-// TXM computed when signing; it is the identity the tx is tracked and polled under.
-// The node-reported hash is only cross-checked: PENDING/DUPLICATE means the envelope
-// may already be in the mempool, so a missing or different node hash is logged but
-// must not release the sequence (that would re-open the duplicate-execution window).
 func (s *StellarTxm) handleSendResult(
 	ctx context.Context,
 	tx *StellarTx,
@@ -235,12 +225,13 @@ func (s *StellarTxm) handleSendResult(
 	switch submitResult.Status {
 	case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
 		if localHash == "" {
-			ctxLogger.Errorw("accepted transaction has no locally computed hash", "status", submitResult.Status)
+			ctxLogger.Errorw("accepted transaction has no local hash", "status", submitResult.Status)
 			return false, true, ErrorReasonNoHash
 		}
+		// The envelope may already be in the mempool, so a missing or different rpc hash
+		// must not release the sequence; the tx is tracked under the local hash.
 		if !strings.EqualFold(submitResult.Hash, localHash) {
-			ctxLogger.Errorw("rpc reported a hash that does not match the signed envelope; tracking local hash",
-				"status", submitResult.Status, "rpcHash", submitResult.Hash, "localHash", localHash)
+			ctxLogger.Errorw("rpc hash does not match signed envelope", "status", submitResult.Status, "rpcHash", submitResult.Hash, "localHash", localHash)
 		}
 
 		err := txStore.AddUnconfirmed(seq, localHash, maxLedger, maxTime, tx)
