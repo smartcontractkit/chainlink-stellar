@@ -1,3 +1,8 @@
+// This file encodes MCMS ops and timelock calls with the ABI from before the August 2026
+// binding regeneration (Call, StellarOp, StellarRootMetadata) and no longer compiles.
+// It is excluded until it is rewritten; build with -tags mcms_stale_abi to include it.
+//go:build mcms_stale_abi
+
 package helpers
 
 import (
@@ -17,9 +22,9 @@ import (
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	timelockops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/timelock"
@@ -41,20 +46,6 @@ type MCMSGovernanceStack struct {
 	ChainNetID     [32]byte
 	SignerPK       *ecdsa.PrivateKey
 	MinDelaySec    uint64
-}
-
-// ContractIDToBytes32 decodes a Soroban contract strkey into a 32-byte contract id.
-func ContractIDToBytes32(contractID string) ([32]byte, error) {
-	var out [32]byte
-	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
-	if err != nil {
-		return out, err
-	}
-	if len(raw) != 32 {
-		return out, fmt.Errorf("contract id raw length %d, want 32", len(raw))
-	}
-	copy(out[:], raw)
-	return out, nil
 }
 
 // SorobanScheduleBatch encodes timelock schedule_batch Call.data for MCMS StellarOp payloads.

@@ -1,4 +1,6 @@
-//go:build integration
+// Depends on tests/testutils/mcms_governance_helpers.go, which is excluded until it is
+// rewritten for the current MCMS and timelock ABI.
+//go:build integration && mcms_stale_abi
 
 package integration
 

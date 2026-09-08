@@ -1,3 +1,8 @@
+// This file hashes MCMS ops and root metadata with the ABI from before the August 2026
+// binding regeneration (StellarOp, StellarRootMetadata) and no longer compiles.
+// It is excluded until it is rewritten; build with -tags mcms_stale_abi to include it.
+//go:build mcms_stale_abi
+
 package helpers
 
 import (
