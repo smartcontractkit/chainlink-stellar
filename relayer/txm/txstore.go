@@ -92,8 +92,6 @@ func (s *TxStore) GetNextSequence() int64 {
 
 // AddUnconfirmed records a transaction that has been submitted to the network.
 // The sequence must match the value returned by the preceding GetNextSequence() call.
-// maxLedger and maxTime are the envelope's LedgerBounds.MaxLedger and TimeBounds.MaxTime;
-// the confirm loop uses them to decide when the network can no longer include the tx.
 func (s *TxStore) AddUnconfirmed(seq int64, hash string, maxLedger uint32, maxTime int64, tx *StellarTx) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()

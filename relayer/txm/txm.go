@@ -964,11 +964,9 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-			// NOT_FOUND or transient RPC error. Check expiry against chain state only: the
-			// sequence may be recycled once the network can no longer include this envelope,
-			// i.e. the latest ledger is past LedgerBounds.MaxLedger or its close time is past
-			// TimeBounds.MaxTime. Recycling earlier lets a second envelope on the same
-			// sequence land alongside the first. Without chain state the tx stays pending.
+			// NOT_FOUND or transient RPC error. Recycle the sequence only once the network can
+			// no longer include this envelope (latest ledger past MaxLedger or its close time past
+			// MaxTime); recycling on enqueue age would let two envelopes land on one sequence.
 			latestLedger, ledgerErr := client.GetLatestLedger(ctx)
 			if ledgerErr != nil {
 				ctxLogger.Errorw("couldn't fetch latest ledger for expiry check", "error", ledgerErr)

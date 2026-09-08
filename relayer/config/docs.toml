@@ -31,7 +31,7 @@ MaxSimulateAttempts = 3 # Default
 MaxSubmitRetryAttempts = 10 # Default
 # SubmitRetryDelay is the delay between SendTransaction retries.
 SubmitRetryDelay = '3s' # Default
-# TxTimeoutSecs sets Transaction TimeBounds.MaxTime (in seconds from build time). The network rejects the envelope after it; the confirm loop only expires a tx on LedgerBounds or TimeBounds, never on enqueue age. 300s = 5 minutes.
+# TxTimeoutSecs sets Transaction TimeBounds.MaxTime (in seconds from build time); the network rejects the envelope after it. 300s = 5 minutes.
 TxTimeoutSecs = 300 # Default
 # LedgerBoundsOffset is the number of ledgers ahead of the latest ledger used for Transaction LedgerBounds. ~5 min at 6s/ledger.
 LedgerBoundsOffset = 50 # Default

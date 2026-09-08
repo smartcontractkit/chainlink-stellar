@@ -1704,10 +1704,6 @@ func seedUnconfirmed(t *testing.T, txm *StellarTxm, seq int64, maxLedger uint32,
 	return store, tx
 }
 
-// A sequence may only be recycled once chain state proves the envelope can no longer
-// be included: the latest ledger is past LedgerBounds.MaxLedger, or its close time is
-// past TimeBounds.MaxTime. Enqueue age alone is not evidence, and without chain state
-// the tx stays pending.
 func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclude(t *testing.T) {
 	t.Parallel()
 
