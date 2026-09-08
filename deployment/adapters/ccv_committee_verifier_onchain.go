@@ -1,8 +1,10 @@
 package adapters
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -152,6 +154,8 @@ func (a *StellarCCVCommitteeVerifierOnchainAdapter) ApplySignatureConfigs(
 			copy(padded[12:], addr[:])
 			signers = append(signers, padded)
 		}
+		// The contract requires strictly ascending signer order (CCIPError 67/66).
+		sort.Slice(signers, func(i, j int) bool { return bytes.Compare(signers[i][:], signers[j][:]) < 0 })
 		signatureConfigs = append(signatureConfigs, ccvbindings.SignatureQuorumConfig{
 			SourceChainSelector: c.SourceChainSelector,
 			Threshold:           uint32(c.Threshold),

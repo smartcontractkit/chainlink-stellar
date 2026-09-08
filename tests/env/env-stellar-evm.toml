@@ -139,16 +139,20 @@ threshold = 2
 # nop_aliases = ["tertiary-verifier-1", "tertiary-verifier-2"]
 # threshold = 2
 
+# nop_aliases are scoped to the chain's family: each executor bootstrapper publishes JD
+# chain configs only for its own family (bootstrap [[chains]] are single-family), and
+# ApplyExecutorConfig validates node chain support per chain against JD. Cross-family
+# listings fail that validation and produce unservable job specs.
 [environment_topology.executor_pools.default.chain_configs.3379446385462418246]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["evm-executor-1"]
 execution_interval = 15_000_000_000
 
 [environment_topology.executor_pools.default.chain_configs.12922642891491394802]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["evm-executor-1"]
 execution_interval = 15_000_000_000
 
 [environment_topology.executor_pools.default.chain_configs.17301180955411967724]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["stellar-executor-1"]
 execution_interval = 15_000_000_000
 
 [cldf]
@@ -233,6 +237,8 @@ execution_interval = 15_000_000_000
     port = 8433
 
 ## EVM Verifier Setup
+# node_index must be unique across ALL NOPs in a committee (both families share
+# committee "default"): stellar verifiers own 0-1, EVM verifiers 2-3.
 [[verifier]]
   chain_family = "evm"
   image = "verifier:dev"
@@ -242,7 +248,7 @@ execution_interval = 15_000_000_000
   source_code_path = "chainlink-ccv/verifier"
   root_path = "../chainlink-ccv"
   committee_name = "default"
-  node_index = 0
+  node_index = 2
   [verifier.db]
     image = "postgres:16-alpine"
     name = "evm-verifier-1-db"
@@ -257,7 +263,7 @@ execution_interval = 15_000_000_000
   source_code_path = "chainlink-ccv/verifier"
   root_path = "../chainlink-ccv"
   committee_name = "default"
-  node_index = 1
+  node_index = 3
   [verifier.db]
     image = "postgres:16-alpine"
     name = "evm-verifier-2-db"

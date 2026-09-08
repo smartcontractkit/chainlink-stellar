@@ -1,6 +1,7 @@
 package sequences
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -79,6 +80,8 @@ var StellarConfigureChainForLanes = cldf_ops.NewSequence(
 					copy(padded[12:], addr[:])
 					signers = append(signers, padded)
 				}
+				// The contract requires strictly ascending signer order (CCIPError 67/66).
+				sort.Slice(signers, func(i, j int) bool { return bytes.Compare(signers[i][:], signers[j][:]) < 0 })
 				quorumConfigs = append(quorumConfigs, cvbindings.SignatureQuorumConfig{
 					SourceChainSelector: remoteSelector,
 					Threshold:           uint32(sigCfg.Threshold),
