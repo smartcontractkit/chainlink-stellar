@@ -274,7 +274,6 @@ fn test_ownable_set_new_owner_publishes_event() {
     client.init_owner(&owner);
     client.set_new_owner(&new_owner);
 
-    // One-step transfers must be as observable as the two-step flow.
     assert_latest_event(
         &env,
         &contract_id,
