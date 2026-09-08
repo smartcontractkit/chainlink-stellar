@@ -1435,3 +1435,177 @@ var CCIPErrorMessage = map[int]string{
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
 }
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// FeeTokenAddedEvent represents the FeeTokenAddedEvent event.
+// Topics: [fq_FeeTokenAdded]
+type FeeTokenAddedEvent struct {
+	FeeToken string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeeTokenAddedEventTopic is the event topic identifier.
+const FeeTokenAddedEventTopic = "fq_FeeTokenAdded"
+
+// DestChainAddedEvent represents the DestChainAddedEvent event.
+// Topics: [fq_DestChainAdded]
+type DestChainAddedEvent struct {
+	DestChainSelector uint64
+	IsEnabled         bool
+	MaxDataBytes      uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// DestChainAddedEventTopic is the event topic identifier.
+const DestChainAddedEventTopic = "fq_DestChainAdded"
+
+// FeeTokenRemovedEvent represents the FeeTokenRemovedEvent event.
+// Topics: [fq_FeeTokenRemoved]
+type FeeTokenRemovedEvent struct {
+	FeeToken string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeeTokenRemovedEventTopic is the event topic identifier.
+const FeeTokenRemovedEventTopic = "fq_FeeTokenRemoved"
+
+// UsdPerTokenUpdatedEvent represents the UsdPerTokenUpdatedEvent event.
+// Topics: [fq_UsdPerTokenUpdated]
+type UsdPerTokenUpdatedEvent struct {
+	Token     string
+	Value     scval.U128
+	Timestamp uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UsdPerTokenUpdatedEventTopic is the event topic identifier.
+const UsdPerTokenUpdatedEventTopic = "fq_UsdPerTokenUpdated"
+
+// UsdPerUnitGasUpdatedEvent represents the UsdPerUnitGasUpdatedEvent event.
+// Topics: [fq_UsdPerUnitGasUpdated]
+type UsdPerUnitGasUpdatedEvent struct {
+	DestChainSelector uint64
+	Value             scval.U128
+	Timestamp         uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UsdPerUnitGasUpdatedEventTopic is the event topic identifier.
+const UsdPerUnitGasUpdatedEventTopic = "fq_UsdPerUnitGasUpdated"
+
+// TokenFeeConfigDeletedEvent represents the TokenFeeConfigDeletedEvent event.
+// Topics: [fq_TknTransferFeeDeleted]
+type TokenFeeConfigDeletedEvent struct {
+	DestChainSelector uint64
+	Token             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeConfigDeletedEventTopic is the event topic identifier.
+const TokenFeeConfigDeletedEventTopic = "fq_TknTransferFeeDeleted"
+
+// TokenFeeConfigUpdatedEvent represents the TokenFeeConfigUpdatedEvent event.
+// Topics: [fq_TknTransferFeeUpdated]
+type TokenFeeConfigUpdatedEvent struct {
+	DestChainSelector uint64
+	Token             string
+	FeeUsdCents       uint32
+	DestGasOverhead   uint32
+	DestBytesOverhead uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeConfigUpdatedEventTopic is the event topic identifier.
+const TokenFeeConfigUpdatedEventTopic = "fq_TknTransferFeeUpdated"
+
+// DestChainConfigUpdatedEvent represents the DestChainConfigUpdatedEvent event.
+// Topics: [fq_DestChainConfigUpdated]
+type DestChainConfigUpdatedEvent struct {
+	DestChainSelector uint64
+	IsEnabled         bool
+	MaxDataBytes      uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// DestChainConfigUpdatedEventTopic is the event topic identifier.
+const DestChainConfigUpdatedEventTopic = "fq_DestChainConfigUpdated"
