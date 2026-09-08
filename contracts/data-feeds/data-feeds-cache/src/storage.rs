@@ -4,7 +4,7 @@ use crate::interface::{types::RoundData, DataId, FeedConfig};
 
 pub(crate) type PermissionHash = BytesN<32>;
 
-pub(crate) const DATA_RETENTION_TTL: u32 = 518_400;
+pub(crate) const DATA_RETENTION_TTL: u32 = 3_110_400;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -195,7 +195,7 @@ mod tests {
             );
         });
         execute_as_contract(|env| {
-            env.ledger().set_max_entry_ttl(600_000);
+            env.ledger().set_max_entry_ttl(4_000_000);
             let key = store_round(env);
             assert_eq!(
                 round_ttl(env, &key.0, key.1),
@@ -252,9 +252,9 @@ mod tests {
     #[test]
     fn round_retention_is_pinned() {
         assert_eq!(
-            DATA_RETENTION_TTL, 518_400,
-            "round-history retention is 30 days at 5s ledgers. Correctness does not depend on \
-             the value: reads only see rounds written within the 30 day window, which tracks the \
+            DATA_RETENTION_TTL, 3_110_400,
+            "round-history retention is 180 days at 5s ledgers. Correctness does not depend on \
+             the value: reads only see rounds written within the 180 day window, which tracks the \
              minted TTL downward instantly and upward once the shorter cohort has aged out. \
              Treat any change as deliberate, and update this canary."
         );

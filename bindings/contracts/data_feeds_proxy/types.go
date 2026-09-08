@@ -66,12 +66,16 @@ func RoundFromScVal(val xdr.ScVal) (*Round, error) {
 
 // ProxyReadError represents the contract error codes.
 const (
-	ProxyReadErrorNoDataPresent = 50
+	ProxyReadErrorNoDataPresent   = 50
+	ProxyReadErrorInvalidDecimals = 51
+	ProxyReadErrorRoundsToZero    = 52
 )
 
 // ProxyReadErrorMessage returns a human-readable message for error codes.
 var ProxyReadErrorMessage = map[int]string{
 	50: "no data present",
+	51: "invalid decimals",
+	52: "rounds to zero",
 }
 
 // CacheError represents the contract error codes.
@@ -146,6 +150,19 @@ type CacheSet struct {
 
 // CacheSetTopic is the event topic identifier.
 const CacheSetTopic = "CacheSet"
+
+// MinDecimalsSet represents the MinDecimalsSet event.
+// Topics: [MinDecimalsSet]
+type MinDecimalsSet struct {
+	DataId [32]byte
+	Min    uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// MinDecimalsSetTopic is the event topic identifier.
+const MinDecimalsSetTopic = "MinDecimalsSet"
 
 // Upgraded represents the Upgraded event.
 // Topics: [Upgraded]
