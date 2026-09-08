@@ -53,7 +53,7 @@ type TxManagerConfig struct {
 	FeeBumpMultiplier *float64 `toml:"FeeBumpMultiplier"`
 	ResourceFeeBuffer *int64   `toml:"ResourceFeeBuffer"`
 	RestoreFeeBuffer  *int64   `toml:"RestoreFeeBuffer"`
-	MaxResourceFee *int64 `toml:"MaxResourceFee"`
+	MaxResourceFee    *int64   `toml:"MaxResourceFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee P50/P90 in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).

@@ -128,24 +128,24 @@ func (a *StellarChainFamilyAdapter) GetChainFamilySelector() [4]byte {
 	return stellarFeeQuoterChainFamilySelector
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig() ccvadapters.FeeQuoterDestChainConfig {
-	return ccvadapters.FeeQuoterDestChainConfig{
-		IsEnabled:                   true,
-		MaxDataBytes:                50_000,
-		MaxPerMsgGasLimit:           4_000_000,
-		DestGasOverhead:             350_000,
-		DestGasPerPayloadByteBase:   16,
-		ChainFamilySelector:         stellarFeeQuoterChainFamilySelector,
-		DefaultTokenFeeUSDCents:     50,
-		DefaultTokenDestGasOverhead: 50_000,
-		DefaultTxGasLimit:           200_000,
-		NetworkFeeUSDCents:          100,
-		LinkFeeMultiplierPercent:    90,
+func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig(_, _ uint64, chainFamilySelector [4]byte) ccvadapters.FeeQuoterDestChainConfigOverrides {
+	return ccvadapters.FeeQuoterDestChainConfigOverrides{
+		IsEnabled:                   ptr(true),
+		MaxDataBytes:                ptr(uint32(50_000)),
+		MaxPerMsgGasLimit:           ptr(uint32(4_000_000)),
+		DestGasOverhead:             ptr(uint32(350_000)),
+		DestGasPerPayloadByteBase:   ptr(uint8(16)),
+		ChainFamilySelector:         chainFamilySelector,
+		DefaultTokenFeeUSDCents:     ptr(uint16(50)),
+		DefaultTokenDestGasOverhead: ptr(uint32(50_000)),
+		DefaultTxGasLimit:           ptr(uint32(200_000)),
+		NetworkFeeUSDCents:          ptr(uint16(100)),
+		LinkFeeMultiplierPercent:    ptr(uint8(90)),
 		USDPerUnitGas:               big.NewInt(1e6),
 	}
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig() ccvadapters.RemoteChainDefaults {
+func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig(_, _ uint64) ccvadapters.RemoteChainDefaults {
 	return ccvadapters.RemoteChainDefaults{
 		AllowTrafficFrom:          true,
 		ExecutorDestChainConfig:   ccvadapters.ExecutorDestChainConfig{USDCentsFee: 0, Enabled: true},
@@ -172,3 +172,5 @@ func (a *StellarChainFamilyAdapter) GetDefaultFinalityConfig() finality.Config {
 		BlockDepth:      1,
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

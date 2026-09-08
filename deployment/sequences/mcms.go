@@ -24,11 +24,13 @@ func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer
 	return stellardeployment.NewDeployerFromChain(ch)
 }
 
-func stellarTimelockAdmin(in deploy.MCMSDeploymentConfigPerChainWithAddress, ch cldfstellar.Chain) (string, error) {
-	if in.TimelockAdmin == (common.Address{}) {
-		return ch.Signer.Address(), nil
+// validateStellarTimelockAdmin rejects a configured TimelockAdmin: the Stellar RBACTimelock
+// grants ADMIN_ROLE only to itself, so there is no external admin to assign.
+func validateStellarTimelockAdmin(in deploy.MCMSDeploymentConfigPerChainWithAddress) error {
+	if in.TimelockAdmin != (common.Address{}) {
+		return fmt.Errorf("timelockAdmin must be the zero address for Stellar RBACTimelock deploy (the timelock is its own admin); non-zero EVM addresses are not supported")
 	}
-	return "", fmt.Errorf("timelockAdmin must be the zero address for Stellar RBACTimelock deploy (use chain signer); non-zero EVM addresses are not supported")
+	return nil
 }
 
 // DeployStellarMCMS deploys a single Soroban MCMS instance and applies the merged signer config.
@@ -105,8 +107,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
 			}
 			tlID = tlOut.Output.ContractID
-			admin, err := stellarTimelockAdmin(in, ch)
-			if err != nil {
+			if err := validateStellarTimelockAdmin(in); err != nil {
 				return seqcore.OnChainOutput{}, err
 			}
 			var minDelay uint64
@@ -120,9 +121,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			_, err = cldfops.ExecuteOperation(b, timelockops.Initialize, deps, timelockops.InitializeInput{
 				ContractID: tlID,
 				MinDelay:   minDelay,
-				Admin:      admin,
 				Proposers:  roleHolders,
-				Executors:  []string{},
 				Cancellers: roleHolders,
 				Bypassers:  roleHolders,
 			})

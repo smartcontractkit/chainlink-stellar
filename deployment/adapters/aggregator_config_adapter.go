@@ -16,6 +16,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	dsutils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
 	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
+	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 )
@@ -43,7 +44,7 @@ func (a *StellarAggregatorConfigAdapter) ScanCommitteeStates(ctx context.Context
 		return nil, fmt.Errorf("Stellar chain %d has no signer configured", chainSelector)
 	}
 
-	// GetAllSignatureConfigs is a read-only Soroban simulation, but we use the
+	// get_signature_config is a read-only Soroban simulation, but we use the
 	// CLDF chain signer (an Ed25519 key already provisioned by the deployment
 	// environment) instead of generating an ephemeral keypair. This avoids
 	// creating a fresh unfunded Stellar account on every changeset run and
@@ -58,7 +59,7 @@ func (a *StellarAggregatorConfigAdapter) ScanCommitteeStates(ctx context.Context
 		}
 
 		client := ccvbindings.NewCommitteeVerifierClient(deployer, contractID)
-		configs, err := client.GetAllSignatureConfigs(ctx)
+		configs, err := readSignatureConfigs(ctx, env, chainSelector, client)
 		if err != nil {
 			return nil, fmt.Errorf("get signature configs from %s on chain %d: %w", ref.Address, chainSelector, err)
 		}
@@ -87,6 +88,29 @@ func (a *StellarAggregatorConfigAdapter) ScanCommitteeStates(ctx context.Context
 	}
 
 	return states, nil
+}
+
+// readSignatureConfigs returns the signature quorum config of every source chain in the
+// environment that the committee verifier has configured. The contract only exposes a
+// per-source getter, so sources outside the environment are not visible here.
+func readSignatureConfigs(ctx context.Context, env deployment.Environment, chainSelector uint64, client *ccvbindings.CommitteeVerifierClient) ([]ccvbindings.SignatureQuorumConfig, error) {
+	var configs []ccvbindings.SignatureQuorumConfig
+	for _, source := range env.BlockChains.ListChainSelectors(cldf_chain.WithChainSelectorsExclusion([]uint64{chainSelector})) {
+		cfg, err := client.GetSignatureConfig(ctx, source)
+		if err != nil {
+			if isContractError(err, ccvbindings.CCIPErrorSourceSignersNotConfigured) {
+				continue
+			}
+			return nil, fmt.Errorf("source %d: %w", source, err)
+		}
+		configs = append(configs, *cfg)
+	}
+	return configs, nil
+}
+
+// isContractError reports whether a simulation error carries the given CCIPError code.
+func isContractError(err error, code int) bool {
+	return strings.Contains(err.Error(), fmt.Sprintf("Error(Contract, #%d)", code))
 }
 
 func hexToStellarContractID(hexAddr string) (string, error) {

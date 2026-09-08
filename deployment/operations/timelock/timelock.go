@@ -13,13 +13,13 @@ const ContractType = "Timelock"
 // Deploy uploads timelock.wasm.
 var Deploy = stellarops.NewDeployOperation("timelock:deploy", "Deploys the Timelock Soroban contract from WASM")
 
-// InitializeInput configures timelock roles and minimum delay.
+// InitializeInput configures timelock roles and minimum delay. The contract grants
+// ADMIN_ROLE only to itself and execution is permissionless, so there is no admin or
+// executor input.
 type InitializeInput struct {
 	ContractID string   `json:"contract_id"`
 	MinDelay   uint64   `json:"min_delay"`
-	Admin      string   `json:"admin"`
 	Proposers  []string `json:"proposers"`
-	Executors  []string `json:"executors"`
 	Cancellers []string `json:"cancellers"`
 	Bypassers  []string `json:"bypassers"`
 }
@@ -28,18 +28,18 @@ type InitializeInput struct {
 var Initialize = cldfops.NewOperation(
 	"timelock:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes Timelock with delay, admin, and role holders",
+	"Initializes Timelock with delay and role holders",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
 		c := tlbindings.NewTimelockClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.MinDelay, in.Admin, in.Proposers, in.Executors, in.Cancellers, in.Bypassers); err != nil {
+		if err := c.Initialize(b.GetContext(), in.MinDelay, in.Proposers, in.Cancellers, in.Bypassers); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil
 	},
 )
 
-// GrantRoleInput grants a role on Timelock to an account. Used by Deployer to grant ADMIN_ROLE
-// to the Timelock itself so role administration goes through scheduled ops.
+// GrantRoleInput grants a role on Timelock to an account. Only the Timelock holds ADMIN_ROLE,
+// so the call must run as a scheduled or bypassed self-call.
 type GrantRoleInput struct {
 	ContractID string `json:"contract_id"`
 	Caller     string `json:"caller"`

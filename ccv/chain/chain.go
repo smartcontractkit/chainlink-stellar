@@ -71,6 +71,8 @@ func ptrU16(v uint16) *uint16 { return &v }
 
 func ptrU8(v uint8) *uint8 { return &v }
 
+func ptrString(v string) *string { return &v }
+
 // generateAccountAddress generates a Stellar account address (G...) from a seed.
 // This uses the Stellar SDK's keypair package to create a proper strkey-encoded address.
 // TODO: move to a test helper since it's not used outside of tests.
@@ -213,38 +215,39 @@ func stellarFeeQuoterDestChainConfigOverride(selector uint64) lanes.FeeQuoterDes
 }
 
 // GetChainLaneProfile implements cciptestinterfaces.OnChainConfigurable.
-// Returns the lane profile for Stellar as a destination chain, mirroring the
+// Returns the lane overrides for Stellar as a destination chain, mirroring the
 // values used in GetConnectionProfile and stellarFeeQuoterDestChainConfigOverride.
-func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (cciptestinterfaces.ChainLaneProfile, error) {
-	// FeeQuoter family selector and DestGasOverhead are populated from the Stellar
-	// lane adapter defaults; overrides here only set fields that differ from those.
+// FeeQuoter family selector, DestGasOverhead and the committee verifier gas come
+// from the Stellar chain-family adapter defaults; only fields that differ are set here.
+func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (ccipChangesets.ChainOverrides, error) {
 	enabled := true
-	return cciptestinterfaces.ChainLaneProfile{
-		BaseExecutionGasCost: ptrU32(100_000),
-		FeeQuoterDestChainConfig: ccipChangesets.FeeQuoterDestChainConfigOverrides{
-			IsEnabled:                   &enabled,
-			MaxDataBytes:                ptrU32(30_000),
-			MaxPerMsgGasLimit:           ptrU32(3_000_000),
-			DestGasPerPayloadByteBase:   ptrU8(16),
-			DefaultTokenFeeUSDCents:     ptrU16(25),
-			DefaultTokenDestGasOverhead: ptrU32(90_000),
-			DefaultTxGasLimit:           ptrU32(200_000),
-			NetworkFeeUSDCents:          ptrU16(10),
-			LinkFeeMultiplierPercent:    ptrU8(90),
-			USDPerUnitGas:               big.NewInt(1e6),
+	return ccipChangesets.ChainOverrides{
+		RemoteChainCfg: ccipChangesets.PartialRemoteChainConfig{
+			DefaultExecutorQualifier: ptrString(devenvcommon.DefaultExecutorQualifier),
+			DefaultInboundCCVs: []datastore.AddressRef{
+				stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
+			},
+			DefaultOutboundCCVs: []datastore.AddressRef{
+				stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
+			},
+			FeeQuoterDestChainConfig: adapters.FeeQuoterDestChainConfigOverrides{
+				IsEnabled:                   &enabled,
+				MaxDataBytes:                ptrU32(30_000),
+				MaxPerMsgGasLimit:           ptrU32(3_000_000),
+				DestGasPerPayloadByteBase:   ptrU8(16),
+				DefaultTokenFeeUSDCents:     ptrU16(25),
+				DefaultTokenDestGasOverhead: ptrU32(90_000),
+				DefaultTxGasLimit:           ptrU32(200_000),
+				NetworkFeeUSDCents:          ptrU16(10),
+				LinkFeeMultiplierPercent:    ptrU8(90),
+				USDPerUnitGas:               big.NewInt(1e6),
+			},
+			ExecutorDestChainConfig: &adapters.ExecutorDestChainConfig{
+				USDCentsFee: 0,
+				Enabled:     true,
+			},
+			BaseExecutionGasCost: ptrU32(100_000),
 		},
-		ExecutorDestChainConfig: &adapters.ExecutorDestChainConfig{
-			USDCentsFee: 0,
-			Enabled:     true,
-		},
-		DefaultExecutorQualifier: devenvcommon.DefaultExecutorQualifier,
-		DefaultInboundCCVs: []datastore.AddressRef{
-			stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
-		},
-		DefaultOutboundCCVs: []datastore.AddressRef{
-			stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
-		},
-		GasForVerification: ptrU32(10_000),
 	}, nil
 }
 
@@ -391,7 +394,7 @@ func (c *Chain) GetDeployChainContractsCfg(env *deployment.Environment, selector
 		return ccipChangesets.DeployChainContractsPerChainCfg{}, fmt.Errorf("decode stellar deployer: %w", err)
 	}
 	return ccipChangesets.DeployChainContractsPerChainCfg{
-		DeployerContract: stellarcommon.HexEncode(raw),
+		DeployerContract: ptrString(stellarcommon.HexEncode(raw)),
 		DeployerKeyOwned: true,
 	}, nil
 }

@@ -56,7 +56,7 @@ func (a *StellarCCVCommitteeVerifierOnchainAdapter) ScanCommitteeStates(
 		}
 
 		client := ccvbindings.NewCommitteeVerifierClient(deployer, contractID)
-		configs, err := client.GetAllSignatureConfigs(ctx)
+		configs, err := readSignatureConfigs(ctx, env, chainSelector, client)
 		if err != nil {
 			return nil, fmt.Errorf("get signature configs from %s on chain %d: %w", ref.Address, chainSelector, err)
 		}
