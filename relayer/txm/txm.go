@@ -652,7 +652,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonRestoreFailed)
 				return
 			}
-			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq); err != nil {
+			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq, inclusionFee); err != nil {
 				ctxLogger.Errorw("failed to restore archived ledger entries", "error", err)
 				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonRestoreFailed)
 				return

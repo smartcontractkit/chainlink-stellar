@@ -121,17 +121,10 @@ func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolr
 		}
 
 		// Set the resource fee inside SorobanData so txnbuild computes the envelope fee correctly.
-		resourceFee = sim.MinResourceFee + s.feeStrat.ResourceFeeBuffer
-		// Enforce the tighter of the configured and per-request resource-fee caps.
-		effectiveCap := s.feeStrat.MaxResourceFee
-		if perRequestMaxResourceFee > 0 {
-			if effectiveCap == 0 || int64(perRequestMaxResourceFee) < effectiveCap {
-				effectiveCap = int64(perRequestMaxResourceFee)
-			}
-		}
-		if effectiveCap > 0 && resourceFee > effectiveCap {
-			return nil, 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (sim.MinResourceFee=%d, buffer=%d)",
-				resourceFee, effectiveCap, sim.MinResourceFee, s.feeStrat.ResourceFeeBuffer)
+		var err error
+		resourceFee, err = s.feeStrat.ResourceFee(sim.MinResourceFee, s.feeStrat.ResourceFeeBuffer, perRequestMaxResourceFee)
+		if err != nil {
+			return nil, 0, err
 		}
 		sorobanData.ResourceFee = xdr.Int64(resourceFee)
 

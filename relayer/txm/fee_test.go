@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
@@ -82,21 +83,61 @@ func TestFeeStrategy_Calculate_ZeroResourceFee(t *testing.T) {
 	assert.Equal(t, int64(100+15_000), total)
 }
 
-func TestFeeStrategy_CalculateRestoreFee(t *testing.T) {
+func TestFeeStrategy_ResourceFee(t *testing.T) {
 	t.Parallel()
 	fs := defaultFeeStrategy()
+	fs.MaxResourceFee = 1_000_000
 
-	// Restore fee = preamble min resource fee + restore buffer (no geometric bumping)
-	fee := fs.CalculateRestoreFee(80_000, 10_000)
-	assert.Equal(t, int64(90_000), fee)
-}
+	t.Run("min plus buffer, no geometric bumping", func(t *testing.T) {
+		t.Parallel()
+		fee, err := fs.ResourceFee(80_000, 10_000, 0)
+		require.NoError(t, err)
+		assert.Equal(t, int64(90_000), fee)
+	})
 
-func TestFeeStrategy_CalculateRestoreFee_ZeroBuffer(t *testing.T) {
-	t.Parallel()
-	fs := defaultFeeStrategy()
+	t.Run("zero buffer", func(t *testing.T) {
+		t.Parallel()
+		fee, err := fs.ResourceFee(80_000, 0, 0)
+		require.NoError(t, err)
+		assert.Equal(t, int64(80_000), fee)
+	})
 
-	fee := fs.CalculateRestoreFee(80_000, 0)
-	assert.Equal(t, int64(80_000), fee)
+	t.Run("non-positive rpc minimum is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := fs.ResourceFee(0, 10_000, 0)
+		require.Error(t, err)
+		_, err = fs.ResourceFee(-1, 10_000, 0)
+		require.Error(t, err)
+	})
+
+	t.Run("over configured cap is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := fs.ResourceFee(995_000, 10_000, 0)
+		require.ErrorContains(t, err, "exceeds cap 1000000")
+	})
+
+	t.Run("per-request cap tightens the configured cap", func(t *testing.T) {
+		t.Parallel()
+		_, err := fs.ResourceFee(80_000, 10_000, 50_000)
+		require.ErrorContains(t, err, "exceeds cap 50000")
+		fee, err := fs.ResourceFee(80_000, 10_000, 100_000)
+		require.NoError(t, err)
+		assert.Equal(t, int64(90_000), fee)
+	})
+
+	t.Run("per-request cap cannot loosen the configured cap", func(t *testing.T) {
+		t.Parallel()
+		_, err := fs.ResourceFee(995_000, 10_000, 5_000_000)
+		require.ErrorContains(t, err, "exceeds cap 1000000")
+	})
+
+	t.Run("uncapped when no cap is configured", func(t *testing.T) {
+		t.Parallel()
+		uncapped := defaultFeeStrategy()
+		fee, err := uncapped.ResourceFee(5_000_000, 0, 0)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5_000_000), fee)
+	})
 }
 
 func TestFeeStrategy_NewFromConfig(t *testing.T) {
