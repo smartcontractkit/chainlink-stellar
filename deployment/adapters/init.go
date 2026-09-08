@@ -22,6 +22,7 @@ import (
 	tokenscore "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/utils/changesets"
 	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
+	ccipoffchainshared "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain/shared"
 
 	ccvdeploymentadapters "github.com/smartcontractkit/chainlink-ccv/deployment/adapters"
 	ccvshared "github.com/smartcontractkit/chainlink-ccv/deployment/shared"
@@ -69,6 +70,10 @@ func init() {
 	ccvshared.RegisterChainTypeFamily(nodev1.ChainType_CHAIN_TYPE_STELLAR, chainsel.FamilyStellar)
 	ccvshared.RegisterAddressNormalizer(chainsel.FamilyStellar, normalizeStellarSignerAddress)
 	ccvshared.RegisterSigningIdentityReader(chainsel.FamilyStellar, ccvshared.EVMSigningIdentityReader{})
+	// The ccip-side fetch_signing_keys (v2_0_0/offchain) only indexes families registered in its
+	// own registry; without this, SigningKeysByNOP[alias]["stellar"] is never populated and lane
+	// configuration cannot build the Stellar committee signer quorum on remote chains.
+	ccipoffchainshared.RegisterSigningIdentityReader(chainsel.FamilyStellar, ccipoffchainshared.EVMSigningIdentityReader{})
 
 	// chainlink-ccv/deployment/adapters: one FamilyRegistry per concern
 	ccvdeploymentadapters.GetAggregatorRegistry().Register(chainsel.FamilyStellar, &StellarCCVDeploymentAggregatorConfigAdapter{})

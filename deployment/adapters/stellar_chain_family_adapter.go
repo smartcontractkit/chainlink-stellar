@@ -7,8 +7,6 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
-
 	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/lanes"
 	datastore_utils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
@@ -19,13 +17,15 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
 // StellarChainFamilyAdapter implements ccvadapters.ChainFamily for CCIP 2.0.
 // Stellar does not register deployment/lanes.LaneAdapter: lane wiring is done
-// via DeployContractsForSelector / ConfigureChainsForLanesFromTopology (no-op
-// ConfigureChainForLanes here). Legacy lanes.ConnectChains is unsupported for
-// Stellar unless a LaneAdapter is reintroduced.
+// via DeployContractsForSelector / ConfigureChainsForLanesFromTopology; the
+// ConfigureChainForLanes hook applies committee verifier signature quorums
+// (sequences.StellarConfigureChainForLanes). Legacy lanes.ConnectChains is
+// unsupported for Stellar unless a LaneAdapter is reintroduced.
 type StellarChainFamilyAdapter struct{}
 
 var _ ccvadapters.ChainFamily = (*StellarChainFamilyAdapter)(nil)
@@ -93,17 +93,8 @@ func (a *StellarChainFamilyAdapter) GetDefaultGasPrice() *big.Int {
 	return big.NewInt(1e9)
 }
 
-var stellarNoOpConfigureChainForLanes = cldf_ops.NewSequence(
-	"StellarConfigureChainForLanes",
-	semver.MustParse("2.0.0"),
-	"No-op: Stellar lane config is applied during contract deployment",
-	func(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, _ ccvadapters.ConfigureChainForLanesInput) (seq_core.OnChainOutput, error) {
-		return seq_core.OnChainOutput{}, nil
-	},
-)
-
 func (a *StellarChainFamilyAdapter) ConfigureChainForLanes() *cldf_ops.Sequence[ccvadapters.ConfigureChainForLanesInput, seq_core.OnChainOutput, cldf_chain.BlockChains] {
-	return stellarNoOpConfigureChainForLanes
+	return sequences.StellarConfigureChainForLanes
 }
 
 func (a *StellarChainFamilyAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byte, error) {
