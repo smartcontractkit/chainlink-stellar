@@ -908,9 +908,6 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailuresDoNotStealLifecycleBudget
 	assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must be 0 — no post-submit retry happened yet")
 }
 
-// The restore envelope must carry the (bounded) resource fee inside SorobanData and only
-// the inclusion bid as BaseFee. txnbuild computes fee = BaseFee*ops + SorobanData.ResourceFee,
-// so passing the resource fee as BaseFee as well would declare it twice.
 func TestStellarTxm_HandleRestore_FeeIsBoundedAndNotDoubleCounted(t *testing.T) {
 	t.Parallel()
 
@@ -997,8 +994,6 @@ func TestStellarTxm_HandleRestore_FeeIsBoundedAndNotDoubleCounted(t *testing.T) 
 	})
 }
 
-// A simulation MinResourceFee that is non-positive or above the configured / per-request
-// cap must fail the tx before anything is signed, and release the reserved sequence.
 func TestStellarTxm_BroadcastPipeline_RejectsUntrustedMinResourceFee(t *testing.T) {
 	t.Parallel()
 

@@ -121,8 +121,6 @@ func (s *StellarTxm) assembleTransaction(tx *txnbuild.Transaction, sim protocolr
 		}
 
 		// Set the resource fee inside SorobanData so txnbuild computes the envelope fee correctly.
-		// sim.MinResourceFee is untrusted RPC output: ResourceFee rejects non-positive values
-		// and anything above the tighter of the configured and per-request caps.
 		var err error
 		resourceFee, err = s.feeStrat.ResourceFee(sim.MinResourceFee, s.feeStrat.ResourceFeeBuffer, perRequestMaxResourceFee)
 		if err != nil {

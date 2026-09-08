@@ -42,22 +42,10 @@ func (f *FeeStrategy) Calculate(minResourceFee int64, attempt uint64) int64 {
 	return inclusionFee + resourceFee
 }
 
-// effectiveResourceFeeCap returns the tighter of the configured MaxResourceFee and a
-// per-request cap. 0 means uncapped.
-func (f *FeeStrategy) effectiveResourceFeeCap(perRequestMaxResourceFee uint64) int64 {
-	capFee := f.MaxResourceFee
-	if perRequestMaxResourceFee > 0 && perRequestMaxResourceFee <= math.MaxInt64 {
-		if capFee == 0 || int64(perRequestMaxResourceFee) < capFee {
-			capFee = int64(perRequestMaxResourceFee)
-		}
-	}
-	return capFee
-}
-
-// ResourceFee returns the resource fee (in stroops) to write into SorobanData for an
-// invoke or restore envelope: the RPC-reported minimum plus a flat buffer, bounded by
-// effectiveResourceFeeCap. minResourceFee comes from an untrusted RPC response, so a
-// non-positive value or a value over the cap is rejected instead of signed.
+// ResourceFee returns the resource fee (in stroops) to write into SorobanData: the RPC-reported
+// minimum plus a flat buffer, bounded by the tighter of MaxResourceFee and the per-request cap
+// (0 = uncapped). minResourceFee is untrusted RPC output, so a non-positive value or one over
+// the cap is an error rather than a signed envelope.
 func (f *FeeStrategy) ResourceFee(minResourceFee int64, buffer int64, perRequestMaxResourceFee uint64) (int64, error) {
 	if minResourceFee <= 0 {
 		return 0, fmt.Errorf("rpc reported non-positive MinResourceFee %d", minResourceFee)
@@ -69,9 +57,15 @@ func (f *FeeStrategy) ResourceFee(minResourceFee int64, buffer int64, perRequest
 		return 0, fmt.Errorf("resource fee overflow: MinResourceFee=%d buffer=%d", minResourceFee, buffer)
 	}
 	fee := minResourceFee + buffer
-	if capFee := f.effectiveResourceFeeCap(perRequestMaxResourceFee); capFee > 0 && fee > capFee {
-		return 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (MinResourceFee=%d, buffer=%d)",
-			fee, capFee, minResourceFee, buffer)
+
+	capFee := f.MaxResourceFee
+	if perRequestMaxResourceFee > 0 && perRequestMaxResourceFee <= math.MaxInt64 {
+		if capFee == 0 || int64(perRequestMaxResourceFee) < capFee {
+			capFee = int64(perRequestMaxResourceFee)
+		}
+	}
+	if capFee > 0 && fee > capFee {
+		return 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (MinResourceFee=%d, buffer=%d)", fee, capFee, minResourceFee, buffer)
 	}
 	return fee, nil
 }
