@@ -27,7 +27,7 @@ fn test_initialize() {
     assert!(!client.is_cursed());
     assert_eq!(
         client.type_and_version(),
-        soroban_sdk::String::from_str(&env, "RMN 2.0.0")
+        soroban_sdk::String::from_str(&env, "RMN-dev 2.0.0")
     );
 }
 
