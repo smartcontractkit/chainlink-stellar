@@ -9,7 +9,10 @@ pub trait SiloedLockReleasePoolInterface {
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn get_token(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_router(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -18,7 +21,10 @@ pub trait SiloedLockReleasePoolInterface {
         router: soroban_sdk::Address,
         ramp_registry: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn set_router(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn set_router(
+        env: soroban_sdk::Env,
+        router: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn get_lock_box(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,
@@ -30,10 +36,6 @@ pub trait SiloedLockReleasePoolInterface {
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_remote_pool(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,
@@ -410,68 +412,68 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_Burned"])]
+#[soroban_sdk::contractevent(topics = ["pool_Burned"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BurnedEvent {
     pub sender: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_Locked"])]
+#[soroban_sdk::contractevent(topics = ["pool_Locked"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockedEvent {
     pub sender: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_Minted"])]
+#[soroban_sdk::contractevent(topics = ["pool_Minted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MintedEvent {
     pub sender: soroban_sdk::Address,
     pub recipient: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_Released"])]
+#[soroban_sdk::contractevent(topics = ["pool_Released"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReleasedEvent {
     pub sender: soroban_sdk::Address,
     pub recipient: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_ChainRemoved"])]
+#[soroban_sdk::contractevent(topics = ["pool_ChainRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ChainRemovedEvent {
     pub remote_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_ChainConfigured"])]
+#[soroban_sdk::contractevent(topics = ["pool_ChainConfigured"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ChainConfiguredEvent {
     pub remote_chain_selector: u64,
@@ -480,24 +482,24 @@ pub struct ChainConfiguredEvent {
     pub outbound_rate_limiter_config: RateLimitConfig,
     pub inbound_rate_limiter_config: RateLimitConfig,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_FinalityConfigSet"])]
+#[soroban_sdk::contractevent(topics = ["pool_FinalityConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FinalityConfigSetEvent {
     pub allowed_finality: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_FtfInboundConsumed"])]
+#[soroban_sdk::contractevent(topics = ["pool_FtfInboundConsumed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FtfInboundConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_FtfOutboundConsumed"])]
+#[soroban_sdk::contractevent(topics = ["pool_FtfOutboundConsumed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FtfOutboundConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_RateLimitConfigured"])]
+#[soroban_sdk::contractevent(topics = ["pool_RateLimitConfigured"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RateLimitConfiguredEvent {
     pub remote_chain_selector: u64,
@@ -505,29 +507,29 @@ pub struct RateLimitConfiguredEvent {
     pub outbound_config: RateLimitConfig,
     pub inbound_config: RateLimitConfig,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_HooksUpdated"])]
+#[soroban_sdk::contractevent(topics = ["pool_HooksUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AdvancedPoolHooksUpdatedEvent {
     pub old_hooks: Option<soroban_sdk::Address>,
     pub new_hooks: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_InboundRateLimitConsumed"])]
+#[soroban_sdk::contractevent(topics = ["pool_InboundRateLimitConsumed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundRateLimitConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }
 #[soroban_sdk::contractevent(
-    export = false,
     topics = ["pool_OutboundRateLimitConsumed",
-    ]
+    ],
+    export = false
 )]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundRateLimitConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["pool_LockBoxConfigured"])]
+#[soroban_sdk::contractevent(topics = ["pool_LockBoxConfigured"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockBoxConfiguredEvent {
     pub remote_chain_selector: u64,

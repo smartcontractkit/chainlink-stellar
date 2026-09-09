@@ -4,9 +4,11 @@ package rmn_remote
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -171,21 +173,6 @@ func (c *RmnRemoteClient) RequireOwner(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return v, nil
-}
-
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *RmnRemoteClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.
@@ -357,4 +344,358 @@ func (c *RmnRemoteClient) CancelOwnershipTransfer(ctx context.Context) error {
 
 	_ = result // void return
 	return nil
+}
+
+// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
+func (c *RmnRemoteClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAuthorizedCallerAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AuthorizedCallerAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
+func (c *RmnRemoteClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseAuthorizedCallerRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &AuthorizedCallerRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "caller":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Caller = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
+func (c *RmnRemoteClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OwnershipTransferStartedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOwnershipTransferStartedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTransferStartedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OwnershipTransferStartedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "previous_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.PreviousOwner = v
+			}
+		case "new_owner":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.NewOwner = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForCursedEvent waits for a CursedEvent event.
+func (c *RmnRemoteClient) WaitForCursedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CursedEvent) bool) (*CursedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{CursedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseCursedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseCursedEvent(e protocolrpc.EventInfo) (*CursedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &CursedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "subjects":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][16]byte, len(*vec))
+				for i, item := range *vec {
+					v, err := scval.Bytes16FromScVal(item)
+					if err == nil {
+						parsed[i] = v
+					}
+				}
+				result.Subjects = parsed
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForUncursedEvent waits for a UncursedEvent event.
+func (c *RmnRemoteClient) WaitForUncursedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*UncursedEvent) bool) (*UncursedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{UncursedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseUncursedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseUncursedEvent(e protocolrpc.EventInfo) (*UncursedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &UncursedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "subjects":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][16]byte, len(*vec))
+				for i, item := range *vec {
+					v, err := scval.Bytes16FromScVal(item)
+					if err == nil {
+						parsed[i] = v
+					}
+				}
+				result.Subjects = parsed
+			}
+		}
+	}
+
+	return result, nil
 }
