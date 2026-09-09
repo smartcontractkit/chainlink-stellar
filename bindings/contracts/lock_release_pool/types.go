@@ -1366,6 +1366,245 @@ var CCIPErrorMessage = map[int]string{
 	803: "zero fee aggregator not allowed",
 }
 
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// BurnedEvent represents the BurnedEvent event.
+// Topics: [pool_Burned]
+type BurnedEvent struct {
+	Sender string
+	Amount int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// BurnedEventTopic is the event topic identifier.
+const BurnedEventTopic = "pool_Burned"
+
+// LockedEvent represents the LockedEvent event.
+// Topics: [pool_Locked]
+type LockedEvent struct {
+	Sender string
+	Amount int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// LockedEventTopic is the event topic identifier.
+const LockedEventTopic = "pool_Locked"
+
+// MintedEvent represents the MintedEvent event.
+// Topics: [pool_Minted]
+type MintedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// MintedEventTopic is the event topic identifier.
+const MintedEventTopic = "pool_Minted"
+
+// ReleasedEvent represents the ReleasedEvent event.
+// Topics: [pool_Released]
+type ReleasedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ReleasedEventTopic is the event topic identifier.
+const ReleasedEventTopic = "pool_Released"
+
+// ChainRemovedEvent represents the ChainRemovedEvent event.
+// Topics: [pool_ChainRemoved]
+type ChainRemovedEvent struct {
+	RemoteChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainRemovedEventTopic is the event topic identifier.
+const ChainRemovedEventTopic = "pool_ChainRemoved"
+
+// ChainConfiguredEvent represents the ChainConfiguredEvent event.
+// Topics: [pool_ChainConfigured]
+type ChainConfiguredEvent struct {
+	RemoteChainSelector       uint64
+	RemotePoolAddress         []byte
+	RemoteTokenAddress        []byte
+	OutboundRateLimiterConfig RateLimitConfig
+	InboundRateLimiterConfig  RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainConfiguredEventTopic is the event topic identifier.
+const ChainConfiguredEventTopic = "pool_ChainConfigured"
+
+// FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
+// Topics: [pool_FinalityConfigSet]
+type FinalityConfigSetEvent struct {
+	AllowedFinality uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FinalityConfigSetEventTopic is the event topic identifier.
+const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
+
+// FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
+// Topics: [pool_FtfInboundConsumed]
+type FtfInboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfInboundConsumedEventTopic is the event topic identifier.
+const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
+
+// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
+// Topics: [pool_FtfOutboundConsumed]
+type FtfOutboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfOutboundConsumedEventTopic is the event topic identifier.
+const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
+
+// RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
+// Topics: [pool_RateLimitConfigured]
+type RateLimitConfiguredEvent struct {
+	RemoteChainSelector uint64
+	FastFinality        bool
+	OutboundConfig      RateLimitConfig
+	InboundConfig       RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RateLimitConfiguredEventTopic is the event topic identifier.
+const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
+
+// AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
+// Topics: [pool_HooksUpdated]
+type AdvancedPoolHooksUpdatedEvent struct {
+	OldHooks *string
+	NewHooks *string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AdvancedPoolHooksUpdatedEventTopic is the event topic identifier.
+const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
+
+// InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
+// Topics: [pool_InboundRateLimitConsumed]
+type InboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// InboundRateLimitConsumedEventTopic is the event topic identifier.
+const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
+
+// OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
+// Topics: [pool_OutboundRateLimitConsumed]
+type OutboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OutboundRateLimitConsumedEventTopic is the event topic identifier.
+const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
+
 // PoolDataKey is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
 // Construct by setting exactly one variant pointer to a non-nil value.

@@ -938,6 +938,112 @@ var CCIPErrorMessage = map[int]string{
 	803: "zero fee aggregator not allowed",
 }
 
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// StaticConfigSetEvent represents the StaticConfigSetEvent event.
+// Topics: [offramp_1_7_StaticConfigSet]
+type StaticConfigSetEvent struct {
+	StaticConfig StaticConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// StaticConfigSetEventTopic is the event topic identifier.
+const StaticConfigSetEventTopic = "offramp_1_7_StaticConfigSet"
+
+// SourceChainConfigSetEvent represents the SourceChainConfigSetEvent event.
+// Topics: [offramp_1_7_SrcChainCfgSet]
+type SourceChainConfigSetEvent struct {
+	SourceChainSelector uint64
+	SourceConfig        SourceChainConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// SourceChainConfigSetEventTopic is the event topic identifier.
+const SourceChainConfigSetEventTopic = "offramp_1_7_SrcChainCfgSet"
+
+// ExecutionStateChangedEvent represents the ExecutionStateChangedEvent event.
+// Topics: [offramp_1_7_ExecStateChanged]
+type ExecutionStateChangedEvent struct {
+	SourceChainSelector uint64
+	SequenceNumber      uint64
+	MessageId           [32]byte
+	State               MessageExecutionState
+	ReturnData          []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ExecutionStateChangedEventTopic is the event topic identifier.
+const ExecutionStateChangedEventTopic = "offramp_1_7_ExecStateChanged"
+
 // DataKey is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
 // Construct by setting exactly one variant pointer to a non-nil value.

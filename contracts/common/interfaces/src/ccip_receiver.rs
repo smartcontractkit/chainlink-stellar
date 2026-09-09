@@ -4,23 +4,27 @@ pub trait ExampleCcipReceiverInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn get_router(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         router: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn ccip_receive(env: soroban_sdk::Env, message: AnyToStellarMessage) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
+    fn ccip_receive(
         env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
+        message: AnyToStellarMessage,
     ) -> Result<(), CCIPError>;
+    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_ccv_config(
         env: soroban_sdk::Env,
         source_chain_selector: u64,
     ) -> Result<CcvChainConfig, CCIPError>;
-    fn last_message_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
+    fn last_message_id(
+        env: soroban_sdk::Env,
+    ) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
@@ -258,7 +262,7 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_CcvCfg"])]
+#[soroban_sdk::contractevent(topics = ["example_CcvCfg"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipCcvConfigSetEvent {
     pub source_chain_selector: u64,
@@ -266,7 +270,7 @@ pub struct CcipCcvConfigSetEvent {
     pub optional_len: u32,
     pub optional_threshold: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_CcipMessageReceived"])]
+#[soroban_sdk::contractevent(topics = ["example_CcipMessageReceived"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipMessageReceivedEvent {
     pub message_id: soroban_sdk::BytesN<32>,
@@ -275,40 +279,10 @@ pub struct CcipMessageReceivedEvent {
     pub sender_len: u32,
     pub dest_token_transfers: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["example_RemChCfg"])]
+#[soroban_sdk::contractevent(topics = ["example_RemChCfg"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CcipRemoteChainConfiguredEvent {
     pub dest_chain_selector: u64,
     pub extra_args_len: u32,
     pub allowed_finality_config: u32,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleGranted"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_RoleRevoked"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerAdded"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_CallerRemoved"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["auth_OwnerTransferStart"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct OwnershipTransferStartedEvent {
-    pub previous_owner: soroban_sdk::Address,
-    pub new_owner: soroban_sdk::Address,
 }
