@@ -71,6 +71,13 @@ pub struct CacheSet {
     pub old_cache: soroban_sdk::Address,
     pub new_cache: soroban_sdk::Address,
 }
+#[soroban_sdk::contractevent(topics = ["MinDecimalsSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct MinDecimalsSet {
+    #[topic]
+    pub data_id: soroban_sdk::BytesN<32>,
+    pub min: u32,
+}
 #[soroban_sdk::contractevent(topics = ["Upgraded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
