@@ -1,3 +1,5 @@
+use common_message::StellarToAnyMessage;
+
 #[soroban_sdk::contractargs(name = "OnRampArgs")]
 #[soroban_sdk::contractclient(name = "OnRampClient")]
 pub trait OnRampInterface {
@@ -80,66 +82,7 @@ pub trait OnRampInterface {
         dest_chain_selector: u64,
     ) -> Result<u64, CCIPError>;
 }
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListEntry {
-    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListUpdate {
-    pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
-    pub dest_chain_selector: u64,
-    pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenAmount {
-    pub amount: i128,
-    pub token: soroban_sdk::Address,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct GenericExtraArgsV3 {
-    pub block_confirmations: u32,
-    pub ccv_args: soroban_sdk::Vec<soroban_sdk::Bytes>,
-    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub executor: soroban_sdk::Address,
-    pub executor_args: soroban_sdk::Bytes,
-    pub gas_limit: u32,
-    pub token_args: soroban_sdk::Bytes,
-    pub token_receiver: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AnyToStellarMessage {
-    pub data: soroban_sdk::Bytes,
-    pub dest_token_amounts: soroban_sdk::Vec<TokenAmount>,
-    pub message_id: soroban_sdk::BytesN<32>,
-    pub sender: soroban_sdk::Bytes,
-    pub source_chain_selector: u64,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StellarToAnyMessage {
-    pub data: soroban_sdk::Bytes,
-    pub extra_args: soroban_sdk::Bytes,
-    pub fee_token: soroban_sdk::Address,
-    pub receiver: soroban_sdk::Bytes,
-    pub token_amounts: soroban_sdk::Vec<TokenAmount>,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Receipt {
-    pub dest_bytes_overhead: u32,
-    pub dest_gas_limit: u32,
-    pub extra_args: soroban_sdk::Bytes,
-    pub fee_token_amount: i128,
-    pub issuer: soroban_sdk::Address,
-}
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaticConfig {
     pub chain_selector: u64,
@@ -147,13 +90,13 @@ pub struct StaticConfig {
     pub rmn_proxy: soroban_sdk::Address,
     pub token_admin_registry: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DynamicConfig {
     pub fee_aggregator: soroban_sdk::Address,
     pub fee_quoter: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfig {
     pub address_bytes_length: u32,
@@ -169,7 +112,7 @@ pub struct DestChainConfig {
     pub token_network_fee_usd_cents: u32,
     pub token_receiver_allowed: bool,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfigArgs {
     pub address_bytes_length: u32,
@@ -185,7 +128,7 @@ pub struct DestChainConfigArgs {
     pub token_network_fee_usd_cents: u32,
     pub token_receiver_allowed: bool,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -305,64 +248,33 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
-    pub new_owner: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_ConfigSet"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ConfigSetEvent {
-    pub static_config: StaticConfig,
-    pub dynamic_config: DynamicConfig,
-}
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_CCIPMessageSent"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CCIPMessageSentEvent {
-    pub dest_chain_selector: u64,
-    pub sequence_number: u64,
-    pub sender: soroban_sdk::Address,
-    pub message_id: soroban_sdk::BytesN<32>,
-    pub fee_token: soroban_sdk::Address,
-    pub token_amount_before_fees: i128,
-    pub encoded_message: soroban_sdk::Bytes,
-    pub receipts: soroban_sdk::Vec<Receipt>,
-    pub verifier_blobs: soroban_sdk::Vec<soroban_sdk::Bytes>,
-}
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_DestChainConfigSet"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DestChainConfigSetEvent {
-    pub dest_chain_selector: u64,
-    pub message_number: u64,
-    pub config: DestChainConfig,
-}
-#[soroban_sdk::contractevent(topics = ["onramp_1_7_OwnershipTransferred"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct OwnershipTransferredEvent {
     pub new_owner: soroban_sdk::Address,
 }

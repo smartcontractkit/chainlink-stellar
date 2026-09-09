@@ -35,7 +35,7 @@ test-integration:
 # Generate Rust interface files for all contracts from their WASM files.
 # This can be run with `--no-build` to skip the build of the contracts.
 generate-interfaces:
-	./scripts/gen_interfaces.sh && cargo fmt -p common-interfaces
+	./scripts/gen_interfaces.sh && rustfmt --edition 2021 contracts/common/interfaces/src/*.rs
 
 # Generate Go bindings for all contracts from their Rust interface files.
 # This can be run with `--no-interfaces` to skip the 

@@ -3,10 +3,16 @@
 Review of `chainlink-ccv` `CHANGELOG.md` (releases `v0.1.0` → `v0.6.0`) and its
 `changelog/` entries, scoped to what affects how `chainlink-stellar` builds and runs.
 
+> **Status update (2026-09-08): the bump is done and `make up` brings the environment up.**
+> The pin is now `v0.6.1-0.20260901122814-abf56d76c31b` (MVS resolves the root module to
+> `v0.9.0`). Everything in §1–§3 landed; §7 records what the original analysis missed.
+> Remaining work is listed in §5 ("Remaining"). Sections §1–§4 are the original analysis,
+> kept as-is with status annotations.
+
 ## Baseline
 
-The last stellar-side alignment record is `changelog/2026-05-05_ccv_keystore_devenv_alignment.md`,
-but the **actual dependency pin is newer**: `go.mod` holds
+The last stellar-side alignment record is `changelog/2026-05-05_ccv_keystore_devenv_alignment.md`.
+The dependency pin at the time of this review was:
 
 ```
 github.com/smartcontractkit/chainlink-ccv          v0.0.2-0.20260608205628-b1fb1b311772
@@ -18,236 +24,255 @@ github.com/smartcontractkit/chainlink-ccv/deployment      (same)
 stellar commit `1802473` (2026-08-25, "regen artifacts and tidy"), which carried it forward
 unchanged from `1ac90ff`; before that it was `4f70eba1dfd2` (2026-05-18).
 
-So the real gap is **ccv 2026-06-08 → 2026-09-01** — 32 upstream changelog entries and
-six tagged releases. Everything below is relative to that.
+So the gap covered here is **ccv 2026-06-08 → 2026-09-01** — 32 upstream changelog entries and
+six tagged releases.
 
 ---
 
-## 1. Compile-breaking for stellar today
+## 1. Compile-breaking for stellar
 
-These break `go build ./...` the moment the ccv pin is bumped. Ordered by rework cost.
-
-### 1.1 `chainaccess.GenericConfig` gutted — `blockchain_infos` removal
+### 1.1 `chainaccess.GenericConfig` gutted — `blockchain_infos` removal ✅ done
 *Upstream:* `2026-07-14_blockchain_infos_removal.md`, release v0.2.0 (`#1271`, breaking).
 
 `blockchain_infos` is gone from job/application config. Removed APIs include
 `bootstrap.JobSpec.GetGenericConfig`, `chainaccess.GenericConfig.ChainConfig`,
 `GenericConfig.GetConcreteConfig`, `GenericConfig.GetAllConcreteConfig`,
 `executor.ConfigWithBlockchainInfo`, `executor.LoadConfigWithBlockchainInfos`.
-Chain selectors now come from application-owned typed maps; RPC endpoints and
-family tuning come from operator-local config.
 
-**This is the largest single item.** `ccv/accessors/factory_constructor.go` is built almost
-entirely on the removed surface:
+**Resolution:** `ccv/accessors/factory_constructor.go` was rewritten off the removed surface:
+reader configs come solely from the bind-mounted Stellar TOML; `applyOnRampRMNHexOverrides`
+still fills OnRamp/RMN contract IDs from `GenericConfig.OnRampAddresses` /
+`RMNRemoteAddresses` (both still exist on the slimmer `GenericConfig`), and
+`buildStellarDestConfigs` overlays `genericConfig.ChainConfiguration[selector].OffRampAddress
+/ RmnAddress` (also still present). `factory_constructor_test.go` was rewritten accordingly.
+The RMN on-chain derivation (§4) was **not** adopted — the address is still plumbed through
+config; see §5 "Remaining".
 
-- `loadStellarJobReaderInfos(genericConfig chainaccess.GenericConfig)` — reads
-  `blockchain_infos` (line ~109-115)
-- `buildStellarReaderConfigs` merges job `blockchain_infos` over the Stellar file TOML (~117-131)
-- `applyOnRampRMNHexOverrides(..., genericConfig.OnRampAddresses, genericConfig.RMNRemoteAddresses)`
-- `buildStellarDestConfigs` overlays `genericConfig.ChainConfiguration[selector].OffRampAddress / RmnAddress` (~143-190)
+### 1.2 `CommitteeVerifierOnchainAdapter` gained two methods ✅ done
+*Upstream:* `2026-07-01_lane_expansion_mcms_and_committee_onchain_products.md`.
 
-The replacement shape is: `JobSpec.GetAppConfig` with the application's typed config, plus
-the Stellar-local operator config file for anything endpoint/tuning shaped. Related consumer:
-`ccv/chain/modifier/executor.go` (`ChainConfiguration`) and
-`deployment/adapters/ccv_deployment_adapters.go`.
+`SetAllowedFinalityConfig` and `ApplyAllowlistUpdates` were added to
+`StellarCCVCommitteeVerifierOnchainAdapter` (finality config is a logged no-op — the Soroban
+contract has no finality gate; allowlist updates are wired to the contract). No
+`LaneConfigAdapter` was added: devenv configures Stellar lanes through the ccip ChainFamily
+adapter; `GetLaneConfigRegistry` is deliberately skipped (see the TODO in
+`deployment/adapters/init.go`).
 
-### 1.2 `CommitteeVerifierOnchainAdapter` gained two methods
-*Upstream:* `2026-07-01_lane_expansion_mcms_and_committee_onchain_products.md` (explicitly
-called out as breaking for non-EVM families implementing the interface outside the repo).
+Note: `ApplySignatureConfigs` there also gained ascending signer sorting — the contract
+requires it (CCIPError #66/#67); see §7.4.
 
-`ccvdeploymentadapters.CommitteeVerifierOnchainAdapter` now requires
-`SetAllowedFinalityConfig` and `ApplyAllowlistUpdates`.
-`deployment/adapters/ccv_committee_verifier_onchain.go` implements only `ScanCommitteeStates`
-(line 25) and `ApplySignatureConfigs` (line 88), and is registered in
-`deployment/adapters/init.go` — so the registration stops compiling.
-
-Same entry adds two methods to `LaneConfigAdapter` (remote ramps now resolved via the *remote*
-chain's own adapter for family-correct encoding). Stellar has no `LaneConfigAdapter` impl today;
-if lane config for Stellar destinations is expected to work from an EVM source, one is now needed.
-
-### 1.3 `bootstrap.WithLogLevel` removed
+### 1.3 `bootstrap.WithLogLevel` removed ✅ done
 *Upstream:* `2026-07-13_bootstrap_prune_functional_options.md`, release v0.1.0 (`#1265`, breaking).
 
-`WithLogLevel` / `WithLogLevelFromEnv` were no-ops and are removed; the deprecated default
-signing-key set is also removed. Delete the calls and set the level in the bootstrap TOML:
+Calls dropped from `cmd/committee-verifier/main.go` and `cmd/executor/main.go`; the log level
+is set via `LogLevel = "info"` in `[environment_topology.monitoring]` (feeds
+`Bootstrap.Monitoring`) in `tests/env/env-stellar-evm.toml`.
 
-```toml
-[Monitoring]
-LogLevel = "info"
-```
-
-Call sites: `cmd/committee-verifier/main.go:29`, `cmd/executor/main.go:35`.
-(`bootstrap.WithKey` is unchanged — the 2026-05-05 key declarations stay.)
-
-### 1.4 `executor.DefaultEVMTransmitterKeyName` removed
+### 1.4 `executor.DefaultEVMTransmitterKeyName` removed ✅ done — and it is load-bearing
 *Upstream:* `2026-06-11_executor_transmitter_key_registry.md`.
 
-Relocated to `contracttransmitter.DefaultKeyName`. `services.BootstrapKeys.EVMTransmitterAddress`
-is replaced by a generic `PublicKeys map[string]string` + `PublicKeyHex(keyName)`, and
-`services/executor.New` changed signature.
+The constant moved to `contracttransmitter.DefaultKeyName`
+(`integration/pkg/contracttransmitter`). **Caution learned the hard way:** that ECDSA key
+declaration is not only a placeholder for devenv's `GetKeys` POST — the bootstrapper only
+publishes chain configs / signing keys to JD (`UpdateNode` on connect) when at least one
+ECDSA_S256 key is declared. Commenting it out instead of swapping the constant caused the
+executor chain-support validation failure in §7.5. Keep the declaration.
 
-Call site: `cmd/executor/main.go:36` (the placeholder ECDSA key declared so devenv's
-`GetKeys` POST does not 500 — see the comment block at the top of that file).
-
-### 1.5 `cciptestinterfaces.ConfirmExecOnDest` returns `ExecEnvelope`
+### 1.5 `cciptestinterfaces.ConfirmExecOnDest` returns `ExecEnvelope` ✅ done
 *Upstream:* `2026-07-23_tcapi_run_result_tx_ids.md` (breaking).
 
-- `Chain.ConfirmExecOnDest` returns `ExecEnvelope` (event **plus** opaque tx id), not a bare event
-- `tcapi.TestCase.Run` returns `(RunResult, error)` instead of `error`
-- `tcapi.SendV3Message` gains a `protocol.ByteSlice` (tx id) return
+`ccv/chain/chain.go` `ConfirmExecOnDest` returns `ExecEnvelope` (TxID left empty — the OffRamp
+event waiter does not expose a transaction hash). E2E call sites updated to
+`.Event.State` / `.Event.ReturnData`. `tcapi.SendV3Message` / `TestCase.Run` are unused in
+this repo, so the other two bullets needed no work.
 
-Call sites: `ccv/chain/chain.go:735`, plus `tests/e2e/{evm_to_stellar,stellar_to_evm}_exec_test.go`
-and both `*_token_transfer_test.go`.
-
-### 1.6 Narrower V3 interfaces — this one *reduces* stellar's surface
+### 1.6 Narrower V3 interfaces ✅ no-op
 *Upstream:* `2026-07-21_v3_source_destination_factories.md`.
 
-`tcapi.SendV3Message` now takes `cciptestinterfaces.V3Source` / `V3Destination` instead of a full
-`CCIP17`, and derives the destination selector from `dst.ChainSelector()` (the separate
-`destSelector` parameter is gone). `tcapi` no longer references `CCIP17` except for `ChainsMap`.
-
-Net effect for `ccv/chain/chain.go`: far fewer methods must exist purely to satisfy type
-assertions. Worth taking as a simplification pass alongside 1.5.
+No stellar code called the widened interfaces; nothing to simplify.
 
 ---
 
 ## 2. Required to boot at all (non-EVM binaries)
 
-### 2.1 `evmconfig` package split — fixes a Stellar verifier boot failure
+### 2.1 `evmconfig` package split — fixes a Stellar verifier boot failure ✅ avoided
 *Upstream:* `2026-08-25_evm_config_driver_split.md`, release v0.5.0 (`#1375`).
 
-Between `#1369` and `#1375`, `cli/migrate` imported the EVM accessor package and `cmd/verifier`
-imports `cli/migrate` — so **every** binary built on `cmd/verifier`, including a downstream
-non-EVM verifier, ran the EVM driver's `init()` and registered the EVM factory.
-`chainaccess.NewRegistry` constructs every registered factory eagerly, and
-`CreateEVMAccessorFactory` fails with no EVM config mounted, killing the process at
-`bootstrap.Run` / `StartJob` with `failed to construct accessor factory for family evm`.
-The changelog names a downstream Solana verifier; `cmd/committee-verifier/main.go` has exactly
-that shape.
+The pin jumped straight to 2026-09-01 (`abf56d76`), past the `#1369`–`#1375` window, so the
+deadly eager-EVM-factory init never shipped in a stellar build. No code imports the EVM
+accessor package.
 
-**Consequences:** do not pin ccv into the `#1369`–`#1375` window. After the bump, stellar must
-import `integration/pkg/accessors/evmconfig` if it ever needs the EVM config types, and never
-`integration/pkg/accessors/evm`. (`evm.Config`, `evm.ChainConfig`, `evm.Node`, `evm.Info`,
-`evm.Conversion`, `evm.NewConfigFromInfos`, `evm.EVMConfigPathEnv`, `evm.DefaultEVMConfigPath`
-survive as aliases.)
-
-### 2.2 Stellar cannot yet sync signing keys to JD
+### 2.2 Stellar signing-key sync to JD ✅ resolved upstream at this pin
 *Upstream:* `2026-06-26_signing_key_sync_to_jd.md`.
 
-Verifier nodes now publish their onchain signing address to JD via `feedsmanager.UpdateNode`
-on every connect, declared through a new optional `[[chains]]` block in the bootstrap config.
-Accepted `type` values: `EVM`, `SOLANA`, `APTOS`, `STARKNET`, `TRON`, `TON`, `SUI` —
-**"Stellar and Canton require a JD proto update first."**
+The 06-26 entry said "Stellar and Canton require a JD proto update first" — that update has
+landed: `chainlink-protos/job-distributor v0.20.0` has `CHAIN_TYPE_STELLAR`, the ccv
+bootstrapper accepts `type = "stellar"` in `[[chains]]`, and devenv's
+`familiesSupportingJDKeySync` includes Stellar. The `ImplFactory.DefaultSignerKey` ECDSA
+workaround stays (the on-chain committee_verifier stores 20-byte ETH-style identities).
 
-So the workaround described in the 2026-05-05 record (`ImplFactory.DefaultSignerKey` returning
-the ECDSA address to keep devenv topology enrichment from falling through to JD) remains
-necessary. Track the JD proto update as the unblocker.
+**Operational caveat:** the JD *server* image must be new enough to round-trip
+`CHAIN_TYPE_STELLAR`. A `job-distributor:local` built before the proto update persists the
+chain type as `UNSPECIFIED`, and `fetch_node_chain_support` skips it — rebuild the image
+(`docker rmi job-distributor:local && just build-jd-docker` in
+`chainlink-ccv/build/devenv`; the recipe skips when the image exists). See §7.6.
 
-Related: `2026-07-14_signing_identity_reader.md` adds a `SigningIdentityReader` registry so each
-family declares whether `fetch_signing_keys` reads `OnchainSigningAddress` (20-byte EVM) or
-`OnchainSigningPubKey` (raw secp256k1). Stellar's `committee_verifier` expects ETH-style 20-byte
-identities, so it is an address-class family and **must still register a reader** — in *both* the
-CCV and CCIP registries — or `fetch_signing_keys` will not index the Stellar family key.
+`SigningIdentityReader` is registered for `FamilyStellar` in **both** registries (address-class
+reader, matching the 20-byte ETH-style on-chain identities): ccv's
+`deployment/shared` and ccip's `v2_0_0/offchain/shared`. The ccip-side registration was nearly
+missed — its `fetch_signing_keys` only indexes `RegisteredSigningIdentityFamilies()`.
 
 ---
 
 ## 3. Config surface changes (bootstrap / app / devenv TOML)
 
-| Change | Upstream | Stellar impact |
+| Change | Upstream | Status |
 |---|---|---|
-| Monitoring moves from JD app config to operator bootstrap config; `[monitoring]` required per app; app-config `Monitoring` deprecated-then-ignored | `2026-06-24`, `2026-08-13_cutover_parity_followups` | Add `[monitoring]` to each bootstrap TOML; drop app-config `Monitoring` |
-| Bootstrap owns Beholder + logger; `ServiceFactory.MetricViews() []sdkmetric.View` required | `2026-06-30` | Low: stellar uses upstream `verifiercmd.NewCommitteeVerifierServiceFactory()` / `executorcmd.NewFactory()`, so this is satisfied upstream. Use `deps.Logger`. |
-| `bootstrap.Config` split into embedded `NonSecretConfig` + `Secrets` | `2026-07-07_bootstrap_config_secret_split` | Reads unaffected; only keyed composite literals break — none found in stellar |
-| `app_config_mode = "jd_app_config" \| "local_app_config"` | `2026-07-09` | Enables a JD-free Stellar devenv / local testing path |
-| Verifier secrets file `COMMITTEE_VERIFIER_SECRETS_PATH` (default `/etc/committee-verifier/secrets.toml`); file wins over env | `2026-07-07_verifier_secrets_file` | Optional; env vars still work |
-| `[key_import]` adopts a Chainlink-node-exported key instead of generating one | `2026-07-29`, v0.3.0 (`#1317`) | EVM migration story; no Stellar action |
-| `[protocol_contracts.deploy]` TOML section; committee verifiers + mock receivers move from Phase 2 to Phase 3 | `2026-06-17` | `tests/env/env-stellar-evm.toml` needs the new section and phase expectations |
-| `use_legacy_configure_lane` flag and `deploy.ConnectAllChainsLegacy` **removed**; changeset inputs now derived from live state (`*FromState`, `NOPIdentities`) | `2026-06-26_state_based_offchain_inputs` (breaking in `build/devenv`) | `tests/env/env-stellar-evm-out.toml` still carries `use_legacy_configure_lane` |
-| `chainreg.ExecutorInfo` per-family registration (which key name, how to decode to an address) | `2026-06-11` | Stellar must register `ExecutorInfo` so devenv funds the Ed25519 transmitter without edits to shared devenv code — this is the clean home for `common.StellarTransmitterKeyName` |
-| Standalone EVM node config: one `http_url` + optional `ws_url` per node; four-URL schema removed, loader is strict | `2026-07-27` | EVM-only, but the strict loader means stale mounted EVM config in the shared devenv fails hard |
+| Monitoring moves to operator bootstrap config | `2026-06-24`, `2026-08-13` | ✅ `[environment_topology.monitoring]` updated: `Enabled`/`Type` removed, `LogLevel = "info"` added, `Beholder.Enabled = true`; same for `[indexer.indexer_config.Monitoring]` |
+| Bootstrap owns Beholder + logger; `MetricViews()` | `2026-06-30` | ✅ satisfied upstream (stellar uses upstream service factories) |
+| `bootstrap.Config` split `NonSecretConfig` + `Secrets` | `2026-07-07` | ✅ no keyed literals in stellar |
+| `app_config_mode` | `2026-07-09` | available; not used by the stellar devenv (JD mode) |
+| Verifier secrets file | `2026-07-07` | not adopted; env vars still work |
+| `[key_import]` | `2026-07-29` | EVM-only; no action |
+| `[protocol_contracts.deploy]`; Phase 2 → Phase 3 move | `2026-06-17` | ✅ no TOML change needed at this pin (section optional) |
+| `use_legacy_configure_lane` removed | `2026-06-26` | ✅ input TOML clean; the stale `env-stellar-evm-out.toml` is regenerated by `make up` (strict legacy decode of the old file fails — delete it if a resume/verify path reads it first) |
+| `chainreg.ExecutorInfo` registration | `2026-06-11` | ✅ `ImplFactory` implements `ExecutorTransmitterKeyName` (`common.StellarTransmitterKeyName`) and `ExecutorTransmitterAddress` (hex of the Ed25519 pubkey — the account address); registered in `RegisterStellarDevenvComponents`. Funding confirmed in the bring-up logs |
+| Aggregator `api_clients.description` removed | (schema strictness) | ✅ dropped from `tests/env/env-stellar-evm.toml` |
+| Executor pool `nop_aliases` must be family-scoped | (JD chain-support validation) | ✅ EVM chains → `evm-executor-1`, stellar chain → `stellar-executor-1`; see §7.5 |
+| Verifier `node_index` unique per committee | (devenv validation) | ✅ stellar verifiers 0–1, EVM verifiers 2–3; mixed-family committee is the intended model (per-source-chain NOP scoping) |
+| Standalone EVM node config | `2026-07-27` | EVM-only; no stellar action |
 
 ---
 
 ## 4. Behavior changes worth knowing (little or no stellar code change)
 
 - **RMN Remote derived from on-chain ramp static config** (`2026-08-14`, v0.5.0 `#1357`).
-  Readers read RMN Remote from OnRamp/OffRamp static config at construction instead of trusting
-  configured values. `rmn_remote_addresses` (verifier app config) and `rmn_address` (executor
-  chain config) are **deprecated but still accepted**; a disagreeing configured value logs a
-  warning and the derived address wins. Both reader constructors now **fail at startup** if the
-  derivation read fails. Also, `vtypes.SourceConfig.RMNRemoteAddress` is removed (`2026-08-13`).
-  → Directly relevant to the RMN overlay logic in `ccv/accessors/factory_constructor.go`
-  (`applyOnRampRMNHexOverrides`, `rmnRemoteContractID`) and to `ccv/contract_transmitter`,
-  `ccv/chain/modifier/{executor,committeeverifier}.go`. Stellar's readers should adopt the same
-  derivation rather than continuing to plumb the address through config.
+  `rmn_remote_addresses` / `rmn_address` are deprecated upstream; readers derive the address
+  at construction and fail startup if the read fails. **Stellar has not adopted this** — the
+  Stellar reader/transmitter still take the address from config (`applyOnRampRMNHexOverrides`,
+  `rmnRemoteContractID`). Tracked in §5 "Remaining".
 
-- **Multi-aggregator committee verifier** (`2026-06-19`, `2026-06-22`). A verifier can fan out to
-  multiple aggregators from one job via `[[aggregators]]` / `commit.Config.Aggregators`;
-  `AggregatorAddress` is deprecated. Breaking: `NewVerificationCoordinator` takes
-  `map[string]*hmac.ClientConfig` keyed by `AggregatorConnection.SecretName` (legacy config uses
-  the `""` key). Stellar does not call `NewVerificationCoordinator` directly — additive for us.
+- **Multi-aggregator committee verifier** (`2026-06-19`, `2026-06-22`). Additive; no stellar
+  call sites.
 
-- **Distributed tracing** (`2026-07-28`, v0.3.0 `#1297`). `executor.NewCoordinator` gains a
-  required `executorID string` parameter; `traceparent` added to `verifier_node_results` as a
-  breaking DB migration (`NOT NULL DEFAULT ''`). Devenv DB volumes need recreating.
+- **Distributed tracing** (`2026-07-28`, v0.3.0 `#1297`). `traceparent NOT NULL` migration:
+  verifier DB volumes must be recreated on first `make up` with the new images.
 
-- **JD lifecycle hardening** (`2026-06-26` ×2, `2026-07-14_jd_replacement_validation`).
-  Two-phase proposal persistence with crash recovery, fallback to the previous job on failed
-  replacement, and pre-stop validation of replacement specs via an optional
-  `ValidatingJobRunner`. Breaking: `client.ClientInterface` gained `UpdateNode` — matters only if
-  stellar has its own JD test double.
+- **JD lifecycle hardening** (`2026-06-26` ×2, `2026-07-14`). No stellar JD test doubles; no
+  action.
 
-- **Signal-driven job queue** (`2026-08-31`). `JobQueue[T].Consume` → `ConsumePending` /
-  `ReclaimStale` / `Signals`; `taskverifier`/`storagewriter` `NewProcessorWithPollInterval`
-  removed. Internal to the verifier; no stellar call sites.
+- **Signal-driven job queue** (`2026-08-31`). Internal; no stellar call sites.
 
-- **Executor / verifier observability restored after cutover** (`2026-08-11` ×2, `2026-08-13`).
-  Notably `chainaccess.CriticalSourceInvariantCallbackSetter` and
-  `chainaccess.ExecutorMonitoringSetter` are new **optional** interfaces the accessor's readers
-  and transmitters can implement — if `ccv/accessors` implements them, Stellar gets the same
-  OffRamp read-latency / unrecoverable-transmit / critical-invariant metrics EVM has. Also, both
-  binaries now accept `http_listen_port` in the app config and the executor serves `/health`.
+- **Executor / verifier observability hooks** (`2026-08-11` ×2, `2026-08-13`).
+  `chainaccess.CriticalSourceInvariantCallbackSetter` / `ExecutorMonitoringSetter` remain
+  **unimplemented** in `ccv/accessors` — optional metric parity, still open (§5).
 
-- **Verifier poll timing unified** to a 2s interval with a dedicated head-fetch timeout
-  (`2026-08-13`); standalone's 1s polling is gone.
+- **Verifier poll timing unified** to 2s (`2026-08-13`). No action.
 
-- **No stellar action:** standalone EVM production chain services (`2026-07-22`), KMS support
-  (v0.3.0 `#1301`), CSA key mode/backend-driven (`#1322`), migration tooling (`2026-08-20`),
-  batched chain status updates (v0.5.0) and batched block header fetches (v0.6.0),
-  Lombard Solana format / token verifier factory refactor, indexer HMAC fix,
-  `RemoveRemotePool` + the new `TokenPoolOnchainAdapter` (only needed if Stellar token pools
-  should support removal — no stellar impl exists).
+- **No stellar action:** standalone EVM production chain services, KMS, CSA key modes,
+  migration tooling, batched chain status / block header fetches, Lombard Solana, indexer
+  HMAC, `RemoveRemotePool`/`TokenPoolOnchainAdapter`.
 
 ---
 
-## 5. Suggested order of work
+## 5. Order of work — outcome and what remains
 
-1. **Bump the pin past `2026-08-25` (v0.5.0+)** — anything in the `#1369`–`#1375` window boots
-   dead for a non-EVM verifier (§2.1).
-2. **Mechanical compile fixes first:** drop `WithLogLevel` (§1.3), swap
-   `executor.DefaultEVMTransmitterKeyName` → `contracttransmitter.DefaultKeyName` (§1.4).
-3. **Rewrite `ccv/accessors/factory_constructor.go` off `GenericConfig`/`blockchain_infos`**
-   (§1.1) — schedule this with the RMN on-chain derivation adoption (§4) since they touch the
-   same address-overlay code.
-4. **Add `SetAllowedFinalityConfig` + `ApplyAllowlistUpdates`** to
-   `StellarCCVCommitteeVerifierOnchainAdapter` (§1.2).
-5. **Update `cciptestinterfaces` impls and e2e tests** for `ExecEnvelope` / `RunResult`, and take
-   the `V3Source`/`V3Destination` narrowing as a simplification (§1.5, §1.6).
-6. **Register `chainreg.ExecutorInfo` and a `SigningIdentityReader` for `FamilyStellar`** (§3, §2.2).
-7. **Devenv TOML:** `[monitoring]` in bootstrap configs, `[protocol_contracts.deploy]`, drop
-   `use_legacy_configure_lane`, recreate verifier DB volumes for the `traceparent` migration.
-8. **Optional but cheap wins:** implement `CriticalSourceInvariantCallbackSetter` /
-   `ExecutorMonitoringSetter` in `ccv/accessors` for metric parity with EVM.
-9. Re-run `make docker-ccv-dev` before `make up` (carried over from the 2026-05-05 record).
+Completed: pin bump past the hazard window (1), mechanical cmd fixes (2 — with the §1.4
+correction), `factory_constructor.go` rewrite (3 — without the RMN derivation), committee
+onchain adapter methods (4), `ExecEnvelope` + e2e updates (5), `ExecutorInfo` +
+`SigningIdentityReader` registrations (6 — both registries), devenv TOML config surface (7).
 
-## 6. Open question
+**Remaining:**
 
-Whether `ccvadapters.VerifierContractAddresses.ExecutorProxyAddress` still exists.
-`2026-07-06_remove_executor_proxy_from_public_api.md` removes it from **chainlink-ccv**'s
-`deployment/adapters/verifier_config.go` and adds `ExecutorConfigAdapter.ResolveExecutorAddress`.
-`deployment/adapters/verifier_config_adapter.go:9` imports the **chainlink-ccip**
-`deployment/v2_0_0/adapters` package, and line 59 sets `ExecutorProxyAddress` there. Confirm
-whether chainlink-ccip mirrored the removal at the ccip ref the new ccv pin pulls in; if so,
-`deployment/adapters/{verifier,executor}_config_adapter.go` need the same consolidation, and the
-second `ExecutorProxy` datastore contract type registered purely to satisfy the verifier adapter
-(`stellarccip.ExecutorProxyDatastoreRef`) can be retired.
+1. **Adopt RMN Remote on-chain derivation** (§4) in the Stellar source/destination readers and
+   contract transmitter, then drop the config plumbing.
+2. **Recreate verifier DB volumes** for the `traceparent` migration on first clean `make up`.
+3. **Optional metric parity:** implement `CriticalSourceInvariantCallbackSetter` /
+   `ExecutorMonitoringSetter` in `ccv/accessors`.
+4. **E2E validation:** run `make test-e2e` against a fresh environment; the first full pass
+   after this bump has not completed yet.
+5. Consider deleting the now-unused `stellarutil.ResolveSignersFromOffchainTopology` (only its
+   test references it; signers are resolved at lane-config time now).
+
+## 6. Open question — resolved
+
+`ccvadapters.VerifierContractAddresses.ExecutorProxyAddress`: chainlink-ccip did mirror the
+consolidation. The ccip-side offchain-config adapters/registries (verifier, executor, indexer,
+token verifier, aggregator) were **deleted upstream**; stellar's implementations moved to the
+`StellarCCVDeployment*` types registered with chainlink-ccv's per-concern `FamilyRegistry`s
+(`deployment/adapters/ccv_deployment_adapters.go`, registrations in `init.go`), and the old
+`*_config_adapter.go` files were deleted.
+
+`stellarccip.ExecutorProxyDatastoreRef` was **not** retired: it is still the resolution path
+for `ChainFamily.ResolveExecutor` (the lane changeset uses it to wire executor addresses on
+remote configs). Retiring it needs a replacement lookup, not just deletion.
+
+---
+
+## 7. Issues discovered during the bring-up (not in the original delta)
+
+These only surfaced once the build was green and `make up` was attempted. All are fixed unless
+noted.
+
+### 7.1 chainlink-ccip `DeployChainContractsAdapter` redesigned (biggest hidden item)
+The ccip/deployment bump (2026-08-17) replaced the two sequence-returning methods with a
+4-step pipeline: `GetDefaultDeployContractParams` → `ResolveDeployAddresses` →
+`BuildDeployContractParams` → `DeployChainContracts`, with topology-derived committee
+verifiers and per-chain overrides. `StellarDeployChainContractsAdapter` implements all four;
+the Stellar deploy sequence still sources its params from the pre-deploy topology stash
+(params/DeployerContract are threaded for changeset parity, not consumed). The orphaned
+`sequences.StellarImportConfigForDeployContracts` was deleted.
+
+### 7.2 Module-graph conflicts with `otel/log v0.22.0`
+The `chainlink-common` bump selected `otel/log v0.22.0`, which removed API that
+`otelzap v0.10.0` and `wasp v1.52.0` compile against — breaking **all test binaries**
+transitively. Fixed by requiring `otelzap v0.20.1` and `wasp v1.53.0` in `go.mod`.
+
+### 7.3 Bindings regen: MCMS/timelock wire format changed
+The 2026-08-21 bindings carry new contract interfaces:
+`timelock.Call{Target, Function, ArgsXdr}` and `mcms.StellarOp{NetworkId, Multisig, Target,
+Function, ArgsXdr, EncodingVersion, Nonce}` (strkey addresses, function name split out,
+args-only `Vec<Val>` XDR). Merkle leaf hashing follows `contracts/mcms/src/encoding.rs`
+(encoding-version prefix, u64 counts, `config_version`) — `tests/testutils/mcms_helpers.go`
+rewritten to match. `execute_batch` is now permissionless (no executor role); timelock
+`initialize` dropped admin/executors; MCMS `initialize` applies the signer config atomically
+(config_version 1). `mcmsops.Initialize` (a no-op stub) was restored with the new signature —
+without it `set_config` reverts on uninitialized instances, blocking the MCMS e2e path.
+`mcmsutil.EncodeSorobanInvokeArgs` added for args-only encoding; the legacy symbol-prefixed
+`EncodeSorobanMCMSInvokePayload` is retained for the MCMS proposal-transformer path
+(`transfer_ownership.go`).
+
+### 7.4 Committee signer quorums moved to lane-configuration time
+Deploy-time `ApplySignatureConfigs` in `RunStellarCCIPFullDeploy` was removed: since the
+signing-key-sync cutover, topology enrichment skips JD-sync families, so signers are absent at
+deploy time. The upstream flow resolves them from JD (topology fallback) inside
+`ConfigureChainsForLanesFromTopology` and calls the family `ConfigureChainForLanes` hook —
+implemented as `sequences.StellarConfigureChainForLanes` (previously a no-op). Two latent bugs
+fixed there and in the onchain adapter: signers must be **sorted ascending** (CCIPError #67
+`InvalidSignerOrder`).
+
+### 7.5 Executor JD chain-support validation
+`ApplyExecutorConfig` validates each executor NOP's JD chain configs against the pool's
+required chains (`fetch_node_chain_support`). Three learnings:
+- The bootstrapper pushes chain configs only when an **ECDSA_S256 key is declared**
+  (§1.4) — the `WithKey(contracttransmitter.DefaultKeyName, …)` line is required.
+- Bootstrap `[[chains]]` are single-family, so cross-family `nop_aliases` in
+  `executor_pools` can never validate — scope them per family in the env TOML.
+- The `stellarexecutor:dev` / `stellarcommittee-verifier:dev` images bake the binary at image
+  build time — after any `cmd/` change, rebuild with `make docker-executor docker-verifier`
+  before `make up`.
+
+### 7.6 Infrastructure image ages
+- `stellar/quickstart` must support the contract protocol: soroban-sdk 26 builds protocol-26
+  WASMs. Both the devenv `[[blockchains]]` entry and `testutils.StellarQuickstartImage` are
+  pinned by digest to the 2026-09-04 build (stellar-core v28.0.1, protocol 28).
+- `job-distributor:local` must postdate the `CHAIN_TYPE_STELLAR` proto addition (§2.2).
+
+### 7.7 `bootstrap.KeystoreSetter` signature change (runtime-silent)
+`SetKeystore(ks)` → `SetKeystore(ctx, ks) error`. The old signature still compiled, so the
+accessor silently stopped satisfying the interface: keystore never injected, no transmitter,
+job rejected (`contract transmitters must support at least one chain`), surfaced as a `/ready`
+timeout. Fixed, and `var _ bootstrap.KeystoreSetter = (*accessor)(nil)` added so future drift
+is a compile error. The Stellar accessor keeps its soft-fail design (errors stored on the
+accessor's `*Err` fields, `nil` returned) so one chain's keystore failure can't abort the
+job's other chains — a deliberate divergence from the EVM accessor's hard-fail.

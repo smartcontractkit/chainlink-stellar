@@ -21,7 +21,7 @@ pub use types::*;
 
 use common_error::CCIPError;
 use common_interfaces::pool_hooks::PoolHooksClient;
-use common_interfaces::ramp_registry::{self, RampRegistryClient};
+use common_interfaces::ramp_registry::RampRegistryClient;
 use common_interfaces::token_pool::{
     LockOrBurnIn as IfaceLockOrBurnIn, MessageDirection as IfaceMessageDirection,
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
@@ -30,10 +30,10 @@ use soroban_sdk::{contracttrait, Address, Bytes, Env, Vec};
 
 pub use types::{PoolFeeResult, PoolRequiredCCVs};
 
-/// Maps the generated `ramp_registry::CCIPError` (WASM / interface copy) to `common_error::CCIPError`.
+/// Maps the interface `ramp_registry::CCIPError` to `common_error::CCIPError`.
 ///
-/// The interface file duplicates the enum so the bindings generator can parse it; discriminants
-/// are kept identical to `common_error::CCIPError` (`#[repr(u32)]`).
+/// The interface re-exports `common_error::CCIPError`, so this is the identity conversion in
+/// practice; it is kept as a guard in case the generated interface ever diverges again.
 #[inline]
 fn ramp_registry_ccip_error_to_common(e: common_error::CCIPError) -> CCIPError {
     let d = e as u32;

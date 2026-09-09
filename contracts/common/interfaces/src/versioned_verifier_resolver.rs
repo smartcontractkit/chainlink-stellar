@@ -55,81 +55,31 @@ pub trait VersionedVerifierResolverInterface {
         env: soroban_sdk::Env,
     ) -> soroban_sdk::Vec<OutboundImplementationArgs>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplementationArgs {
     pub verifier: soroban_sdk::Address,
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplementationArgs {
     pub dest_chain_selector: u64,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplementationUpdate {
     pub verifier: Option<soroban_sdk::Address>,
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplementationUpdate {
     pub dest_chain_selector: u64,
     pub verifier: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListEntry {
-    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListUpdate {
-    pub added_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
-    pub dest_chain_selector: u64,
-    pub removed_allowlisted_senders: soroban_sdk::Vec<soroban_sdk::Address>,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenAmount {
-    pub amount: i128,
-    pub token: soroban_sdk::Address,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct GenericExtraArgsV3 {
-    pub block_confirmations: u32,
-    pub ccv_args: soroban_sdk::Vec<soroban_sdk::Bytes>,
-    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub executor: soroban_sdk::Address,
-    pub executor_args: soroban_sdk::Bytes,
-    pub gas_limit: u32,
-    pub token_args: soroban_sdk::Bytes,
-    pub token_receiver: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AnyToStellarMessage {
-    pub data: soroban_sdk::Bytes,
-    pub dest_token_amounts: soroban_sdk::Vec<TokenAmount>,
-    pub message_id: soroban_sdk::BytesN<32>,
-    pub sender: soroban_sdk::Bytes,
-    pub source_chain_selector: u64,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StellarToAnyMessage {
-    pub data: soroban_sdk::Bytes,
-    pub extra_args: soroban_sdk::Bytes,
-    pub fee_token: soroban_sdk::Address,
-    pub receiver: soroban_sdk::Bytes,
-    pub token_amounts: soroban_sdk::Vec<TokenAmount>,
-}
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -249,63 +199,63 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet"])]
+#[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplSetEvent {
     pub version: soroban_sdk::BytesN<4>,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplSet"])]
+#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplSetEvent {
     pub dest_chain_selector: u64,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_FeeAggregatorSet"])]
+#[soroban_sdk::contractevent(topics = ["vvr_FeeAggregatorSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeAggregatorSetEvent {
     pub fee_aggregator: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_InboundImplRemoved"])]
+#[soroban_sdk::contractevent(topics = ["vvr_InboundImplRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplRemovedEvent {
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplRemoved"])]
+#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplRemovedEvent {
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OwnerTransferred"])]
+#[soroban_sdk::contractevent(topics = ["vvr_OwnerTransferred"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferredEvent {
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"])]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,

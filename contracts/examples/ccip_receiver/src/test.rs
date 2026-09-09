@@ -4,9 +4,8 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, BytesN, Env};
 
-use crate::{ExampleCcipReceiver, ExampleCcipReceiverClient};
+use crate::{CcvChainConfig, CcvConfigUpdate, ExampleCcipReceiver, ExampleCcipReceiverClient};
 
-use common_interfaces::ccip_receiver::{CcvChainConfig, CcvConfigUpdate};
 use common_message::AnyToStellarMessage;
 
 #[test]
