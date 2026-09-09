@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/stellar/go-stellar-sdk/xdr"
 
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
 // Domain separators — must match contracts/mcms/src/constants.rs and docs/mcms-stellar-plan.md.
@@ -101,7 +101,10 @@ func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
 }
 
 // HashStellarOp returns keccak256(encode_stellar_op(op)) per contracts/mcms/src/encoding.rs.
-// The function field is encoded as its Soroban Symbol XDR (length-prefixed string).
+// The function field is encoded as the full ScVal::Symbol XDR (SCV_SYMBOL discriminant plus
+// length-prefixed, 4-byte-padded bytes), matching Symbol::to_xdr in encode_stellar_op. Omitting
+// the ScVal wrapper shortens the length-prefixed segment below and yields a different merkle leaf
+// than the contract computes, so set_root succeeds but execute fails proof verification.
 func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
 	if op.EncodingVersion != mcmsEncodingVersion {
 		return [32]byte{}, fmt.Errorf("unsupported encoding version %d, want %d", op.EncodingVersion, mcmsEncodingVersion)
@@ -114,7 +117,7 @@ func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("decode target contract id: %w", err)
 	}
-	fnXDR, err := xdr.ScSymbol(op.Function).MarshalBinary()
+	fnXDR, err := scval.SymbolToScVal(op.Function).MarshalBinary()
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("marshal function symbol %q: %w", op.Function, err)
 	}

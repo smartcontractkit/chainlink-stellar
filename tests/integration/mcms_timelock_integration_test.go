@@ -10,10 +10,12 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
@@ -89,9 +91,26 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 	var saltSched [32]byte
 	saltSched[31] = 42
 
-	emptyCalls := timelockbindings.Calls{Inner: []timelockbindings.Call{}}
+	// Smallest realistic non-empty batch: a timelock self-call re-asserting the same min delay.
+	// hash_operation_batch rejects an empty batch (TimelockError::EmptyBatch = 55,
+	// contracts/timelock/src/encoding.rs). Self-targeted calls are dispatched internally by
+	// execute_self_admin (contracts/timelock/src/lib.rs) because Soroban forbids contract
+	// re-entry; update_delay requires exactly 2 args with args[0] == the timelock itself.
+	// Re-asserting minDelaySec keeps this a no-op, so nothing downstream in the test shifts.
+	selfDelayArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{
+		scval.AddressToScVal(tlID),
+		scval.Uint64ToScVal(minDelaySec),
+	})
+	if err != nil {
+		t.Fatalf("encode update_delay args: %v", err)
+	}
+	calls := timelockbindings.Calls{
+		Inner: []timelockbindings.Call{
+			{Target: tlID, Function: "update_delay", ArgsXdr: selfDelayArgs},
+		},
+	}
 
-	scheduleArgs, err := helpers.SorobanScheduleBatch(mcmsID, emptyCalls, predecessor, saltSched, minDelaySec)
+	scheduleArgs, err := helpers.SorobanScheduleBatch(mcmsID, calls, predecessor, saltSched, minDelaySec)
 	if err != nil {
 		t.Fatalf("encode schedule_batch: %v", err)
 	}
@@ -150,7 +169,7 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 		t.Fatalf("Execute schedule_batch: %v", err)
 	}
 
-	opID, err := tlClient.HashOperationBatch(ctx, emptyCalls, predecessor, saltSched)
+	opID, err := tlClient.HashOperationBatch(ctx, calls, predecessor, saltSched)
 	if err != nil {
 		t.Fatalf("HashOperationBatch: %v", err)
 	}
@@ -175,7 +194,7 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 		t.Fatalf("scheduled op never became ready: ready=%v err=%v", okReady, err)
 	}
 
-	execArgs, err := helpers.SorobanExecuteBatch(emptyCalls, predecessor, saltSched)
+	execArgs, err := helpers.SorobanExecuteBatch(calls, predecessor, saltSched)
 	if err != nil {
 		t.Fatalf("encode execute_batch: %v", err)
 	}
