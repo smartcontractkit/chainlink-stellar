@@ -254,21 +254,6 @@ func (c *McmsClient) RequireOwner(ctx context.Context) (string, error) {
 	return v, nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *McmsClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // ExtendAllTtls calls the extend_all_ttls function on the contract.
 func (c *McmsClient) ExtendAllTtls(ctx context.Context) error {
 	args := []xdr.ScVal{}

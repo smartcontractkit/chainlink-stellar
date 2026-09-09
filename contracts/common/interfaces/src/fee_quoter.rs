@@ -5,7 +5,10 @@ use common_message::StellarToAnyMessage;
 pub trait FeeQuoterInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -13,10 +16,6 @@ pub trait FeeQuoterInterface {
         authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn update_prices(
         env: soroban_sdk::Env,
         updater: soroban_sdk::Address,

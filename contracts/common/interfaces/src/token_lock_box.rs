@@ -15,17 +15,16 @@ pub trait TokenLockBoxInterface {
         recipient: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
     fn get_token(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         token: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn is_token_supported(
@@ -40,7 +39,9 @@ pub trait TokenLockBoxInterface {
         env: soroban_sdk::Env,
         callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn get_allowed_callers(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
+    fn get_allowed_callers(
+        env: soroban_sdk::Env,
+    ) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn remove_allowed_callers(
         env: soroban_sdk::Env,
         callers: soroban_sdk::Vec<soroban_sdk::Address>,

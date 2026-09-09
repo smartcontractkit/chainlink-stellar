@@ -3,20 +3,22 @@
 pub trait RmnProxyInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_rmn(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_rmn(env: soroban_sdk::Env, rmn: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn set_rmn(
+        env: soroban_sdk::Env,
+        rmn: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
+    fn init_owner(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         rmn: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;

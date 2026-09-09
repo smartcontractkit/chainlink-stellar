@@ -16,13 +16,15 @@ pub trait TokenAdminRegistryInterface {
         env: soroban_sdk::Env,
         tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<soroban_sdk::Vec<Option<soroban_sdk::Address>>, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
-    fn initialize(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
+    fn init_owner(
         env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
+        owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+    fn initialize(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_token_config(
         env: soroban_sdk::Env,

@@ -339,21 +339,6 @@ func (c *RouterClient) RouteMessage(ctx context.Context, offramp string, sourceC
 	return nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *RouterClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // RemoveOfframp calls the remove_offramp function on the contract.
 func (c *RouterClient) RemoveOfframp(ctx context.Context, sourceChainSelector uint64, offramp string) error {
 	args := []xdr.ScVal{
