@@ -962,6 +962,7 @@ const (
 	ForwarderErrorInvalidReceiver              = 18
 	ForwarderErrorInvalidSigner                = 19
 	ForwarderErrorCannotRemoveSelf             = 20
+	ForwarderErrorUnauthorizedRelayer          = 21
 )
 
 // ForwarderErrorMessage returns a human-readable message for error codes.
@@ -986,6 +987,7 @@ var ForwarderErrorMessage = map[int]string{
 	18: "invalid receiver",
 	19: "invalid signer",
 	20: "cannot remove self",
+	21: "unauthorized relayer",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
@@ -1068,6 +1070,18 @@ type ConfigSetEvent struct {
 // ConfigSetEventTopic is the event topic identifier.
 const ConfigSetEventTopic = "forwarder_ConfigSet"
 
+// RelayerAddedEvent represents the RelayerAddedEvent event.
+// Topics: [forwarder_RelayerAdded]
+type RelayerAddedEvent struct {
+	Relayer string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayerAddedEventTopic is the event topic identifier.
+const RelayerAddedEventTopic = "forwarder_RelayerAdded"
+
 // ForwarderAddedEvent represents the ForwarderAddedEvent event.
 // Topics: [forwarder_ForwarderAdded]
 type ForwarderAddedEvent struct {
@@ -1079,6 +1093,33 @@ type ForwarderAddedEvent struct {
 
 // ForwarderAddedEventTopic is the event topic identifier.
 const ForwarderAddedEventTopic = "forwarder_ForwarderAdded"
+
+// RelayerRemovedEvent represents the RelayerRemovedEvent event.
+// Topics: [forwarder_RelayerRemoved]
+type RelayerRemovedEvent struct {
+	Relayer string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayerRemovedEventTopic is the event topic identifier.
+const RelayerRemovedEventTopic = "forwarder_RelayerRemoved"
+
+// RelayProcessedEvent represents the RelayProcessedEvent event.
+// Topics: [forwarder_RelayProcessed]
+type RelayProcessedEvent struct {
+	Receiver    string
+	ExecutionId [32]byte
+	PayloadHash [32]byte
+	State       TransmissionState
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayProcessedEventTopic is the event topic identifier.
+const RelayProcessedEventTopic = "forwarder_RelayProcessed"
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
 // Topics: [forwarder_ReportProcessed]
@@ -1204,6 +1245,8 @@ type DataKey struct {
 	Forwarder    *DataKeyForwarder
 	Config       *DataKeyConfig
 	Transmission *DataKeyTransmission
+	Relayer      *DataKeyRelayer
+	Relay        *DataKeyRelay
 }
 
 // DataKeyForwarder is the tuple variant DataKey::Forwarder.
@@ -1221,6 +1264,16 @@ type DataKeyTransmission struct {
 	Field0 [32]byte
 }
 
+// DataKeyRelayer is the tuple variant DataKey::Relayer.
+type DataKeyRelayer struct {
+	Field0 string
+}
+
+// DataKeyRelay is the tuple variant DataKey::Relay.
+type DataKeyRelay struct {
+	Field0 [32]byte
+}
+
 // ToScVal converts DataKey to its Soroban discriminated-union encoding.
 // Returns an error if zero or multiple variant pointers are set.
 func (e DataKey) ToScVal() (xdr.ScVal, error) {
@@ -1232,6 +1285,12 @@ func (e DataKey) ToScVal() (xdr.ScVal, error) {
 		set++
 	}
 	if e.Transmission != nil {
+		set++
+	}
+	if e.Relayer != nil {
+		set++
+	}
+	if e.Relay != nil {
 		set++
 	}
 	if set != 1 {
@@ -1255,6 +1314,20 @@ func (e DataKey) ToScVal() (xdr.ScVal, error) {
 		items := []xdr.ScVal{
 			scval.SymbolToScVal("Transmission"),
 			scval.Bytes32ToScVal(e.Transmission.Field0),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.Relayer != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("Relayer"),
+			scval.AddressToScVal(e.Relayer.Field0),
+		}
+		return scval.VecToScVal(items), nil
+	}
+	if e.Relay != nil {
+		items := []xdr.ScVal{
+			scval.SymbolToScVal("Relay"),
+			scval.Bytes32ToScVal(e.Relay.Field0),
 		}
 		return scval.VecToScVal(items), nil
 	}
@@ -1309,6 +1382,28 @@ func DataKeyFromScVal(val xdr.ScVal) (DataKey, error) {
 			payload.Field0 = v
 		}
 		return DataKey{Transmission: payload}, nil
+	case "Relayer":
+		if len(vec) != 2 {
+			return DataKey{}, fmt.Errorf("DataKey::Relayer: expected 2 elements, got %d", len(vec))
+		}
+		payload := &DataKeyRelayer{}
+		if v, err := scval.AddressFromScVal(vec[1]); err != nil {
+			return DataKey{}, fmt.Errorf("DataKey::Relayer[0]: %w", err)
+		} else {
+			payload.Field0 = v
+		}
+		return DataKey{Relayer: payload}, nil
+	case "Relay":
+		if len(vec) != 2 {
+			return DataKey{}, fmt.Errorf("DataKey::Relay: expected 2 elements, got %d", len(vec))
+		}
+		payload := &DataKeyRelay{}
+		if v, err := scval.Bytes32FromScVal(vec[1]); err != nil {
+			return DataKey{}, fmt.Errorf("DataKey::Relay[0]: %w", err)
+		} else {
+			payload.Field0 = v
+		}
+		return DataKey{Relay: payload}, nil
 	default:
 		return DataKey{}, fmt.Errorf("DataKey: unknown variant %q", tag)
 	}

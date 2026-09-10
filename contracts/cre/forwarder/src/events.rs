@@ -1,5 +1,7 @@
 use soroban_sdk::{contractevent, Address, BytesN, Vec};
 
+use crate::types::TransmissionState;
+
 #[contractevent(topics = ["forwarder_ForwarderAdded"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForwarderAddedEvent {
@@ -33,4 +35,31 @@ pub struct ReportProcessedEvent {
     #[topic]
     pub report_id: BytesN<2>,
     pub success: bool,
+}
+
+#[contractevent(topics = ["forwarder_RelayerAdded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayerAddedEvent {
+    pub relayer: Address,
+}
+
+#[contractevent(topics = ["forwarder_RelayerRemoved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayerRemovedEvent {
+    pub relayer: Address,
+}
+
+/// Emitted once per `relay()` call that writes state. Carries the resulting
+/// `TransmissionState` so `Failed` and `InvalidReceiver` are distinguishable
+/// off-chain without polling `get_relay_info`.
+#[contractevent(topics = ["forwarder_RelayProcessed"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayProcessedEvent {
+    #[topic]
+    pub receiver: Address,
+    #[topic]
+    pub execution_id: BytesN<32>,
+    #[topic]
+    pub payload_hash: BytesN<32>,
+    pub state: TransmissionState,
 }
