@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	crebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/cre"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
 )
@@ -40,7 +43,8 @@ func ConfigureForwarder(ctx context.Context, deployer *deployment.Deployer, cont
 	return nil
 }
 
-// AddForwarder registers an account  as an authorized transmitter on the forwarder.
+// AddForwarder registers an account as an authorized transmitter for
+// quorum-signed reports (report()) on the forwarder.
 func AddForwarder(ctx context.Context, deployer *deployment.Deployer, contractID, forwarder string) error {
 	if deployer == nil {
 		return fmt.Errorf("deployer is nil")
@@ -48,6 +52,24 @@ func AddForwarder(ctx context.Context, deployer *deployment.Deployer, contractID
 	client := crebindings.NewForwarderClient(deployer, contractID)
 	if err := client.AddForwarder(ctx, forwarder); err != nil {
 		return fmt.Errorf("add_forwarder %s on forwarder %s: %w", forwarder, contractID, err)
+	}
+	return nil
+}
+
+// AddRelayer registers an account as an authorized relayer for self-verified
+// payloads (relay()) on the forwarder. This list is independent from the
+// report() transmitter list; the forwarder performs no signature verification
+// on the relay path, so only add accounts whose receivers verify their own
+// payloads.
+func AddRelayer(ctx context.Context, deployer *deployment.Deployer, contractID, relayer string) error {
+	if deployer == nil {
+		return fmt.Errorf("deployer is nil")
+	}
+	// TODO: switch to crebindings.ForwarderClient.AddRelayer once the root
+	// go.mod picks up a bindings release that includes the relay entrypoints.
+	args := []xdr.ScVal{scval.AddressToScVal(relayer)}
+	if _, err := deployer.InvokeContract(ctx, contractID, "add_relayer", args); err != nil {
+		return fmt.Errorf("add_relayer %s on forwarder %s: %w", relayer, contractID, err)
 	}
 	return nil
 }

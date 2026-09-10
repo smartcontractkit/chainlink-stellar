@@ -51,23 +51,22 @@ func (c *ForwarderClient) Owner(ctx context.Context) (*string, error) {
 	return v, nil
 }
 
-// Route calls the route function on the contract.
-func (c *ForwarderClient) Route(ctx context.Context, transmissionId [32]byte, transmitter string, receiver string, metadata []byte, validatedReport []byte) (bool, error) {
+// Relay calls the relay function on the contract.
+func (c *ForwarderClient) Relay(ctx context.Context, transmitter string, receiver string, executionId [32]byte, payload []byte) (bool, error) {
 	args := []xdr.ScVal{
-		scval.Bytes32ToScVal(transmissionId),
 		scval.AddressToScVal(transmitter),
 		scval.AddressToScVal(receiver),
-		scval.BytesToScVal(metadata),
-		scval.BytesToScVal(validatedReport),
+		scval.Bytes32ToScVal(executionId),
+		scval.BytesToScVal(payload),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "route", args)
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "relay", args)
 	if err != nil {
-		return false, fmt.Errorf("failed to call route: %w", err)
+		return false, fmt.Errorf("failed to call relay: %w", err)
 	}
 
 	if result == nil {
-		return false, fmt.Errorf("no return value from route")
+		return false, fmt.Errorf("no return value from relay")
 	}
 
 	v, ok := result.GetB()
@@ -166,6 +165,21 @@ func (c *ForwarderClient) SetConfig(ctx context.Context, donId uint32, configVer
 	return nil
 }
 
+// AddRelayer calls the add_relayer function on the contract.
+func (c *ForwarderClient) AddRelayer(ctx context.Context, relayer string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(relayer),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_relayer", args)
+	if err != nil {
+		return fmt.Errorf("failed to call add_relayer: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // ClearConfig calls the clear_config function on the contract.
 func (c *ForwarderClient) ClearConfig(ctx context.Context, donId uint32, configVersion uint32) error {
 	args := []xdr.ScVal{
@@ -226,6 +240,41 @@ func (c *ForwarderClient) SetNewOwner(ctx context.Context, newOwner string) erro
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
 	if err != nil {
 		return fmt.Errorf("failed to call set_new_owner: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetRelayInfo calls the get_relay_info function on the contract.
+func (c *ForwarderClient) GetRelayInfo(ctx context.Context, receiver string, executionId [32]byte, payloadHash [32]byte) (*TransmissionInfo, error) {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(receiver),
+		scval.Bytes32ToScVal(executionId),
+		scval.Bytes32ToScVal(payloadHash),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_relay_info", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_relay_info: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_relay_info")
+	}
+
+	return TransmissionInfoFromScVal(*result)
+}
+
+// RemoveRelayer calls the remove_relayer function on the contract.
+func (c *ForwarderClient) RemoveRelayer(ctx context.Context, relayer string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(relayer),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_relayer", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_relayer: %w", err)
 	}
 
 	_ = result // void return
@@ -801,6 +850,73 @@ func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 	return result, nil
 }
 
+// WaitForRelayerAddedEvent waits for a RelayerAddedEvent event.
+func (c *ForwarderClient) WaitForRelayerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RelayerAddedEvent) bool) (*RelayerAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RelayerAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRelayerAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRelayerAddedEvent(e protocolrpc.EventInfo) (*RelayerAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RelayerAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "relayer":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Relayer = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // WaitForForwarderAddedEvent waits for a ForwarderAddedEvent event.
 func (c *ForwarderClient) WaitForForwarderAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ForwarderAddedEvent) bool) (*ForwarderAddedEvent, error) {
 	startTime := time.Now()
@@ -861,6 +977,167 @@ func ParseForwarderAddedEvent(e protocolrpc.EventInfo) (*ForwarderAddedEvent, er
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
 				result.Forwarder = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRelayerRemovedEvent waits for a RelayerRemovedEvent event.
+func (c *ForwarderClient) WaitForRelayerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RelayerRemovedEvent) bool) (*RelayerRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RelayerRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRelayerRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRelayerRemovedEvent(e protocolrpc.EventInfo) (*RelayerRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RelayerRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "relayer":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Relayer = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRelayProcessedEvent waits for a RelayProcessedEvent event.
+func (c *ForwarderClient) WaitForRelayProcessedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RelayProcessedEvent) bool) (*RelayProcessedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RelayProcessedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRelayProcessedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRelayProcessedEvent(e protocolrpc.EventInfo) (*RelayProcessedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RelayProcessedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	if len(e.TopicXDR) > 1 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[1], &tv) == nil {
+			if v, err := scval.AddressFromScVal(tv); err == nil {
+				result.Receiver = v
+			}
+		}
+	}
+
+	if len(e.TopicXDR) > 2 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[2], &tv) == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
+				result.ExecutionId = v
+			}
+		}
+	}
+
+	if len(e.TopicXDR) > 3 {
+		var tv xdr.ScVal
+		if xdr.SafeUnmarshalBase64(e.TopicXDR[3], &tv) == nil {
+			if v, err := scval.Bytes32FromScVal(tv); err == nil {
+				result.PayloadHash = v
+			}
+		}
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "state":
+			v, err := TransmissionStateFromScVal(entry.Val)
+			if err == nil {
+				result.State = v
 			}
 		}
 	}

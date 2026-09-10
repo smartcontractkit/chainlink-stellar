@@ -21,10 +21,10 @@ func TestTxStore_GetNextSequence_AdvancesAfterAddUnconfirmed(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "hash-a", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "hash-a", 100, 0, nil))
 	assert.Equal(t, int64(11), store.GetNextSequence())
 
-	require.NoError(t, store.AddUnconfirmed(11, "hash-b", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "hash-b", 100, 0, nil))
 	assert.Equal(t, int64(12), store.GetNextSequence())
 }
 
@@ -33,9 +33,9 @@ func TestTxStore_GetNextSequence_WithFailedRecycling(t *testing.T) {
 	store := NewTxStore(10)
 
 	// Use sequences 10, 11, 12
-	require.NoError(t, store.AddUnconfirmed(10, "hash-10", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(11, "hash-11", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(12, "hash-12", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "hash-10", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "hash-11", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(12, "hash-12", 100, 0, nil))
 	assert.Equal(t, int64(13), store.GetNextSequence())
 
 	// Sequence 10 expires (not consumed on-chain) — recycle it
@@ -45,7 +45,7 @@ func TestTxStore_GetNextSequence_WithFailedRecycling(t *testing.T) {
 	assert.Equal(t, int64(10), store.GetNextSequence())
 
 	// Use the recycled sequence
-	require.NoError(t, store.AddUnconfirmed(10, "hash-10-retry", 200, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "hash-10-retry", 200, 0, nil))
 
 	// 10 is no longer in failedSequences, so next should be 13 again
 	assert.Equal(t, int64(13), store.GetNextSequence())
@@ -55,9 +55,9 @@ func TestTxStore_GetNextSequence_MultipleFailedPicksSmallest(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(12, "h12", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(12, "h12", 100, 0, nil))
 
 	// Both 10 and 12 fail
 	require.NoError(t, store.Confirm(10, "h10", true))
@@ -73,8 +73,8 @@ func TestTxStore_AddUnconfirmed_DuplicateReject(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "hash-a", 100, nil))
-	err := store.AddUnconfirmed(10, "hash-b", 100, nil)
+	require.NoError(t, store.AddUnconfirmed(10, "hash-a", 100, 0, nil))
+	err := store.AddUnconfirmed(10, "hash-b", 100, 0, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sequence used")
 }
@@ -83,8 +83,8 @@ func TestTxStore_AddUnconfirmed_RejectsOldSequence(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
-	err := store.AddUnconfirmed(9, "h9", 100, nil)
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
+	err := store.AddUnconfirmed(9, "h9", 100, 0, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "old sequence")
 }
@@ -93,7 +93,7 @@ func TestTxStore_AddUnconfirmed_RejectsFutureSequence(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	err := store.AddUnconfirmed(12, "h12", 100, nil)
+	err := store.AddUnconfirmed(12, "h12", 100, 0, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "future sequence")
 }
@@ -102,11 +102,11 @@ func TestTxStore_AddUnconfirmed_AcceptsRecycledSequence(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 	require.NoError(t, store.Confirm(10, "h10", true)) // failed -> recycled
 
 	// The recycled sequence should be accepted even though nextSequence is 11
-	require.NoError(t, store.AddUnconfirmed(10, "h10-retry", 200, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10-retry", 200, 0, nil))
 	assert.Equal(t, 1, store.InflightCount())
 }
 
@@ -116,7 +116,7 @@ func TestTxStore_Confirm_SuccessRemovesUnconfirmed(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 	assert.Equal(t, 1, store.InflightCount())
 
 	require.NoError(t, store.Confirm(10, "h10", false))
@@ -127,8 +127,8 @@ func TestTxStore_Confirm_FailedAddsToRecycling(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, 0, nil))
 
 	// Seq 10 fails -> goes to failedSequences
 	require.NoError(t, store.Confirm(10, "h10", true))
@@ -142,7 +142,7 @@ func TestTxStore_Confirm_FailedBelowOnchainIsNotRecycled(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 
 	// Simulate resync that advances on-chain state past seq 10
 	store.ResyncNonce(12)
@@ -168,7 +168,7 @@ func TestTxStore_Confirm_HashMismatch(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 	err := store.Confirm(10, "wrong-hash", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected tx hash")
@@ -211,7 +211,7 @@ func TestTxStore_Release_CleansUpUnconfirmedEntry(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 	assert.Equal(t, 1, store.InflightCount())
 
 	// Release removes from unconfirmed and adds to failed
@@ -237,7 +237,7 @@ func TestTxStore_ResyncNonce_DoesNotGoBackwards(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 	// nextSequence is now 11
 
 	// Resync to 5 — should not go backwards
@@ -252,8 +252,8 @@ func TestTxStore_ResyncNonce_CleansStaleFailedSequences(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "h11", 100, 0, nil))
 
 	// Both fail
 	require.NoError(t, store.Confirm(10, "h10", true))
@@ -287,9 +287,9 @@ func TestTxStore_GetUnconfirmed_ReturnsSortedBySequence(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store.AddUnconfirmed(11, "h11", 110, nil))
-	require.NoError(t, store.AddUnconfirmed(12, "h12", 120, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(11, "h11", 110, 0, nil))
+	require.NoError(t, store.AddUnconfirmed(12, "h12", 120, 0, nil))
 
 	unconfirmed := store.GetUnconfirmed()
 	require.Len(t, unconfirmed, 3)
@@ -302,7 +302,7 @@ func TestTxStore_GetUnconfirmed_ReturnsShallowCopy(t *testing.T) {
 	t.Parallel()
 	store := NewTxStore(10)
 
-	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, nil))
+	require.NoError(t, store.AddUnconfirmed(10, "h10", 100, 0, nil))
 
 	unconfirmed := store.GetUnconfirmed()
 	require.Len(t, unconfirmed, 1)
@@ -363,9 +363,9 @@ func TestAccountStore_GetTotalInflightCount(t *testing.T) {
 	store1, _ := as.CreateTxStore("GACC1", 10)
 	store2, _ := as.CreateTxStore("GACC2", 20)
 
-	require.NoError(t, store1.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store1.AddUnconfirmed(11, "h11", 100, nil))
-	require.NoError(t, store2.AddUnconfirmed(20, "h20", 100, nil))
+	require.NoError(t, store1.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store1.AddUnconfirmed(11, "h11", 100, 0, nil))
+	require.NoError(t, store2.AddUnconfirmed(20, "h20", 100, 0, nil))
 
 	assert.Equal(t, 3, as.GetTotalInflightCount())
 }
@@ -377,9 +377,9 @@ func TestAccountStore_GetAllUnconfirmed(t *testing.T) {
 	store1, _ := as.CreateTxStore("GACC1", 10)
 	store2, _ := as.CreateTxStore("GACC2", 20)
 
-	require.NoError(t, store1.AddUnconfirmed(10, "h10", 100, nil))
-	require.NoError(t, store2.AddUnconfirmed(20, "h20", 100, nil))
-	require.NoError(t, store2.AddUnconfirmed(21, "h21", 100, nil))
+	require.NoError(t, store1.AddUnconfirmed(10, "h10", 100, 0, nil))
+	require.NoError(t, store2.AddUnconfirmed(20, "h20", 100, 0, nil))
+	require.NoError(t, store2.AddUnconfirmed(21, "h21", 100, 0, nil))
 
 	all := as.GetAllUnconfirmed()
 	assert.Len(t, all["GACC1"], 1)
@@ -399,7 +399,7 @@ func TestTxStore_FullLifecycle(t *testing.T) {
 	for i := int64(0); i < 3; i++ {
 		seq := store.GetNextSequence()
 		assert.Equal(t, int64(100+i), seq)
-		require.NoError(t, store.AddUnconfirmed(seq, fmt.Sprintf("hash-%d", seq), uint32(200+i), nil))
+		require.NoError(t, store.AddUnconfirmed(seq, fmt.Sprintf("hash-%d", seq), uint32(200+i), 0, nil))
 	}
 	assert.Equal(t, 3, store.InflightCount())
 
@@ -416,7 +416,7 @@ func TestTxStore_FullLifecycle(t *testing.T) {
 	assert.Equal(t, int64(101), next)
 
 	// Retry with recycled sequence
-	require.NoError(t, store.AddUnconfirmed(101, "hash-101-retry", 300, nil))
+	require.NoError(t, store.AddUnconfirmed(101, "hash-101-retry", 300, 0, nil))
 	assert.Equal(t, 2, store.InflightCount())
 
 	// Seq 102 confirms, seq 101 retry confirms
@@ -433,7 +433,7 @@ func TestTxStore_ReleaseAndRetryLifecycle(t *testing.T) {
 	store := NewTxStore(50)
 
 	// Tx A: seq 50 broadcasts successfully, advancing nextSequence to 51
-	require.NoError(t, store.AddUnconfirmed(50, "hash-50", 200, nil))
+	require.NoError(t, store.AddUnconfirmed(50, "hash-50", 200, 0, nil))
 	assert.Equal(t, int64(51), store.GetNextSequence())
 
 	// Tx B: gets seq 51, but simulation fails before SendTransaction.
@@ -441,7 +441,7 @@ func TestTxStore_ReleaseAndRetryLifecycle(t *testing.T) {
 	// so a retry would naturally get 51 again. However, Release is needed
 	// when the sequence was tracked in unconfirmedSequences before the failure.
 	// Simulate that case:
-	require.NoError(t, store.AddUnconfirmed(51, "hash-51", 200, nil))
+	require.NoError(t, store.AddUnconfirmed(51, "hash-51", 200, 0, nil))
 	// nextSequence is now 52
 
 	// Assembly/signing fails — Release the sequence
@@ -453,7 +453,7 @@ func TestTxStore_ReleaseAndRetryLifecycle(t *testing.T) {
 	assert.Equal(t, int64(51), seq)
 
 	// Retry succeeds
-	require.NoError(t, store.AddUnconfirmed(51, "hash-51-retry", 300, nil))
+	require.NoError(t, store.AddUnconfirmed(51, "hash-51-retry", 300, 0, nil))
 	assert.Equal(t, 2, store.InflightCount())
 	assert.Equal(t, int64(52), store.GetNextSequence())
 }

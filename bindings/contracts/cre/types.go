@@ -364,6 +364,7 @@ const (
 	ForwarderErrorInvalidReceiver              = 18
 	ForwarderErrorInvalidSigner                = 19
 	ForwarderErrorCannotRemoveSelf             = 20
+	ForwarderErrorUnauthorizedRelayer          = 21
 )
 
 // ForwarderErrorMessage returns a human-readable message for error codes.
@@ -388,6 +389,7 @@ var ForwarderErrorMessage = map[int]string{
 	18: "invalid receiver",
 	19: "invalid signer",
 	20: "cannot remove self",
+	21: "unauthorized relayer",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
@@ -470,6 +472,18 @@ type ConfigSetEvent struct {
 // ConfigSetEventTopic is the event topic identifier.
 const ConfigSetEventTopic = "forwarder_ConfigSet"
 
+// RelayerAddedEvent represents the RelayerAddedEvent event.
+// Topics: [forwarder_RelayerAdded]
+type RelayerAddedEvent struct {
+	Relayer string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayerAddedEventTopic is the event topic identifier.
+const RelayerAddedEventTopic = "forwarder_RelayerAdded"
+
 // ForwarderAddedEvent represents the ForwarderAddedEvent event.
 // Topics: [forwarder_ForwarderAdded]
 type ForwarderAddedEvent struct {
@@ -481,6 +495,33 @@ type ForwarderAddedEvent struct {
 
 // ForwarderAddedEventTopic is the event topic identifier.
 const ForwarderAddedEventTopic = "forwarder_ForwarderAdded"
+
+// RelayerRemovedEvent represents the RelayerRemovedEvent event.
+// Topics: [forwarder_RelayerRemoved]
+type RelayerRemovedEvent struct {
+	Relayer string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayerRemovedEventTopic is the event topic identifier.
+const RelayerRemovedEventTopic = "forwarder_RelayerRemoved"
+
+// RelayProcessedEvent represents the RelayProcessedEvent event.
+// Topics: [forwarder_RelayProcessed]
+type RelayProcessedEvent struct {
+	Receiver    string
+	ExecutionId [32]byte
+	PayloadHash [32]byte
+	State       TransmissionState
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RelayProcessedEventTopic is the event topic identifier.
+const RelayProcessedEventTopic = "forwarder_RelayProcessed"
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
 // Topics: [forwarder_ReportProcessed]

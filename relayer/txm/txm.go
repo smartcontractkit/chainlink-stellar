@@ -143,11 +143,12 @@ func (s *StellarTxm) Start(_ context.Context) error {
 	})
 }
 
+// Close stops the loops. broadcastChan stays open: nothing ranges over it, and closing it
+// would make a late Enqueue or maybeRetry send panic.
 func (s *StellarTxm) Close() error {
 	return s.starter.StopOnce(s.Name(), func() error {
 		close(s.stop)
 		s.done.Wait()
-		close(s.broadcastChan)
 		return nil
 	})
 }
@@ -156,8 +157,9 @@ func (s *StellarTxm) Close() error {
 
 // Enqueue submits a Soroban transaction request for asynchronous processing.
 // Returns the transaction ID (auto-generated if TxRequest.ID is empty).
-// If TxRequest.ID is already in flight or tracked, returns that same id with a nil error
-// and does not enqueue again (idempotent, aligned with EVM TxMgr idempotency key behavior).
+// If TxRequest.ID is already in flight or tracked with the same payload, returns that same id
+// with a nil error and does not enqueue again (idempotent, aligned with EVM TxMgr idempotency
+// key behavior); a different payload is rejected with ErrIdempotencyKeyPayloadMismatch.
 func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error) {
 	txID := req.ID
 	if txID == "" {
@@ -181,6 +183,11 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		return "", fmt.Errorf("invalid FromAddress %q: %w", fromAddr, err)
 	}
 
+	fingerprint, err := txFingerprint(fromAddr, req.Operations, req.LedgerBoundsOffset, req.MaxResourceFee)
+	if err != nil {
+		return "", fmt.Errorf("invalid operations: %w", err)
+	}
+
 	tx := &StellarTx{
 		ID:                 txID,
 		Timestamp:          time.Now(),
@@ -188,6 +195,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		Operations:         req.Operations,
 		LedgerBoundsOffset: req.LedgerBoundsOffset,
 		MaxResourceFee:     req.MaxResourceFee,
+		Fingerprint:        fingerprint,
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
@@ -244,17 +252,28 @@ func (s *StellarTxm) txResultLocked(tx *StellarTx) *TxResult {
 }
 
 // enqueueTransaction stores the tx and pushes it to broadcastChan.
-// If tx.ID is already present (after prune), returns that id with a nil error and does not
-// enqueue again (idempotent, matching EVM TxMgr CreateTransaction with IdempotencyKey).
+// If tx.ID is already present (after prune) with the same fingerprint, returns that id with a
+// nil error and does not enqueue again (idempotent, matching EVM TxMgr CreateTransaction with
+// IdempotencyKey). A different fingerprint is rejected with ErrIdempotencyKeyPayloadMismatch.
 // On backpressure it drops the oldest queued tx (not the new one): the oldest has
 // the stalest simulation data and the nearest LedgerBounds expiry, so the newer tx's
 // intent takes priority.
 func (s *StellarTxm) enqueueTransaction(ctx context.Context, tx *StellarTx) (string, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, nil)
 
+	select {
+	case <-s.stop:
+		return "", ErrTxmStopped
+	default:
+	}
+
 	s.transactionsMapLock.Lock()
-	if _, exists := s.transactions[tx.ID]; exists {
+	if existing, exists := s.transactions[tx.ID]; exists {
 		s.transactionsMapLock.Unlock()
+		if existing.Fingerprint != tx.Fingerprint {
+			ctxLogger.Errorw("enqueue rejected: tx id already present with a different payload", "txID", tx.ID)
+			return "", fmt.Errorf("%w: id %s", ErrIdempotencyKeyPayloadMismatch, tx.ID)
+		}
 		ctxLogger.Debugw("enqueue idempotent: tx id already present, not re-enqueueing", "txID", tx.ID)
 		s.closeDone(tx)
 		return tx.ID, nil
@@ -652,7 +671,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonRestoreFailed)
 				return
 			}
-			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq); err != nil {
+			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq, inclusionFee); err != nil {
 				ctxLogger.Errorw("failed to restore archived ledger entries", "error", err)
 				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonRestoreFailed)
 				return
@@ -679,9 +698,18 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		s.metrics.ObserveResourceFee(ctx, resourceFee)
 		s.updateTransactionFee(tx, big.NewInt(totalFee))
 
+		maxTime := assembledTx.Timebounds().MaxTime
+
 		signedTx, err := s.signTransaction(ctx, assembledTx, tx.FromAddress)
 		if err != nil {
 			ctxLogger.Errorw("failed to sign transaction", "error", err)
+			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSigning)
+			return
+		}
+
+		localHash, err := signedTx.HashHex(s.networkPassphrase)
+		if err != nil {
+			ctxLogger.Errorw("failed to hash signed transaction", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSigning)
 			return
 		}
@@ -711,9 +739,9 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger)
+		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime, localHash)
 		if accepted {
-			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", submitResult.Hash)
+			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", localHash)
 			s.markBroadcastAt(tx)
 			s.metrics.IncrementBroadcastedTxs(ctx)
 			s.updateTransactionStatus(tx, commontypes.Unconfirmed)
@@ -962,31 +990,23 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-			// NOT_FOUND or transient RPC error: check ledger expiry.
+			// NOT_FOUND or transient RPC error. Recycle the sequence only once the network can
+			// no longer include this envelope (latest ledger past MaxLedger or its close time past
+			// MaxTime); recycling on enqueue age would let two envelopes land on one sequence.
 			latestLedger, ledgerErr := client.GetLatestLedger(ctx)
-
-			txTimeout := time.Duration(*s.config.TxTimeoutSecs) * time.Second
-			wallClockExpired := time.Since(utx.Tx.Timestamp) > txTimeout
-
 			if ledgerErr != nil {
 				ctxLogger.Errorw("couldn't fetch latest ledger for expiry check", "error", ledgerErr)
-				if !wallClockExpired {
-					totalPending++
-					continue
-				}
-				// Wall-clock expired while ledger check is unavailable — expire the tx.
-				ctxLogger.Warnw("tx wall-clock expired while ledger fetch failed, expiring", "hash", hash)
-			} else {
-				ledgerExpired := latestLedger.Sequence > utx.MaxLedger
-				if !ledgerExpired && !wallClockExpired {
-					totalPending++
-					ctxLogger.Debugw("tx still pending", "hash", hash, "currentLedger", latestLedger.Sequence, "maxLedger", utx.MaxLedger)
-					continue
-				}
-				if wallClockExpired && !ledgerExpired {
-					ctxLogger.Warnw("tx expired via wall-clock fallback", "hash", hash,
-						"age", time.Since(utx.Tx.Timestamp).Round(time.Second))
-				}
+				totalPending++
+				continue
+			}
+			ledgerExpired := latestLedger.Sequence > utx.MaxLedger
+			timeExpired := utx.MaxTime > 0 && latestLedger.LedgerCloseTime > utx.MaxTime
+			if !ledgerExpired && !timeExpired {
+				totalPending++
+				ctxLogger.Debugw("tx still pending", "hash", hash,
+					"currentLedger", latestLedger.Sequence, "maxLedger", utx.MaxLedger,
+					"ledgerCloseTime", latestLedger.LedgerCloseTime, "maxTime", utx.MaxTime)
+				continue
 			}
 
 			// Expired: confirm as failed, recycle the sequence.

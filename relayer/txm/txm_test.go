@@ -2,8 +2,10 @@ package txm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -67,6 +69,7 @@ type mockRPCClient struct {
 	getFeeStatsErr       error
 
 	getTransactionCalls atomic.Int32
+	lastSendReq         atomic.Pointer[protocolrpc.SendTransactionRequest]
 
 	// getLatestLedgerHook, when set, is used instead of getLatestLedgerResp (avoids
 	// racy test updates to getLatestLedgerResp after Start).
@@ -84,6 +87,7 @@ func (m *mockRPCClient) SimulateTransaction(_ context.Context, req protocolrpc.S
 	return m.simulateResp, m.simulateErr
 }
 func (m *mockRPCClient) SendTransaction(_ context.Context, req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	m.lastSendReq.Store(&req)
 	if m.sendHook != nil {
 		return m.sendHook(req)
 	}
@@ -147,6 +151,28 @@ func buildRestorePreambleTransactionDataXDR(t *testing.T) string {
 	b64, err := xdr.MarshalBase64(data)
 	require.NoError(t, err)
 	return b64
+}
+
+// sendRequestHash returns the testnet hash of the signed envelope in req, which is what the TXM tracks and polls.
+func sendRequestHash(t *testing.T, req protocolrpc.SendTransactionRequest) string {
+	t.Helper()
+	gtx, err := txnbuild.TransactionFromXDR(req.Transaction)
+	require.NoError(t, err)
+	tx, ok := gtx.Transaction()
+	require.True(t, ok, "expected a plain (non fee-bump) transaction envelope")
+	passphrase, err := chainsel.StellarPassphraseFromChainId(chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	hash, err := tx.HashHex(passphrase)
+	require.NoError(t, err)
+	return hash
+}
+
+// lastSendRequestHash returns sendRequestHash for the last SendTransaction the mock received.
+func lastSendRequestHash(t *testing.T, mock *mockRPCClient) string {
+	t.Helper()
+	req := mock.lastSendReq.Load()
+	require.NotNil(t, req, "mock never received a SendTransaction")
+	return sendRequestHash(t, *req)
 }
 
 func newTestClient(mock *mockRPCClient) RPCClient {
@@ -1292,7 +1318,7 @@ func TestStellarTxm_ConfirmLoop_UpdatesFeeAndMetaFromXDR(t *testing.T) {
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
-	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, lastSendRequestHash(t, mock), result.Hash)
 	assert.Equal(t, commontypes.Finalized, result.Status)
 	assert.Equal(t, big.NewInt(40_200), result.Fee)
 	assert.Equal(t, int64(1_700_000_000), result.LedgerCloseTime)
@@ -1546,7 +1572,7 @@ func TestStellarTxm_ConfirmLoop_TerminalContractFailureDoesNotRetry(t *testing.T
 
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
-	assert.Equal(t, "test-hash", result.Hash)
+	assert.Equal(t, lastSendRequestHash(t, mock), result.Hash)
 	assert.Equal(t, commontypes.Failed, result.Status)
 	assert.Equal(t, int64(1_700_000_001), result.LedgerCloseTime)
 	assert.Equal(t, resultB64, result.ResultXDR)
@@ -1681,4 +1707,244 @@ func TestStellarTxm_Concurrency_GetResultAndUpdateOnDifferentTxs(t *testing.T) {
 		assert.Equal(t, uint64(writerIterations), tx.Attempt.Load(),
 			"tx %d Attempt should be exactly %d after concurrent increments", i, writerIterations)
 	}
+}
+
+// seedUnconfirmed registers one unconfirmed tx at seq for testAddress, as if it had
+// been broadcast earlier, and returns the store and tx for assertions.
+func seedUnconfirmed(t *testing.T, txm *StellarTxm, seq int64, maxLedger uint32, maxTime int64, enqueuedAt time.Time) (*TxStore, *StellarTx) {
+	t.Helper()
+	store, err := txm.accountStore.CreateTxStore(testAddress, seq)
+	require.NoError(t, err)
+	tx := &StellarTx{
+		ID:          "seeded",
+		FromAddress: testAddress,
+		Timestamp:   enqueuedAt,
+		Status:      commontypes.Unconfirmed,
+		Done:        make(chan struct{}),
+	}
+	txm.transactionsMapLock.Lock()
+	txm.transactions[tx.ID] = tx
+	txm.transactionsMapLock.Unlock()
+	require.NoError(t, store.AddUnconfirmed(seq, "seeded-hash", maxLedger, maxTime, tx))
+	return store, tx
+}
+
+func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclude(t *testing.T) {
+	t.Parallel()
+
+	const seq = int64(101)
+	const maxLedger = uint32(1050)
+	const maxTime = int64(1_700_000_300)
+	longAgo := time.Now().Add(-time.Hour) // far past TxTimeoutSecs
+
+	cases := []struct {
+		name         string
+		latestLedger protocolrpc.GetLatestLedgerResponse
+		latestErr    error
+		wantNextSeq  int64
+		wantInflight int
+		wantTxStatus commontypes.TransactionStatus
+	}{
+		{
+			name:         "enqueue age past TxTimeoutSecs but bounds not reached keeps tx pending",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime - 100},
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "ledger past MaxLedger recycles the sequence",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 2000, LedgerCloseTime: maxTime - 100},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "ledger close time past MaxTime recycles the sequence",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime + 1},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "ledger close time unavailable falls back to MaxLedger only",
+			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "ledger unavailable keeps tx pending regardless of age",
+			latestErr:    errors.New("rpc down"),
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockRPCClient{
+				getLatestLedgerResp: tc.latestLedger,
+				getLatestLedgerErr:  tc.latestErr,
+				getTransactionResp: protocolrpc.GetTransactionResponse{
+					TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+				},
+			}
+			cfg := config.TxManagerConfig{
+				TxTimeoutSecs:      ptr(int64(300)),
+				MaxTxRetryAttempts: ptr(uint64(0)), // expiry goes straight to Failed, which makes recycling observable
+			}
+			txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+			require.NoError(t, err)
+			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, maxTime, longAgo)
+
+			txm.checkUnconfirmed(t.Context())
+
+			assert.Equal(t, tc.wantInflight, store.InflightCount())
+			assert.Equal(t, tc.wantNextSeq, store.GetNextSequence())
+			status, err := txm.GetStatus(tx.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTxStatus, status)
+		})
+	}
+}
+
+func TestStellarTxm_Enqueue_IdempotencyKeyBindsPayload(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	// Not started, so broadcastLoop never drains the channel.
+
+	base := TxRequest{ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}}
+	id, err := txm.Enqueue(t.Context(), base)
+	require.NoError(t, err)
+	require.Equal(t, "key", id)
+
+	txm.transactionsMapLock.RLock()
+	first := txm.transactions["key"]
+	txm.transactionsMapLock.RUnlock()
+	require.NotNil(t, first)
+
+	t.Run("same payload is idempotent", func(t *testing.T) {
+		id, err := txm.Enqueue(t.Context(), base)
+		require.NoError(t, err)
+		assert.Equal(t, "key", id)
+	})
+
+	otherOp := testInvokeNoopOp()
+	otherOp.HostFunction.InvokeContract.FunctionName = xdr.ScSymbol("other")
+
+	mismatches := map[string]TxRequest{
+		"different operation":     {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{otherOp}},
+		"different ledger bounds": {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}, LedgerBoundsOffset: 7},
+		"different fee cap":       {ID: "key", FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}, MaxResourceFee: 1},
+	}
+	for name, req := range mismatches {
+		t.Run(name+" is rejected", func(t *testing.T) {
+			_, err := txm.Enqueue(t.Context(), req)
+			require.ErrorIs(t, err, ErrIdempotencyKeyPayloadMismatch)
+		})
+	}
+
+	txm.transactionsMapLock.RLock()
+	assert.Same(t, first, txm.transactions["key"], "the tracked tx is untouched by rejected requests")
+	txm.transactionsMapLock.RUnlock()
+	assert.Equal(t, 1, len(txm.broadcastChan), "only the first request was queued")
+}
+
+func Test_txFingerprint(t *testing.T) {
+	t.Parallel()
+
+	op := testInvokeNoopOp()
+	base, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 0, 0)
+	require.NoError(t, err)
+
+	same, err := txFingerprint(testAddress, []txnbuild.Operation{testInvokeNoopOp()}, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, base, same, "deterministic for equal inputs")
+
+	otherOp := testInvokeNoopOp()
+	otherOp.HostFunction.InvokeContract.FunctionName = xdr.ScSymbol("other")
+	diffOp, err := txFingerprint(testAddress, []txnbuild.Operation{otherOp}, 0, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffOp)
+
+	diffOffset, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 1, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffOffset)
+
+	diffCap, err := txFingerprint(testAddress, []txnbuild.Operation{op}, 0, 1)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffCap)
+
+	diffFrom, err := txFingerprint("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", []txnbuild.Operation{op}, 0, 0)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, diffFrom)
+
+	_, err = txFingerprint(testAddress, []txnbuild.Operation{nil}, 0, 0)
+	require.Error(t, err)
+}
+
+func TestStellarTxm_Enqueue_AfterCloseReturnsErrTxmStopped(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	require.NoError(t, txm.Close())
+
+	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
+
+	_, err = txm.EnqueueAndWait(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
+
+	// maybeRetry also sends on broadcastChan and must not panic after Close.
+	require.NotPanics(t, func() {
+		txm.maybeRetry(t.Context(), &UnconfirmedTx{Tx: &StellarTx{ID: "late-retry", Done: make(chan struct{})}, Hash: "h"}, RetryReasonTimedOut)
+	})
+}
+
+func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
+	t.Parallel()
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+
+	const producers = 8
+	var wg sync.WaitGroup
+	var unexpected atomic.Int32
+	stopProducing := make(chan struct{})
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stopProducing:
+					return
+				default:
+				}
+				_, err := txm.Enqueue(context.Background(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+				// Backpressure is expected when hammering the queue; anything else is not.
+				if err != nil && !errors.Is(err, ErrTxmStopped) && !strings.Contains(err.Error(), "broadcast channel full") {
+					unexpected.Add(1)
+				}
+			}
+		}()
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, txm.Close())
+	time.Sleep(20 * time.Millisecond) // keep producing after Close so late sends are exercised
+	close(stopProducing)
+	wg.Wait()
+
+	assert.Equal(t, int32(0), unexpected.Load(), "every Enqueue returned nil, backpressure or ErrTxmStopped")
+	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.ErrorIs(t, err, ErrTxmStopped)
 }

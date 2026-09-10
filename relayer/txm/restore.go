@@ -3,6 +3,7 @@ package txm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -11,12 +12,16 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// handleRestore submits a RestoreFootprint transaction for the archived entries in preamble
+// and waits for it to be included. inclusionFee is the bid seeded for this broadcast; the
+// resource fee goes into SorobanData, not BaseFee (see assembleTransaction).
 func (s *StellarTxm) handleRestore(
 	ctx context.Context,
 	client RPCClient,
 	tx *StellarTx,
 	preamble protocolrpc.RestorePreamble,
 	seq int64,
+	inclusionFee int64,
 ) error {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 
@@ -24,6 +29,14 @@ func (s *StellarTxm) handleRestore(
 	if err := xdr.SafeUnmarshalBase64(preamble.TransactionDataXDR, &sorobanData); err != nil {
 		return fmt.Errorf("failed to decode restore preamble soroban data: %w", err)
 	}
+
+	resourceFee, err := s.feeStrat.ResourceFee(preamble.MinResourceFee, *s.config.RestoreFeeBuffer, tx.MaxResourceFee)
+	if err != nil {
+		return fmt.Errorf("restore preamble fee rejected: %w", err)
+	}
+	sorobanData.ResourceFee = xdr.Int64(resourceFee)
+	s.metrics.ObserveInclusionFee(ctx, inclusionFee)
+	s.metrics.ObserveResourceFee(ctx, resourceFee)
 
 	restoreOp := &txnbuild.RestoreFootprint{
 		SourceAccount: tx.FromAddress,
@@ -39,12 +52,11 @@ func (s *StellarTxm) handleRestore(
 	// buildPreliminaryTx).
 	currentSequence := max(int64(0), seq-1)
 	sourceAccount := txnbuild.NewSimpleAccount(tx.FromAddress, currentSequence)
-	restoreFee := s.feeStrat.CalculateRestoreFee(preamble.MinResourceFee, *s.config.RestoreFeeBuffer)
 	restoreTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        &sourceAccount,
 		IncrementSequenceNum: true,
 		Operations:           []txnbuild.Operation{restoreOp},
-		BaseFee:              restoreFee,
+		BaseFee:              inclusionFee,
 		Preconditions: txnbuild.Preconditions{
 			TimeBounds: txnbuild.NewTimeout(*s.config.TxTimeoutSecs),
 		},
@@ -56,6 +68,10 @@ func (s *StellarTxm) handleRestore(
 	signedTx, err := s.signTransaction(ctx, restoreTx, tx.FromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to sign restore transaction: %w", err)
+	}
+	localHash, err := signedTx.HashHex(s.networkPassphrase)
+	if err != nil {
+		return fmt.Errorf("failed to hash restore transaction: %w", err)
 	}
 
 	signedXDR, err := signedTx.Base64()
@@ -81,12 +97,15 @@ func (s *StellarTxm) handleRestore(
 
 		switch submitResult.Status {
 		case stellarcore.TXStatusPending, stellarcore.TXStatusDuplicate:
-			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", submitResult.Hash)
+			if !strings.EqualFold(submitResult.Hash, localHash) {
+				ctxLogger.Errorw("rpc hash does not match signed restore envelope", "rpcHash", submitResult.Hash, "localHash", localHash)
+			}
+			ctxLogger.Debugw("restore transaction accepted", "attempt", attempt, "seq", seq, "hash", localHash)
 
-			resp, err := s.pollRestoreTransaction(ctx, client, submitResult.Hash)
+			resp, err := s.pollRestoreTransaction(ctx, client, localHash)
 			if err != nil {
 				lastErr = fmt.Errorf("restore transaction polling failed: %w", err)
-				ctxLogger.Warnw("restore poll failed, retrying", "attempt", attempt, "hash", submitResult.Hash, "error", err)
+				ctxLogger.Warnw("restore poll failed, retrying", "attempt", attempt, "hash", localHash, "error", err)
 				if !s.sleepBeforeRestoreRetry(ctx) {
 					return ctx.Err()
 				}
@@ -94,7 +113,7 @@ func (s *StellarTxm) handleRestore(
 			}
 			if resp.Status == protocolrpc.TransactionStatusSuccess {
 				s.metrics.IncrementRestore(ctx, RestoreOutcomeSuccess)
-				ctxLogger.Infow("restore transaction confirmed", "seq", seq, "hash", submitResult.Hash)
+				ctxLogger.Infow("restore transaction confirmed", "seq", seq, "hash", localHash)
 				if err := s.resyncSequence(ctx, client, tx); err != nil {
 					return fmt.Errorf("failed to resync sequence after restore: %w", err)
 				}

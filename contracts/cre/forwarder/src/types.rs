@@ -51,9 +51,16 @@ pub struct Ed25519Signature {
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
+    /// Transmitters allowed to submit quorum-signed reports via `report()`.
     Forwarder(Address),
     Config(u64),
+    /// Replay marker + state for `report()` deliveries.
     Transmission(BytesN<32>),
+    /// Transmitters allowed to deliver self-verified payloads via `relay()`.
+    Relayer(Address),
+    /// Replay marker + state for `relay()` deliveries. Separate key space from
+    /// `Transmission` so a relay can never occupy a report's replay key.
+    Relay(BytesN<32>),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

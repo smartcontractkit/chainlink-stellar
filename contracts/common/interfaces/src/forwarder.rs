@@ -2,13 +2,12 @@
 #[soroban_sdk::contractclient(name = "creClient")]
 pub trait creInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn route(
+    fn relay(
         env: soroban_sdk::Env,
-        transmission_id: soroban_sdk::BytesN<32>,
         transmitter: soroban_sdk::Address,
         receiver: soroban_sdk::Address,
-        metadata: soroban_sdk::Bytes,
-        validated_report: soroban_sdk::Bytes,
+        execution_id: soroban_sdk::BytesN<32>,
+        payload: soroban_sdk::Bytes,
     ) -> Result<bool, ForwarderError>;
     fn report(
         env: soroban_sdk::Env,
@@ -29,6 +28,10 @@ pub trait creInterface {
         f: u32,
         signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
     ) -> Result<(), ForwarderError>;
+    fn add_relayer(
+        env: soroban_sdk::Env,
+        relayer: soroban_sdk::Address,
+    ) -> Result<(), ForwarderError>;
     fn clear_config(
         env: soroban_sdk::Env,
         don_id: u32,
@@ -43,6 +46,16 @@ pub trait creInterface {
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+    fn get_relay_info(
+        env: soroban_sdk::Env,
+        receiver: soroban_sdk::Address,
+        execution_id: soroban_sdk::BytesN<32>,
+        payload_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<TransmissionInfo, ForwarderError>;
+    fn remove_relayer(
+        env: soroban_sdk::Env,
+        relayer: soroban_sdk::Address,
+    ) -> Result<(), ForwarderError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn remove_forwarder(
         env: soroban_sdk::Env,
@@ -225,6 +238,7 @@ pub enum ForwarderError {
     InvalidReceiver = 18,
     InvalidSigner = 19,
     CannotRemoveSelf = 20,
+    UnauthorizedRelayer = 21,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -266,10 +280,31 @@ pub struct ConfigSetEvent {
     pub f: u32,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerAdded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RelayerAddedEvent {
+    pub relayer: soroban_sdk::Address,
+}
 #[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderAddedEvent {
     pub forwarder: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerRemoved"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RelayerRemovedEvent {
+    pub relayer: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayProcessed"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RelayProcessedEvent {
+    #[topic]
+    pub receiver: soroban_sdk::Address,
+    #[topic]
+    pub execution_id: soroban_sdk::BytesN<32>,
+    #[topic]
+    pub payload_hash: soroban_sdk::BytesN<32>,
+    pub state: TransmissionState,
 }
 #[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

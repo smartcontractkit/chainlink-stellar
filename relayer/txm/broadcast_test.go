@@ -79,7 +79,7 @@ func TestStellarTxm_BroadcastPipeline_HappyPath(t *testing.T) {
 	txm.transactionsMapLock.RUnlock()
 
 	tx.mu.RLock()
-	assert.Equal(t, "test-hash", tx.TxHash)
+	assert.Equal(t, lastSendRequestHash(t, mock), tx.TxHash, "tracked hash is the locally computed envelope hash, not the rpc string")
 	assert.NotNil(t, tx.Fee)
 	assert.True(t, tx.Fee.Cmp(big.NewInt(0)) > 0)
 	tx.mu.RUnlock()
@@ -415,7 +415,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget
 	assert.Equal(t, 0, store.InflightCount())
 }
 
-func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
+func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashTracksLocalHash(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
 	mock := &mockRPCClient{
@@ -425,6 +425,7 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
 		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending},
+		getTransactionResp:  protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}},
 	}
 	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
@@ -436,13 +437,14 @@ func TestStellarTxm_BroadcastPipeline_AcceptedWithoutHashFails(t *testing.T) {
 	require.Eventually(t, func() bool {
 		st, err := txm.GetStatus(txID)
 		require.NoError(t, err)
-		return st == commontypes.Failed
+		return st == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond)
 
 	store := txm.accountStore.GetTxStore(testAddress)
 	require.NotNil(t, store)
-	assert.Equal(t, int64(101), store.GetNextSequence())
-	assert.Equal(t, 0, store.InflightCount())
+	assert.Equal(t, int64(102), store.GetNextSequence(), "sequence 101 stays reserved for the accepted envelope")
+	require.Equal(t, 1, store.InflightCount())
+	assert.Equal(t, lastSendRequestHash(t, mock), store.GetUnconfirmed()[0].Hash)
 }
 
 func TestStellarTxm_BroadcastPipeline_SimulateErrorField(t *testing.T) {
@@ -499,15 +501,18 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleSuccess(t *testing.T) {
 		}
 		return protocolrpc.SimulateTransactionResponse{MinResourceFee: 10_000}, nil
 	}
-	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	// The TXM polls the hash it computed for the restore envelope, not a fixed string.
+	var restoreHash atomic.Pointer[string]
+	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		hash := sendRequestHash(t, req)
 		if sendCalls.Add(1) == 1 {
+			restoreHash.Store(&hash)
 			mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
 		}
-		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "original-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: hash}, nil
 	}
 	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
-		if req.Hash == "restore-hash" {
+		if h := restoreHash.Load(); h != nil && req.Hash == *h {
 			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
 		}
 		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
@@ -581,16 +586,14 @@ func TestStellarTxm_BroadcastPipeline_RestorePreambleTwiceFails(t *testing.T) {
 			RestorePreamble: &preamble,
 		},
 	}
-	mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+	// Every send here is a restore (the invoke never passes its second simulation), so any polled hash confirms.
+	mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
 		sendCalls.Add(1)
 		mock.getLedgerEntriesResp = protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}}
-		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
+		return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: sendRequestHash(t, req)}, nil
 	}
-	mock.getTransactionHook = func(req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
-		if req.Hash == "restore-hash" {
-			return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
-		}
-		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound}}, nil
+	mock.getTransactionHook = func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+		return protocolrpc.GetTransactionResponse{TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess}}, nil
 	}
 
 	cfg := config.TxManagerConfig{SubmitRetryDelay: clconfig.MustNewDuration(10 * time.Millisecond)}
@@ -769,7 +772,7 @@ func TestStellarTxm_HandleRestore_RestoreTotalNotInflatedByRetry(t *testing.T) {
 
 	// handleRestore is expected to fail (loop exhausts), but the metric
 	// invariant must hold regardless of outcome.
-	err = txm.handleRestore(t.Context(), client, tx, preamble, 1)
+	err = txm.handleRestore(t.Context(), client, tx, preamble, 1, 100)
 	require.Error(t, err)
 
 	assert.GreaterOrEqual(t, sendCalls.Load(), int32(2),
@@ -829,7 +832,7 @@ func TestStellarTxm_HandleRestore_RestoreTotalCountsOnceOnSuccess(t *testing.T) 
 	tx := &StellarTx{ID: "restore-test-ok", FromAddress: testAddress, Done: make(chan struct{})}
 	client := newTestClient(mock)
 
-	require.NoError(t, txm.handleRestore(t.Context(), client, tx, preamble, 1))
+	require.NoError(t, txm.handleRestore(t.Context(), client, tx, preamble, 1, 100))
 
 	assert.Equal(t, float64(1), testutil.ToFloat64(promStellarTxmRestore.WithLabelValues(chainID, string(RestoreOutcomeInitiated)))-initiatedBefore,
 		"restore initiated must increment exactly once per logical restore")
@@ -906,4 +909,144 @@ func TestStellarTxm_BroadcastPipeline_GetClientFailuresDoNotStealLifecycleBudget
 	require.NotNil(t, tracked)
 	assert.Equal(t, uint64(3), tracked.InfraAttempts.Load(), "3 getClient failures must increment InfraAttempts to 3")
 	assert.Equal(t, uint64(0), tracked.Attempt.Load(), "lifecycle Attempt must be 0 — no post-submit retry happened yet")
+}
+
+func TestStellarTxm_HandleRestore_FeeIsBoundedAndNotDoubleCounted(t *testing.T) {
+	t.Parallel()
+
+	const inclusionFee = int64(250)
+	accountAfterRestoreXDR := buildAccountEntryXDR(t, testAddress, 101)
+
+	newRestoreTxm := func(t *testing.T, perTxCap uint64) (*StellarTxm, *mockRPCClient, *StellarTx, *atomic.Pointer[protocolrpc.SendTransactionRequest]) {
+		t.Helper()
+		var lastSend atomic.Pointer[protocolrpc.SendTransactionRequest]
+		mock := &mockRPCClient{
+			getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+			getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: accountAfterRestoreXDR}}},
+			getTransactionResp: protocolrpc.GetTransactionResponse{
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusSuccess},
+			},
+		}
+		mock.sendHook = func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			lastSend.Store(&req)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "restore-hash"}, nil
+		}
+		cfg := config.TxManagerConfig{
+			TxTimeoutSecs:    ptr(int64(5)),
+			SubmitRetryDelay: clconfig.MustNewDuration(time.Millisecond),
+		}
+		txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+		require.NoError(t, err)
+		_, err = txm.accountStore.CreateTxStore(testAddress, 101)
+		require.NoError(t, err)
+		tx := &StellarTx{ID: "restore-fee", FromAddress: testAddress, MaxResourceFee: perTxCap, Done: make(chan struct{})}
+		return txm, mock, tx, &lastSend
+	}
+
+	t.Run("resource fee lives in SorobanData and the envelope fee counts it once", func(t *testing.T) {
+		t.Parallel()
+		txm, mock, tx, lastSend := newRestoreTxm(t, 0)
+		preamble := protocolrpc.RestorePreamble{MinResourceFee: 80_000, TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t)}
+
+		require.NoError(t, txm.handleRestore(t.Context(), newTestClient(mock), tx, preamble, 101, inclusionFee))
+
+		req := lastSend.Load()
+		require.NotNil(t, req, "restore envelope was not sent")
+		gtx, err := txnbuild.TransactionFromXDR(req.Transaction)
+		require.NoError(t, err)
+		sent, ok := gtx.Transaction()
+		require.True(t, ok)
+
+		wantResourceFee := preamble.MinResourceFee + *txm.config.RestoreFeeBuffer
+		env := sent.ToXDR()
+		require.NotNil(t, env.V1)
+		require.NotNil(t, env.V1.Tx.Ext.SorobanData)
+		assert.Equal(t, xdr.Int64(wantResourceFee), env.V1.Tx.Ext.SorobanData.ResourceFee)
+		assert.Equal(t, inclusionFee+wantResourceFee, int64(env.V1.Tx.Fee))
+		assert.Len(t, sent.Operations(), 1)
+	})
+
+	t.Run("preamble MinResourceFee over the configured cap is rejected before signing", func(t *testing.T) {
+		t.Parallel()
+		txm, mock, tx, lastSend := newRestoreTxm(t, 0)
+		preamble := protocolrpc.RestorePreamble{MinResourceFee: *txm.config.MaxResourceFee + 1, TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t)}
+
+		err := txm.handleRestore(t.Context(), newTestClient(mock), tx, preamble, 101, inclusionFee)
+		require.ErrorContains(t, err, "exceeds cap")
+		assert.Nil(t, lastSend.Load(), "nothing is signed or sent")
+	})
+
+	t.Run("preamble MinResourceFee over the per-request cap is rejected", func(t *testing.T) {
+		t.Parallel()
+		txm, mock, tx, lastSend := newRestoreTxm(t, 50_000)
+		preamble := protocolrpc.RestorePreamble{MinResourceFee: 80_000, TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t)}
+
+		err := txm.handleRestore(t.Context(), newTestClient(mock), tx, preamble, 101, inclusionFee)
+		require.ErrorContains(t, err, "exceeds cap 50000")
+		assert.Nil(t, lastSend.Load())
+	})
+
+	t.Run("non-positive preamble MinResourceFee is rejected", func(t *testing.T) {
+		t.Parallel()
+		txm, mock, tx, lastSend := newRestoreTxm(t, 0)
+		preamble := protocolrpc.RestorePreamble{MinResourceFee: 0, TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t)}
+
+		err := txm.handleRestore(t.Context(), newTestClient(mock), tx, preamble, 101, inclusionFee)
+		require.ErrorContains(t, err, "non-positive MinResourceFee")
+		assert.Nil(t, lastSend.Load())
+	})
+}
+
+func TestStellarTxm_BroadcastPipeline_RejectsUntrustedMinResourceFee(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		minResourceFee int64
+		perTxCap       uint64
+	}{
+		{name: "zero MinResourceFee", minResourceFee: 0},
+		{name: "negative MinResourceFee", minResourceFee: -1},
+		{name: "MinResourceFee above configured cap", minResourceFee: 5_000_000},
+		{name: "MinResourceFee above per-request cap", minResourceFee: 80_000, perTxCap: 50_000},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var sendCalls atomic.Int32
+			mock := &mockRPCClient{
+				getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}}},
+				getLatestLedgerResp:  protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+				simulateResp: protocolrpc.SimulateTransactionResponse{
+					MinResourceFee:     tc.minResourceFee,
+					TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+				},
+			}
+			mock.sendHook = func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+				sendCalls.Add(1)
+				return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "unused"}, nil
+			}
+			txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+			require.NoError(t, err)
+			require.NoError(t, txm.Start(t.Context()))
+			t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+			txID, err := txm.Enqueue(t.Context(), TxRequest{
+				FromAddress:    testAddress,
+				Operations:     []txnbuild.Operation{testInvokeNoopOp()},
+				MaxResourceFee: tc.perTxCap,
+			})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				st, e := txm.GetStatus(txID)
+				return e == nil && st == commontypes.Failed
+			}, 5*time.Second, 20*time.Millisecond)
+
+			assert.Equal(t, int32(0), sendCalls.Load(), "nothing is signed at an untrusted price")
+			store := txm.accountStore.GetTxStore(testAddress)
+			require.NotNil(t, store)
+			assert.Equal(t, int64(101), store.GetNextSequence(), "reserved sequence is released")
+		})
+	}
 }
