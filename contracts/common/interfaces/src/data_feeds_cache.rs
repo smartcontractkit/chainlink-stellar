@@ -148,22 +148,7 @@ pub enum CacheError {
     FeedFrozen = 109,
     NoFeedState = 110,
 }
-#[soroban_sdk::contracterror(export = false)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum RoleTransferError {
-    NoPendingTransfer = 2200,
-    InvalidLiveUntilLedger = 2201,
-    InvalidPendingAccount = 2202,
-    TransferExpired = 2203,
-}
-#[soroban_sdk::contracterror(export = false)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum OwnableError {
-    OwnerNotSet = 2100,
-    TransferInProgress = 2101,
-    OwnerAlreadySet = 2102,
-}
-#[soroban_sdk::contractevent(export = false, topics = ["FeedUpdated"])]
+#[soroban_sdk::contractevent(topics = ["FeedUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedUpdated {
     #[topic]
@@ -174,7 +159,7 @@ pub struct FeedUpdated {
     pub ledger_seq: u32,
     pub primary: bool,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["StaleReport"])]
+#[soroban_sdk::contractevent(topics = ["StaleReport"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaleReport {
     #[topic]
@@ -182,7 +167,7 @@ pub struct StaleReport {
     pub report_ts: u64,
     pub stored_ts: u64,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["FeedConfigSet"])]
+#[soroban_sdk::contractevent(topics = ["FeedConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigSet {
     #[topic]
@@ -191,32 +176,32 @@ pub struct FeedConfigSet {
     pub description: soroban_sdk::String,
     pub workflow_permissions: soroban_sdk::Vec<WorkflowPermission>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["FeedFrozenSet"])]
+#[soroban_sdk::contractevent(topics = ["FeedFrozenSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedFrozenSet {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
     pub frozen: bool,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["FeedAdminAdded"])]
+#[soroban_sdk::contractevent(topics = ["FeedAdminAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedAdminAdded {
     #[topic]
     pub admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["FeedAdminRemoved"])]
+#[soroban_sdk::contractevent(topics = ["FeedAdminRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedAdminRemoved {
     #[topic]
     pub admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["FeedConfigRemoved"])]
+#[soroban_sdk::contractevent(topics = ["FeedConfigRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigRemoved {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["InvalidUpdatePermission"])]
+#[soroban_sdk::contractevent(topics = ["InvalidUpdatePermission"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InvalidUpdatePermission {
     #[topic]
@@ -225,31 +210,31 @@ pub struct InvalidUpdatePermission {
     pub workflow_owner: soroban_sdk::BytesN<20>,
     pub workflow_name: soroban_sdk::BytesN<10>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["Upgraded"])]
+#[soroban_sdk::contractevent(topics = ["Upgraded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["TokenRecovered"])]
+#[soroban_sdk::contractevent(topics = ["TokenRecovered"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenRecovered {
     pub token: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["ownership_transfer"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransfer {
     pub old_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
     pub live_until_ledger: u32,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["ownership_renounced"])]
+#[soroban_sdk::contractevent(topics = ["ownership_renounced"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipRenounced {
     pub old_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(export = false, topics = ["ownership_transfer_completed"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferCompleted {
     pub new_owner: soroban_sdk::Address,

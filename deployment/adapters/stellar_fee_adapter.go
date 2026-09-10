@@ -25,15 +25,15 @@ var _ fees.FeeAdapter = (*StellarFeeAdapter)(nil)
 // StellarFeeAdapter implements fees.FeeAdapter for the Stellar FeeQuoter.
 type StellarFeeAdapter struct{}
 
-func (a *StellarFeeAdapter) GetFeeContractRef(e cldf.Environment, onRamp datastore.AddressRef, src uint64, dst uint64) (datastore.AddressRef, error) {
+func (a *StellarFeeAdapter) GetFeeContractRef(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, ds datastore.DataStore, onRamp datastore.AddressRef, src uint64, dst uint64) (datastore.AddressRef, error) {
 	toRef := func(ref datastore.AddressRef) (datastore.AddressRef, error) { return ref, nil }
-	return datastore_utils.FindAndFormatRef(e.DataStore, datastore.AddressRef{
+	return datastore_utils.FindAndFormatRef(ds, datastore.AddressRef{
 		Type:    datastore.ContractType(fqopstype.ContractType),
 		Version: semver.MustParse(fqopstype.Deploy.Version()),
 	}, src, toRef)
 }
 
-func (a *StellarFeeAdapter) SetTokenTransferFee(e cldf.Environment, fq datastore.AddressRef) *cldf_ops.Sequence[fees.SetTokenTransferFeeSequenceInput, seqcore.OnChainOutput, cldf_chain.BlockChains] {
+func (a *StellarFeeAdapter) SetTokenTransferFee(_ datastore.DataStore, fq datastore.AddressRef) *cldf_ops.Sequence[fees.SetTokenTransferFeeSequenceInput, seqcore.OnChainOutput, cldf_chain.BlockChains] {
 	return cldf_ops.NewSequence(
 		stellarsequences.StellarSetTokenTransferFee.ID(),
 		stellarops.ContractDeploymentVersion,
@@ -55,7 +55,7 @@ func (a *StellarFeeAdapter) SetTokenTransferFee(e cldf.Environment, fq datastore
 	)
 }
 
-func (a *StellarFeeAdapter) GetOnchainTokenTransferFeeConfig(_ cldf.Environment, fq datastore.AddressRef, _ uint64, _ uint64, _ string) (fees.TokenTransferFeeArgs, error) {
+func (a *StellarFeeAdapter) GetOnchainTokenTransferFeeConfig(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, fq datastore.AddressRef, _ uint64, _ uint64, _ string) (fees.TokenTransferFeeArgs, error) {
 	return fees.TokenTransferFeeArgs{}, fmt.Errorf("stellar GetOnchainTokenTransferFeeConfig: not yet implemented (requires live chain query)")
 }
 
@@ -84,7 +84,7 @@ func (a *StellarFeeAdapter) Validate(_ cldf.Environment, feeRef datastore.Addres
 	return nil
 }
 
-func (a *StellarFeeAdapter) ApplyDestChainConfigUpdates(e cldf.Environment, feeRef datastore.AddressRef) *cldf_ops.Sequence[fees.ApplyDestChainConfigSequenceInput, seqcore.OnChainOutput, cldf_chain.BlockChains] {
+func (a *StellarFeeAdapter) ApplyDestChainConfigUpdates(_ datastore.DataStore, feeRef datastore.AddressRef) *cldf_ops.Sequence[fees.ApplyDestChainConfigSequenceInput, seqcore.OnChainOutput, cldf_chain.BlockChains] {
 	return cldf_ops.NewSequence(
 		stellarsequences.StellarApplyDestChainConfig.ID(),
 		stellarops.ContractDeploymentVersion,
@@ -106,7 +106,7 @@ func (a *StellarFeeAdapter) ApplyDestChainConfigUpdates(e cldf.Environment, feeR
 	)
 }
 
-func (a *StellarFeeAdapter) GetOnchainDestChainConfig(_ cldf.Environment, fq datastore.AddressRef, _ uint64, _ uint64) (lanes.FeeQuoterDestChainConfig, error) {
+func (a *StellarFeeAdapter) GetOnchainDestChainConfig(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, fq datastore.AddressRef, _ uint64, _ uint64) (lanes.FeeQuoterDestChainConfig, error) {
 	return lanes.FeeQuoterDestChainConfig{}, fmt.Errorf("stellar GetOnchainDestChainConfig: not yet implemented (requires live chain query)")
 }
 

@@ -4,7 +4,6 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_0_0/operations/rmn_proxy"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/executor"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/fee_quoter"
@@ -104,10 +103,22 @@ func FeeQuoterDatastoreRef() DatastoreSorobanContractRef {
 	}
 }
 
+// RMNRemote's canonical (type, version) pair used to be importable from
+// chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote. That package was removed;
+// upstream now keeps the type string private (chains/evm/deployment/utils/rmn.go
+// `rmnRemoteContractType`) and resolves it by datastore lookup. These constants preserve the
+// exact values that package exported so existing Stellar datastore refs keep resolving — do not
+// switch them to the Stellar-local deployment/operations/rmn_remote values ("RmnRemote"/2.0.0),
+// which would silently orphan every recorded ref.
+const (
+	RMNRemoteContractType    = "RMNRemote"
+	RMNRemoteContractVersion = "1.6.0"
+)
+
 func RMNRemoteDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(rmn_remote.ContractType),
-		Version:   semver.MustParse(rmn_remote.Deploy.Version()),
+		Type:      datastore.ContractType(RMNRemoteContractType),
+		Version:   semver.MustParse(RMNRemoteContractVersion),
 		Qualifier: "",
 	}
 }

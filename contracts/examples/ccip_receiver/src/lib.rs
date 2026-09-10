@@ -26,9 +26,6 @@ use soroban_sdk::{
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_interfaces::ccip_receiver::{
-    CcvChainConfig, CcvConfigUpdate, CcvsAndFinalityConfig, RemoteChainConfig,
-};
 use common_interfaces::router::{RouterClient, StellarToAnyMessage};
 use common_message::AnyToStellarMessage;
 use events::{CcipCcvConfigSetEvent, CcipMessageReceivedEvent, CcipRemoteChainConfiguredEvent};
@@ -44,6 +41,39 @@ const REM_SELS: Symbol = symbol_short!("RMSELS");
 /// Cap for [`ExampleCcipReceiver::get_remote_chain_selectors`] (Soroban resource limits; EVM set is unbounded).
 const MAX_REMOTE_CHAIN_SELECTORS: u32 = 256;
 const CCV_KEY: Symbol = symbol_short!("CCVCG");
+
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CcvChainConfig {
+    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_threshold: u32,
+}
+
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CcvConfigUpdate {
+    pub source_chain_selector: u64,
+    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_threshold: u32,
+}
+
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RemoteChainConfig {
+    pub extra_args: soroban_sdk::Bytes,
+    pub allowed_finality_config: u32,
+}
+
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CcvsAndFinalityConfig {
+    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub optional_threshold: u32,
+    pub allowed_finality_config: u32,
+}
 
 #[contract]
 pub struct ExampleCcipReceiver;

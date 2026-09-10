@@ -213,38 +213,41 @@ func stellarFeeQuoterDestChainConfigOverride(selector uint64) lanes.FeeQuoterDes
 }
 
 // GetChainLaneProfile implements cciptestinterfaces.OnChainConfigurable.
-// Returns the lane profile for Stellar as a destination chain, mirroring the
+// Returns the lane overrides for Stellar as a destination chain, mirroring the
 // values used in GetConnectionProfile and stellarFeeQuoterDestChainConfigOverride.
-func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (cciptestinterfaces.ChainLaneProfile, error) {
+func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (ccipChangesets.ChainOverrides, error) {
 	// FeeQuoter family selector and DestGasOverhead are populated from the Stellar
 	// lane adapter defaults; overrides here only set fields that differ from those.
 	enabled := true
-	return cciptestinterfaces.ChainLaneProfile{
-		BaseExecutionGasCost: ptrU32(100_000),
-		FeeQuoterDestChainConfig: ccipChangesets.FeeQuoterDestChainConfigOverrides{
-			IsEnabled:                   &enabled,
-			MaxDataBytes:                ptrU32(30_000),
-			MaxPerMsgGasLimit:           ptrU32(3_000_000),
-			DestGasPerPayloadByteBase:   ptrU8(16),
-			DefaultTokenFeeUSDCents:     ptrU16(25),
-			DefaultTokenDestGasOverhead: ptrU32(90_000),
-			DefaultTxGasLimit:           ptrU32(200_000),
-			NetworkFeeUSDCents:          ptrU16(10),
-			LinkFeeMultiplierPercent:    ptrU8(90),
-			USDPerUnitGas:               big.NewInt(1e6),
+	executorQualifier := devenvcommon.DefaultExecutorQualifier
+	return ccipChangesets.ChainOverrides{
+		CommitteeVerifierGasForVerification: ptrU32(10_000),
+		RemoteChainCfg: ccipChangesets.PartialRemoteChainConfig{
+			BaseExecutionGasCost: ptrU32(100_000),
+			FeeQuoterDestChainConfig: adapters.FeeQuoterDestChainConfigOverrides{
+				IsEnabled:                   &enabled,
+				MaxDataBytes:                ptrU32(30_000),
+				MaxPerMsgGasLimit:           ptrU32(3_000_000),
+				DestGasPerPayloadByteBase:   ptrU8(16),
+				DefaultTokenFeeUSDCents:     ptrU16(25),
+				DefaultTokenDestGasOverhead: ptrU32(90_000),
+				DefaultTxGasLimit:           ptrU32(200_000),
+				NetworkFeeUSDCents:          ptrU16(10),
+				LinkFeeMultiplierPercent:    ptrU8(90),
+				USDPerUnitGas:               big.NewInt(1e6),
+			},
+			ExecutorDestChainConfig: &adapters.ExecutorDestChainConfig{
+				USDCentsFee: 0,
+				Enabled:     true,
+			},
+			DefaultExecutorQualifier: &executorQualifier,
+			DefaultInboundCCVs: []datastore.AddressRef{
+				stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
+			},
+			DefaultOutboundCCVs: []datastore.AddressRef{
+				stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
+			},
 		},
-		ExecutorDestChainConfig: &adapters.ExecutorDestChainConfig{
-			USDCentsFee: 0,
-			Enabled:     true,
-		},
-		DefaultExecutorQualifier: devenvcommon.DefaultExecutorQualifier,
-		DefaultInboundCCVs: []datastore.AddressRef{
-			stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
-		},
-		DefaultOutboundCCVs: []datastore.AddressRef{
-			stellarccip.VVRDatastoreRef().LaneAddressRef(selector),
-		},
-		GasForVerification: ptrU32(10_000),
 	}, nil
 }
 
@@ -390,8 +393,9 @@ func (c *Chain) GetDeployChainContractsCfg(env *deployment.Environment, selector
 	if err != nil {
 		return ccipChangesets.DeployChainContractsPerChainCfg{}, fmt.Errorf("decode stellar deployer: %w", err)
 	}
+	deployerContract := stellarcommon.HexEncode(raw)
 	return ccipChangesets.DeployChainContractsPerChainCfg{
-		DeployerContract: stellarcommon.HexEncode(raw),
+		DeployerContract: &deployerContract,
 		DeployerKeyOwned: true,
 	}, nil
 }
@@ -732,17 +736,18 @@ func (c *Chain) ConfirmSendOnSource(ctx context.Context, to uint64, key cciptest
 }
 
 // ConfirmExecOnDest implements cciptestinterfaces.Chain.
-func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptestinterfaces.MessageEventKey, timeout time.Duration) (cciptestinterfaces.ExecutionStateChangedEvent, error) {
+// TxID is left empty: the OffRamp event waiter does not expose the enclosing transaction hash.
+func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptestinterfaces.MessageEventKey, timeout time.Duration) (cciptestinterfaces.ExecEnvelope, error) {
 	if key.MessageID == (protocol.Bytes32{}) && key.SeqNum == 0 {
-		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("MessageEventKey must set MessageID or SeqNum")
+		return cciptestinterfaces.ExecEnvelope{}, fmt.Errorf("MessageEventKey must set MessageID or SeqNum")
 	}
 	if c.offRampClient == nil {
-		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("OffRamp client not initialized")
+		return cciptestinterfaces.ExecEnvelope{}, fmt.Errorf("OffRamp client not initialized")
 	}
 
 	latestLedger, err := c.rpcClient.GetLatestLedger(ctx)
 	if err != nil {
-		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("failed to get latest ledger: %w", err)
+		return cciptestinterfaces.ExecEnvelope{}, fmt.Errorf("failed to get latest ledger: %w", err)
 	}
 
 	var filter func(*offrampbindings.ExecutionStateChangedEvent) bool
@@ -775,15 +780,17 @@ func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptest
 		filter,
 	)
 	if err != nil {
-		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("failed waiting for execution event: %w", err)
+		return cciptestinterfaces.ExecEnvelope{}, fmt.Errorf("failed waiting for execution event: %w", err)
 	}
 
-	return cciptestinterfaces.ExecutionStateChangedEvent{
-		SourceChainSelector: protocol.ChainSelector(event.SourceChainSelector),
-		MessageID:           event.MessageId,
-		MessageNumber:       event.SequenceNumber,
-		State:               cciptestinterfaces.MessageExecutionState(event.State),
-		ReturnData:          event.ReturnData,
+	return cciptestinterfaces.ExecEnvelope{
+		Event: cciptestinterfaces.ExecutionStateChangedEvent{
+			SourceChainSelector: protocol.ChainSelector(event.SourceChainSelector),
+			MessageID:           event.MessageId,
+			MessageNumber:       event.SequenceNumber,
+			State:               cciptestinterfaces.MessageExecutionState(event.State),
+			ReturnData:          event.ReturnData,
+		},
 	}, nil
 }
 

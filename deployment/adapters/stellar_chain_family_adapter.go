@@ -7,8 +7,6 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
-
 	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/lanes"
 	datastore_utils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
@@ -19,13 +17,15 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
 // StellarChainFamilyAdapter implements ccvadapters.ChainFamily for CCIP 2.0.
 // Stellar does not register deployment/lanes.LaneAdapter: lane wiring is done
-// via DeployContractsForSelector / ConfigureChainsForLanesFromTopology (no-op
-// ConfigureChainForLanes here). Legacy lanes.ConnectChains is unsupported for
-// Stellar unless a LaneAdapter is reintroduced.
+// via DeployContractsForSelector / ConfigureChainsForLanesFromTopology; the
+// ConfigureChainForLanes hook applies committee verifier signature quorums
+// (sequences.StellarConfigureChainForLanes). Legacy lanes.ConnectChains is
+// unsupported for Stellar unless a LaneAdapter is reintroduced.
 type StellarChainFamilyAdapter struct{}
 
 var _ ccvadapters.ChainFamily = (*StellarChainFamilyAdapter)(nil)
@@ -93,17 +93,8 @@ func (a *StellarChainFamilyAdapter) GetDefaultGasPrice() *big.Int {
 	return big.NewInt(1e9)
 }
 
-var stellarNoOpConfigureChainForLanes = cldf_ops.NewSequence(
-	"StellarConfigureChainForLanes",
-	semver.MustParse("2.0.0"),
-	"No-op: Stellar lane config is applied during contract deployment",
-	func(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, _ ccvadapters.ConfigureChainForLanesInput) (seq_core.OnChainOutput, error) {
-		return seq_core.OnChainOutput{}, nil
-	},
-)
-
 func (a *StellarChainFamilyAdapter) ConfigureChainForLanes() *cldf_ops.Sequence[ccvadapters.ConfigureChainForLanesInput, seq_core.OnChainOutput, cldf_chain.BlockChains] {
-	return stellarNoOpConfigureChainForLanes
+	return sequences.StellarConfigureChainForLanes
 }
 
 func (a *StellarChainFamilyAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byte, error) {
@@ -128,24 +119,33 @@ func (a *StellarChainFamilyAdapter) GetChainFamilySelector() [4]byte {
 	return stellarFeeQuoterChainFamilySelector
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig() ccvadapters.FeeQuoterDestChainConfig {
-	return ccvadapters.FeeQuoterDestChainConfig{
-		IsEnabled:                   true,
-		MaxDataBytes:                50_000,
-		MaxPerMsgGasLimit:           4_000_000,
-		DestGasOverhead:             350_000,
-		DestGasPerPayloadByteBase:   16,
-		ChainFamilySelector:         stellarFeeQuoterChainFamilySelector,
-		DefaultTokenFeeUSDCents:     50,
-		DefaultTokenDestGasOverhead: 50_000,
-		DefaultTxGasLimit:           200_000,
-		NetworkFeeUSDCents:          100,
-		LinkFeeMultiplierPercent:    90,
+func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig(
+	_, _ uint64, chainFamilySelector [4]byte,
+) ccvadapters.FeeQuoterDestChainConfigOverrides {
+	// FeeQuoterDestChainConfigOverrides uses pointer fields so a nil means "leave the
+	// existing on-chain value alone". These are Stellar's defaults, so every field is set.
+	// The caller passes the destination's family selector; fall back to Stellar's own when
+	// it is unset so a zero-value call still produces a usable config.
+	if chainFamilySelector == ([4]byte{}) {
+		chainFamilySelector = stellarFeeQuoterChainFamilySelector
+	}
+	return ccvadapters.FeeQuoterDestChainConfigOverrides{
+		IsEnabled:                   ptr(true),
+		MaxDataBytes:                ptr(uint32(50_000)),
+		MaxPerMsgGasLimit:           ptr(uint32(4_000_000)),
+		DestGasOverhead:             ptr(uint32(350_000)),
+		DestGasPerPayloadByteBase:   ptr(uint8(16)),
+		ChainFamilySelector:         chainFamilySelector,
+		DefaultTokenFeeUSDCents:     ptr(uint16(50)),
+		DefaultTokenDestGasOverhead: ptr(uint32(50_000)),
+		DefaultTxGasLimit:           ptr(uint32(200_000)),
+		NetworkFeeUSDCents:          ptr(uint16(100)),
+		LinkFeeMultiplierPercent:    ptr(uint8(90)),
 		USDPerUnitGas:               big.NewInt(1e6),
 	}
 }
 
-func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig() ccvadapters.RemoteChainDefaults {
+func (a *StellarChainFamilyAdapter) GetDefaultRemoteChainConfig(_, _ uint64) ccvadapters.RemoteChainDefaults {
 	return ccvadapters.RemoteChainDefaults{
 		AllowTrafficFrom:          true,
 		ExecutorDestChainConfig:   ccvadapters.ExecutorDestChainConfig{USDCentsFee: 0, Enabled: true},
@@ -172,3 +172,16 @@ func (a *StellarChainFamilyAdapter) GetDefaultFinalityConfig() finality.Config {
 		BlockDepth:      1,
 	}
 }
+
+// ValidateNOPsTopology accepts any NOP count for Stellar.
+//
+// The EVM adapter enforces a production floor (minProductionChainNOPs). Stellar has no such
+// requirement agreed yet, and the devenv runs far fewer NOPs than EVM's floor, so copying that
+// constant would fail every local and CI environment. Revisit when Stellar has a production
+// committee-size policy.
+func (a *StellarChainFamilyAdapter) ValidateNOPsTopology(_ string, _ int) error {
+	return nil
+}
+
+// ptr returns a pointer to v, for the pointer-valued override fields above.
+func ptr[T any](v T) *T { return &v }

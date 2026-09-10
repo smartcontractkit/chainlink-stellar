@@ -13,13 +13,14 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	"github.com/stretchr/testify/require"
 
+	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	lrpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	timelockops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/timelock"
@@ -36,8 +37,6 @@ type MCMSGovernanceStack struct {
 	TimelockID     string
 	MCMSClient     *mcmsbindings.McmsClient
 	TimelockClient *timelockbindings.TimelockClient
-	MCMSRaw        [32]byte
-	TimelockRaw    [32]byte
 	ChainNetID     [32]byte
 	SignerPK       *ecdsa.PrivateKey
 	MinDelaySec    uint64
@@ -57,7 +56,8 @@ func ContractIDToBytes32(contractID string) ([32]byte, error) {
 	return out, nil
 }
 
-// SorobanScheduleBatch encodes timelock schedule_batch Call.data for MCMS StellarOp payloads.
+// SorobanScheduleBatch encodes the timelock schedule_batch arguments as StellarOp.ArgsXdr
+// (args-only XDR Vec<Val>; the function name lives in StellarOp.Function).
 func SorobanScheduleBatch(
 	caller string,
 	calls timelockbindings.Calls,
@@ -68,20 +68,18 @@ func SorobanScheduleBatch(
 	if err != nil {
 		return nil, err
 	}
-	val := scval.VecToScVal([]xdr.ScVal{
-		scval.SymbolToScVal("schedule_batch"),
+	return mcmsutil.EncodeSorobanInvokeArgs([]xdr.ScVal{
 		scval.AddressToScVal(caller),
 		callsVal,
 		scval.Bytes32ToScVal(predecessor),
 		scval.Bytes32ToScVal(salt),
 		scval.Uint64ToScVal(delay),
 	})
-	return val.MarshalBinary()
 }
 
-// SorobanExecuteBatch encodes timelock execute_batch Call.data for MCMS StellarOp payloads.
+// SorobanExecuteBatch encodes the timelock execute_batch arguments as StellarOp.ArgsXdr
+// (args-only XDR Vec<Val>). execute_batch is permissionless and takes no caller argument.
 func SorobanExecuteBatch(
-	caller string,
 	calls timelockbindings.Calls,
 	predecessor, salt [32]byte,
 ) ([]byte, error) {
@@ -89,14 +87,11 @@ func SorobanExecuteBatch(
 	if err != nil {
 		return nil, err
 	}
-	val := scval.VecToScVal([]xdr.ScVal{
-		scval.SymbolToScVal("execute_batch"),
-		scval.AddressToScVal(caller),
+	return mcmsutil.EncodeSorobanInvokeArgs([]xdr.ScVal{
 		callsVal,
 		scval.Bytes32ToScVal(predecessor),
 		scval.Bytes32ToScVal(salt),
 	})
-	return val.MarshalBinary()
 }
 
 // MCMSValidUntilSeconds returns a deadline for MCMS set_root: must be >= host ledger timestamp
@@ -156,24 +151,20 @@ func DeployMCMSAndTimelock(
 	require.NoError(t, err)
 	mcmsID := mcmsDep.Output.ContractID
 
-	_, err = cldfops.ExecuteOperation(bundle, mcmsops.Initialize, deps, mcmsops.InitializeInput{
-		ContractID:     mcmsID,
-		Owner:          env.DeployerKP.Address(),
-		ChainNetworkID: chainNetID,
-	})
-	require.NoError(t, err)
-
 	var groupQuorums [32]byte
 	groupQuorums[0] = 1
 	var groupParents [32]byte
 	paddedSigner := PaddedEthAddress(&pk.PublicKey)
-	_, err = cldfops.ExecuteOperation(bundle, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
+	// initialize applies the signer config atomically; no separate set_config needed.
+	_, err = cldfops.ExecuteOperation(bundle, mcmsops.Initialize, deps, mcmsops.InitializeInput{
 		ContractID:      mcmsID,
+		Owner:           env.DeployerKP.Address(),
+		ChainNetworkID:  chainNetID,
 		SignerAddresses: mcmsbindings.SignerAddresses{Inner: [][32]byte{paddedSigner}},
 		SignerGroups:    mcmsbindings.SignerGroups{Inner: []uint32{0}},
 		GroupQuorums:    groupQuorums,
 		GroupParents:    groupParents,
-		ClearRoot:       true,
+		InstanceLabel:   "PROPOSER",
 	})
 	require.NoError(t, err)
 
@@ -188,17 +179,10 @@ func DeployMCMSAndTimelock(
 	_, err = cldfops.ExecuteOperation(bundle, timelockops.Initialize, deps, timelockops.InitializeInput{
 		ContractID: tlID,
 		MinDelay:   minDelay,
-		Admin:      env.DeployerKP.Address(),
 		Proposers:  []string{mcmsID},
-		Executors:  []string{mcmsID},
 		Cancellers: []string{},
 		Bypassers:  []string{},
 	})
-	require.NoError(t, err)
-
-	mcmsRaw, err := ContractIDToBytes32(mcmsID)
-	require.NoError(t, err)
-	tlRaw, err := ContractIDToBytes32(tlID)
 	require.NoError(t, err)
 
 	return &MCMSGovernanceStack{
@@ -206,17 +190,16 @@ func DeployMCMSAndTimelock(
 		TimelockID:     tlID,
 		MCMSClient:     mcmsbindings.NewMcmsClient(env.Deployer, mcmsID),
 		TimelockClient: timelockbindings.NewTimelockClient(env.Deployer, tlID),
-		MCMSRaw:        mcmsRaw,
-		TimelockRaw:    tlRaw,
 		ChainNetID:     chainNetID,
 		SignerPK:       pk,
 		MinDelaySec:    minDelay,
 	}
 }
 
-// EncodeTimelockInvokePayload builds timelock Call.data for a Soroban contract function invocation.
-func EncodeTimelockInvokePayload(functionName string, argScVals []xdr.ScVal) ([]byte, error) {
-	return mcmsutil.EncodeSorobanMCMSInvokePayload(functionName, argScVals)
+// EncodeTimelockCallArgs builds timelock Call.ArgsXdr for a Soroban contract function
+// invocation (args-only XDR Vec<Val>; the function name lives in Call.Function).
+func EncodeTimelockCallArgs(argScVals []xdr.ScVal) ([]byte, error) {
+	return mcmsutil.EncodeSorobanInvokeArgs(argScVals)
 }
 
 // CleanupMCMSTestPool restores the shared devenv lock-release pool after MCMS e2e tests.
@@ -229,7 +212,6 @@ func CleanupMCMSTestPool(
 	env *E2ETestEnv,
 	gov *MCMSGovernanceStack,
 	poolContractID string,
-	poolRaw [32]byte,
 	remoteSelector uint64,
 	deployerAddr string,
 	predecessor, saltTransfer [32]byte,
@@ -246,7 +228,7 @@ func CleanupMCMSTestPool(
 	)
 	deps := stellardeps.FromDeployer(env.Deployer)
 
-	transferData, err := EncodeTimelockInvokePayload("transfer_ownership", []xdr.ScVal{
+	transferArgs, err := EncodeTimelockCallArgs([]xdr.ScVal{
 		scval.AddressToScVal(deployerAddr),
 	})
 	if err != nil {
@@ -254,7 +236,7 @@ func CleanupMCMSTestPool(
 		return
 	}
 	transferCalls := timelockbindings.Calls{
-		Inner: []timelockbindings.Call{{To: poolRaw, Data: transferData}},
+		Inner: []timelockbindings.Call{{Target: poolContractID, Function: "transfer_ownership", ArgsXdr: transferArgs}},
 	}
 	if err := MCMSTimelockScheduleAndExecuteErr(ctx, env, gov, transferCalls, predecessor, saltTransfer); err != nil {
 		t.Logf("mcms pool cleanup: transfer ownership to deployer via MCMS: %v", err)
@@ -343,7 +325,7 @@ func MCMSTimelockScheduleAndExecuteErr(
 		return fmt.Errorf("get mcms op count: %w", err)
 	}
 
-	scheduleData, err := SorobanScheduleBatch(gov.MCMSID, calls, predecessor, salt, gov.MinDelaySec)
+	scheduleArgs, err := SorobanScheduleBatch(gov.MCMSID, calls, predecessor, salt, gov.MinDelaySec)
 	if err != nil {
 		return fmt.Errorf("encode schedule_batch: %w", err)
 	}
@@ -353,20 +335,28 @@ func MCMSTimelockScheduleAndExecuteErr(
 		return fmt.Errorf("mcms valid_until: %w", err)
 	}
 
+	configVersion, err := gov.MCMSClient.GetConfigVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("mcms get_config_version: %w", err)
+	}
+
 	opSchedule := mcmsbindings.StellarOp{
-		ChainId:  gov.ChainNetID,
-		Multisig: gov.MCMSRaw,
-		Nonce:    preOpCount,
-		To:       gov.TimelockRaw,
-		Value:    [32]byte{},
-		Data:     scheduleData,
+		NetworkId:       gov.ChainNetID,
+		Multisig:        gov.MCMSID,
+		Nonce:           preOpCount,
+		Target:          gov.TimelockID,
+		Function:        "schedule_batch",
+		ArgsXdr:         scheduleArgs,
+		EncodingVersion: bindings.SorobanInvokeEncodingVersion,
 	}
 	metaSchedule := mcmsbindings.StellarRootMetadata{
-		ChainId:              gov.ChainNetID,
-		Multisig:             gov.MCMSRaw,
+		NetworkId:            gov.ChainNetID,
+		Multisig:             gov.MCMSID,
 		PreOpCount:           preOpCount,
 		PostOpCount:          preOpCount + 1,
 		OverridePreviousRoot: false,
+		ConfigVersion:        configVersion,
+		EncodingVersion:      bindings.SorobanInvokeEncodingVersion,
 	}
 
 	metaLeaf, err := HashRootMetadata(metaSchedule)
@@ -410,26 +400,29 @@ func MCMSTimelockScheduleAndExecuteErr(
 		return err
 	}
 
-	execData, err := SorobanExecuteBatch(gov.MCMSID, calls, predecessor, salt)
+	execArgs, err := SorobanExecuteBatch(calls, predecessor, salt)
 	if err != nil {
 		return fmt.Errorf("encode execute_batch: %w", err)
 	}
 
 	execNonce := preOpCount + 1
 	opExec := mcmsbindings.StellarOp{
-		ChainId:  gov.ChainNetID,
-		Multisig: gov.MCMSRaw,
-		Nonce:    execNonce,
-		To:       gov.TimelockRaw,
-		Value:    [32]byte{},
-		Data:     execData,
+		NetworkId:       gov.ChainNetID,
+		Multisig:        gov.MCMSID,
+		Nonce:           execNonce,
+		Target:          gov.TimelockID,
+		Function:        "execute_batch",
+		ArgsXdr:         execArgs,
+		EncodingVersion: bindings.SorobanInvokeEncodingVersion,
 	}
 	metaExec := mcmsbindings.StellarRootMetadata{
-		ChainId:              gov.ChainNetID,
-		Multisig:             gov.MCMSRaw,
+		NetworkId:            gov.ChainNetID,
+		Multisig:             gov.MCMSID,
 		PreOpCount:           execNonce,
 		PostOpCount:          execNonce + 1,
 		OverridePreviousRoot: false,
+		ConfigVersion:        configVersion,
+		EncodingVersion:      bindings.SorobanInvokeEncodingVersion,
 	}
 
 	metaLeafExec, err := HashRootMetadata(metaExec)

@@ -3,7 +3,6 @@ package sequences
 import (
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
 	cldfchain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -22,13 +21,6 @@ import (
 
 func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer, error) {
 	return stellardeployment.NewDeployerFromChain(ch)
-}
-
-func stellarTimelockAdmin(in deploy.MCMSDeploymentConfigPerChainWithAddress, ch cldfstellar.Chain) (string, error) {
-	if in.TimelockAdmin == (common.Address{}) {
-		return ch.Signer.Address(), nil
-	}
-	return "", fmt.Errorf("timelockAdmin must be the zero address for Stellar RBACTimelock deploy (use chain signer); non-zero EVM addresses are not supported")
 }
 
 // DeployStellarMCMS deploys a single Soroban MCMS instance and applies the merged signer config.
@@ -58,7 +50,8 @@ var DeployStellarMCMS = cldfops.NewSequence(
 		deps := stellardeps.FromDeployer(dep)
 
 		contractID, _ := mcmsutil.FindExistingStellarMCMS(in.ExistingAddresses, in.ChainSelector, qual)
-		if contractID == "" {
+		freshDeploy := contractID == ""
+		if freshDeploy {
 			wasmPath, err := mcmsutil.ResolveMCMSWasmPath()
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
@@ -69,26 +62,33 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy: %w", err)
 			}
 			contractID = depOut.Output.ContractID
+			// initialize applies the signer config atomically (config_version 1).
 			_, err = cldfops.ExecuteOperation(b, mcmsops.Initialize, deps, mcmsops.InitializeInput{
-				ContractID:     contractID,
-				Owner:          ch.Signer.Address(),
-				ChainNetworkID: mcmsutil.ChainNetworkID(ch.NetworkPassphrase),
+				ContractID:      contractID,
+				Owner:           ch.Signer.Address(),
+				ChainNetworkID:  mcmsutil.ChainNetworkID(ch.NetworkPassphrase),
+				SignerAddresses: signerAddrs,
+				SignerGroups:    signerGroups,
+				GroupQuorums:    gq,
+				GroupParents:    gp,
+				InstanceLabel:   "PROPOSER",
 			})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms initialize: %w", err)
 			}
-		}
-
-		_, err = cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
-			ContractID:      contractID,
-			SignerAddresses: signerAddrs,
-			SignerGroups:    signerGroups,
-			GroupQuorums:    gq,
-			GroupParents:    gp,
-			ClearRoot:       true,
-		})
-		if err != nil {
-			return seqcore.OnChainOutput{}, fmt.Errorf("mcms set_config: %w", err)
+		} else {
+			// Pre-existing instance: re-apply the config via set_config (initialize would revert).
+			_, err = cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
+				ContractID:      contractID,
+				SignerAddresses: signerAddrs,
+				SignerGroups:    signerGroups,
+				GroupQuorums:    gq,
+				GroupParents:    gp,
+				ClearRoot:       true,
+			})
+			if err != nil {
+				return seqcore.OnChainOutput{}, fmt.Errorf("mcms set_config: %w", err)
+			}
 		}
 
 		mcmsRefs := mcmsutil.StellarMCMSDatastoreRefs(in.ChainSelector, qual, contractID)
@@ -105,10 +105,6 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
 			}
 			tlID = tlOut.Output.ContractID
-			admin, err := stellarTimelockAdmin(in, ch)
-			if err != nil {
-				return seqcore.OnChainOutput{}, err
-			}
 			var minDelay uint64
 			if in.TimelockMinDelay != nil {
 				if !in.TimelockMinDelay.IsUint64() {
@@ -120,9 +116,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			_, err = cldfops.ExecuteOperation(b, timelockops.Initialize, deps, timelockops.InitializeInput{
 				ContractID: tlID,
 				MinDelay:   minDelay,
-				Admin:      admin,
 				Proposers:  roleHolders,
-				Executors:  []string{},
 				Cancellers: roleHolders,
 				Bypassers:  roleHolders,
 			})

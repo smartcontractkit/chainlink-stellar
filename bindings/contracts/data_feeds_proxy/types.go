@@ -66,72 +66,16 @@ func RoundFromScVal(val xdr.ScVal) (*Round, error) {
 
 // ProxyReadError represents the contract error codes.
 const (
-	ProxyReadErrorNoDataPresent = 50
+	ProxyReadErrorNoDataPresent   = 50
+	ProxyReadErrorInvalidDecimals = 51
+	ProxyReadErrorRoundsToZero    = 52
 )
 
 // ProxyReadErrorMessage returns a human-readable message for error codes.
 var ProxyReadErrorMessage = map[int]string{
 	50: "no data present",
-}
-
-// CacheError represents the contract error codes.
-const (
-	CacheErrorMalformedReport     = 100
-	CacheErrorUnauthorizedCaller  = 101
-	CacheErrorFeedNotConfigured   = 102
-	CacheErrorEmptyConfig         = 103
-	CacheErrorInvalidAddress      = 104
-	CacheErrorInvalidWorkflowName = 105
-	CacheErrorDuplicatePermission = 106
-	CacheErrorInvalidDataId       = 107
-	CacheErrorDuplicateFeedConfig = 108
-	CacheErrorFeedFrozen          = 109
-	CacheErrorNoFeedState         = 110
-)
-
-// CacheErrorMessage returns a human-readable message for error codes.
-var CacheErrorMessage = map[int]string{
-	100: "malformed report",
-	101: "unauthorized caller",
-	102: "feed not configured",
-	103: "empty config",
-	104: "invalid address",
-	105: "invalid workflow name",
-	106: "duplicate permission",
-	107: "invalid data id",
-	108: "duplicate feed config",
-	109: "feed frozen",
-	110: "no feed state",
-}
-
-// RoleTransferError represents the contract error codes.
-const (
-	RoleTransferErrorNoPendingTransfer      = 2200
-	RoleTransferErrorInvalidLiveUntilLedger = 2201
-	RoleTransferErrorInvalidPendingAccount  = 2202
-	RoleTransferErrorTransferExpired        = 2203
-)
-
-// RoleTransferErrorMessage returns a human-readable message for error codes.
-var RoleTransferErrorMessage = map[int]string{
-	2200: "no pending transfer",
-	2201: "invalid live until ledger",
-	2202: "invalid pending account",
-	2203: "transfer expired",
-}
-
-// OwnableError represents the contract error codes.
-const (
-	OwnableErrorOwnerNotSet        = 2100
-	OwnableErrorTransferInProgress = 2101
-	OwnableErrorOwnerAlreadySet    = 2102
-)
-
-// OwnableErrorMessage returns a human-readable message for error codes.
-var OwnableErrorMessage = map[int]string{
-	2100: "owner not set",
-	2101: "transfer in progress",
-	2102: "owner already set",
+	51: "invalid decimals",
+	52: "rounds to zero",
 }
 
 // CacheSet represents the CacheSet event.
@@ -146,6 +90,19 @@ type CacheSet struct {
 
 // CacheSetTopic is the event topic identifier.
 const CacheSetTopic = "CacheSet"
+
+// MinDecimalsSet represents the MinDecimalsSet event.
+// Topics: [MinDecimalsSet]
+type MinDecimalsSet struct {
+	DataId [32]byte
+	Min    uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// MinDecimalsSetTopic is the event topic identifier.
+const MinDecimalsSetTopic = "MinDecimalsSet"
 
 // Upgraded represents the Upgraded event.
 // Topics: [Upgraded]

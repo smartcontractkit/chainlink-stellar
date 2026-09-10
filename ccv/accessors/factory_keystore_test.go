@@ -57,7 +57,7 @@ func TestAccessor_SetKeystore_NilKeystore(t *testing.T) {
 
 	// Calling SetKeystore(nil) must be a no-op (no panic, no state change). The
 	// destination components should remain unbuilt and report errKeystoreNotInjected.
-	acc.SetKeystore(nil)
+	require.NoError(t, acc.SetKeystore(ctx, nil))
 
 	_, err = acc.DestinationReader()
 	require.Error(t, err)
@@ -78,7 +78,7 @@ func TestAccessor_SetKeystore_MissingKeyFailsGetters(t *testing.T) {
 	// Empty keystore: SetKeystore should record the load error against every
 	// keystore-backed getter so callers see a consistent root cause.
 	ks := newTestKeystore(t)
-	acc.SetKeystore(ks)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
 
 	_, err = acc.DestinationReader()
 	require.Error(t, err)
@@ -101,7 +101,7 @@ func TestAccessor_SetKeystore_BuildsDestinationComponents(t *testing.T) {
 	ks := newTestKeystore(t)
 	createKey(t, ks, "stellar/tx/dest-test", keystore.Ed25519)
 
-	acc.SetKeystore(ks)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
 
 	// After the keystore arrives, the destination components must be wired up
 	// and observable from both DestinationReader() and ContractTransmitter().
@@ -145,7 +145,7 @@ func TestAccessor_SetKeystore_FallsBackToDefaultKeyName(t *testing.T) {
 	// Register the default Stellar transmitter key so the fallback succeeds.
 	createKey(t, ks, "stellar/tx/stellar_transmitter_ed25519_key", keystore.Ed25519)
 
-	acc.SetKeystore(ks)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
 
 	sr, err := acc.SourceReader()
 	require.NoError(t, err)

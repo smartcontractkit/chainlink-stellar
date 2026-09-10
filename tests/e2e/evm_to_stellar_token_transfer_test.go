@@ -159,8 +159,8 @@ func TestEVMToStellarTokenTransfer(t *testing.T) {
 
 		execEvent, err := stellarChain.ConfirmExecOnDest(ctx, evmDetails.ChainSelector, messageKey, execTimeout)
 		require.NoError(t, err)
-		require.Equalf(t, cciptestinterfaces.ExecutionStateSuccess, execEvent.State,
-			"message should have been successfully executed, return data: %x", execEvent.ReturnData)
+		require.Equalf(t, cciptestinterfaces.ExecutionStateSuccess, execEvent.Event.State,
+			"message should have been successfully executed, return data: %x", execEvent.Event.ReturnData)
 
 		l.Info().
 			Str("messageID", hex.EncodeToString(messageID[:])).

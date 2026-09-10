@@ -8,449 +8,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// AllowListEntry represents the AllowListEntry struct from the contract.
-type AllowListEntry struct {
-	Allowlist        []string
-	AllowlistEnabled bool
-}
-
-// ToScVal converts AllowListEntry to an xdr.ScVal for contract calls.
-func (s AllowListEntry) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"allowlist":         scval.AddressSliceToScVal(s.Allowlist),
-		"allowlist_enabled": scval.BoolToScVal(s.AllowlistEnabled),
-	})
-}
-
-// AllowListEntryFromScVal parses an xdr.ScVal into AllowListEntry.
-func AllowListEntryFromScVal(val xdr.ScVal) (*AllowListEntry, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AllowListEntry{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "allowlist":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("allowlist is not a vec")
-			}
-			result.Allowlist = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Allowlist[i] = v
-			}
-		case "allowlist_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("allowlist_enabled is not bool")
-			}
-			result.AllowlistEnabled = v
-		}
-	}
-
-	return result, nil
-}
-
-// AllowListUpdate represents the AllowListUpdate struct from the contract.
-type AllowListUpdate struct {
-	AddedAllowlistedSenders   []string
-	AllowlistEnabled          bool
-	DestChainSelector         uint64
-	RemovedAllowlistedSenders []string
-}
-
-// ToScVal converts AllowListUpdate to an xdr.ScVal for contract calls.
-func (s AllowListUpdate) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"added_allowlisted_senders":   scval.AddressSliceToScVal(s.AddedAllowlistedSenders),
-		"allowlist_enabled":           scval.BoolToScVal(s.AllowlistEnabled),
-		"dest_chain_selector":         scval.Uint64ToScVal(s.DestChainSelector),
-		"removed_allowlisted_senders": scval.AddressSliceToScVal(s.RemovedAllowlistedSenders),
-	})
-}
-
-// AllowListUpdateFromScVal parses an xdr.ScVal into AllowListUpdate.
-func AllowListUpdateFromScVal(val xdr.ScVal) (*AllowListUpdate, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AllowListUpdate{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "added_allowlisted_senders":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("added_allowlisted_senders is not a vec")
-			}
-			result.AddedAllowlistedSenders = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.AddedAllowlistedSenders[i] = v
-			}
-		case "allowlist_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("allowlist_enabled is not bool")
-			}
-			result.AllowlistEnabled = v
-		case "dest_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("dest_chain_selector: %w", err)
-			}
-			result.DestChainSelector = v
-		case "removed_allowlisted_senders":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("removed_allowlisted_senders is not a vec")
-			}
-			result.RemovedAllowlistedSenders = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.RemovedAllowlistedSenders[i] = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// TokenAmount represents the TokenAmount struct from the contract.
-type TokenAmount struct {
-	Amount int64
-	Token  string
-}
-
-// ToScVal converts TokenAmount to an xdr.ScVal for contract calls.
-func (s TokenAmount) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"amount": scval.I128ToScVal(s.Amount),
-		"token":  scval.AddressToScVal(s.Token),
-	})
-}
-
-// TokenAmountFromScVal parses an xdr.ScVal into TokenAmount.
-func TokenAmountFromScVal(val xdr.ScVal) (*TokenAmount, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &TokenAmount{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("amount: %w", err)
-			}
-			result.Amount = v
-		case "token":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("token: %w", err)
-			}
-			result.Token = v
-		}
-	}
-
-	return result, nil
-}
-
-// GenericExtraArgsV3 represents the GenericExtraArgsV3 struct from the contract.
-type GenericExtraArgsV3 struct {
-	BlockConfirmations uint32
-	CcvArgs            [][]byte
-	Ccvs               []string
-	Executor           string
-	ExecutorArgs       []byte
-	GasLimit           uint32
-	TokenArgs          []byte
-	TokenReceiver      []byte
-}
-
-// ToScVal converts GenericExtraArgsV3 to an xdr.ScVal for contract calls.
-func (s GenericExtraArgsV3) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"block_confirmations": scval.Uint32ToScVal(s.BlockConfirmations),
-		"ccv_args":            scval.BytesSliceToScVal(s.CcvArgs),
-		"ccvs":                scval.AddressSliceToScVal(s.Ccvs),
-		"executor":            scval.AddressToScVal(s.Executor),
-		"executor_args":       scval.BytesToScVal(s.ExecutorArgs),
-		"gas_limit":           scval.Uint32ToScVal(s.GasLimit),
-		"token_args":          scval.BytesToScVal(s.TokenArgs),
-		"token_receiver":      scval.BytesToScVal(s.TokenReceiver),
-	})
-}
-
-// GenericExtraArgsV3FromScVal parses an xdr.ScVal into GenericExtraArgsV3.
-func GenericExtraArgsV3FromScVal(val xdr.ScVal) (*GenericExtraArgsV3, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &GenericExtraArgsV3{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "block_confirmations":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("block_confirmations is not u32")
-			}
-			result.BlockConfirmations = uint32(v)
-		case "ccv_args":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccv_args is not a vec")
-			}
-			result.CcvArgs = make([][]byte, len(*vec))
-			for i, item := range *vec {
-				v, ok := item.GetBytes()
-				if !ok {
-					return nil, fmt.Errorf("vec item is not bytes")
-				}
-				result.CcvArgs[i] = []byte(v)
-			}
-		case "ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccvs is not a vec")
-			}
-			result.Ccvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Ccvs[i] = v
-			}
-		case "executor":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("executor: %w", err)
-			}
-			result.Executor = v
-		case "executor_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("executor_args is not bytes")
-			}
-			result.ExecutorArgs = []byte(v)
-		case "gas_limit":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("gas_limit is not u32")
-			}
-			result.GasLimit = uint32(v)
-		case "token_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_args is not bytes")
-			}
-			result.TokenArgs = []byte(v)
-		case "token_receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_receiver is not bytes")
-			}
-			result.TokenReceiver = []byte(v)
-		}
-	}
-
-	return result, nil
-}
-
-// AnyToStellarMessage represents the AnyToStellarMessage struct from the contract.
-type AnyToStellarMessage struct {
-	Data                []byte
-	DestTokenAmounts    []TokenAmount
-	MessageId           [32]byte
-	Sender              []byte
-	SourceChainSelector uint64
-}
-
-// ToScVal converts AnyToStellarMessage to an xdr.ScVal for contract calls.
-func (s AnyToStellarMessage) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data":                  scval.BytesToScVal(s.Data),
-		"dest_token_amounts":    scval.StructSliceToScVal(s.DestTokenAmounts),
-		"message_id":            scval.Bytes32ToScVal(s.MessageId),
-		"sender":                scval.BytesToScVal(s.Sender),
-		"source_chain_selector": scval.Uint64ToScVal(s.SourceChainSelector),
-	})
-}
-
-// AnyToStellarMessageFromScVal parses an xdr.ScVal into AnyToStellarMessage.
-func AnyToStellarMessageFromScVal(val xdr.ScVal) (*AnyToStellarMessage, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AnyToStellarMessage{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "data":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
-			}
-			result.Data = []byte(v)
-		case "dest_token_amounts":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("dest_token_amounts is not a vec")
-			}
-			result.DestTokenAmounts = make([]TokenAmount, len(*vec))
-			for i, item := range *vec {
-				v, err := TokenAmountFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.DestTokenAmounts[i] = *v
-			}
-		case "message_id":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("message_id: %w", err)
-			}
-			result.MessageId = v
-		case "sender":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("sender is not bytes")
-			}
-			result.Sender = []byte(v)
-		case "source_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("source_chain_selector: %w", err)
-			}
-			result.SourceChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
-// StellarToAnyMessage represents the StellarToAnyMessage struct from the contract.
-type StellarToAnyMessage struct {
-	Data         []byte
-	ExtraArgs    []byte
-	FeeToken     string
-	Receiver     []byte
-	TokenAmounts []TokenAmount
-}
-
-// ToScVal converts StellarToAnyMessage to an xdr.ScVal for contract calls.
-func (s StellarToAnyMessage) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data":          scval.BytesToScVal(s.Data),
-		"extra_args":    scval.BytesToScVal(s.ExtraArgs),
-		"fee_token":     scval.AddressToScVal(s.FeeToken),
-		"receiver":      scval.BytesToScVal(s.Receiver),
-		"token_amounts": scval.StructSliceToScVal(s.TokenAmounts),
-	})
-}
-
-// StellarToAnyMessageFromScVal parses an xdr.ScVal into StellarToAnyMessage.
-func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &StellarToAnyMessage{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "data":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
-			}
-			result.Data = []byte(v)
-		case "extra_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("extra_args is not bytes")
-			}
-			result.ExtraArgs = []byte(v)
-		case "fee_token":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("fee_token: %w", err)
-			}
-			result.FeeToken = v
-		case "receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("receiver is not bytes")
-			}
-			result.Receiver = []byte(v)
-		case "token_amounts":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("token_amounts is not a vec")
-			}
-			result.TokenAmounts = make([]TokenAmount, len(*vec))
-			for i, item := range *vec {
-				v, err := TokenAmountFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.TokenAmounts[i] = *v
-			}
-		}
-	}
-
-	return result, nil
-}
-
 // ChainUpdate represents the ChainUpdate struct from the contract.
 type ChainUpdate struct {
 	InboundRateLimiterConfig  RateLimitConfig
@@ -1079,53 +636,6 @@ func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
 	return result, nil
 }
 
-// RemoteChainConfig represents the RemoteChainConfig struct from the contract.
-type RemoteChainConfig struct {
-	RemotePoolAddress  []byte
-	RemoteTokenAddress []byte
-}
-
-// ToScVal converts RemoteChainConfig to an xdr.ScVal for contract calls.
-func (s RemoteChainConfig) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"remote_pool_address":  scval.BytesToScVal(s.RemotePoolAddress),
-		"remote_token_address": scval.BytesToScVal(s.RemoteTokenAddress),
-	})
-}
-
-// RemoteChainConfigFromScVal parses an xdr.ScVal into RemoteChainConfig.
-func RemoteChainConfigFromScVal(val xdr.ScVal) (*RemoteChainConfig, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &RemoteChainConfig{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_pool_address":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("remote_pool_address is not bytes")
-			}
-			result.RemotePoolAddress = []byte(v)
-		case "remote_token_address":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("remote_token_address is not bytes")
-			}
-			result.RemoteTokenAddress = []byte(v)
-		}
-	}
-
-	return result, nil
-}
-
 // LockBoxEntry represents the LockBoxEntry struct from the contract.
 type LockBoxEntry struct {
 	LockBox             string
@@ -1413,347 +923,257 @@ var CCIPErrorMessage = map[int]string{
 	803: "zero fee aggregator not allowed",
 }
 
-// PoolDataKey is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
-// Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
-// Construct by setting exactly one variant pointer to a non-nil value.
-type PoolDataKey struct {
-	Token                 *PoolDataKeyToken
-	RemoteChainConfig     *PoolDataKeyRemoteChainConfig
-	SupportedChains       *PoolDataKeySupportedChains
-	TokenDecimals         *PoolDataKeyTokenDecimals
-	OutboundRateLimit     *PoolDataKeyOutboundRateLimit
-	InboundRateLimit      *PoolDataKeyInboundRateLimit
-	RateLimitAdmin        *PoolDataKeyRateLimitAdmin
-	FtfOutboundRateLimit  *PoolDataKeyFtfOutboundRateLimit
-	FtfInboundRateLimit   *PoolDataKeyFtfInboundRateLimit
-	AllowedFinalityConfig *PoolDataKeyAllowedFinalityConfig
-	RampRegistry          *PoolDataKeyRampRegistry
-	AdvancedPoolHooks     *PoolDataKeyAdvancedPoolHooks
-	PoolFeeConfig         *PoolDataKeyPoolFeeConfig
-	Router                *PoolDataKeyRouter
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyToken is the unit variant PoolDataKey::Token.
-type PoolDataKeyToken struct{}
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
 
-// PoolDataKeyRemoteChainConfig is the tuple variant PoolDataKey::RemoteChainConfig.
-type PoolDataKeyRemoteChainConfig struct {
-	Field0 uint64
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeySupportedChains is the unit variant PoolDataKey::SupportedChains.
-type PoolDataKeySupportedChains struct{}
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
 
-// PoolDataKeyTokenDecimals is the unit variant PoolDataKey::TokenDecimals.
-type PoolDataKeyTokenDecimals struct{}
-
-// PoolDataKeyOutboundRateLimit is the tuple variant PoolDataKey::OutboundRateLimit.
-type PoolDataKeyOutboundRateLimit struct {
-	Field0 uint64
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyInboundRateLimit is the tuple variant PoolDataKey::InboundRateLimit.
-type PoolDataKeyInboundRateLimit struct {
-	Field0 uint64
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyRateLimitAdmin is the unit variant PoolDataKey::RateLimitAdmin.
-type PoolDataKeyRateLimitAdmin struct{}
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
-// PoolDataKeyFtfOutboundRateLimit is the tuple variant PoolDataKey::FtfOutboundRateLimit.
-type PoolDataKeyFtfOutboundRateLimit struct {
-	Field0 uint64
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyFtfInboundRateLimit is the tuple variant PoolDataKey::FtfInboundRateLimit.
-type PoolDataKeyFtfInboundRateLimit struct {
-	Field0 uint64
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// BurnedEvent represents the BurnedEvent event.
+// Topics: [pool_Burned]
+type BurnedEvent struct {
+	Sender string
+	Amount int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyAllowedFinalityConfig is the unit variant PoolDataKey::AllowedFinalityConfig.
-type PoolDataKeyAllowedFinalityConfig struct{}
+// BurnedEventTopic is the event topic identifier.
+const BurnedEventTopic = "pool_Burned"
 
-// PoolDataKeyRampRegistry is the unit variant PoolDataKey::RampRegistry.
-type PoolDataKeyRampRegistry struct{}
-
-// PoolDataKeyAdvancedPoolHooks is the unit variant PoolDataKey::AdvancedPoolHooks.
-type PoolDataKeyAdvancedPoolHooks struct{}
-
-// PoolDataKeyPoolFeeConfig is the tuple variant PoolDataKey::PoolFeeConfig.
-type PoolDataKeyPoolFeeConfig struct {
-	Field0 uint64
+// LockedEvent represents the LockedEvent event.
+// Topics: [pool_Locked]
+type LockedEvent struct {
+	Sender string
+	Amount int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyRouter is the unit variant PoolDataKey::Router.
-type PoolDataKeyRouter struct{}
+// LockedEventTopic is the event topic identifier.
+const LockedEventTopic = "pool_Locked"
 
-// ToScVal converts PoolDataKey to its Soroban discriminated-union encoding.
-// Returns an error if zero or multiple variant pointers are set.
-func (e PoolDataKey) ToScVal() (xdr.ScVal, error) {
-	set := 0
-	if e.Token != nil {
-		set++
-	}
-	if e.RemoteChainConfig != nil {
-		set++
-	}
-	if e.SupportedChains != nil {
-		set++
-	}
-	if e.TokenDecimals != nil {
-		set++
-	}
-	if e.OutboundRateLimit != nil {
-		set++
-	}
-	if e.InboundRateLimit != nil {
-		set++
-	}
-	if e.RateLimitAdmin != nil {
-		set++
-	}
-	if e.FtfOutboundRateLimit != nil {
-		set++
-	}
-	if e.FtfInboundRateLimit != nil {
-		set++
-	}
-	if e.AllowedFinalityConfig != nil {
-		set++
-	}
-	if e.RampRegistry != nil {
-		set++
-	}
-	if e.AdvancedPoolHooks != nil {
-		set++
-	}
-	if e.PoolFeeConfig != nil {
-		set++
-	}
-	if e.Router != nil {
-		set++
-	}
-	if set != 1 {
-		return xdr.ScVal{}, fmt.Errorf("PoolDataKey: expected exactly one variant set, got %d", set)
-	}
-	if e.Token != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("Token"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.RemoteChainConfig != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("RemoteChainConfig"),
-			scval.Uint64ToScVal(e.RemoteChainConfig.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.SupportedChains != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("SupportedChains"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.TokenDecimals != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("TokenDecimals"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.OutboundRateLimit != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("OutboundRateLimit"),
-			scval.Uint64ToScVal(e.OutboundRateLimit.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.InboundRateLimit != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("InboundRateLimit"),
-			scval.Uint64ToScVal(e.InboundRateLimit.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.RateLimitAdmin != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("RateLimitAdmin"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.FtfOutboundRateLimit != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("FtfOutboundRateLimit"),
-			scval.Uint64ToScVal(e.FtfOutboundRateLimit.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.FtfInboundRateLimit != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("FtfInboundRateLimit"),
-			scval.Uint64ToScVal(e.FtfInboundRateLimit.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.AllowedFinalityConfig != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("AllowedFinalityConfig"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.RampRegistry != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("RampRegistry"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.AdvancedPoolHooks != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("AdvancedPoolHooks"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.PoolFeeConfig != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("PoolFeeConfig"),
-			scval.Uint64ToScVal(e.PoolFeeConfig.Field0),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	if e.Router != nil {
-		items := []xdr.ScVal{
-			scval.SymbolToScVal("Router"),
-		}
-		return scval.VecToScVal(items), nil
-	}
-	return xdr.ScVal{}, fmt.Errorf("PoolDataKey: unreachable")
+// MintedEvent represents the MintedEvent event.
+// Topics: [pool_Minted]
+type MintedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
 
-// PoolDataKeyFromScVal parses an xdr.ScVal into PoolDataKey.
-func PoolDataKeyFromScVal(val xdr.ScVal) (PoolDataKey, error) {
-	vecPtr, ok := val.GetVec()
-	if !ok || vecPtr == nil || *vecPtr == nil {
-		return PoolDataKey{}, fmt.Errorf("expected vec for PoolDataKey enum")
-	}
-	vec := *vecPtr
-	if len(vec) < 1 {
-		return PoolDataKey{}, fmt.Errorf("PoolDataKey: empty vec")
-	}
-	tag, err := scval.SymbolFromScVal(vec[0])
-	if err != nil {
-		return PoolDataKey{}, fmt.Errorf("PoolDataKey: variant tag: %w", err)
-	}
-	switch tag {
-	case "Token":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::Token: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{Token: &PoolDataKeyToken{}}, nil
-	case "RemoteChainConfig":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::RemoteChainConfig: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyRemoteChainConfig{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::RemoteChainConfig[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{RemoteChainConfig: payload}, nil
-	case "SupportedChains":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::SupportedChains: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{SupportedChains: &PoolDataKeySupportedChains{}}, nil
-	case "TokenDecimals":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::TokenDecimals: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{TokenDecimals: &PoolDataKeyTokenDecimals{}}, nil
-	case "OutboundRateLimit":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::OutboundRateLimit: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyOutboundRateLimit{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::OutboundRateLimit[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{OutboundRateLimit: payload}, nil
-	case "InboundRateLimit":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::InboundRateLimit: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyInboundRateLimit{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::InboundRateLimit[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{InboundRateLimit: payload}, nil
-	case "RateLimitAdmin":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::RateLimitAdmin: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{RateLimitAdmin: &PoolDataKeyRateLimitAdmin{}}, nil
-	case "FtfOutboundRateLimit":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::FtfOutboundRateLimit: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyFtfOutboundRateLimit{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::FtfOutboundRateLimit[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{FtfOutboundRateLimit: payload}, nil
-	case "FtfInboundRateLimit":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::FtfInboundRateLimit: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyFtfInboundRateLimit{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::FtfInboundRateLimit[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{FtfInboundRateLimit: payload}, nil
-	case "AllowedFinalityConfig":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::AllowedFinalityConfig: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{AllowedFinalityConfig: &PoolDataKeyAllowedFinalityConfig{}}, nil
-	case "RampRegistry":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::RampRegistry: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{RampRegistry: &PoolDataKeyRampRegistry{}}, nil
-	case "AdvancedPoolHooks":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::AdvancedPoolHooks: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{AdvancedPoolHooks: &PoolDataKeyAdvancedPoolHooks{}}, nil
-	case "PoolFeeConfig":
-		if len(vec) != 2 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::PoolFeeConfig: expected 2 elements, got %d", len(vec))
-		}
-		payload := &PoolDataKeyPoolFeeConfig{}
-		if v, err := scval.Uint64FromScVal(vec[1]); err != nil {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::PoolFeeConfig[0]: %w", err)
-		} else {
-			payload.Field0 = v
-		}
-		return PoolDataKey{PoolFeeConfig: payload}, nil
-	case "Router":
-		if len(vec) != 1 {
-			return PoolDataKey{}, fmt.Errorf("PoolDataKey::Router: expected 1 elements, got %d", len(vec))
-		}
-		return PoolDataKey{Router: &PoolDataKeyRouter{}}, nil
-	default:
-		return PoolDataKey{}, fmt.Errorf("PoolDataKey: unknown variant %q", tag)
-	}
+// MintedEventTopic is the event topic identifier.
+const MintedEventTopic = "pool_Minted"
+
+// ReleasedEvent represents the ReleasedEvent event.
+// Topics: [pool_Released]
+type ReleasedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
 }
+
+// ReleasedEventTopic is the event topic identifier.
+const ReleasedEventTopic = "pool_Released"
+
+// ChainRemovedEvent represents the ChainRemovedEvent event.
+// Topics: [pool_ChainRemoved]
+type ChainRemovedEvent struct {
+	RemoteChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainRemovedEventTopic is the event topic identifier.
+const ChainRemovedEventTopic = "pool_ChainRemoved"
+
+// ChainConfiguredEvent represents the ChainConfiguredEvent event.
+// Topics: [pool_ChainConfigured]
+type ChainConfiguredEvent struct {
+	RemoteChainSelector       uint64
+	RemotePoolAddress         []byte
+	RemoteTokenAddress        []byte
+	OutboundRateLimiterConfig RateLimitConfig
+	InboundRateLimiterConfig  RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainConfiguredEventTopic is the event topic identifier.
+const ChainConfiguredEventTopic = "pool_ChainConfigured"
+
+// FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
+// Topics: [pool_FinalityConfigSet]
+type FinalityConfigSetEvent struct {
+	AllowedFinality uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FinalityConfigSetEventTopic is the event topic identifier.
+const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
+
+// FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
+// Topics: [pool_FtfInboundConsumed]
+type FtfInboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfInboundConsumedEventTopic is the event topic identifier.
+const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
+
+// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
+// Topics: [pool_FtfOutboundConsumed]
+type FtfOutboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfOutboundConsumedEventTopic is the event topic identifier.
+const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
+
+// RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
+// Topics: [pool_RateLimitConfigured]
+type RateLimitConfiguredEvent struct {
+	RemoteChainSelector uint64
+	FastFinality        bool
+	OutboundConfig      RateLimitConfig
+	InboundConfig       RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RateLimitConfiguredEventTopic is the event topic identifier.
+const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
+
+// AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
+// Topics: [pool_HooksUpdated]
+type AdvancedPoolHooksUpdatedEvent struct {
+	OldHooks *string
+	NewHooks *string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AdvancedPoolHooksUpdatedEventTopic is the event topic identifier.
+const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
+
+// InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
+// Topics: [pool_InboundRateLimitConsumed]
+type InboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// InboundRateLimitConsumedEventTopic is the event topic identifier.
+const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
+
+// OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
+// Topics: [pool_OutboundRateLimitConsumed]
+type OutboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              int64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OutboundRateLimitConsumedEventTopic is the event topic identifier.
+const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
+
+// LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
+// Topics: [pool_LockBoxConfigured]
+type LockBoxConfiguredEvent struct {
+	RemoteChainSelector uint64
+	LockBox             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// LockBoxConfiguredEventTopic is the event topic identifier.
+const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
 
 // MessageDirection represents the MessageDirection enum (unit-only Soroban contracttype, encoded as ScVal::U32).
 type MessageDirection uint32

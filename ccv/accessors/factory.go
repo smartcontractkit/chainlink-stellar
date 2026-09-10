@@ -14,6 +14,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-ccv/bootstrap"
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-common/keystore"
@@ -186,6 +187,11 @@ var (
 	errKeystoreNotInjected = errors.New("stellar accessor requires SetKeystore to be called before constructing keystore-backed components")
 )
 
+// Compile-time guarantee that the accessor satisfies bootstrap.KeystoreSetter;
+// without it a signature drift degrades to "keystore not injected" warnings at
+// runtime instead of a build error.
+var _ bootstrap.KeystoreSetter = (*accessor)(nil)
+
 // SetKeystore implements bootstrap.KeystoreSetter. It is invoked automatically
 // by bootstrap.KeystoreRegistry after every GetAccessor call so the accessor
 // can build keystore-backed components without holding raw key material.
@@ -197,8 +203,10 @@ var (
 //     even read-only Soroban simulations use a deterministic account.
 //   - Errors during construction are stored in *Err fields so the failing
 //     getter (DestinationReader / ContractTransmitter / SourceReader) returns
-//     the original cause, while unaffected getters keep working.
-func (a *accessor) SetKeystore(ks keystore.Keystore) {
+//     the original cause, while unaffected getters keep working. We return nil
+//     rather than the error so a keystore problem on one chain does not abort
+//     accessor construction for the rest of the job's chains.
+func (a *accessor) SetKeystore(ctx context.Context, ks keystore.Keystore) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -206,7 +214,7 @@ func (a *accessor) SetKeystore(ks keystore.Keystore) {
 		a.zlggr.Warn().
 			Str("chain_selector", a.strSelector).
 			Msg("stellar accessor: SetKeystore called with nil keystore; keystore-backed components will not be constructed")
-		return
+		return nil
 	}
 
 	keyName := a.destCfg.keyName
@@ -216,7 +224,7 @@ func (a *accessor) SetKeystore(ks keystore.Keystore) {
 		keyName = common.StellarTransmitterKeyName
 	}
 
-	signer, err := LoadStellarKeystoreSigner(context.Background(), ks, keyName)
+	signer, err := LoadStellarKeystoreSigner(ctx, ks, keyName)
 	if err != nil {
 		a.zlggr.Error().
 			Err(err).
@@ -231,7 +239,7 @@ func (a *accessor) SetKeystore(ks keystore.Keystore) {
 			a.destReaderErr = fmt.Errorf("load stellar keystore signer: %w", err)
 			a.contractTransmitterErr = fmt.Errorf("load stellar keystore signer: %w", err)
 		}
-		return
+		return nil
 	}
 	a.zlggr.Info().
 		Str("key_name", keyName).
@@ -252,7 +260,7 @@ func (a *accessor) SetKeystore(ks keystore.Keystore) {
 		if err != nil {
 			a.destReaderErr = err
 			a.contractTransmitterErr = err
-			return
+			return nil
 		}
 		a.destinationReader = dr
 		a.contractTransmitter = ct
@@ -262,6 +270,7 @@ func (a *accessor) SetKeystore(ks keystore.Keystore) {
 		a.destReaderErr = nil
 		a.contractTransmitterErr = nil
 	}
+	return nil
 }
 
 func (a *accessor) SourceReader() (chainaccess.SourceReader, error) {

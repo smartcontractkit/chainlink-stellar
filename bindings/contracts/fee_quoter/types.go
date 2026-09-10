@@ -133,324 +133,6 @@ func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
 	return result, nil
 }
 
-// AllowListEntry represents the AllowListEntry struct from the contract.
-type AllowListEntry struct {
-	Allowlist        []string
-	AllowlistEnabled bool
-}
-
-// ToScVal converts AllowListEntry to an xdr.ScVal for contract calls.
-func (s AllowListEntry) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"allowlist":         scval.AddressSliceToScVal(s.Allowlist),
-		"allowlist_enabled": scval.BoolToScVal(s.AllowlistEnabled),
-	})
-}
-
-// AllowListEntryFromScVal parses an xdr.ScVal into AllowListEntry.
-func AllowListEntryFromScVal(val xdr.ScVal) (*AllowListEntry, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AllowListEntry{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "allowlist":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("allowlist is not a vec")
-			}
-			result.Allowlist = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Allowlist[i] = v
-			}
-		case "allowlist_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("allowlist_enabled is not bool")
-			}
-			result.AllowlistEnabled = v
-		}
-	}
-
-	return result, nil
-}
-
-// AllowListUpdate represents the AllowListUpdate struct from the contract.
-type AllowListUpdate struct {
-	AddedAllowlistedSenders   []string
-	AllowlistEnabled          bool
-	DestChainSelector         uint64
-	RemovedAllowlistedSenders []string
-}
-
-// ToScVal converts AllowListUpdate to an xdr.ScVal for contract calls.
-func (s AllowListUpdate) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"added_allowlisted_senders":   scval.AddressSliceToScVal(s.AddedAllowlistedSenders),
-		"allowlist_enabled":           scval.BoolToScVal(s.AllowlistEnabled),
-		"dest_chain_selector":         scval.Uint64ToScVal(s.DestChainSelector),
-		"removed_allowlisted_senders": scval.AddressSliceToScVal(s.RemovedAllowlistedSenders),
-	})
-}
-
-// AllowListUpdateFromScVal parses an xdr.ScVal into AllowListUpdate.
-func AllowListUpdateFromScVal(val xdr.ScVal) (*AllowListUpdate, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AllowListUpdate{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "added_allowlisted_senders":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("added_allowlisted_senders is not a vec")
-			}
-			result.AddedAllowlistedSenders = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.AddedAllowlistedSenders[i] = v
-			}
-		case "allowlist_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("allowlist_enabled is not bool")
-			}
-			result.AllowlistEnabled = v
-		case "dest_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("dest_chain_selector: %w", err)
-			}
-			result.DestChainSelector = v
-		case "removed_allowlisted_senders":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("removed_allowlisted_senders is not a vec")
-			}
-			result.RemovedAllowlistedSenders = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.RemovedAllowlistedSenders[i] = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// GenericExtraArgsV3 represents the GenericExtraArgsV3 struct from the contract.
-type GenericExtraArgsV3 struct {
-	BlockConfirmations uint32
-	CcvArgs            [][]byte
-	Ccvs               []string
-	Executor           string
-	ExecutorArgs       []byte
-	GasLimit           uint32
-	TokenArgs          []byte
-	TokenReceiver      []byte
-}
-
-// ToScVal converts GenericExtraArgsV3 to an xdr.ScVal for contract calls.
-func (s GenericExtraArgsV3) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"block_confirmations": scval.Uint32ToScVal(s.BlockConfirmations),
-		"ccv_args":            scval.BytesSliceToScVal(s.CcvArgs),
-		"ccvs":                scval.AddressSliceToScVal(s.Ccvs),
-		"executor":            scval.AddressToScVal(s.Executor),
-		"executor_args":       scval.BytesToScVal(s.ExecutorArgs),
-		"gas_limit":           scval.Uint32ToScVal(s.GasLimit),
-		"token_args":          scval.BytesToScVal(s.TokenArgs),
-		"token_receiver":      scval.BytesToScVal(s.TokenReceiver),
-	})
-}
-
-// GenericExtraArgsV3FromScVal parses an xdr.ScVal into GenericExtraArgsV3.
-func GenericExtraArgsV3FromScVal(val xdr.ScVal) (*GenericExtraArgsV3, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &GenericExtraArgsV3{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "block_confirmations":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("block_confirmations is not u32")
-			}
-			result.BlockConfirmations = uint32(v)
-		case "ccv_args":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccv_args is not a vec")
-			}
-			result.CcvArgs = make([][]byte, len(*vec))
-			for i, item := range *vec {
-				v, ok := item.GetBytes()
-				if !ok {
-					return nil, fmt.Errorf("vec item is not bytes")
-				}
-				result.CcvArgs[i] = []byte(v)
-			}
-		case "ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccvs is not a vec")
-			}
-			result.Ccvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Ccvs[i] = v
-			}
-		case "executor":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("executor: %w", err)
-			}
-			result.Executor = v
-		case "executor_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("executor_args is not bytes")
-			}
-			result.ExecutorArgs = []byte(v)
-		case "gas_limit":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("gas_limit is not u32")
-			}
-			result.GasLimit = uint32(v)
-		case "token_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_args is not bytes")
-			}
-			result.TokenArgs = []byte(v)
-		case "token_receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_receiver is not bytes")
-			}
-			result.TokenReceiver = []byte(v)
-		}
-	}
-
-	return result, nil
-}
-
-// AnyToStellarMessage represents the AnyToStellarMessage struct from the contract.
-type AnyToStellarMessage struct {
-	Data                []byte
-	DestTokenAmounts    []TokenAmount
-	MessageId           [32]byte
-	Sender              []byte
-	SourceChainSelector uint64
-}
-
-// ToScVal converts AnyToStellarMessage to an xdr.ScVal for contract calls.
-func (s AnyToStellarMessage) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data":                  scval.BytesToScVal(s.Data),
-		"dest_token_amounts":    scval.StructSliceToScVal(s.DestTokenAmounts),
-		"message_id":            scval.Bytes32ToScVal(s.MessageId),
-		"sender":                scval.BytesToScVal(s.Sender),
-		"source_chain_selector": scval.Uint64ToScVal(s.SourceChainSelector),
-	})
-}
-
-// AnyToStellarMessageFromScVal parses an xdr.ScVal into AnyToStellarMessage.
-func AnyToStellarMessageFromScVal(val xdr.ScVal) (*AnyToStellarMessage, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AnyToStellarMessage{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "data":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
-			}
-			result.Data = []byte(v)
-		case "dest_token_amounts":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("dest_token_amounts is not a vec")
-			}
-			result.DestTokenAmounts = make([]TokenAmount, len(*vec))
-			for i, item := range *vec {
-				v, err := TokenAmountFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.DestTokenAmounts[i] = *v
-			}
-		case "message_id":
-			v, err := scval.Bytes32FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("message_id: %w", err)
-			}
-			result.MessageId = v
-		case "sender":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("sender is not bytes")
-			}
-			result.Sender = []byte(v)
-		case "source_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("source_chain_selector: %w", err)
-			}
-			result.SourceChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
 // PriceUpdates represents the PriceUpdates struct from the contract.
 type PriceUpdates struct {
 	GasPriceUpdates   []GasPriceUpdate
@@ -1435,3 +1117,177 @@ var CCIPErrorMessage = map[int]string{
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
 }
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// FeeTokenAddedEvent represents the FeeTokenAddedEvent event.
+// Topics: [fq_FeeTokenAdded]
+type FeeTokenAddedEvent struct {
+	FeeToken string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeeTokenAddedEventTopic is the event topic identifier.
+const FeeTokenAddedEventTopic = "fq_FeeTokenAdded"
+
+// DestChainAddedEvent represents the DestChainAddedEvent event.
+// Topics: [fq_DestChainAdded]
+type DestChainAddedEvent struct {
+	DestChainSelector uint64
+	IsEnabled         bool
+	MaxDataBytes      uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// DestChainAddedEventTopic is the event topic identifier.
+const DestChainAddedEventTopic = "fq_DestChainAdded"
+
+// FeeTokenRemovedEvent represents the FeeTokenRemovedEvent event.
+// Topics: [fq_FeeTokenRemoved]
+type FeeTokenRemovedEvent struct {
+	FeeToken string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FeeTokenRemovedEventTopic is the event topic identifier.
+const FeeTokenRemovedEventTopic = "fq_FeeTokenRemoved"
+
+// UsdPerTokenUpdatedEvent represents the UsdPerTokenUpdatedEvent event.
+// Topics: [fq_UsdPerTokenUpdated]
+type UsdPerTokenUpdatedEvent struct {
+	Token     string
+	Value     scval.U128
+	Timestamp uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UsdPerTokenUpdatedEventTopic is the event topic identifier.
+const UsdPerTokenUpdatedEventTopic = "fq_UsdPerTokenUpdated"
+
+// UsdPerUnitGasUpdatedEvent represents the UsdPerUnitGasUpdatedEvent event.
+// Topics: [fq_UsdPerUnitGasUpdated]
+type UsdPerUnitGasUpdatedEvent struct {
+	DestChainSelector uint64
+	Value             scval.U128
+	Timestamp         uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UsdPerUnitGasUpdatedEventTopic is the event topic identifier.
+const UsdPerUnitGasUpdatedEventTopic = "fq_UsdPerUnitGasUpdated"
+
+// TokenFeeConfigDeletedEvent represents the TokenFeeConfigDeletedEvent event.
+// Topics: [fq_TknTransferFeeDeleted]
+type TokenFeeConfigDeletedEvent struct {
+	DestChainSelector uint64
+	Token             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeConfigDeletedEventTopic is the event topic identifier.
+const TokenFeeConfigDeletedEventTopic = "fq_TknTransferFeeDeleted"
+
+// TokenFeeConfigUpdatedEvent represents the TokenFeeConfigUpdatedEvent event.
+// Topics: [fq_TknTransferFeeUpdated]
+type TokenFeeConfigUpdatedEvent struct {
+	DestChainSelector uint64
+	Token             string
+	FeeUsdCents       uint32
+	DestGasOverhead   uint32
+	DestBytesOverhead uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeConfigUpdatedEventTopic is the event topic identifier.
+const TokenFeeConfigUpdatedEventTopic = "fq_TknTransferFeeUpdated"
+
+// DestChainConfigUpdatedEvent represents the DestChainConfigUpdatedEvent event.
+// Topics: [fq_DestChainConfigUpdated]
+type DestChainConfigUpdatedEvent struct {
+	DestChainSelector uint64
+	IsEnabled         bool
+	MaxDataBytes      uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// DestChainConfigUpdatedEventTopic is the event topic identifier.
+const DestChainConfigUpdatedEventTopic = "fq_DestChainConfigUpdated"

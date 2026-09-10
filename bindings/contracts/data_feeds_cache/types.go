@@ -266,36 +266,6 @@ var CacheErrorMessage = map[int]string{
 	110: "no feed state",
 }
 
-// RoleTransferError represents the contract error codes.
-const (
-	RoleTransferErrorNoPendingTransfer      = 2200
-	RoleTransferErrorInvalidLiveUntilLedger = 2201
-	RoleTransferErrorInvalidPendingAccount  = 2202
-	RoleTransferErrorTransferExpired        = 2203
-)
-
-// RoleTransferErrorMessage returns a human-readable message for error codes.
-var RoleTransferErrorMessage = map[int]string{
-	2200: "no pending transfer",
-	2201: "invalid live until ledger",
-	2202: "invalid pending account",
-	2203: "transfer expired",
-}
-
-// OwnableError represents the contract error codes.
-const (
-	OwnableErrorOwnerNotSet        = 2100
-	OwnableErrorTransferInProgress = 2101
-	OwnableErrorOwnerAlreadySet    = 2102
-)
-
-// OwnableErrorMessage returns a human-readable message for error codes.
-var OwnableErrorMessage = map[int]string{
-	2100: "owner not set",
-	2101: "transfer in progress",
-	2102: "owner already set",
-}
-
 // FeedUpdated represents the FeedUpdated event.
 // Topics: [FeedUpdated]
 type FeedUpdated struct {

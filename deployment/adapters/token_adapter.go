@@ -36,7 +36,7 @@ func (a *StellarTokenAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byt
 	return b, nil
 }
 
-func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chainSelector uint64, poolRef datastore.AddressRef) ([]byte, error) {
+func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chainSelector uint64, poolRef datastore.AddressRef) (string, error) {
 	qualifier := poolRef.Qualifier
 	if qualifier == "" {
 		qualifier = stellarccip.DevenvTestTokenPoolQualifier
@@ -47,9 +47,11 @@ func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chain
 		Qualifier: qualifier,
 	}, chainSelector, datastore_utils.FullRef)
 	if err != nil {
-		return nil, fmt.Errorf("find test token ref for chain %d: %w", chainSelector, err)
+		return "", fmt.Errorf("find test token ref for chain %d: %w", chainSelector, err)
 	}
-	return a.AddressRefToBytes(tokenRef)
+	// The caller feeds this straight back into ResolveTokenRef as a datastore AddressRef.Address
+	// and does its own AddressRefToBytes conversion, so return the datastore address form.
+	return tokenRef.Address, nil
 }
 
 const stellarTestTokenDecimals = 7

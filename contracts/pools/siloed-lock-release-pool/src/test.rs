@@ -502,7 +502,7 @@ fn constructor_sets_token_and_version() {
     assert_eq!(t.pool_client.get_token(), t.token_addr);
     assert_eq!(t.pool_client.get_token_decimals(), 7);
     let version = t.pool_client.type_and_version();
-    let expected = soroban_sdk::String::from_str(&t.env, "SiloedLockReleaseTokenPool 2.0.0");
+    let expected = soroban_sdk::String::from_str(&t.env, "SiloedLockReleaseTokenPool-dev 2.0.0");
     assert_eq!(version, expected);
 }
 

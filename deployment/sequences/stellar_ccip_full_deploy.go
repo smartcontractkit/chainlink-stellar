@@ -9,9 +9,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
-	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/executor"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/fee_quoter"
@@ -104,11 +102,10 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: incomplete StellarDeps")
 	}
 	if topology == nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: offchain EnvironmentTopology is nil (committee verifier signature quorum requires NOP topology; use CCV pre-deploy stash + StellarDeployChainContracts or RunStellarCCIPFullDeployForCCV with a non-nil CCV topology)")
+		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: offchain EnvironmentTopology is nil (use CCV pre-deploy stash + StellarDeployChainContracts or RunStellarCCIPFullDeployForCCV with a non-nil CCV topology)")
 	}
-	if topology.NOPTopology == nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: topology.NOPTopology is nil (cannot resolve committee signers for ApplySignatureConfigs)")
-	}
+	// topology is retained for the stash contract and future deploy-time needs; committee
+	// signer quorums are applied later, at lane-configuration time (see the comment below).
 
 	ds := datastore.NewMemoryDataStore()
 	if err := stellarccip.MergeExistingAddressRefs(ds, in.ExistingAddresses); err != nil {
@@ -374,25 +371,12 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates: %w", err)
 	}
 
-	signatureQuorumConfigs := make([]cvbindings.SignatureQuorumConfig, 0, len(allSelectors))
-	for _, rs := range allSelectors {
-		signers, threshold := stellarutil.ResolveSignersFromOffchainTopology(topology, rs, chainsel.FamilyEVM)
-		if len(signers) == 0 {
-			return seq_core.OnChainOutput{}, fmt.Errorf("no signers found in topology for chain selector %d and family %s", rs, chainsel.FamilyEVM)
-		}
-		signatureQuorumConfigs = append(signatureQuorumConfigs, cvbindings.SignatureQuorumConfig{
-			SourceChainSelector: rs,
-			Threshold:           threshold,
-			Signers:             signers,
-		})
-	}
-	if _, err := execStellarCCIPOp(b, deps, cvops.ApplySignatureConfigs, cvops.ApplySignatureConfigsInput{
-		ContractID:             cvContractID,
-		RemoveSelectors:        []uint64{},
-		SignatureQuorumConfigs: signatureQuorumConfigs,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply signature quorum configs: %w", err)
-	}
+	// Signature quorum configs are deliberately NOT applied here. Since the
+	// chainlink-ccv 2026-06-26 signing-key sync cutover, topology enrichment skips
+	// families whose bootstrappers push signing keys to JD on connect, so signer
+	// addresses are not reliably present at deploy time. They are resolved from JD
+	// (with topology fallback) and applied during the lane-configuration phase by
+	// StellarConfigureChainForLanes via ConfigureChainsForLanesFromTopology.
 
 	fqDestChainConfigs := []fqbindings.DestChainConfigArgs{}
 	for _, rs := range allSelectors {
@@ -814,8 +798,8 @@ func RunStellarCCIPFullDeploy(
 	}
 	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
 		Address:       rmnRemoteHex,
-		Type:          datastore.ContractType(rmn_remote.ContractType),
-		Version:       semver.MustParse(rmn_remote.Deploy.Version()),
+		Type:          datastore.ContractType(stellarccip.RMNRemoteContractType),
+		Version:       semver.MustParse(stellarccip.RMNRemoteContractVersion),
 		ChainSelector: selector,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, err
