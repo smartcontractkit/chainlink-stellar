@@ -60,16 +60,16 @@ sequenceDiagram
 
 ❕ Make sure the contracts are built and Go bindings are generated before running the tests. Running `make generate-bindings` is sufficient to have the pre-requisites necessary.
 
-To run all integration tests, use the following command from the base directory:
+To run all integration tests, use the following command from the `tests/` directory (the `/tests` tree is its own Go module):
 
 ```shell
-go test ./tests/integration/... -v -tags=integration -count=1 -p=1 -timeout=15m
+cd tests && go test ./integration/... -v -tags=integration -count=1 -p=1 -timeout=15m
 ```
 
 To run a specific integration test, use the `-run` flag instead of specifying the file directly:
 
 ```shell
-go test ./tests/integration/... -v -tags=integration -count=1 -p=1 -timeout=15m -run TestRmnRemote
+cd tests && go test ./integration/... -v -tags=integration -count=1 -p=1 -timeout=15m -run TestRmnRemote
 ```
 
 > Note: This is required to make sure that a single test env setup is done when running multiple tests. This approach speeds up the spin up time to avoid having each test suite wait for 120-150 seconds for the local Stellar node to be ready.
@@ -99,8 +99,10 @@ Use the `make` command / alias to spin up the environment
 make up
 ```
 
-> This command is current an alias for `go run ./tests/testutils/cmd/devenv up tests/env/env-stellar-evm.toml`.
+> This command is currently an alias for `cd tests && go run ./testutils/cmd/devenv up env/env-stellar-evm.toml`.
 
 This will run the CCV CLI's `up` command and point the the default network topology TOML file. It will also generate (or overwrite) an `out` toplogy file (usually named `$TOPLOGY_FILE_NAME-out.toml` where `$TOPLOGY_FILE_NAME` is the file that was used as input for the `up` command).
 
-Running the E2E tests is now as simple running regular Go tets with `go test -v -timeout 15m ./tests/e2e/...`
+Running the E2E tests is now as simple running regular Go tets with `cd tests && go test -v -timeout 15m ./e2e/...`
+
+> The `/tests` directory is a separate Go module (`tests/go.mod`) that imports the production module and the e2e testing framework (CTF) via a local `replace`. This keeps the production module at the repo root free of direct CTF imports, so other repositories can import `chainlink-stellar` without inheriting CTF and its pinned version. Run all `go` commands for e2e, integration, and devenv code from inside `tests/`.
