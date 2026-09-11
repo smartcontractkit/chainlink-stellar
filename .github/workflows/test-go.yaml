@@ -35,3 +35,12 @@ jobs:
       - name: Run unit tests (ccv packages)
         working-directory: ccv
         run: go test -v -race -fullpath -shuffle on -coverprofile=coverage.out ./...
+
+      # The /tests directory is a separate Go module (tests/go.mod) that imports
+      # the production module + CTF. Run its unit tests here too, excluding ./e2e
+      # which needs a live devenv (covered by test-e2e.yaml).
+      - name: Run unit tests (tests module, excl. e2e)
+        working-directory: tests
+        run: |
+          pkgs=$(go list ./... | grep -v '/e2e' || true)
+          go test -v -race -fullpath -shuffle on -short -coverprofile=coverage-tests.out $pkgs

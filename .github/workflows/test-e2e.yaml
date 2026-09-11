@@ -91,7 +91,7 @@ jobs:
       - name: Run E2E tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        run: go test -v -timeout 20m ./tests/e2e/...
+        run: cd tests && go test -v -timeout 20m ./e2e/...
 
       - name: Dump container logs
         if: failure()

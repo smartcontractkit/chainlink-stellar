@@ -46,25 +46,35 @@ fmt-contracts-check:
 lint-contracts:
     just data_feeds lint
 
-# Run Go unit tests (root module) with coverage; optional second arg "short" runs -short tests only.
-# Excludes tests/e2e (requires running devenv; same idea as chainlink-ccv -short for heavy tests).
+# Run Go unit tests (root production module) with coverage; optional second arg "short" runs -short tests only.
+# The /tests directory is a separate Go module (tests/go.mod), so `go list ./...` from the root
+# already excludes it; e2e/integration tests live there and are run via `just test-go-tests`.
 # Writes filtered coverprofile to coverage_file (strips mock files matching COVERAGE_EXCLUDE_REGEX).
 test-coverage coverage_file="coverage.out" short="":
     #!/usr/bin/env bash
     set -euo pipefail
-    pkgs=$(go list ./... | grep -v '/tests/e2e' || true)
+    pkgs=$(go list ./...)
     go test -v -race -fullpath -shuffle on {{ if short != "" { "-short" } else { "" } }} -coverprofile={{ coverage_file }} $pkgs
     { head -n1 {{ coverage_file }}; tail -n +2 {{ coverage_file }} | grep -v -E '{{ COVERAGE_EXCLUDE_REGEX }}' || true; } > {{ coverage_file }}.filtered
     mv {{ coverage_file }}.filtered {{ coverage_file }}
 
-# Run Go unit tests (root module) with coverage.
-# Excludes tests/e2e (requires running devenv; run those with: go test -v -timeout 10m ./tests/e2e/...).
+# Run Go unit tests (root production module) with coverage.
+# The /tests directory is a separate Go module, so this covers production code only.
+# Run e2e tests with: cd tests && go test -v -timeout 10m ./e2e/...
 test-go:
     #!/usr/bin/env bash
     set -euo pipefail
-    pkgs=$(go list ./... | grep -v '/tests/e2e' || true)
+    pkgs=$(go list ./...)
     go test -v -race -fullpath -shuffle on -coverprofile=coverage.out $pkgs
     go tool cover -func=coverage.out
+
+# Run Go unit tests (tests module) with coverage; excludes ./e2e (requires a running devenv).
+test-go-tests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests && pkgs=$(go list ./... | grep -v '/e2e' || true)
+    cd tests && go test -v -race -fullpath -shuffle on -coverprofile=coverage-tests.out $pkgs
+    cd tests && go tool cover -func=coverage-tests.out
 
 # Run Go unit tests (bindings module) with coverage
 test-go-bindings:
@@ -72,11 +82,11 @@ test-go-bindings:
     cd bindings && go tool cover -func=coverage-bindings.out
 
 # Run all Go unit tests
-test-go-all: test-go test-go-bindings
+test-go-all: test-go test-go-tests test-go-bindings
 
 # Run Go integration tests (requires running Stellar localnet)
 test-go-integration:
-    go test -tags integration -v -timeout 20m ./tests/integration/...
+    cd tests && go test -tags integration -v -timeout 20m ./integration/...
 
 # Generate mocks using mockery
 mock:

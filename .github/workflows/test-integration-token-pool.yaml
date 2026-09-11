@@ -42,7 +42,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run token pool integration tests
-        run: go test -v -race -tags integration -fullpath -shuffle on -timeout 20m -run '^TestTokenPool($|/)' -coverpkg=./bindings/contracts/... -coverprofile=coverage-integration-token-pool.out ./tests/integration/...
+        run: cd tests && go test -v -race -tags integration -fullpath -shuffle on -timeout 20m -run '^TestTokenPool($|/)' -coverpkg=github.com/smartcontractkit/chainlink-stellar/bindings/contracts/... -coverprofile=../coverage-integration-token-pool.out ./integration/...
 
       - name: Write full coverage to job summary
         if: github.event_name == 'pull_request'

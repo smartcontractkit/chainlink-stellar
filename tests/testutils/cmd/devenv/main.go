@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cli"
 
-	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 )
 
 func init() {

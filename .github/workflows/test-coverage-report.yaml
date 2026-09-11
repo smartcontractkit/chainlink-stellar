@@ -61,6 +61,10 @@ jobs:
         run: |
           just test-go-bindings
 
+      - name: Run tests-module unit tests
+        run: |
+          just test-go-tests
+
       - name: Coverage on target branch
         if: github.event_name == 'pull_request'
         run: |
