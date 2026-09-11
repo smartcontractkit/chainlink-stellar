@@ -11,7 +11,6 @@ import (
 	"fmt"
 
 	_ "github.com/lib/pq"
-	"go.uber.org/zap/zapcore"
 
 	"github.com/smartcontractkit/chainlink-ccv/bootstrap"
 	verifiercmd "github.com/smartcontractkit/chainlink-ccv/cmd/verifier"
@@ -26,7 +25,6 @@ func main() {
 	if err := bootstrap.Run(
 		"StellarCommitteeVerifier",
 		verifiercmd.NewCommitteeVerifierServiceFactory(),
-		bootstrap.WithLogLevel(zapcore.InfoLevel),
 		bootstrap.WithKey(commit.DefaultECDSASigningKeyName, "signing", keystore.ECDSA_S256),
 		bootstrap.WithKey(common.StellarTransmitterKeyName, "transmitting", keystore.Ed25519),
 	); err != nil {

@@ -30,7 +30,9 @@ func isUnitEnumType(rustType string) bool {
 // parsed contract. Event-only modules (e.g. rmn_remote after config removal)
 // emit plain Go structs and need no fmt/scval/xdr imports.
 func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, needBig bool) {
-	if len(contract.Structs) > 0 || len(contract.Errors) > 0 || len(contract.Enums) > 0 {
+	// Structs and enums get ToScVal/FromScVal helpers (fmt/scval/xdr); error
+	// enums and events emit plain consts/structs and need no imports.
+	if len(contract.Structs) > 0 || len(contract.Enums) > 0 {
 		needFmt, needScval, needXdr = true, true, true
 	}
 	var fields []Field

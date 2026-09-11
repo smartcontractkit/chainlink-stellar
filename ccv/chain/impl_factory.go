@@ -23,11 +23,13 @@ import (
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	"github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
 
 var _ chainreg.ImplFactory = &ImplFactory{}
+var _ chainreg.ExecutorInfo = &ImplFactory{}
 
 // ImplFactory creates Stellar CCIP17 chain implementations.
 // It implements [registry.ImplFactory] and is registered with the global factory
@@ -79,6 +81,20 @@ func (f *ImplFactory) DefaultFeeAggregator(env *deployment.Environment, chainSel
 // primitives in devenv (e.g. Canton) return false.
 func (f *ImplFactory) SupportsFunding() bool {
 	return true
+}
+
+// ExecutorTransmitterKeyName implements [chainreg.ExecutorInfo].
+// The executor declares this Ed25519 key via bootstrap.WithKey (see cmd/executor).
+func (f *ImplFactory) ExecutorTransmitterKeyName() string {
+	return common.StellarTransmitterKeyName
+}
+
+// ExecutorTransmitterAddress implements [chainreg.ExecutorInfo].
+// A Stellar account address is the Ed25519 public key itself, and
+// BootstrapKeys.PublicKeys already carries it as hex-encoded raw bytes — the exact
+// hex form devenv expects before decoding into a protocol.UnknownAddress for funding.
+func (f *ImplFactory) ExecutorTransmitterAddress(keys ccvservices.BootstrapKeys) string {
+	return keys.PublicKeyHex(common.StellarTransmitterKeyName)
 }
 
 // NewEmpty implements [chainreg.ImplFactory].

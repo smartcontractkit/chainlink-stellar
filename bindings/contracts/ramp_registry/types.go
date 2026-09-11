@@ -8,53 +8,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// OffRampKey represents the OffRampKey struct from the contract.
-type OffRampKey struct {
-	Offramp             string
-	SourceChainSelector uint64
-}
-
-// ToScVal converts OffRampKey to an xdr.ScVal for contract calls.
-func (s OffRampKey) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"offramp":               scval.AddressToScVal(s.Offramp),
-		"source_chain_selector": scval.Uint64ToScVal(s.SourceChainSelector),
-	})
-}
-
-// OffRampKeyFromScVal parses an xdr.ScVal into OffRampKey.
-func OffRampKeyFromScVal(val xdr.ScVal) (*OffRampKey, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &OffRampKey{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "offramp":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("offramp: %w", err)
-			}
-			result.Offramp = v
-		case "source_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("source_chain_selector: %w", err)
-			}
-			result.SourceChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
 // OnRampEntry represents the OnRampEntry struct from the contract.
 type OnRampEntry struct {
 	DestChainSelector uint64
@@ -250,3 +203,68 @@ func OffRampUpdateFromScVal(val xdr.ScVal) (*OffRampUpdate, error) {
 
 	return result, nil
 }
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"

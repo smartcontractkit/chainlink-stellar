@@ -14,12 +14,15 @@ const ContractType = "Timelock"
 var Deploy = stellarops.NewDeployOperation("timelock:deploy", "Deploys the Timelock Soroban contract from WASM")
 
 // InitializeInput configures timelock roles and minimum delay.
+//
+// There is deliberately no Admin or Executors field: `initialize` grants ADMIN_ROLE only to
+// the contract itself (contracts/timelock/src/lib.rs), so role administration must go through
+// scheduled ops, and the contract defines no executor role — `execute_batch` is permissionless
+// once an operation is ready. Both fields existed here previously and were silently dropped.
 type InitializeInput struct {
 	ContractID string   `json:"contract_id"`
 	MinDelay   uint64   `json:"min_delay"`
-	Admin      string   `json:"admin"`
 	Proposers  []string `json:"proposers"`
-	Executors  []string `json:"executors"`
 	Cancellers []string `json:"cancellers"`
 	Bypassers  []string `json:"bypassers"`
 }
@@ -28,10 +31,10 @@ type InitializeInput struct {
 var Initialize = cldfops.NewOperation(
 	"timelock:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes Timelock with delay, admin, and role holders",
+	"Initializes Timelock with delay and role holders",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
 		c := tlbindings.NewTimelockClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.MinDelay, in.Admin, in.Proposers, in.Executors, in.Cancellers, in.Bypassers); err != nil {
+		if err := c.Initialize(b.GetContext(), in.MinDelay, in.Proposers, in.Cancellers, in.Bypassers); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

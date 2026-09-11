@@ -8,96 +8,19 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// CcvConfigUpdate represents the CcvConfigUpdate struct from the contract.
-type CcvConfigUpdate struct {
-	SourceChainSelector uint64
-	RequiredCcvs        []string
-	OptionalCcvs        []string
-	OptionalThreshold   uint32
-}
-
-// ToScVal converts CcvConfigUpdate to an xdr.ScVal for contract calls.
-func (s CcvConfigUpdate) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"source_chain_selector": scval.Uint64ToScVal(s.SourceChainSelector),
-		"required_ccvs":         scval.AddressSliceToScVal(s.RequiredCcvs),
-		"optional_ccvs":         scval.AddressSliceToScVal(s.OptionalCcvs),
-		"optional_threshold":    scval.Uint32ToScVal(s.OptionalThreshold),
-	})
-}
-
-// CcvConfigUpdateFromScVal parses an xdr.ScVal into CcvConfigUpdate.
-func CcvConfigUpdateFromScVal(val xdr.ScVal) (*CcvConfigUpdate, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &CcvConfigUpdate{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "source_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("source_chain_selector: %w", err)
-			}
-			result.SourceChainSelector = v
-		case "required_ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("required_ccvs is not a vec")
-			}
-			result.RequiredCcvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.RequiredCcvs[i] = v
-			}
-		case "optional_ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("optional_ccvs is not a vec")
-			}
-			result.OptionalCcvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.OptionalCcvs[i] = v
-			}
-		case "optional_threshold":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("optional_threshold is not u32")
-			}
-			result.OptionalThreshold = uint32(v)
-		}
-	}
-
-	return result, nil
-}
-
 // CcvChainConfig represents the CcvChainConfig struct from the contract.
 type CcvChainConfig struct {
-	RequiredCcvs      []string
 	OptionalCcvs      []string
 	OptionalThreshold uint32
+	RequiredCcvs      []string
 }
 
 // ToScVal converts CcvChainConfig to an xdr.ScVal for contract calls.
 func (s CcvChainConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"required_ccvs":      scval.AddressSliceToScVal(s.RequiredCcvs),
 		"optional_ccvs":      scval.AddressSliceToScVal(s.OptionalCcvs),
 		"optional_threshold": scval.Uint32ToScVal(s.OptionalThreshold),
+		"required_ccvs":      scval.AddressSliceToScVal(s.RequiredCcvs),
 	})
 }
 
@@ -116,19 +39,6 @@ func CcvChainConfigFromScVal(val xdr.ScVal) (*CcvChainConfig, error) {
 		}
 
 		switch string(key) {
-		case "required_ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("required_ccvs is not a vec")
-			}
-			result.RequiredCcvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.RequiredCcvs[i] = v
-			}
 		case "optional_ccvs":
 			vec, ok := entry.Val.GetVec()
 			if !ok || vec == nil {
@@ -148,6 +58,96 @@ func CcvChainConfigFromScVal(val xdr.ScVal) (*CcvChainConfig, error) {
 				return nil, fmt.Errorf("optional_threshold is not u32")
 			}
 			result.OptionalThreshold = uint32(v)
+		case "required_ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("required_ccvs is not a vec")
+			}
+			result.RequiredCcvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.RequiredCcvs[i] = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// CcvConfigUpdate represents the CcvConfigUpdate struct from the contract.
+type CcvConfigUpdate struct {
+	OptionalCcvs        []string
+	OptionalThreshold   uint32
+	RequiredCcvs        []string
+	SourceChainSelector uint64
+}
+
+// ToScVal converts CcvConfigUpdate to an xdr.ScVal for contract calls.
+func (s CcvConfigUpdate) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"optional_ccvs":         scval.AddressSliceToScVal(s.OptionalCcvs),
+		"optional_threshold":    scval.Uint32ToScVal(s.OptionalThreshold),
+		"required_ccvs":         scval.AddressSliceToScVal(s.RequiredCcvs),
+		"source_chain_selector": scval.Uint64ToScVal(s.SourceChainSelector),
+	})
+}
+
+// CcvConfigUpdateFromScVal parses an xdr.ScVal into CcvConfigUpdate.
+func CcvConfigUpdateFromScVal(val xdr.ScVal) (*CcvConfigUpdate, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &CcvConfigUpdate{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "optional_ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("optional_ccvs is not a vec")
+			}
+			result.OptionalCcvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.OptionalCcvs[i] = v
+			}
+		case "optional_threshold":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("optional_threshold is not u32")
+			}
+			result.OptionalThreshold = uint32(v)
+		case "required_ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("required_ccvs is not a vec")
+			}
+			result.RequiredCcvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.RequiredCcvs[i] = v
+			}
+		case "source_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("source_chain_selector: %w", err)
+			}
+			result.SourceChainSelector = v
 		}
 	}
 
@@ -156,15 +156,15 @@ func CcvChainConfigFromScVal(val xdr.ScVal) (*CcvChainConfig, error) {
 
 // RemoteChainConfig represents the RemoteChainConfig struct from the contract.
 type RemoteChainConfig struct {
-	ExtraArgs             []byte
 	AllowedFinalityConfig uint32
+	ExtraArgs             []byte
 }
 
 // ToScVal converts RemoteChainConfig to an xdr.ScVal for contract calls.
 func (s RemoteChainConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"extra_args":              scval.BytesToScVal(s.ExtraArgs),
 		"allowed_finality_config": scval.Uint32ToScVal(s.AllowedFinalityConfig),
+		"extra_args":              scval.BytesToScVal(s.ExtraArgs),
 	})
 }
 
@@ -183,18 +183,18 @@ func RemoteChainConfigFromScVal(val xdr.ScVal) (*RemoteChainConfig, error) {
 		}
 
 		switch string(key) {
-		case "extra_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("extra_args is not bytes")
-			}
-			result.ExtraArgs = []byte(v)
 		case "allowed_finality_config":
 			v, ok := entry.Val.GetU32()
 			if !ok {
 				return nil, fmt.Errorf("allowed_finality_config is not u32")
 			}
 			result.AllowedFinalityConfig = uint32(v)
+		case "extra_args":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("extra_args is not bytes")
+			}
+			result.ExtraArgs = []byte(v)
 		}
 	}
 
@@ -203,19 +203,19 @@ func RemoteChainConfigFromScVal(val xdr.ScVal) (*RemoteChainConfig, error) {
 
 // CcvsAndFinalityConfig represents the CcvsAndFinalityConfig struct from the contract.
 type CcvsAndFinalityConfig struct {
-	RequiredCcvs          []string
+	AllowedFinalityConfig uint32
 	OptionalCcvs          []string
 	OptionalThreshold     uint32
-	AllowedFinalityConfig uint32
+	RequiredCcvs          []string
 }
 
 // ToScVal converts CcvsAndFinalityConfig to an xdr.ScVal for contract calls.
 func (s CcvsAndFinalityConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"required_ccvs":           scval.AddressSliceToScVal(s.RequiredCcvs),
+		"allowed_finality_config": scval.Uint32ToScVal(s.AllowedFinalityConfig),
 		"optional_ccvs":           scval.AddressSliceToScVal(s.OptionalCcvs),
 		"optional_threshold":      scval.Uint32ToScVal(s.OptionalThreshold),
-		"allowed_finality_config": scval.Uint32ToScVal(s.AllowedFinalityConfig),
+		"required_ccvs":           scval.AddressSliceToScVal(s.RequiredCcvs),
 	})
 }
 
@@ -234,19 +234,12 @@ func CcvsAndFinalityConfigFromScVal(val xdr.ScVal) (*CcvsAndFinalityConfig, erro
 		}
 
 		switch string(key) {
-		case "required_ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("required_ccvs is not a vec")
+		case "allowed_finality_config":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("allowed_finality_config is not u32")
 			}
-			result.RequiredCcvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.RequiredCcvs[i] = v
-			}
+			result.AllowedFinalityConfig = uint32(v)
 		case "optional_ccvs":
 			vec, ok := entry.Val.GetVec()
 			if !ok || vec == nil {
@@ -266,12 +259,19 @@ func CcvsAndFinalityConfigFromScVal(val xdr.ScVal) (*CcvsAndFinalityConfig, erro
 				return nil, fmt.Errorf("optional_threshold is not u32")
 			}
 			result.OptionalThreshold = uint32(v)
-		case "allowed_finality_config":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("allowed_finality_config is not u32")
+		case "required_ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("required_ccvs is not a vec")
 			}
-			result.AllowedFinalityConfig = uint32(v)
+			result.RequiredCcvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.RequiredCcvs[i] = v
+			}
 		}
 	}
 
@@ -319,115 +319,6 @@ func TokenAmountFromScVal(val xdr.ScVal) (*TokenAmount, error) {
 				return nil, fmt.Errorf("token: %w", err)
 			}
 			result.Token = v
-		}
-	}
-
-	return result, nil
-}
-
-// GenericExtraArgsV3 represents the GenericExtraArgsV3 struct from the contract.
-type GenericExtraArgsV3 struct {
-	BlockConfirmations uint32
-	CcvArgs            [][]byte
-	Ccvs               []string
-	Executor           string
-	ExecutorArgs       []byte
-	GasLimit           uint32
-	TokenArgs          []byte
-	TokenReceiver      []byte
-}
-
-// ToScVal converts GenericExtraArgsV3 to an xdr.ScVal for contract calls.
-func (s GenericExtraArgsV3) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"block_confirmations": scval.Uint32ToScVal(s.BlockConfirmations),
-		"ccv_args":            scval.BytesSliceToScVal(s.CcvArgs),
-		"ccvs":                scval.AddressSliceToScVal(s.Ccvs),
-		"executor":            scval.AddressToScVal(s.Executor),
-		"executor_args":       scval.BytesToScVal(s.ExecutorArgs),
-		"gas_limit":           scval.Uint32ToScVal(s.GasLimit),
-		"token_args":          scval.BytesToScVal(s.TokenArgs),
-		"token_receiver":      scval.BytesToScVal(s.TokenReceiver),
-	})
-}
-
-// GenericExtraArgsV3FromScVal parses an xdr.ScVal into GenericExtraArgsV3.
-func GenericExtraArgsV3FromScVal(val xdr.ScVal) (*GenericExtraArgsV3, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &GenericExtraArgsV3{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "block_confirmations":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("block_confirmations is not u32")
-			}
-			result.BlockConfirmations = uint32(v)
-		case "ccv_args":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccv_args is not a vec")
-			}
-			result.CcvArgs = make([][]byte, len(*vec))
-			for i, item := range *vec {
-				v, ok := item.GetBytes()
-				if !ok {
-					return nil, fmt.Errorf("vec item is not bytes")
-				}
-				result.CcvArgs[i] = []byte(v)
-			}
-		case "ccvs":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("ccvs is not a vec")
-			}
-			result.Ccvs = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Ccvs[i] = v
-			}
-		case "executor":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("executor: %w", err)
-			}
-			result.Executor = v
-		case "executor_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("executor_args is not bytes")
-			}
-			result.ExecutorArgs = []byte(v)
-		case "gas_limit":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("gas_limit is not u32")
-			}
-			result.GasLimit = uint32(v)
-		case "token_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_args is not bytes")
-			}
-			result.TokenArgs = []byte(v)
-		case "token_receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("token_receiver is not bytes")
-			}
-			result.TokenReceiver = []byte(v)
 		}
 	}
 
@@ -506,84 +397,6 @@ func AnyToStellarMessageFromScVal(val xdr.ScVal) (*AnyToStellarMessage, error) {
 				return nil, fmt.Errorf("source_chain_selector: %w", err)
 			}
 			result.SourceChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
-// StellarToAnyMessage represents the StellarToAnyMessage struct from the contract.
-type StellarToAnyMessage struct {
-	Data         []byte
-	ExtraArgs    []byte
-	FeeToken     string
-	Receiver     []byte
-	TokenAmounts []TokenAmount
-}
-
-// ToScVal converts StellarToAnyMessage to an xdr.ScVal for contract calls.
-func (s StellarToAnyMessage) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"data":          scval.BytesToScVal(s.Data),
-		"extra_args":    scval.BytesToScVal(s.ExtraArgs),
-		"fee_token":     scval.AddressToScVal(s.FeeToken),
-		"receiver":      scval.BytesToScVal(s.Receiver),
-		"token_amounts": scval.StructSliceToScVal(s.TokenAmounts),
-	})
-}
-
-// StellarToAnyMessageFromScVal parses an xdr.ScVal into StellarToAnyMessage.
-func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &StellarToAnyMessage{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "data":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("data is not bytes")
-			}
-			result.Data = []byte(v)
-		case "extra_args":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("extra_args is not bytes")
-			}
-			result.ExtraArgs = []byte(v)
-		case "fee_token":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("fee_token: %w", err)
-			}
-			result.FeeToken = v
-		case "receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("receiver is not bytes")
-			}
-			result.Receiver = []byte(v)
-		case "token_amounts":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("token_amounts is not a vec")
-			}
-			result.TokenAmounts = make([]TokenAmount, len(*vec))
-			for i, item := range *vec {
-				v, err := TokenAmountFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.TokenAmounts[i] = *v
-			}
 		}
 	}
 
@@ -829,3 +642,113 @@ var CCIPErrorMessage = map[int]string{
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
 }
+
+// CcipCcvConfigSetEvent represents the CcipCcvConfigSetEvent event.
+// Topics: [example_CcvCfg]
+type CcipCcvConfigSetEvent struct {
+	SourceChainSelector uint64
+	RequiredLen         uint32
+	OptionalLen         uint32
+	OptionalThreshold   uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// CcipCcvConfigSetEventTopic is the event topic identifier.
+const CcipCcvConfigSetEventTopic = "example_CcvCfg"
+
+// CcipMessageReceivedEvent represents the CcipMessageReceivedEvent event.
+// Topics: [example_CcipMessageReceived]
+type CcipMessageReceivedEvent struct {
+	MessageId           [32]byte
+	SourceChainSelector uint64
+	DataLen             uint32
+	SenderLen           uint32
+	DestTokenTransfers  uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// CcipMessageReceivedEventTopic is the event topic identifier.
+const CcipMessageReceivedEventTopic = "example_CcipMessageReceived"
+
+// CcipRemoteChainConfiguredEvent represents the CcipRemoteChainConfiguredEvent event.
+// Topics: [example_RemChCfg]
+type CcipRemoteChainConfiguredEvent struct {
+	DestChainSelector     uint64
+	ExtraArgsLen          uint32
+	AllowedFinalityConfig uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// CcipRemoteChainConfiguredEventTopic is the event topic identifier.
+const CcipRemoteChainConfiguredEventTopic = "example_RemChCfg"
+
+// RoleGrantedEvent represents the RoleGrantedEvent event.
+// Topics: [auth_RoleGranted]
+type RoleGrantedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleGrantedEventTopic is the event topic identifier.
+const RoleGrantedEventTopic = "auth_RoleGranted"
+
+// RoleRevokedEvent represents the RoleRevokedEvent event.
+// Topics: [auth_RoleRevoked]
+type RoleRevokedEvent struct {
+	Role    string
+	Account string
+	Sender  string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RoleRevokedEventTopic is the event topic identifier.
+const RoleRevokedEventTopic = "auth_RoleRevoked"
+
+// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
+// Topics: [auth_CallerAdded]
+type AuthorizedCallerAddedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerAddedEventTopic is the event topic identifier.
+const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
+
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
+// OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
+// Topics: [auth_OwnerTransferStart]
+type OwnershipTransferStartedEvent struct {
+	PreviousOwner string
+	NewOwner      string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OwnershipTransferStartedEventTopic is the event topic identifier.
+const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"

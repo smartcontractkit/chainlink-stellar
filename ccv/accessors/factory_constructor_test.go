@@ -6,12 +6,13 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/BurntSushi/toml"
-
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
+	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/ccv/common"
+	contracttransmitter "github.com/smartcontractkit/chainlink-stellar/ccv/contract_transmitter"
+	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	sourcereader "github.com/smartcontractkit/chainlink-stellar/ccv/source_reader"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,51 +30,6 @@ func TestStellarConfigPath(t *testing.T) {
 		require.NoError(t, os.Unsetenv(StellarConfigPathEnv))
 		assert.Equal(t, common.DefaultStellarConfigPath, stellarConfigPath())
 	})
-}
-
-func TestMergeReaderConfig(t *testing.T) {
-	base := sourcereader.ReaderConfig{
-		NetworkPassphrase:   "file-pass",
-		SorobanRPCURL:       "http://file",
-		OnRampContractID:    "file-onramp",
-		RMNRemoteContractID: "file-rmn",
-	}
-	overlay := sourcereader.ReaderConfig{
-		SorobanRPCURL:    "http://job",
-		OnRampContractID: "job-onramp",
-	}
-	out := mergeReaderConfig(base, overlay)
-	assert.Equal(t, "file-pass", out.NetworkPassphrase, "empty overlay field preserves base")
-	assert.Equal(t, "http://job", out.SorobanRPCURL)
-	assert.Equal(t, "job-onramp", out.OnRampContractID)
-	assert.Equal(t, "file-rmn", out.RMNRemoteContractID, "zero-value overlay string does not overwrite")
-}
-
-func TestMergeFileAndJobReaderConfigs(t *testing.T) {
-	sel := strconv.FormatUint(chainsel.STELLAR_LOCALNET.Selector, 10)
-	file := map[string]sourcereader.ReaderConfig{
-		sel: {
-			NetworkPassphrase: "from-file",
-			SorobanRPCURL:     "http://file-rpc",
-		},
-	}
-	job := chainaccess.Infos[sourcereader.ReaderConfig]{
-		sel: {SorobanRPCURL: "http://job-rpc"},
-	}
-	out := mergeFileAndJobReaderConfigs(file, job)
-	require.Contains(t, out, sel)
-	assert.Equal(t, "from-file", out[sel].NetworkPassphrase)
-	assert.Equal(t, "http://job-rpc", out[sel].SorobanRPCURL)
-}
-
-func TestMergeFileAndJobReaderConfigs_jobOnlyChain(t *testing.T) {
-	sel := strconv.FormatUint(chainsel.STELLAR_LOCALNET.Selector, 10)
-	job := chainaccess.Infos[sourcereader.ReaderConfig]{
-		sel: {SorobanRPCURL: "http://rpc", NetworkPassphrase: "p"},
-	}
-	out := mergeFileAndJobReaderConfigs(nil, job)
-	require.Len(t, out, 1)
-	assert.Equal(t, "http://rpc", out[sel].SorobanRPCURL)
 }
 
 func TestApplyOnRampRMNHexOverrides(t *testing.T) {
@@ -110,51 +66,121 @@ func TestApplyOnRampRMNHexOverrides(t *testing.T) {
 	})
 }
 
-func TestLoadStellarJobReaderInfos(t *testing.T) {
-	sel := chainsel.STELLAR_LOCALNET.Selector
-	raw := `
-[blockchain_infos.` + strconv.FormatUint(sel, 10) + `]
-soroban_rpc_url = "http://from-job"
-network_passphrase = "job-pass"
-`
-	var gc chainaccess.GenericConfig
-	_, err := toml.Decode(raw, &gc)
+func TestBuildStellarDestConfigs(t *testing.T) {
+	sel := strconv.FormatUint(chainsel.STELLAR_LOCALNET.Selector, 10)
+	wantStrkey, err := scval.HexToContractStrkey(validContractHex)
 	require.NoError(t, err)
 
-	infos, err := loadStellarJobReaderInfos(gc)
-	require.NoError(t, err)
-	require.Len(t, infos, 1)
-	got := infos[strconv.FormatUint(sel, 10)]
-	assert.Equal(t, "http://from-job", got.SorobanRPCURL)
-	assert.Equal(t, "job-pass", got.NetworkPassphrase)
+	t.Run("no destination config yields nil", func(t *testing.T) {
+		out, err := buildStellarDestConfigs(&common.Config{}, chainaccess.GenericConfig{})
+		require.NoError(t, err)
+		assert.Nil(t, out)
+	})
+
+	t.Run("seeds from file transmitter config", func(t *testing.T) {
+		fileCfg := &common.Config{
+			TransmitterConfigs: map[string]contracttransmitter.ContractTransmitterConfig{
+				sel: {
+					OffRampContractID:     "offramp-file",
+					RMNRemoteAddress:      "rmn-file",
+					CCIPStateChangedTopic: "topic",
+				},
+			},
+		}
+		out, err := buildStellarDestConfigs(fileCfg, chainaccess.GenericConfig{})
+		require.NoError(t, err)
+		require.Contains(t, out, sel)
+		assert.Equal(t, "offramp-file", out[sel].offRampContractID)
+		assert.Equal(t, "rmn-file", out[sel].rmnRemoteContractID)
+		assert.Equal(t, common.StellarTransmitterKeyName, out[sel].keyName)
+	})
+
+	t.Run("overlays hex addresses from ChainConfiguration", func(t *testing.T) {
+		fileCfg := &common.Config{
+			TransmitterConfigs: map[string]contracttransmitter.ContractTransmitterConfig{
+				sel: {CCIPStateChangedTopic: "topic"},
+			},
+		}
+		var gc chainaccess.GenericConfig
+		gc.ChainConfiguration = map[string]chainaccess.DestinationChainConfig{
+			sel: {OffRampAddress: validContractHex, RmnAddress: validContractHex},
+		}
+		out, err := buildStellarDestConfigs(fileCfg, gc)
+		require.NoError(t, err)
+		require.Contains(t, out, sel)
+		assert.Equal(t, wantStrkey, out[sel].offRampContractID)
+		assert.Equal(t, wantStrkey, out[sel].rmnRemoteContractID)
+	})
+
+	t.Run("transmitter key name override", func(t *testing.T) {
+		fileCfg := &common.Config{
+			TransmitterConfigs: map[string]contracttransmitter.ContractTransmitterConfig{
+				sel: {OffRampContractID: "offramp-file", CCIPStateChangedTopic: "topic"},
+			},
+		}
+		var gc chainaccess.GenericConfig
+		gc.ChainConfiguration = map[string]chainaccess.DestinationChainConfig{
+			sel: {TransmitterKeyName: "custom-key"},
+		}
+		out, err := buildStellarDestConfigs(fileCfg, gc)
+		require.NoError(t, err)
+		require.Contains(t, out, sel)
+		assert.Equal(t, "custom-key", out[sel].keyName)
+	})
+
+	t.Run("invalid offramp hex returns error", func(t *testing.T) {
+		fileCfg := &common.Config{
+			TransmitterConfigs: map[string]contracttransmitter.ContractTransmitterConfig{
+				sel: {CCIPStateChangedTopic: "topic"},
+			},
+		}
+		var gc chainaccess.GenericConfig
+		gc.ChainConfiguration = map[string]chainaccess.DestinationChainConfig{
+			sel: {OffRampAddress: "0xZZZZ"},
+		}
+		_, err := buildStellarDestConfigs(fileCfg, gc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "convert OffRamp hex")
+	})
+
+	t.Run("drops entries missing offramp or topic", func(t *testing.T) {
+		fileCfg := &common.Config{
+			DestinationReaderConfigs: map[string]destinationreader.Config{
+				sel: {OffRampContractID: "offramp-file"},
+			},
+		}
+		out, err := buildStellarDestConfigs(fileCfg, chainaccess.GenericConfig{})
+		require.NoError(t, err)
+		assert.Nil(t, out, "entry without stateChangedTopic must be dropped")
+	})
 }
 
-func TestBuildStellarReaderConfigs(t *testing.T) {
-	sel := chainsel.STELLAR_LOCALNET.Selector
-	selStr := strconv.FormatUint(sel, 10)
+func TestCreateStellarAccessorFactory(t *testing.T) {
+	sel := strconv.FormatUint(chainsel.STELLAR_LOCALNET.Selector, 10)
+	wantStrkey, err := scval.HexToContractStrkey(validContractHex)
+	require.NoError(t, err)
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "stellar.toml")
 	fileContents := `
-[reader_configs.` + selStr + `]
+[reader_configs.` + sel + `]
 network_passphrase = "file-pass"
 soroban_rpc_url = "http://file-rpc"
 `
 	require.NoError(t, os.WriteFile(cfgPath, []byte(fileContents), 0o600))
+	t.Setenv(StellarConfigPathEnv, cfgPath)
 
-	rawJob := `
-[blockchain_infos.` + selStr + `]
-network_passphrase = "job-pass"
-`
 	var gc chainaccess.GenericConfig
-	_, err := toml.Decode(rawJob, &gc)
-	require.NoError(t, err)
-	gc.OnRampAddresses = map[string]string{selStr: validContractHex}
+	gc.OnRampAddresses = map[string]string{sel: validContractHex}
 
-	out, err := buildStellarReaderConfigs(cfgPath, gc)
+	accessorFactory, err := CreateStellarAccessorFactory(logger.Test(t), gc)
 	require.NoError(t, err)
-	require.Contains(t, out, selStr)
-	assert.Equal(t, "job-pass", out[selStr].NetworkPassphrase)
-	assert.Equal(t, "http://file-rpc", out[selStr].SorobanRPCURL)
-	require.NotEmpty(t, out[selStr].OnRampContractID, "onramp filled from hex map")
+	require.NotNil(t, accessorFactory)
+
+	// The on-ramp hex map fills the reader's OnRampContractID via strkey conversion.
+	f, ok := accessorFactory.(*factory)
+	require.True(t, ok)
+	require.Contains(t, f.readerConfig, sel)
+	assert.Equal(t, "file-pass", f.readerConfig[sel].NetworkPassphrase)
+	assert.Equal(t, wantStrkey, f.readerConfig[sel].OnRampContractID)
 }

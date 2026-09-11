@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"context"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
@@ -32,16 +31,10 @@ func TestCCIPAdapterRegistrations_stellar(t *testing.T) {
 	_, ok = ccvadapters.GetChainFamilyRegistry().GetChainFamily(chainsel.FamilyStellar)
 	require.True(t, ok, "ChainFamily")
 
-	_, ok = ccvadapters.GetAggregatorConfigRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok, "AggregatorConfig")
-	_, ok = ccvadapters.GetIndexerConfigRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok, "IndexerConfig")
-	_, ok = ccvadapters.GetVerifierJobConfigRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok, "VerifierConfig")
-	_, ok = ccvadapters.GetExecutorConfigRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok, "ExecutorConfig")
-	_, ok = ccvadapters.GetTokenVerifierConfigRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok, "TokenVerifierConfig")
+	// The ccip-side offchain-config registries (verifier, executor, indexer, token verifier,
+	// aggregator) were removed upstream; those adapters now live in chainlink-ccv
+	// (see TestCCVDeploymentAdapterRegistrations_stellar below).
+
 	_, ok = ccvadapters.GetCommitteeVerifierContractRegistry().Get(chainsel.FamilyStellar)
 	require.True(t, ok, "CommitteeVerifierContract")
 
@@ -52,26 +45,44 @@ func TestCCIPAdapterRegistrations_stellar(t *testing.T) {
 	require.True(t, ok, "TokenAdapter 2.0.0")
 }
 
-func TestCCVDeploymentAdapterRegistry_stellar(t *testing.T) {
+func TestCCVDeploymentAdapterRegistrations_stellar(t *testing.T) {
 	t.Parallel()
-	a, ok := ccvdeploymentadapters.GetRegistry().Get(chainsel.FamilyStellar)
-	require.True(t, ok)
-	require.NotNil(t, a.Aggregator)
-	require.NotNil(t, a.Executor)
-	require.NotNil(t, a.Verifier)
-	require.NotNil(t, a.Indexer)
-	require.NotNil(t, a.TokenVerifier)
-	require.NotNil(t, a.CommitteeVerifierOnchain)
+	sel := chainsel.STELLAR_TESTNET.Selector
+
+	_, err := ccvdeploymentadapters.GetAggregatorRegistry().Get(sel)
+	require.NoError(t, err, "Aggregator")
+	_, err = ccvdeploymentadapters.GetExecutorRegistry().Get(sel)
+	require.NoError(t, err, "Executor")
+	_, err = ccvdeploymentadapters.GetVerifierRegistry().Get(sel)
+	require.NoError(t, err, "Verifier")
+	_, err = ccvdeploymentadapters.GetIndexerRegistry().Get(sel)
+	require.NoError(t, err, "Indexer")
+	_, err = ccvdeploymentadapters.GetTokenVerifierRegistry().Get(sel)
+	require.NoError(t, err, "TokenVerifier")
+	_, err = ccvdeploymentadapters.GetCommitteeVerifierOnchainRegistry().Get(sel)
+	require.NoError(t, err, "CommitteeVerifierOnchain")
 }
 
 func TestStellarDeployChainContractsAdapter_smoke(t *testing.T) {
 	t.Parallel()
 	var _ ccvadapters.DeployChainContractsAdapter = (*StellarDeployChainContractsAdapter)(nil)
 	a := &StellarDeployChainContractsAdapter{}
-	seqImp := a.SetContractParamsFromImportedConfig()
-	require.NotNil(t, seqImp)
-	require.Equal(t, stellarsequences.StellarImportConfigForDeployContracts.ID(), seqImp.ID())
-	require.Equal(t, stellarsequences.SequenceVersion.String(), seqImp.Version())
+
+	require.Empty(t, a.GetDefaultDeployContractParams(1))
+
+	env := cldf.Environment{BlockChains: cldf_chain.NewBlockChains(nil)}
+	_, err := a.ResolveDeployAddresses(env, 1)
+	require.Error(t, err, "no stellar chain in environment")
+
+	_, err = a.BuildDeployContractParams(ccvadapters.BuildDeployContractParamsInput{ChainSelector: 1})
+	require.Error(t, err, "committee verifiers required")
+	params, err := a.BuildDeployContractParams(ccvadapters.BuildDeployContractParamsInput{
+		ChainSelector:      1,
+		CommitteeVerifiers: []ccvadapters.CommitteeVerifierDeployParams{{Qualifier: "q"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, params.CommitteeVerifiers, 1)
+
 	seqDep := a.DeployChainContracts()
 	require.NotNil(t, seqDep)
 	require.Equal(t, stellarsequences.StellarDeployChainContracts.ID(), seqDep.ID())
@@ -100,48 +111,6 @@ func TestStellarTransferOwnershipAdapter_smoke(t *testing.T) {
 	require.Equal(t, deploy.MCMSVersion.String(), seqAccept.Version())
 }
 
-func TestStellarVerifierConfigAdapter_smoke(t *testing.T) {
-	t.Parallel()
-	var _ ccvadapters.VerifierConfigAdapter = (*StellarVerifierConfigAdapter)(nil)
-	ds := datastore.NewMemoryDataStore().Seal()
-	_, err := (&StellarVerifierConfigAdapter{}).ResolveVerifierContractAddresses(ds, 1, "q", "q")
-	require.Error(t, err)
-}
-
-func TestStellarTokenVerifierConfigAdapter_smoke(t *testing.T) {
-	t.Parallel()
-	var _ ccvadapters.TokenVerifierConfigAdapter = (*StellarTokenVerifierConfigAdapter)(nil)
-	ds := datastore.NewMemoryDataStore().Seal()
-	_, err := (&StellarTokenVerifierConfigAdapter{}).ResolveTokenVerifierAddresses(ds, 1, "", "")
-	require.Error(t, err)
-}
-
-func TestStellarExecutorConfigAdapter_smoke(t *testing.T) {
-	t.Parallel()
-	var _ ccvadapters.ExecutorConfigAdapter = (*StellarExecutorConfigAdapter)(nil)
-	a := &StellarExecutorConfigAdapter{}
-	require.Nil(t, a.GetDeployedChains(nil, "q"))
-	ds := datastore.NewMemoryDataStore().Seal()
-	require.Empty(t, a.GetDeployedChains(ds, "q"))
-	_, err := a.BuildChainConfig(ds, 1, "q")
-	require.Error(t, err)
-}
-
-func TestStellarIndexerConfigAdapter_smoke(t *testing.T) {
-	t.Parallel()
-	var _ ccvadapters.IndexerConfigAdapter = (*StellarIndexerConfigAdapter)(nil)
-	ds := datastore.NewMemoryDataStore().Seal()
-	ad := &StellarIndexerConfigAdapter{}
-	_, err := ad.ResolveVerifierAddresses(ds, 1, "q", ccvadapters.CCTPVerifierKind)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support")
-
-	var miss *ccvadapters.MissingIndexerVerifierAddressesError
-	_, err = ad.ResolveVerifierAddresses(ds, 1, "q", ccvadapters.CommitteeVerifierKind)
-	require.Error(t, err)
-	require.ErrorAs(t, err, &miss)
-}
-
 func TestStellarCommitteeVerifierContractAdapter_smoke(t *testing.T) {
 	t.Parallel()
 	var _ ccvadapters.CommitteeVerifierContractAdapter = (*StellarCommitteeVerifierContractAdapter)(nil)
@@ -159,19 +128,6 @@ func TestStellarChainFamilyAdapter_smoke(t *testing.T) {
 	ds := datastore.NewMemoryDataStore().Seal()
 	_, err := a.GetOnRampAddress(ds, 1)
 	require.Error(t, err)
-}
-
-func TestStellarAggregatorConfigAdapter_smoke(t *testing.T) {
-	t.Parallel()
-	var _ ccvadapters.AggregatorConfigAdapter = (*StellarAggregatorConfigAdapter)(nil)
-	ctx := context.Background()
-	env := cldf.Environment{
-		DataStore:   datastore.NewMemoryDataStore().Seal(),
-		BlockChains: cldf_chain.NewBlockChains(nil),
-	}
-	states, err := (&StellarAggregatorConfigAdapter{}).ScanCommitteeStates(ctx, env, 1)
-	require.NoError(t, err)
-	require.Empty(t, states)
 }
 
 func TestStellarMCMSDeployer_smoke(t *testing.T) {

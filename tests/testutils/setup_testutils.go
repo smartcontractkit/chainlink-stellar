@@ -41,8 +41,8 @@ import (
 const STELLAR_LOCALNET_PASSPHRASE = "Standalone Network ; February 2017"
 
 // StellarQuickstartImage pins the local-network image by manifest-list digest
-// instead of the rolling `stellar/quickstart:testing` tag. April-10 (core v26, also Protocol 25).
-const StellarQuickstartImage = "stellar/quickstart@sha256:c28a5a9374cb28b70a82ef1bd37871946b0ef966b0c5e02e7855913297421ec1"
+
+const StellarQuickstartImage = "stellar/quickstart@sha256:21a149eef1e6636b1447ce826596071bf1fc435db9d0c03169d6e2094610c443"
 
 // getFreePort asks the OS for an available TCP port.
 func getFreePort(t *testing.T) string {

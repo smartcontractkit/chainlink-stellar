@@ -6,11 +6,13 @@ cl_nodes_funding_link = 50
 indexer_address = ["http://indexer-1:8100"]
 pyroscope_url = "http://host.docker.internal:4040"
 
+# monitoring.Config (chainlink-ccv common/monitoring): no top-level Enabled/Type —
+# Beholder is enabled inside its own section; LogLevel replaces bootstrap.WithLogLevel.
 [environment_topology.monitoring]
-Enabled = true
-Type = "beholder"
+LogLevel = "info"
 
 [environment_topology.monitoring.Beholder]
+Enabled = true
 InsecureConnection = true
 OtelExporterHTTPEndpoint = "host.docker.internal:4318"
 LogStreamingEnabled = false
@@ -137,16 +139,20 @@ threshold = 2
 # nop_aliases = ["tertiary-verifier-1", "tertiary-verifier-2"]
 # threshold = 2
 
+# nop_aliases are scoped to the chain's family: each executor bootstrapper publishes JD
+# chain configs only for its own family (bootstrap [[chains]] are single-family), and
+# ApplyExecutorConfig validates node chain support per chain against JD. Cross-family
+# listings fail that validation and produce unservable job specs.
 [environment_topology.executor_pools.default.chain_configs.3379446385462418246]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["evm-executor-1"]
 execution_interval = 15_000_000_000
 
 [environment_topology.executor_pools.default.chain_configs.12922642891491394802]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["evm-executor-1"]
 execution_interval = 15_000_000_000
 
 [environment_topology.executor_pools.default.chain_configs.17301180955411967724]
-nop_aliases = ["stellar-executor-1", "evm-executor-1"]
+nop_aliases = ["stellar-executor-1"]
 execution_interval = 15_000_000_000
 
 [cldf]
@@ -175,8 +181,10 @@ execution_interval = 15_000_000_000
 # Stellar (localnet)
 [[blockchains]]
   container_name = "blockchain-stellar"
-  chain_id = "baefd734b8d3e48472cff83912375fedbc7573701912fe308af730180f97d74a" 
-  image = "stellar/quickstart:testing"
+  chain_id = "baefd734b8d3e48472cff83912375fedbc7573701912fe308af730180f97d74a"
+  # Pinned by digest (core v28.0.1, protocol 28): protocol-26 WASMs from soroban-sdk 26
+  # fail on older images with "contract protocol number is newer than host".
+  image = "stellar/quickstart@sha256:21a149eef1e6636b1447ce826596071bf1fc435db9d0c03169d6e2094610c443"
   port = "8010"
   type = "stellar"
 
@@ -229,6 +237,8 @@ execution_interval = 15_000_000_000
     port = 8433
 
 ## EVM Verifier Setup
+# node_index must be unique across ALL NOPs in a committee (both families share
+# committee "default"): stellar verifiers own 0-1, EVM verifiers 2-3.
 [[verifier]]
   chain_family = "evm"
   image = "verifier:dev"
@@ -238,7 +248,7 @@ execution_interval = 15_000_000_000
   source_code_path = "chainlink-ccv/verifier"
   root_path = "../chainlink-ccv"
   committee_name = "default"
-  node_index = 0
+  node_index = 2
   [verifier.db]
     image = "postgres:16-alpine"
     name = "evm-verifier-1-db"
@@ -253,7 +263,7 @@ execution_interval = 15_000_000_000
   source_code_path = "chainlink-ccv/verifier"
   root_path = "../chainlink-ccv"
   committee_name = "default"
-  node_index = 1
+  node_index = 3
   [verifier.db]
     image = "postgres:16-alpine"
     name = "evm-verifier-2-db"
@@ -352,10 +362,9 @@ execution_interval = 15_000_000_000
 LogLevel = 'info'
 
 [indexer.indexer_config.Monitoring]
-Enabled = true
-Type = 'beholder'
 
 [indexer.indexer_config.Monitoring.Beholder]
+Enabled = true
 InsecureConnection = true
 CACertFile = ''
 OtelExporterGRPCEndpoint = ''
@@ -446,61 +455,51 @@ URI = "postgresql://indexer:indexer@indexer-db:5432/indexer?sslmode=disable"
 
   [[aggregator.api_clients]]
   client_id = "stellar-verifier-1"
-  description = "Stellar verifier 1"
   enabled = true
   groups = ["verifiers"]
 
   [[aggregator.api_clients]]
   client_id = "stellar-verifier-2"
-  description = "Stellar verifier 2"
   enabled = true
   groups = ["verifiers"]
 
   [[aggregator.api_clients]]
   client_id = "evm-verifier-1"
-  description = "EVM verifier 1"
   enabled = true
   groups = ["verifiers"]
 
   [[aggregator.api_clients]]
   client_id = "evm-verifier-2"
-  description = "EVM verifier 2"
   enabled = true
   groups = ["verifiers"]
 
   [[aggregator.api_clients]]
   client_id = "monitoring"
-  description = "Monitoring and infrastructure client"
   enabled = true
   groups = ["monitoring"]
 
   [[aggregator.api_clients]]
   client_id = "indexer"
-  description = "Development Indexer"
   enabled = true
   groups = ["indexer"]
 
   [[aggregator.api_clients]]
   client_id = "evm-executor-1"
-  description = "EVM executor 1"
   enabled = true
   groups = ["executors"]
 
   [[aggregator.api_clients]]
   client_id = "evm-executor-2"
-  description = "EVM executor 2"
   enabled = true
   groups = ["executors"]
 
   [[aggregator.api_clients]]
   client_id = "stellar-executor-1"
-  description = "Stellar executor 1"
   enabled = true
   groups = ["executors"]
 
   [[aggregator.api_clients]]
   client_id = "stellar-executor-2"
-  description = "Stellar executor 2"
   enabled = true
   groups = ["executors"]
 

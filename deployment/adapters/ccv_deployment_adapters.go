@@ -7,14 +7,18 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	dsutils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
-	ccipdevenvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
 	ccvdeploymentadapters "github.com/smartcontractkit/chainlink-ccv/deployment/adapters"
 	"github.com/smartcontractkit/chainlink-ccv/executor"
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 
+	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
+
+// refAddress is the datastore ref formatter used throughout this file: Stellar records
+// contract IDs verbatim, so no per-family address conversion is needed.
+func refAddress(r datastore.AddressRef) (string, error) { return r.Address, nil }
 
 // StellarCCVDeploymentAggregatorConfigAdapter implements
 // github.com/smartcontractkit/chainlink-ccv/deployment/adapters.AggregatorConfigAdapter
@@ -69,8 +73,7 @@ func (a *StellarCCVDeploymentAggregatorConfigAdapter) resolveVerifierAddress(
 	chainSelector uint64,
 	qualifier string,
 ) (string, error) {
-	return dsutils.FindAndFormatFirstRef(ds, chainSelector,
-		func(r datastore.AddressRef) (string, error) { return r.Address, nil },
+	return dsutils.FindAndFormatFirstRef(ds, chainSelector, refAddress,
 		datastore.AddressRef{
 			Type:      datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
 			Qualifier: qualifier,
@@ -112,21 +115,62 @@ func (a *StellarCCVDeploymentExecutorConfigAdapter) GetDeployedChains(ds datasto
 	return chains
 }
 
+// ResolveExecutorAddress is the single source of truth for the Stellar executor address:
+// BuildChainConfig uses it for DefaultExecutorAddress, and the committee verifier changeset
+// uses it as the executor on-ramp address. Stellar keeps its existing ExecutorProxy datastore
+// type — the adapter API no longer prescribes a contract-type name, but changing the recorded
+// type would orphan every existing ref.
+func (a *StellarCCVDeploymentExecutorConfigAdapter) ResolveExecutorAddress(
+	ds datastore.DataStore,
+	chainSelector uint64,
+	qualifier string,
+) (string, error) {
+	addr, err := dsutils.FindAndFormatRef(
+		ds,
+		stellarccip.ExecutorProxyDatastoreRef(qualifier).PartialAddressRef(),
+		chainSelector,
+		refAddress,
+	)
+	if err != nil {
+		return "", fmt.Errorf("executor address for chain %d: %w", chainSelector, err)
+	}
+	return addr, nil
+}
+
 func (a *StellarCCVDeploymentExecutorConfigAdapter) BuildChainConfig(
 	ds datastore.DataStore,
 	chainSelector uint64,
 	qualifier string,
 ) (executor.ChainConfiguration, error) {
-	cfg, err := (&StellarExecutorConfigAdapter{}).BuildChainConfig(ds, chainSelector, qualifier)
+	offRampAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.OffRampDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
+	if err != nil {
+		return executor.ChainConfiguration{}, fmt.Errorf("off ramp address for chain %d: %w", chainSelector, err)
+	}
+
+	// RMN Remote is deprecated upstream — readers derive it from the OffRamp's on-chain static
+	// config. Emit it when the datastore has it so specs keep working for node binaries that
+	// predate the derivation cutover, but do not fail the build when it is absent.
+	rmnRemoteAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.RMNRemoteDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
+	if err != nil {
+		rmnRemoteAddr = ""
+	}
+
+	executorAddr, err := a.ResolveExecutorAddress(ds, chainSelector, qualifier)
 	if err != nil {
 		return executor.ChainConfiguration{}, err
 	}
+
 	return executor.ChainConfiguration{
 		DestinationChainConfig: chainaccess.DestinationChainConfig{
-			OffRampAddress: cfg.OffRampAddress,
-			RmnAddress:     cfg.RmnAddress,
+			OffRampAddress: offRampAddr,
+			RmnAddress:     rmnRemoteAddr,
+			// Make the Stellar Ed25519 transmitter key explicit in the generated job spec
+			// rather than relying on the accessor's default-key fallback.
+			TransmitterKeyName: stellarcommon.StellarTransmitterKeyName,
 		},
-		DefaultExecutorAddress: cfg.ExecutorProxyAddress,
+		DefaultExecutorAddress: executorAddr,
 	}, nil
 }
 
@@ -144,18 +188,40 @@ func (a *StellarCCVDeploymentVerifierConfigAdapter) ResolveVerifierContractAddre
 	ds datastore.DataStore,
 	chainSelector uint64,
 	committeeQualifier string,
-	executorQualifier string,
+	_ string,
 ) (*ccvdeploymentadapters.VerifierContractAddresses, error) {
-	addrs, err := (&StellarVerifierConfigAdapter{}).ResolveVerifierContractAddresses(
-		ds, chainSelector, committeeQualifier, executorQualifier)
+	committeeVerifierAddr, err := dsutils.FindAndFormatFirstRef(ds, chainSelector, refAddress,
+		datastore.AddressRef{
+			Type:      datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
+			Qualifier: committeeQualifier,
+		},
+		datastore.AddressRef{
+			Type:      datastore.ContractType(committee_verifier.ContractType),
+			Qualifier: committeeQualifier,
+		},
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("committee verifier address for chain %d: %w", chainSelector, err)
 	}
+
+	onRampAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.OnRampDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
+	if err != nil {
+		return nil, fmt.Errorf("on ramp address for chain %d: %w", chainSelector, err)
+	}
+
+	// The executor address is no longer part of this struct — the changeset resolves it via
+	// ExecutorConfigAdapter.ResolveExecutorAddress. RMN Remote is deprecated and optional.
+	rmnRemoteAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.RMNRemoteDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
+	if err != nil {
+		rmnRemoteAddr = ""
+	}
+
 	return &ccvdeploymentadapters.VerifierContractAddresses{
-		CommitteeVerifierAddress: addrs.CommitteeVerifierAddress,
-		OnRampAddress:            addrs.OnRampAddress,
-		ExecutorProxyAddress:     addrs.ExecutorProxyAddress,
-		RMNRemoteAddress:         addrs.RMNRemoteAddress,
+		CommitteeVerifierAddress: committeeVerifierAddr,
+		OnRampAddress:            onRampAddr,
+		RMNRemoteAddress:         rmnRemoteAddr,
 	}, nil
 }
 
@@ -171,13 +237,37 @@ func (a *StellarCCVDeploymentIndexerConfigAdapter) ResolveVerifierAddresses(
 	qualifier string,
 	kind ccvdeploymentadapters.VerifierKind,
 ) ([]string, error) {
-	switch kind {
-	case ccvdeploymentadapters.CommitteeVerifierKind:
-		return (&StellarIndexerConfigAdapter{}).ResolveVerifierAddresses(
-			ds, chainSelector, qualifier, ccipdevenvadapters.VerifierKind(kind))
-	default:
-		return nil, fmt.Errorf("Stellar does not support verifier kind %q", kind)
+	if kind != ccvdeploymentadapters.CommitteeVerifierKind {
+		return nil, fmt.Errorf("stellar does not support verifier kind %q", kind)
 	}
+
+	refs := ds.Addresses().Filter(
+		datastore.AddressRefByChainSelector(chainSelector),
+		datastore.AddressRefByQualifier(qualifier),
+		datastore.AddressRefByType(datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType)),
+		datastore.AddressRefByVersion(versioned_verifier_resolver.Version),
+	)
+	if len(refs) == 0 {
+		refs = ds.Addresses().Filter(
+			datastore.AddressRefByChainSelector(chainSelector),
+			datastore.AddressRefByQualifier(qualifier),
+			datastore.AddressRefByType(datastore.ContractType(committee_verifier.ContractType)),
+			datastore.AddressRefByVersion(committee_verifier.Version),
+		)
+	}
+	if len(refs) == 0 {
+		return nil, &ccvdeploymentadapters.MissingIndexerVerifierAddressesError{
+			Kind:          kind,
+			ChainSelector: chainSelector,
+			Qualifier:     qualifier,
+		}
+	}
+
+	addresses := make([]string, 0, len(refs))
+	for _, r := range refs {
+		addresses = append(addresses, r.Address)
+	}
+	return addresses, nil
 }
 
 // StellarCCVDeploymentTokenVerifierConfigAdapter implements
@@ -189,19 +279,25 @@ var _ ccvdeploymentadapters.TokenVerifierConfigAdapter = (*StellarCCVDeploymentT
 func (a *StellarCCVDeploymentTokenVerifierConfigAdapter) ResolveTokenVerifierAddresses(
 	ds datastore.DataStore,
 	chainSelector uint64,
-	cctpQualifier string,
-	lombardQualifier string,
+	_ string,
+	_ string,
 ) (*ccvdeploymentadapters.TokenVerifierChainAddresses, error) {
-	addrs, err := (&StellarTokenVerifierConfigAdapter{}).ResolveTokenVerifierAddresses(
-		ds, chainSelector, cctpQualifier, lombardQualifier)
+	onRampAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.OnRampDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("on ramp address for chain %d: %w", chainSelector, err)
 	}
+
+	// Deprecated and optional; see ResolveVerifierContractAddresses.
+	rmnRemoteAddr, err := dsutils.FindAndFormatRef(
+		ds, stellarccip.RMNRemoteDatastoreRef().PartialAddressRef(), chainSelector, refAddress)
+	if err != nil {
+		rmnRemoteAddr = ""
+	}
+
+	// Stellar deploys no CCTP or Lombard token verifiers; those addresses stay empty.
 	return &ccvdeploymentadapters.TokenVerifierChainAddresses{
-		OnRampAddress:                  addrs.OnRampAddress,
-		RMNRemoteAddress:               addrs.RMNRemoteAddress,
-		CCTPVerifierAddress:            addrs.CCTPVerifierAddress,
-		CCTPVerifierResolverAddress:    addrs.CCTPVerifierResolverAddress,
-		LombardVerifierResolverAddress: addrs.LombardVerifierResolverAddress,
+		OnRampAddress:    onRampAddr,
+		RMNRemoteAddress: rmnRemoteAddr,
 	}, nil
 }
