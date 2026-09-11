@@ -56,10 +56,10 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
- 
+
+      # This step assumes the `chainlink-ccv` is a sibling directory.
       - name: Build CCV Docker images
-        working-directory: ../chainlink-ccv/build/devenv
-        run: just build-docker-dev-ci
+        run: make docker-ccv-dev
         env:
           DOCKER_BUILDKIT: 1
 
