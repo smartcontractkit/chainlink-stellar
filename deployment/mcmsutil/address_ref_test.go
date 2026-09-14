@@ -13,60 +13,74 @@ import (
 	mcmsutils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/mcms"
 )
 
-func TestMCMSRefLookupOrder(t *testing.T) {
-	t.Run("schedule", func(t *testing.T) {
-		order, err := MCMSRefLookupOrder(mcmstypes.TimelockActionSchedule)
+func TestMCMSRefTypeForAction(t *testing.T) {
+	cases := []struct {
+		action mcmstypes.TimelockAction
+		want   cldf.ContractType
+	}{
+		{mcmstypes.TimelockActionSchedule, cldf.ContractType(utils.ProposerManyChainMultisig)},
+		{mcmstypes.TimelockActionCancel, cldf.ContractType(utils.CancellerManyChainMultisig)},
+		{mcmstypes.TimelockActionBypass, cldf.ContractType(utils.BypasserManyChainMultisig)},
+	}
+	for _, c := range cases {
+		got, err := MCMSRefTypeForAction(c.action)
 		require.NoError(t, err)
-		require.Equal(t, cldf.ContractType(utils.ProposerManyChainMultisig), order[0])
-	})
-
-	t.Run("unsupported", func(t *testing.T) {
-		_, err := MCMSRefLookupOrder(mcmstypes.TimelockAction("nope"))
-		require.Error(t, err)
-	})
+		require.Equal(t, c.want, got)
+	}
+	_, err := MCMSRefTypeForAction(mcmstypes.TimelockAction("nope"))
+	require.Error(t, err)
 }
 
-func TestFindStellarTimelockAddressRef(t *testing.T) {
+func TestFindStellarMCMSAddressRef_failClosed(t *testing.T) {
 	chainSel := uint64(42)
 	qual := "q1"
-	mcmsAddr := "CMCMSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY"
+	proposerAddr := "CPROPOSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+	ds := datastore.NewMemoryDataStore()
+	ref, err := StellarMCMSRoleDatastoreRef(chainSel, qual, RoleProposer, proposerAddr)
+	require.NoError(t, err)
+	require.NoError(t, ds.Addresses().Upsert(ref))
+	env := cldf.Environment{DataStore: ds.Seal()}
+
+	scheduleInput := mcmsutils.Input{Qualifier: qual, TimelockAction: mcmstypes.TimelockActionSchedule}
+	got, err := FindStellarMCMSAddressRef(env, chainSel, scheduleInput)
+	require.NoError(t, err)
+	require.Equal(t, proposerAddr, got.Address)
+
+	// Only the proposer ref exists: a bypass action must fail closed, not reuse the proposer.
+	bypassInput := mcmsutils.Input{Qualifier: qual, TimelockAction: mcmstypes.TimelockActionBypass}
+	_, err = FindStellarMCMSAddressRef(env, chainSel, bypassInput)
+	require.Error(t, err)
+
+	// Empty datastore fails closed too.
+	emptyEnv := cldf.Environment{DataStore: datastore.NewMemoryDataStore().Seal()}
+	_, err = FindStellarMCMSAddressRef(emptyEnv, chainSel, scheduleInput)
+	require.Error(t, err)
+}
+
+func TestFindStellarTimelockAddressRef_noMCMSFallback(t *testing.T) {
+	chainSel := uint64(42)
+	qual := "q1"
+	proposerAddr := "CPROPOSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	tlAddr := "CTLOCKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY"
+	input := mcmsutils.Input{Qualifier: qual, TimelockAction: mcmstypes.TimelockActionSchedule}
 
-	input := mcmsutils.Input{
-		Qualifier:      qual,
-		TimelockAction: mcmstypes.TimelockActionSchedule,
-	}
-
-	t.Run("prefers_RBACTimelock_when_present", func(t *testing.T) {
+	t.Run("resolves RBACTimelock", func(t *testing.T) {
 		ds := datastore.NewMemoryDataStore()
-		for _, r := range StellarMCMSDatastoreRefs(chainSel, qual, mcmsAddr) {
-			require.NoError(t, ds.Addresses().Upsert(r))
-		}
 		require.NoError(t, ds.Addresses().Upsert(StellarTimelockDatastoreRef(chainSel, qual, tlAddr)))
-
 		env := cldf.Environment{DataStore: ds.Seal()}
 		ref, err := FindStellarTimelockAddressRef(env, chainSel, input)
 		require.NoError(t, err)
 		require.Equal(t, tlAddr, ref.Address)
-		require.Equal(t, datastore.ContractType(utils.RBACTimelock), ref.Type)
 	})
 
-	t.Run("falls_back_to_MCMS_when_no_timelock_row", func(t *testing.T) {
+	t.Run("no timelock ref fails closed even when an MCMS ref exists", func(t *testing.T) {
 		ds := datastore.NewMemoryDataStore()
-		for _, r := range StellarMCMSDatastoreRefs(chainSel, qual, mcmsAddr) {
-			require.NoError(t, ds.Addresses().Upsert(r))
-		}
-
-		env := cldf.Environment{DataStore: ds.Seal()}
-		ref, err := FindStellarTimelockAddressRef(env, chainSel, input)
+		ref, err := StellarMCMSRoleDatastoreRef(chainSel, qual, RoleProposer, proposerAddr)
 		require.NoError(t, err)
-		require.Equal(t, mcmsAddr, ref.Address)
-	})
-
-	t.Run("FindStellarMCMSAddressRef_errors_when_empty", func(t *testing.T) {
-		ds := datastore.NewMemoryDataStore()
+		require.NoError(t, ds.Addresses().Upsert(ref))
 		env := cldf.Environment{DataStore: ds.Seal()}
-		_, err := FindStellarMCMSAddressRef(env, chainSel, input)
-		require.Error(t, err)
+		_, err = FindStellarTimelockAddressRef(env, chainSel, input)
+		require.Error(t, err, "must not fall back to the MCMS contract")
 	})
 }

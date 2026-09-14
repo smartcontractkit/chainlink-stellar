@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
+	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
@@ -23,6 +24,11 @@ var (
 	domainOpStellar = [32]byte{
 		0x12, 0xcd, 0xc8, 0x8e, 0x33, 0xb5, 0x9a, 0x3a, 0x5a, 0x9f, 0xe3, 0x07, 0x2e, 0x0b, 0xab, 0x63,
 		0xee, 0x3d, 0xb8, 0x88, 0xaf, 0x2c, 0xdb, 0x10, 0xbc, 0x93, 0x34, 0x56, 0x88, 0x05, 0x8d, 0x16,
+	}
+	// Must match contracts/timelock/src/encoding.rs DOMAIN_TIMELOCK_BATCH_STELLAR.
+	domainTimelockBatchStellar = [32]byte{
+		0xe0, 0xf6, 0x6b, 0x80, 0x81, 0xe2, 0x9e, 0xf8, 0x2e, 0x0f, 0x2a, 0x28, 0xd6, 0x8a, 0xf0, 0x18,
+		0x40, 0x2d, 0xd0, 0x3f, 0x4a, 0x71, 0xf5, 0x43, 0x18, 0xb8, 0x2d, 0x42, 0x7a, 0x7e, 0xd6, 0xdc,
 	}
 )
 
@@ -66,14 +72,14 @@ func appendU64BE(buf *bytes.Buffer, v uint64) error {
 	return nil
 }
 
-// HashRootMetadata returns keccak256(encode_root_metadata(m)) per contracts/mcms/src/encoding.rs.
-func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
+// EncodeRootMetadata returns the canonical Stellar metadata preimage per contracts/mcms/src/encoding.rs.
+func EncodeRootMetadata(m mcmsbindings.StellarRootMetadata) ([]byte, error) {
 	if m.EncodingVersion != mcmsEncodingVersion {
-		return [32]byte{}, fmt.Errorf("unsupported encoding version %d, want %d", m.EncodingVersion, mcmsEncodingVersion)
+		return nil, fmt.Errorf("unsupported encoding version %d, want %d", m.EncodingVersion, mcmsEncodingVersion)
 	}
 	multisig, err := ContractIDToBytes32(m.Multisig)
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("decode multisig contract id: %w", err)
+		return nil, fmt.Errorf("decode multisig contract id: %w", err)
 	}
 	var buf bytes.Buffer
 	buf.Write(domainMetaStellar[:])
@@ -81,10 +87,10 @@ func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
 	buf.Write(m.NetworkId[:])
 	buf.Write(multisig[:])
 	if err := appendU64BE(&buf, m.PreOpCount); err != nil {
-		return [32]byte{}, err
+		return nil, err
 	}
 	if err := appendU64BE(&buf, m.PostOpCount); err != nil {
-		return [32]byte{}, err
+		return nil, err
 	}
 	if m.OverridePreviousRoot {
 		buf.WriteByte(1)
@@ -94,32 +100,41 @@ func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
 	var cv [8]byte
 	binary.BigEndian.PutUint64(cv[:], m.ConfigVersion)
 	buf.Write(cv[:])
-	h := crypto.Keccak256(buf.Bytes())
+	return buf.Bytes(), nil
+}
+
+// HashRootMetadata returns keccak256(encode_root_metadata(m)) per contracts/mcms/src/encoding.rs.
+func HashRootMetadata(m mcmsbindings.StellarRootMetadata) ([32]byte, error) {
+	preimage, err := EncodeRootMetadata(m)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	h := crypto.Keccak256(preimage)
 	var digest [32]byte
 	copy(digest[:], h)
 	return digest, nil
 }
 
-// HashStellarOp returns keccak256(encode_stellar_op(op)) per contracts/mcms/src/encoding.rs.
+// EncodeStellarOp returns the canonical Stellar operation preimage per contracts/mcms/src/encoding.rs.
 // The function field is encoded as the full ScVal::Symbol XDR (SCV_SYMBOL discriminant plus
 // length-prefixed, 4-byte-padded bytes), matching Symbol::to_xdr in encode_stellar_op. Omitting
 // the ScVal wrapper shortens the length-prefixed segment below and yields a different merkle leaf
 // than the contract computes, so set_root succeeds but execute fails proof verification.
-func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
+func EncodeStellarOp(op mcmsbindings.StellarOp) ([]byte, error) {
 	if op.EncodingVersion != mcmsEncodingVersion {
-		return [32]byte{}, fmt.Errorf("unsupported encoding version %d, want %d", op.EncodingVersion, mcmsEncodingVersion)
+		return nil, fmt.Errorf("unsupported encoding version %d, want %d", op.EncodingVersion, mcmsEncodingVersion)
 	}
 	multisig, err := ContractIDToBytes32(op.Multisig)
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("decode multisig contract id: %w", err)
+		return nil, fmt.Errorf("decode multisig contract id: %w", err)
 	}
 	target, err := ContractIDToBytes32(op.Target)
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("decode target contract id: %w", err)
+		return nil, fmt.Errorf("decode target contract id: %w", err)
 	}
 	fnXDR, err := scval.SymbolToScVal(op.Function).MarshalBinary()
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("marshal function symbol %q: %w", op.Function, err)
+		return nil, fmt.Errorf("marshal function symbol %q: %w", op.Function, err)
 	}
 	var buf bytes.Buffer
 	buf.Write(domainOpStellar[:])
@@ -127,17 +142,80 @@ func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
 	buf.Write(op.NetworkId[:])
 	buf.Write(multisig[:])
 	if err := appendU64BE(&buf, op.Nonce); err != nil {
-		return [32]byte{}, err
+		return nil, err
 	}
 	buf.Write(target[:])
 	appendU32BE(&buf, uint32(len(fnXDR)))
 	buf.Write(fnXDR)
 	appendU32BE(&buf, uint32(len(op.ArgsXdr)))
 	buf.Write(op.ArgsXdr)
-	h := crypto.Keccak256(buf.Bytes())
+	return buf.Bytes(), nil
+}
+
+// HashStellarOp returns keccak256(encode_stellar_op(op)) per contracts/mcms/src/encoding.rs.
+func HashStellarOp(op mcmsbindings.StellarOp) ([32]byte, error) {
+	preimage, err := EncodeStellarOp(op)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	h := crypto.Keccak256(preimage)
 	var digest [32]byte
 	copy(digest[:], h)
 	return digest, nil
+}
+
+// EncodeTimelockCall returns the canonical Stellar timelock call preimage
+// (matches contracts/timelock/src/encoding.rs hash_single_call input).
+func EncodeTimelockCall(call timelockbindings.Call) ([]byte, error) {
+	target, err := ContractIDToBytes32(call.Target)
+	if err != nil {
+		return nil, fmt.Errorf("decode target contract id: %w", err)
+	}
+	functionXDR, err := scval.SymbolToScVal(call.Function).MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("marshal function symbol %q: %w", call.Function, err)
+	}
+	var buf bytes.Buffer
+	buf.Write(target[:])
+	appendU32BE(&buf, uint32(len(functionXDR)))
+	buf.Write(functionXDR)
+	appendU32BE(&buf, uint32(len(call.ArgsXdr)))
+	buf.Write(call.ArgsXdr)
+	return buf.Bytes(), nil
+}
+
+// HashTimelockCall returns the canonical Stellar timelock call hash.
+func HashTimelockCall(call timelockbindings.Call) ([32]byte, error) {
+	preimage, err := EncodeTimelockCall(call)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	var out [32]byte
+	copy(out[:], crypto.Keccak256(preimage))
+	return out, nil
+}
+
+// TimelockOperationID computes the domain-separated Stellar v2 timelock batch operation id
+// (matches contracts/timelock/src/encoding.rs hash_operation_batch).
+func TimelockOperationID(calls timelockbindings.Calls, predecessor, salt [32]byte) ([32]byte, error) {
+	if len(calls.Inner) == 0 {
+		return [32]byte{}, fmt.Errorf("empty batch")
+	}
+	var buf bytes.Buffer
+	buf.Write(domainTimelockBatchStellar[:])
+	appendU32BE(&buf, uint32(len(calls.Inner)))
+	for _, call := range calls.Inner {
+		callHash, err := HashTimelockCall(call)
+		if err != nil {
+			return [32]byte{}, err
+		}
+		buf.Write(callHash[:])
+	}
+	buf.Write(predecessor[:])
+	buf.Write(salt[:])
+	var out [32]byte
+	copy(out[:], crypto.Keccak256(buf.Bytes()))
+	return out, nil
 }
 
 // HashSetRootInner returns keccak256(abi.encode(bytes32 root, uint32 validUntil)).

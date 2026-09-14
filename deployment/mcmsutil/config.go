@@ -10,15 +10,6 @@ import (
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 )
 
-// MergeTripleMCMSConfig requires Proposer, Bypasser, and Canceller configs to be equal
-// (single Soroban MCMS instance). Returns a copy suitable for ExtractSetConfigInputs.
-func MergeTripleMCMSConfig(p, b, c mcmstypes.Config) (*mcmstypes.Config, error) {
-	if !p.Equals(&b) || !b.Equals(&c) {
-		return nil, fmt.Errorf("stellar MCMS: Proposer, Bypasser, and Canceller configs must be identical for a single MCMS instance")
-	}
-	return &p, nil
-}
-
 // ConfigToStellarSetConfig maps mcms types.Config to Soroban set_config inputs using
 // the shared ExtractSetConfigInputs helper from github.com/smartcontractkit/mcms/sdk.
 func ConfigToStellarSetConfig(cfg *mcmstypes.Config, clearRoot bool) (mcmsbindings.SignerAddresses, mcmsbindings.SignerGroups, [32]byte, [32]byte, bool, error) {

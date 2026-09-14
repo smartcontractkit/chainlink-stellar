@@ -20,17 +20,29 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// encodeApplyOnrampUpdatesArgs builds timelock Call.ArgsXdr for ramp registry
+// applyOnrampUpdatesCall builds a timelock Call for ramp registry
 // apply_onramp_updates(Vec<OnRampUpdate>) with one on-ramp upsert (Some(addr)).
-// Args-only XDR Vec<Val>; the function name lives in Call.Function.
-func encodeApplyOnrampUpdatesArgs(destChainSelector uint64, onramp string) ([]byte, error) {
+func applyOnrampUpdatesCall(t *testing.T, registryID string, destChainSelector uint64, onramp string) timelockbindings.Call {
+	t.Helper()
 	u := rampbindings.OnRampUpdate{
 		DestChainSelector: destChainSelector,
 		Onramp:            &onramp,
 	}
-	return helpers.EncodeTimelockCallArgs([]xdr.ScVal{
+	args, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{
 		scval.StructSliceToScVal([]rampbindings.OnRampUpdate{u}),
 	})
+	if err != nil {
+		t.Fatalf("encode apply_onramp_updates args: %v", err)
+	}
+	return timelockbindings.Call{
+		Target:   registryID,
+		Function: "apply_onramp_updates",
+		ArgsXdr:  args,
+	}
+}
+
+func singleCallBatch(call timelockbindings.Call) timelockbindings.Calls {
+	return timelockbindings.Calls{Inner: []timelockbindings.Call{call}}
 }
 
 func randSalt(t *testing.T) [32]byte {
@@ -71,9 +83,9 @@ func assertApplyOnrampUpdatesRejectsNonOwner(t *testing.T, ctx context.Context, 
 }
 
 // Uses ccip-ramp-registry as the Ownable target: transfer_ownership → timelock schedules
-// accept_ownership → execute; owner-only apply_onramp_updates is denied for the former owner and strangers,
-// and only succeeds via schedule → wait → execute. Scheduling requires PROPOSER; execute_batch is
-// permissionless once the operation is ready (contracts/timelock/src/lib.rs).
+// accept_ownership → execute; owner-only apply_onramp_updates is denied for the former owner and
+// strangers, and only succeeds via schedule → wait → execute. Execution is permissionless in the
+// v2 timelock: an unrelated funded account submits execute_batch. Only PROPOSER can schedule.
 func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -81,14 +93,14 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	projectRoot, deployerKP, deployer, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
 
 	proposerKP := keypair.MustRandom()
-	executorKP := keypair.MustRandom()
+	anyoneKP := keypair.MustRandom()
 	strangerKP := keypair.MustRandom()
 	for _, label := range []struct {
 		name string
 		kp   *keypair.Full
 	}{
 		{"proposer", proposerKP},
-		{"executor", executorKP},
+		{"anyone", anyoneKP},
 		{"stranger", strangerKP},
 	} {
 		if err := helpers.FundViaFriendbot(friendbotURL, label.kp.Address()); err != nil {
@@ -97,7 +109,7 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	}
 
 	proposerDep := deployment.NewDeployer(rpcClient, passphrase, proposerKP)
-	executorDep := deployment.NewDeployer(rpcClient, passphrase, executorKP)
+	anyoneDep := deployment.NewDeployer(rpcClient, passphrase, anyoneKP)
 	strangerDep := deployment.NewDeployer(rpcClient, passphrase, strangerKP)
 
 	deploy := func(name, wasm string) string {
@@ -114,14 +126,15 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	registryID := deploy("gov-tl-ramp-registry", "ccip_ramp_registry.wasm")
 	timelockID := deploy("gov-tl-timelock", "timelock.wasm")
 
-	tlAdmin := timelockbindings.NewTimelockClient(deployer, timelockID)
+	tlReader := timelockbindings.NewTimelockClient(deployer, timelockID)
 	tlProposer := timelockbindings.NewTimelockClient(proposerDep, timelockID)
-	tlExecutor := timelockbindings.NewTimelockClient(executorDep, timelockID)
+	tlAnyone := timelockbindings.NewTimelockClient(anyoneDep, timelockID)
 	tlStranger := timelockbindings.NewTimelockClient(strangerDep, timelockID)
 
 	const minDelaySec uint64 = 3
 
-	if err := tlAdmin.Initialize(ctx, minDelaySec,
+	// The v2 timelock grants ADMIN to itself; there is no admin input and no executor role.
+	if err := tlReader.Initialize(ctx, minDelaySec,
 		[]string{proposerKP.Address()},
 		[]string{},
 		[]string{},
@@ -152,24 +165,24 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 
 	var predecessor [32]byte
 	saltAccept := randSalt(t)
-	callsAccept := timelockbindings.Calls{
-		Inner: []timelockbindings.Call{
-			{Target: registryID, Function: "accept_ownership", ArgsXdr: acceptArgs},
-		},
-	}
+	callsAccept := singleCallBatch(timelockbindings.Call{
+		Target:   registryID,
+		Function: "accept_ownership",
+		ArgsXdr:  acceptArgs,
+	})
 
 	if err := tlProposer.ScheduleBatch(ctx, proposerKP.Address(), callsAccept, predecessor, saltAccept, minDelaySec); err != nil {
 		t.Fatalf("ScheduleBatch accept_ownership: %v", err)
 	}
 
-	opIDAccept, err := tlAdmin.HashOperationBatch(ctx, callsAccept, predecessor, saltAccept)
+	opIDAccept, err := tlReader.HashOperationBatch(ctx, callsAccept, predecessor, saltAccept)
 	if err != nil {
 		t.Fatalf("HashOperationBatch accept: %v", err)
 	}
 
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
-		ready, err := tlAdmin.IsOperationReady(ctx, opIDAccept)
+		ready, err := tlReader.IsOperationReady(ctx, opIDAccept)
 		if err != nil {
 			t.Fatalf("IsOperationReady: %v", err)
 		}
@@ -179,12 +192,13 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 		time.Sleep(400 * time.Millisecond)
 	}
 
-	okAccept, err := tlAdmin.IsOperationReady(ctx, opIDAccept)
+	okAccept, err := tlReader.IsOperationReady(ctx, opIDAccept)
 	if err != nil || !okAccept {
 		t.Fatalf("accept operation never became ready: ready=%v err=%v", okAccept, err)
 	}
 
-	if err := tlExecutor.ExecuteBatch(ctx, callsAccept, predecessor, saltAccept); err != nil {
+	// Permissionless execution: an unrelated account submits the ready operation.
+	if err := tlAnyone.ExecuteBatch(ctx, callsAccept, predecessor, saltAccept); err != nil {
 		t.Fatalf("ExecuteBatch accept_ownership: %v", err)
 	}
 
@@ -200,14 +214,14 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 		chainReject   uint64 = 910001
 		chainEarly    uint64 = 910002
 		chainGate     uint64 = 910003
-		chainExecutor uint64 = 910005
+		chainNonProp  uint64 = 910004
 		chainStranger uint64 = 910006
 	)
 
 	mockReject := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-reject")
 	mockEarly := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-early")
 	mockGate := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-gate")
-	mockExecutor := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-exec")
+	mockNonProp := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-nonprop")
 	mockStranger := helpers.GenerateMockContractID(t, deployerKP.Address(), "gov-tl-mock-stranger")
 
 	// Non-owner cannot call apply_onramp_updates: see assertApplyOnrampUpdatesRejectsNonOwner.
@@ -226,33 +240,21 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	})
 
 	t.Run("non-proposer cannot schedule", func(t *testing.T) {
-		opArgs, err := encodeApplyOnrampUpdatesArgs(chainExecutor, mockExecutor)
-		if err != nil {
-			t.Fatal(err)
-		}
+		callsOp := singleCallBatch(applyOnrampUpdatesCall(t, registryID, chainNonProp, mockNonProp))
 		saltBump := randSalt(t)
-		callsOp := timelockbindings.Calls{
-			Inner: []timelockbindings.Call{{Target: registryID, Function: "apply_onramp_updates", ArgsXdr: opArgs}},
-		}
-		err = tlExecutor.ScheduleBatch(ctx, executorKP.Address(), callsOp, predecessor, saltBump, minDelaySec)
+		err := tlAnyone.ScheduleBatch(ctx, anyoneKP.Address(), callsOp, predecessor, saltBump, minDelaySec)
 		if err == nil {
-			t.Fatal("expected ScheduleBatch to fail when caller lacks PROPOSER")
+			t.Fatal("expected ScheduleBatch to fail for account without PROPOSER")
 		}
 	})
 
 	t.Run("apply_onramp_updates before delay cannot execute", func(t *testing.T) {
-		opArgs, err := encodeApplyOnrampUpdatesArgs(chainEarly, mockEarly)
-		if err != nil {
-			t.Fatal(err)
-		}
+		callsOp := singleCallBatch(applyOnrampUpdatesCall(t, registryID, chainEarly, mockEarly))
 		saltEarly := randSalt(t)
-		callsOp := timelockbindings.Calls{
-			Inner: []timelockbindings.Call{{Target: registryID, Function: "apply_onramp_updates", ArgsXdr: opArgs}},
-		}
 		if err := tlProposer.ScheduleBatch(ctx, proposerKP.Address(), callsOp, predecessor, saltEarly, minDelaySec); err != nil {
 			t.Fatalf("ScheduleBatch apply_onramp_updates: %v", err)
 		}
-		err = tlExecutor.ExecuteBatch(ctx, callsOp, predecessor, saltEarly)
+		err := tlAnyone.ExecuteBatch(ctx, callsOp, predecessor, saltEarly)
 		if err == nil {
 			t.Fatal("expected ExecuteBatch before min_delay to fail")
 		}
@@ -263,25 +265,19 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 			t.Fatal("expected GetOnramp to fail before route is configured")
 		}
 
-		opArgs, err := encodeApplyOnrampUpdatesArgs(chainGate, mockGate)
-		if err != nil {
-			t.Fatal(err)
-		}
+		callsOp := singleCallBatch(applyOnrampUpdatesCall(t, registryID, chainGate, mockGate))
 		saltBump := randSalt(t)
-		callsOp := timelockbindings.Calls{
-			Inner: []timelockbindings.Call{{Target: registryID, Function: "apply_onramp_updates", ArgsXdr: opArgs}},
-		}
 		if err := tlProposer.ScheduleBatch(ctx, proposerKP.Address(), callsOp, predecessor, saltBump, minDelaySec); err != nil {
 			t.Fatalf("ScheduleBatch apply_onramp_updates: %v", err)
 		}
-		opBump, err := tlAdmin.HashOperationBatch(ctx, callsOp, predecessor, saltBump)
+		opBump, err := tlReader.HashOperationBatch(ctx, callsOp, predecessor, saltBump)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		deadline := time.Now().Add(45 * time.Second)
 		for time.Now().Before(deadline) {
-			ready, err := tlAdmin.IsOperationReady(ctx, opBump)
+			ready, err := tlReader.IsOperationReady(ctx, opBump)
 			if err != nil {
 				t.Fatalf("IsOperationReady: %v", err)
 			}
@@ -290,11 +286,12 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 			}
 			time.Sleep(400 * time.Millisecond)
 		}
-		if ok, _ := tlAdmin.IsOperationReady(ctx, opBump); !ok {
+		if ok, _ := tlReader.IsOperationReady(ctx, opBump); !ok {
 			t.Fatal("apply_onramp_updates operation never became ready")
 		}
 
-		if err := tlExecutor.ExecuteBatch(ctx, callsOp, predecessor, saltBump); err != nil {
+		// Any account may execute a ready operation, including one with no timelock role.
+		if err := tlStranger.ExecuteBatch(ctx, callsOp, predecessor, saltBump); err != nil {
 			t.Fatalf("ExecuteBatch apply_onramp_updates: %v", err)
 		}
 
@@ -308,15 +305,9 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	})
 
 	t.Run("stranger cannot schedule", func(t *testing.T) {
-		opArgs, err := encodeApplyOnrampUpdatesArgs(chainGate, mockGate)
-		if err != nil {
-			t.Fatal(err)
-		}
+		callsOp := singleCallBatch(applyOnrampUpdatesCall(t, registryID, chainGate, mockGate))
 		saltBump := randSalt(t)
-		callsOp := timelockbindings.Calls{
-			Inner: []timelockbindings.Call{{Target: registryID, Function: "apply_onramp_updates", ArgsXdr: opArgs}},
-		}
-		err = tlStranger.ScheduleBatch(ctx, strangerKP.Address(), callsOp, predecessor, saltBump, minDelaySec)
+		err := tlStranger.ScheduleBatch(ctx, strangerKP.Address(), callsOp, predecessor, saltBump, minDelaySec)
 		if err == nil {
 			t.Fatal("expected ScheduleBatch to fail for account without PROPOSER")
 		}

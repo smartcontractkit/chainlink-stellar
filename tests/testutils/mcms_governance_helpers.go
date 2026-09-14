@@ -37,6 +37,8 @@ type MCMSGovernanceStack struct {
 	TimelockID     string
 	MCMSClient     *mcmsbindings.McmsClient
 	TimelockClient *timelockbindings.TimelockClient
+	MCMSRaw        [32]byte
+	TimelockRaw    [32]byte
 	ChainNetID     [32]byte
 	SignerPK       *ecdsa.PrivateKey
 	MinDelaySec    uint64
@@ -115,10 +117,10 @@ func MCMSValidUntilSeconds(ctx context.Context, rpc *rpcclient.Client) (uint32, 
 }
 
 // DeployMCMSAndTimelock deploys and initializes MCMS + RBAC timelock via CLDF operations
-// (mcmsops/timelockops Deploy, Initialize, SetConfig), using mcmsutil WASM paths and deploy salts.
+// (mcmsops/timelockops Deploy and Initialize), using mcmsutil WASM paths and deploy salts.
 //
-// MCMS is configured as both proposer and executor on the timelock so MCMS.execute can drive
-// schedule_batch and execute_batch (same wiring as integration TestMcmsMerkleTimelockScheduleAndExecute).
+// MCMS is the timelock PROPOSER so MCMS.execute can drive schedule_batch; execute_batch is
+// permissionless (same wiring as integration TestMcmsMerkleTimelockScheduleAndExecute).
 func DeployMCMSAndTimelock(
 	t *testing.T,
 	ctx context.Context,
@@ -146,7 +148,7 @@ func DeployMCMSAndTimelock(
 
 	mcmsDep, err := cldfops.ExecuteOperation(bundle, mcmsops.Deploy, deps, stellarops.DeployInput{
 		WasmPath: mcmsWasm,
-		Salt:     mcmsutil.MCMSDeploySalt(chainSelector, qualifier),
+		Salt:     mcmsutil.MCMSRoleDeploySalt(chainSelector, qualifier, mcmsutil.RoleProposer),
 	})
 	require.NoError(t, err)
 	mcmsID := mcmsDep.Output.ContractID
@@ -185,11 +187,18 @@ func DeployMCMSAndTimelock(
 	})
 	require.NoError(t, err)
 
+	mcmsRaw, err := ContractIDToBytes32(mcmsID)
+	require.NoError(t, err)
+	tlRaw, err := ContractIDToBytes32(tlID)
+	require.NoError(t, err)
+
 	return &MCMSGovernanceStack{
 		MCMSID:         mcmsID,
 		TimelockID:     tlID,
 		MCMSClient:     mcmsbindings.NewMcmsClient(env.Deployer, mcmsID),
 		TimelockClient: timelockbindings.NewTimelockClient(env.Deployer, tlID),
+		MCMSRaw:        mcmsRaw,
+		TimelockRaw:    tlRaw,
 		ChainNetID:     chainNetID,
 		SignerPK:       pk,
 		MinDelaySec:    minDelay,
