@@ -82,8 +82,13 @@ test-go-bindings:
     cd bindings && go test -v -race -fullpath -shuffle on -coverprofile=coverage-bindings.out ./...
     cd bindings && go tool cover -func=coverage-bindings.out
 
+# Run Go unit tests (deployment module) with coverage
+test-go-deployment:
+    cd deployment && go test -v -race -fullpath -shuffle on -coverprofile=coverage-deployment.out ./...
+    cd deployment && go tool cover -func=coverage-deployment.out
+
 # Run all Go unit tests
-test-go-all: test-go test-go-tests test-go-bindings
+test-go-all: test-go test-go-tests test-go-bindings test-go-deployment
 
 # Run Go integration tests (requires running Stellar localnet)
 test-go-integration:

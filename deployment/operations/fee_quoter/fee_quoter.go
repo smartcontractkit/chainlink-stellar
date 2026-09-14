@@ -57,9 +57,9 @@ var ApplyDestChainConfigs = cldfops.NewOperation(
 
 // UpdatePricesInput sets gas and token price updates on FeeQuoter.
 type UpdatePricesInput struct {
-	ContractID   string                    `json:"contract_id"`
-	Updater      string                    `json:"updater"`
-	PriceUpdates fqbindings.PriceUpdates   `json:"price_updates"`
+	ContractID   string                  `json:"contract_id"`
+	Updater      string                  `json:"updater"`
+	PriceUpdates fqbindings.PriceUpdates `json:"price_updates"`
 }
 
 // UpdatePrices calls FeeQuoter `update_prices`.
@@ -78,8 +78,8 @@ var UpdatePrices = cldfops.NewOperation(
 
 // ApplyTokenFeeConfigsInput sets per-token transfer fee overrides on FeeQuoter.
 type ApplyTokenFeeConfigsInput struct {
-	ContractID string                          `json:"contract_id"`
-	AddConfigs []fqbindings.TokenFeeConfigArgs `json:"add_configs"`
+	ContractID string                                `json:"contract_id"`
+	AddConfigs []fqbindings.TokenFeeConfigArgs       `json:"add_configs"`
 	RemoveArgs []fqbindings.TokenFeeConfigRemoveArgs `json:"remove_args"`
 }
 

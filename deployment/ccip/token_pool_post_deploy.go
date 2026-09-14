@@ -12,10 +12,10 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	sacops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/sac_token"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	slrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
-	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
+	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 	poolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_pool"
 )
 

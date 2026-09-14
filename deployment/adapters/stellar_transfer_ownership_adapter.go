@@ -96,7 +96,7 @@ func (a *StellarTransferOwnershipAdapter) wrapOwnershipSequence(
 			}
 			report, err := cldfops.ExecuteSequence(b, inner, chains, stellarsequences.StellarTransferOwnershipInput{
 				TransferOwnershipPerChainInput: in,
-				GovernanceAddr:                gov,
+				GovernanceAddr:                 gov,
 			})
 			if err != nil {
 				return seqcore.OnChainOutput{}, err

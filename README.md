@@ -74,6 +74,8 @@ cd tests && go test ./integration/... -v -tags=integration -count=1 -p=1 -timeou
 
 > Note: This is required to make sure that a single test env setup is done when running multiple tests. This approach speeds up the spin up time to avoid having each test suite wait for 120-150 seconds for the local Stellar node to be ready.
 
+> The `/deployment` tree is also its own Go module (`github.com/smartcontractkit/chainlink-stellar/deployment`), separate from the root production module and from `/tests`. Run its tests with `just test-go-deployment` or `cd deployment && go test ./...`.
+
 
 ### Contract Tests
 

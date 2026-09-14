@@ -32,25 +32,25 @@ type CLDFStellarCCIPDevenvHost struct {
 	dep     *stellardeployment.Deployer
 	ownerKp *keypair.Full
 
-	onRampContractID       string
-	onRampClient           *onrampbindings.OnRampClient
-	feeQuoterClient        *fqbindings.FeeQuoterClient
-	tarContractID          string
-	tarClient              *tarbindings.TokenAdminRegistryClient
-	tokenPoolContractID        string
-	tokenPoolClient            *tokenpoolbindings.TokenPoolClient
-	legacyLockReleasePoolID    string
-	tokenLockBoxContractID     string
-	testTokenContractID      string
-	offRampContractID      string
-	offRampClient          *offrampbindings.OffRampClient
-	routerContractID       string
-	routerClient           *routerbindings.RouterClient
-	rampRegistryContractID string
-	vvrContractID          string
-	cvContractID           string
-	receiverContractID     string
-	feeTokenContractID     string
+	onRampContractID        string
+	onRampClient            *onrampbindings.OnRampClient
+	feeQuoterClient         *fqbindings.FeeQuoterClient
+	tarContractID           string
+	tarClient               *tarbindings.TokenAdminRegistryClient
+	tokenPoolContractID     string
+	tokenPoolClient         *tokenpoolbindings.TokenPoolClient
+	legacyLockReleasePoolID string
+	tokenLockBoxContractID  string
+	testTokenContractID     string
+	offRampContractID       string
+	offRampClient           *offrampbindings.OffRampClient
+	routerContractID        string
+	routerClient            *routerbindings.RouterClient
+	rampRegistryContractID  string
+	vvrContractID           string
+	cvContractID            string
+	receiverContractID      string
+	feeTokenContractID      string
 }
 
 var _ CCIPDevenvHost = (*CLDFStellarCCIPDevenvHost)(nil)
