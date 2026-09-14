@@ -46,6 +46,7 @@ import (
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
@@ -1154,14 +1155,6 @@ var remotePoolContractTypes = []string{
 	"LockReleaseTokenPool",
 }
 
-// remoteTokenContractTypes lists token contract types used by EVM devenv
-// deployments. Order mirrors deployment likelihood.
-var remoteTokenContractTypes = []string{
-	"BurnMintERC20WithDripToken",
-	"BurnMintERC20WithDrip",
-	"BurnMintERC20Token",
-}
-
 // resolveRemotePoolAndToken finds the counterpart pool and token on the remote
 // chain. EVM remotes use the deterministic EVM-to-Stellar token pair resolver;
 // other remotes fall back to the first matching pool and token with the same
@@ -1180,7 +1173,7 @@ func resolveRemotePoolAndToken(ds datastore.DataStore, remoteSelector uint64) (p
 
 	family, err := chainsel.GetSelectorFamily(remoteSelector)
 	if err == nil && family == chainsel.FamilyEVM {
-		if poolRef, tokenRef, found := ResolveEVMTokenPoolForStellar(allRefs, remoteSelector); found {
+		if poolRef, tokenRef, found := ccvchainprod.ResolveEVMTokenPoolForStellar(allRefs, remoteSelector); found {
 			poolBytes, err = stellarccip.AddressBytesHex(poolRef, remoteSelector)
 			if err != nil {
 				return zeroPad(), zeroPad(), nil
@@ -1232,7 +1225,7 @@ func resolveRemotePoolAndToken(ds datastore.DataStore, remoteSelector uint64) (p
 
 	// Find a token with the same qualifier as the pool.
 	tokenBytes = zeroPad()
-	for _, ct := range remoteTokenContractTypes {
+	for _, ct := range ccvchainprod.RemoteTokenContractTypes {
 		if ref, ok := byKey[refKey{ct, poolRef.Qualifier}]; ok {
 			if tb, err := stellarccip.AddressBytesHex(ref, remoteSelector); err == nil {
 				tokenBytes = tb

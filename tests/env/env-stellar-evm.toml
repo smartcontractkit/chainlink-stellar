@@ -191,13 +191,13 @@ execution_interval = 15_000_000_000
 [fake]
   image = "ccv-fakes:dev"
   port = 9111
-  source_code_path = "chainlink-ccv/build/devenv/fakes"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/build/devenv/fakes"
+  root_path = "../../chainlink-ccv"
 
 [pricer]
   image = "pricer:dev"
-  source_code_path = "chainlink-ccv/pricer"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/pricer"
+  root_path = "../../chainlink-ccv"
   [pricer.keystore]
     address = "0x9221E2E83903C731C2927CCd84e5fa02B22Bb1E2"
     file_path = "../pricer/keystore.json"
@@ -210,8 +210,8 @@ execution_interval = 15_000_000_000
   container_name = "stellar-verifier-1"
   nop_alias = "stellar-verifier-1"
   port = 8100
-  source_code_path = "chainlink-ccv/verifier"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/verifier"
+  root_path = "../../chainlink-ccv"
   committee_name = "default"
   node_index = 0
   disable_finality_checkers = ["17301180955411967724"]
@@ -226,8 +226,8 @@ execution_interval = 15_000_000_000
   container_name = "stellar-verifier-2"
   nop_alias = "stellar-verifier-2"
   port = 8200
-  source_code_path = "chainlink-ccv/verifier"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/verifier"
+  root_path = "../../chainlink-ccv"
   committee_name = "default"
   node_index = 1
   disable_finality_checkers = ["17301180955411967724"]
@@ -245,8 +245,8 @@ execution_interval = 15_000_000_000
   container_name = "evm-verifier-1"
   nop_alias = "evm-verifier-1"
   port = 8300
-  source_code_path = "chainlink-ccv/verifier"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/verifier"
+  root_path = "../../chainlink-ccv"
   committee_name = "default"
   node_index = 2
   [verifier.db]
@@ -260,8 +260,8 @@ execution_interval = 15_000_000_000
   container_name = "evm-verifier-2"
   nop_alias = "evm-verifier-2"
   port = 8400
-  source_code_path = "chainlink-ccv/verifier"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/verifier"
+  root_path = "../../chainlink-ccv"
   committee_name = "default"
   node_index = 3
   [verifier.db]
@@ -275,8 +275,8 @@ execution_interval = 15_000_000_000
 #   container_name = "secondary-verifier-1"
 #   nop_alias = "secondary-verifier-1"
 #   port = 8300
-#   source_code_path = "chainlink-ccv/verifier"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/verifier"
+#   root_path = "../../chainlink-ccv"
 #   committee_name = "secondary"
 #   node_index = 0
 #   disable_finality_checkers = ["17301180955411967724"]
@@ -290,8 +290,8 @@ execution_interval = 15_000_000_000
 #   container_name = "secondary-verifier-2"
 #   nop_alias = "secondary-verifier-2"
 #   port = 8400
-#   source_code_path = "chainlink-ccv/verifier"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/verifier"
+#   root_path = "../../chainlink-ccv"
 #   committee_name = "secondary"
 #   node_index = 1
 #   disable_finality_checkers = ["17301180955411967724"]
@@ -306,8 +306,8 @@ execution_interval = 15_000_000_000
 #   container_name = "tertiary-verifier-1"
 #   nop_alias = "tertiary-verifier-1"
 #   port = 8500
-#   source_code_path = "chainlink-ccv/verifier"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/verifier"
+#   root_path = "../../chainlink-ccv"
 #   committee_name = "tertiary"
 #   node_index = 0
 #   disable_finality_checkers = ["17301180955411967724"]
@@ -321,8 +321,8 @@ execution_interval = 15_000_000_000
 #   container_name = "tertiary-verifier-2"
 #   nop_alias = "tertiary-verifier-2"
 #   port = 8600
-#   source_code_path = "chainlink-ccv/verifier"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/verifier"
+#   root_path = "../../chainlink-ccv"
 #   committee_name = "tertiary"
 #   node_index = 1
 #   disable_finality_checkers = ["17301180955411967724"]
@@ -336,16 +336,16 @@ execution_interval = 15_000_000_000
   # The `port` field was removed in chainlink-ccv changelog/2026-04-27_executor_jd_migration.md;
   # the executor no longer exposes an HTTP port and registers with JD over WSRPC.
   chain_family = "stellar"
-  source_code_path = "chainlink-stellar/cmd/executor"
-  root_path = ".."
+  source_code_path = "../chainlink-stellar/cmd/executor"
+  root_path = "../.."
   container_name = "stellar-executor-1"
   nop_alias = "stellar-executor-1"
   executor_qualifier = "default"
 
 [[executor]]
   image = "executor:dev"
-  source_code_path = "chainlink-ccv/executor"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/executor"
+  root_path = "../../chainlink-ccv"
   container_name = "evm-executor-1"
   nop_alias = "evm-executor-1"
   executor_qualifier = "default"
@@ -353,8 +353,8 @@ execution_interval = 15_000_000_000
 [[indexer]]
   image = "indexer:dev"
   port = 8104
-  source_code_path = "chainlink-ccv/indexer"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/indexer"
+  root_path = "../../chainlink-ccv"
   [indexer.db]
     image = "postgres:16-alpine"
 
@@ -442,8 +442,8 @@ URI = "postgresql://indexer:indexer@indexer-db:5432/indexer?sslmode=disable"
   committee_name = "default"
   image = "aggregator:dev"
   host_port = 50051
-  source_code_path = "chainlink-ccv/aggregator"
-  root_path = "../chainlink-ccv"
+  source_code_path = "../chainlink-ccv/aggregator"
+  root_path = "../../chainlink-ccv"
 
   [aggregator.db]
     image = "postgres:16-alpine"
@@ -514,8 +514,8 @@ URI = "postgresql://indexer:indexer@indexer-db:5432/indexer?sslmode=disable"
 #   committee_name = "secondary"
 #   image = "aggregator:dev"
 #   host_port = 50052
-#   source_code_path = "chainlink-ccv/aggregator"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/aggregator"
+#   root_path = "../../chainlink-ccv"
 
 #   [aggregator.db]
 #     image = "postgres:16-alpine"
@@ -559,8 +559,8 @@ URI = "postgresql://indexer:indexer@indexer-db:5432/indexer?sslmode=disable"
 #   committee_name = "tertiary"
 #   image = "aggregator:dev"
 #   host_port = 50053
-#   source_code_path = "chainlink-ccv/aggregator"
-#   root_path = "../chainlink-ccv"
+#   source_code_path = "../chainlink-ccv/aggregator"
+#   root_path = "../../chainlink-ccv"
 
 #   [aggregator.db]
 #     image = "postgres:16-alpine"

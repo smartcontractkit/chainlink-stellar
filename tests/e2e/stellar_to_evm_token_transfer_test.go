@@ -15,7 +15,7 @@ import (
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
-	ccvchain "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 

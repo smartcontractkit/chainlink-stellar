@@ -27,10 +27,10 @@ update-data-feeds-artifacts:
 	./scripts/update_data_feeds_artifacts.sh
 
 test-e2e:
-	go test -v -timeout 30m ./tests/e2e/...
+	cd tests && go test -v -timeout 30m ./e2e/...
 
 test-integration:
-	go test -v -tags=integration -count=1 -p=1 -timeout=15m ./tests/integration/...
+	cd tests && go test -v -tags=integration -count=1 -p=1 -timeout=15m ./integration/...
 
 # Generate Rust interface files for all contracts from their WASM files.
 # This can be run with `--no-build` to skip the build of the contracts.
@@ -94,7 +94,7 @@ restart-verifier-executor: docker-verifier docker-executor
 	$(MAKE) down && $(MAKE) up
 
 up:
-	CTF_CONFIGS=tests/env/env-stellar-evm.toml go run ./tests/testutils/cmd/devenv up tests/env/env-stellar-evm.toml
+	cd tests && CTF_CONFIGS=env/env-stellar-evm.toml go run ./testutils/cmd/devenv up env/env-stellar-evm.toml
 
 down:
-	CTF_CONFIGS=tests/env/env-stellar-evm.toml go run ./tests/testutils/cmd/devenv down tests/env/env-stellar-evm.toml
+	cd tests && CTF_CONFIGS=env/env-stellar-evm.toml go run ./testutils/cmd/devenv down env/env-stellar-evm.toml

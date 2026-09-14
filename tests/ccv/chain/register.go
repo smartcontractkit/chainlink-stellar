@@ -21,7 +21,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/chainreg"
 	devenvccipevm "github.com/smartcontractkit/chainlink-ccv/build/devenv/evm"
 
-	modifier "github.com/smartcontractkit/chainlink-stellar/ccv/chain/modifier"
+	modifier "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain/modifier"
 
 	// Triggers deployment/adapters init; see package doc.
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters"
