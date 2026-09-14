@@ -19,7 +19,6 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
-	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
@@ -747,7 +746,7 @@ func RunStellarCCIPFullDeploy(
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("convert VVR address: %w", err)
 	}
-	for _, qualifier := range []string{devenvcommon.DefaultCommitteeVerifierQualifier} {
+	for _, qualifier := range []string{stellarccip.DefaultCommitteeVerifierQualifier} {
 		if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
 			Address:       vvrHex,
 			Type:          datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
@@ -767,7 +766,7 @@ func RunStellarCCIPFullDeploy(
 		Address:       cvHex,
 		Type:          datastore.ContractType(committee_verifier.ContractType),
 		Version:       committee_verifier.Version,
-		Qualifier:     devenvcommon.DefaultCommitteeVerifierQualifier,
+		Qualifier:     stellarccip.DefaultCommitteeVerifierQualifier,
 		ChainSelector: selector,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, err
@@ -777,7 +776,7 @@ func RunStellarCCIPFullDeploy(
 		Address:       contractHexAddr("stellar-executor"),
 		Type:          datastore.ContractType(executor.ContractType),
 		Version:       executor.Version,
-		Qualifier:     devenvcommon.DefaultExecutorQualifier,
+		Qualifier:     stellarccip.DefaultExecutorQualifier,
 		ChainSelector: selector,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, err
@@ -786,7 +785,7 @@ func RunStellarCCIPFullDeploy(
 		Address:       contractHexAddr("stellar-executor-proxy"),
 		Type:          datastore.ContractType(proxy.ContractType),
 		Version:       proxy.Version,
-		Qualifier:     devenvcommon.DefaultExecutorQualifier,
+		Qualifier:     stellarccip.DefaultExecutorQualifier,
 		ChainSelector: selector,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, err

@@ -72,9 +72,10 @@ test-go:
 test-go-tests:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd tests && pkgs=$(go list ./... | grep -v '/e2e' || true)
-    cd tests && go test -v -race -fullpath -shuffle on -coverprofile=coverage-tests.out $pkgs
-    cd tests && go tool cover -func=coverage-tests.out
+    cd tests
+    pkgs=$(go list ./... | grep -v '/e2e' || true)
+    go test -v -race -fullpath -shuffle on -coverprofile=coverage-tests.out $pkgs
+    go tool cover -func=coverage-tests.out
 
 # Run Go unit tests (bindings module) with coverage
 test-go-bindings:

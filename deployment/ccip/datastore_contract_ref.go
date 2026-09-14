@@ -11,7 +11,6 @@ import (
 	onrampoperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/onramp"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/proxy"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
-	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	rrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ramp_registry"
@@ -115,6 +114,18 @@ const (
 	RMNRemoteContractVersion = "1.6.0"
 )
 
+// Default datastore qualifiers for committee-verifier and executor contract refs.
+// These mirror chainlink-ccv/build/devenv/common's DefaultCommitteeVerifierQualifier
+// and DefaultExecutorQualifier (both "default") exactly so existing Stellar
+// datastore refs keep resolving. They are duplicated locally to keep the root
+// production module free of the chainlink-ccv/build/devenv dependency (and the
+// transitive chainlink-testing-framework pull it would otherwise cause). If
+// devenv ever changes these values, update both constants here to match.
+const (
+	DefaultCommitteeVerifierQualifier = "default"
+	DefaultExecutorQualifier          = "default"
+)
+
 func RMNRemoteDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(RMNRemoteContractType),
@@ -143,7 +154,7 @@ func VVRDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
 		Version:   versioned_verifier_resolver.Version,
-		Qualifier: devenvcommon.DefaultCommitteeVerifierQualifier,
+		Qualifier: DefaultCommitteeVerifierQualifier,
 	}
 }
 
@@ -151,7 +162,7 @@ func CommitteeVerifierDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(committee_verifier.ContractType),
 		Version:   committee_verifier.Version,
-		Qualifier: devenvcommon.DefaultCommitteeVerifierQualifier,
+		Qualifier: DefaultCommitteeVerifierQualifier,
 	}
 }
 
@@ -211,12 +222,12 @@ func DefaultExecutorDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(executor.ContractType),
 		Version:   executor.Version,
-		Qualifier: devenvcommon.DefaultExecutorQualifier,
+		Qualifier: DefaultExecutorQualifier,
 	}
 }
 
 // ExecutorProxyDatastoreRef returns the executor proxy row for the given qualifier
-// (typically devenvcommon.DefaultExecutorQualifier).
+// (typically DefaultExecutorQualifier).
 func ExecutorProxyDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(proxy.ContractType),

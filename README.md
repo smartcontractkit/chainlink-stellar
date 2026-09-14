@@ -104,5 +104,3 @@ make up
 This will run the CCV CLI's `up` command and point the the default network topology TOML file. It will also generate (or overwrite) an `out` toplogy file (usually named `$TOPLOGY_FILE_NAME-out.toml` where `$TOPLOGY_FILE_NAME` is the file that was used as input for the `up` command).
 
 Running the E2E tests is now as simple running regular Go tets with `cd tests && go test -v -timeout 15m ./e2e/...`
-
-> The `/tests` directory is a separate Go module (`tests/go.mod`) that imports the production module and the e2e testing framework (CTF) via a local `replace`. This keeps the production module at the repo root free of direct CTF imports, so other repositories can import `chainlink-stellar` without inheriting CTF and its pinned version. Run all `go` commands for e2e, integration, and devenv code from inside `tests/`.

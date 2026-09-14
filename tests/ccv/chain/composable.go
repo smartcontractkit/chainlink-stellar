@@ -23,8 +23,8 @@ type StellarSendOptions struct{}
 func (StellarSendOptions) IsSendOption() {}
 
 var (
-	_ cciptestinterfaces.ChainAsSource       = (*Chain)(nil)
-	_ cciptestinterfaces.ChainAsDestination  = (*Chain)(nil)
+	_ cciptestinterfaces.ChainAsSource        = (*Chain)(nil)
+	_ cciptestinterfaces.ChainAsDestination   = (*Chain)(nil)
 	_ cciptestinterfaces.MessageV3Destination = (*Chain)(nil)
 )
 
@@ -48,7 +48,7 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 	// pre-populate a MessageOptions so EncodeStellarSourceExtraArgsForOnRamp
 	// emits sensible defaults. Callers that need richer per-send overrides
 	// should construct the Soroban extraArgs externally.
-	encodedExtraArgs, err := common.EncodeStellarSourceExtraArgsForOnRamp(
+	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
 		c.deployerKeypair.Address(),
 		c.vvrContractID,
 		cciptestinterfaces.MessageOptions{OutOfOrderExecution: true},
