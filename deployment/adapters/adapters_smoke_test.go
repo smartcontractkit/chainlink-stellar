@@ -5,6 +5,8 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/stretchr/testify/require"
+
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	tokens "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/utils/changesets"
@@ -13,7 +15,6 @@ import (
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
-	"github.com/stretchr/testify/require"
 
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
@@ -146,7 +147,9 @@ func TestStellarCCVDeploymentAdapters_smoke(t *testing.T) {
 	t.Parallel()
 	var _ ccvdeploymentadapters.AggregatorConfigAdapter = (*StellarCCVDeploymentAggregatorConfigAdapter)(nil)
 	var _ ccvdeploymentadapters.ExecutorConfigAdapter = (*StellarCCVDeploymentExecutorConfigAdapter)(nil)
+	var _ ccvdeploymentadapters.ExecutorNodeChainJDSupport = (*StellarCCVDeploymentExecutorConfigAdapter)(nil)
 	var _ ccvdeploymentadapters.VerifierConfigAdapter = (*StellarCCVDeploymentVerifierConfigAdapter)(nil)
+	var _ ccvdeploymentadapters.VerifierNodeChainJDSupport = (*StellarCCVDeploymentVerifierConfigAdapter)(nil)
 	var _ ccvdeploymentadapters.IndexerConfigAdapter = (*StellarCCVDeploymentIndexerConfigAdapter)(nil)
 	var _ ccvdeploymentadapters.TokenVerifierConfigAdapter = (*StellarCCVDeploymentTokenVerifierConfigAdapter)(nil)
 
@@ -156,12 +159,16 @@ func TestStellarCCVDeploymentAdapters_smoke(t *testing.T) {
 	_, err = (&StellarCCVDeploymentAggregatorConfigAdapter{}).ResolveDestinationVerifierAddress(ds, 1, "q")
 	require.Error(t, err)
 
-	require.Empty(t, (&StellarCCVDeploymentExecutorConfigAdapter{}).GetDeployedChains(ds, "q"))
-	_, err = (&StellarCCVDeploymentExecutorConfigAdapter{}).BuildChainConfig(ds, 1, "q")
+	executorAdapter := &StellarCCVDeploymentExecutorConfigAdapter{}
+	require.False(t, executorAdapter.RequiresNodeChainSupportInJD())
+	require.Empty(t, executorAdapter.GetDeployedChains(ds, "q"))
+	_, err = executorAdapter.BuildChainConfig(ds, 1, "q")
 	require.Error(t, err)
 
-	require.Equal(t, chainsel.FamilyStellar, (&StellarCCVDeploymentVerifierConfigAdapter{}).GetSignerAddressFamily())
-	_, err = (&StellarCCVDeploymentVerifierConfigAdapter{}).ResolveVerifierContractAddresses(ds, 1, "a", "b")
+	verifierAdapter := &StellarCCVDeploymentVerifierConfigAdapter{}
+	require.False(t, verifierAdapter.RequiresNodeChainSupportInJD())
+	require.Equal(t, chainsel.FamilyStellar, verifierAdapter.GetSignerAddressFamily())
+	_, err = verifierAdapter.ResolveVerifierContractAddresses(ds, 1, "a", "b")
 	require.Error(t, err)
 
 	_, err = (&StellarCCVDeploymentIndexerConfigAdapter{}).ResolveVerifierAddresses(ds, 1, "q", ccvdeploymentadapters.CommitteeVerifierKind)
