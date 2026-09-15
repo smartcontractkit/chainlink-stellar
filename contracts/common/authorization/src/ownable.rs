@@ -155,17 +155,6 @@ pub trait Ownable: Initializable {
         env.storage().instance().remove(&Self::PENDING_OWNER);
         Ok(())
     }
-
-    /// A method to transfer ownership without waiting for the new owner to accept.
-    ///
-    /// # Panics
-    ///
-    /// If the current owner did not authorize this invocation (`require_auth`).
-    fn set_new_owner(env: &Env, new_owner: &Address) -> Result<(), CCIPError> {
-        Self::require_owner(env)?;
-        env.storage().instance().set(&Self::OWNER, new_owner);
-        Ok(())
-    }
 }
 
 /// Default implementation of Ownable using standard storage keys.

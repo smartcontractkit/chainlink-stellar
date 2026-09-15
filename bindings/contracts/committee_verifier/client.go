@@ -168,21 +168,6 @@ func (c *CommitteeVerifierClient) RequireOwner(ctx context.Context) (string, err
 	return v, nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *CommitteeVerifierClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // VerifyMessage calls the verify_message function on the contract.
 func (c *CommitteeVerifierClient) VerifyMessage(ctx context.Context, sourceChainSelector uint64, messageHash [32]byte, verifierResults []byte) error {
 	args := []xdr.ScVal{

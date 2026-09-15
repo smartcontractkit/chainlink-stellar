@@ -13,10 +13,6 @@ pub trait FeeQuoterInterface {
         authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn update_prices(
         env: soroban_sdk::Env,
         updater: soroban_sdk::Address,

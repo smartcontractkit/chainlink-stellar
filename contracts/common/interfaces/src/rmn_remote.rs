@@ -24,10 +24,6 @@ pub trait RmnRemoteInterface {
         curse_admins: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_curse_admins(
         env: soroban_sdk::Env,

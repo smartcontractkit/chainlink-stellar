@@ -51,10 +51,6 @@ pub trait RouterInterface {
         receiver: soroban_sdk::Address,
         message: AnyToStellarMessage,
     ) -> Result<(), CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn remove_offramp(
         env: soroban_sdk::Env,
         source_chain_selector: u64,

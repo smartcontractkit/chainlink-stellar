@@ -12,10 +12,6 @@ pub trait ExampleCcipReceiverInterface {
     ) -> Result<(), CCIPError>;
     fn ccip_receive(env: soroban_sdk::Env, message: AnyToStellarMessage) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_ccv_config(
         env: soroban_sdk::Env,
         source_chain_selector: u64,

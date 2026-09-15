@@ -220,21 +220,6 @@ func (c *LockReleasePoolClient) RequireOwner(ctx context.Context) (string, error
 	return v, nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *LockReleasePoolClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // GetRemotePool calls the get_remote_pool function on the contract.
 func (c *LockReleasePoolClient) GetRemotePool(ctx context.Context, remoteChainSelector uint64) ([]byte, error) {
 	args := []xdr.ScVal{

@@ -9,6 +9,7 @@ import (
 	burnmintbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	cciprecvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	crebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/cre"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	lrpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
@@ -25,6 +26,7 @@ import (
 	burnmintops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
 	cciprecvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
+	creforwarderops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/cre_forwarder"
 	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
@@ -144,6 +146,12 @@ func ContractOwner(ctx context.Context, deps stellardeps.StellarDeps, ref datast
 		return optionalStellarOwner(o)
 	case cciprecvops.ContractType:
 		o, err := cciprecvbindings.NewExampleCcipReceiverClient(deps.Invoker, cid).Owner(ctx)
+		if err != nil {
+			return "", err
+		}
+		return optionalStellarOwner(o)
+	case creforwarderops.ContractType:
+		o, err := crebindings.NewForwarderClient(deps.Invoker, cid).Owner(ctx)
 		if err != nil {
 			return "", err
 		}

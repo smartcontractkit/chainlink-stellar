@@ -11,58 +11,48 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 	ccipdatastore "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
 	mcmsutils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/mcms"
-
-	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 )
 
-// MCMSRefLookupOrder returns datastore contract types to try when resolving a Stellar MCMS address.
-func MCMSRefLookupOrder(action mcmstypes.TimelockAction) ([]cldf.ContractType, error) {
-	var primary cldf.ContractType
+// MCMSRefTypeForAction returns the single datastore contract type for a timelock action.
+func MCMSRefTypeForAction(action mcmstypes.TimelockAction) (cldf.ContractType, error) {
 	switch action {
 	case mcmstypes.TimelockActionSchedule:
-		primary = cldf.ContractType(utils.ProposerManyChainMultisig)
+		return cldf.ContractType(utils.ProposerManyChainMultisig), nil
 	case mcmstypes.TimelockActionBypass:
-		primary = cldf.ContractType(utils.BypasserManyChainMultisig)
+		return cldf.ContractType(utils.BypasserManyChainMultisig), nil
 	case mcmstypes.TimelockActionCancel:
-		primary = cldf.ContractType(utils.CancellerManyChainMultisig)
+		return cldf.ContractType(utils.CancellerManyChainMultisig), nil
 	default:
-		return nil, fmt.Errorf("unsupported timelock action: %s", action)
+		return "", fmt.Errorf("unsupported timelock action: %s", action)
 	}
-	return []cldf.ContractType{
-		primary,
-		cldf.ContractType(utils.ProposerManyChainMultisig),
-		cldf.ContractType(utils.BypasserManyChainMultisig),
-		cldf.ContractType(utils.CancellerManyChainMultisig),
-		cldf.ContractType(mcmsops.ContractType),
-	}, nil
 }
 
-// FindStellarMCMSAddressRef resolves the MCMS contract from the environment datastore.
+// FindStellarMCMSAddressRef resolves the role-specific MCMS contract from the datastore.
+// It fails closed: the exact role ref must exist, with no fallback to another role.
 func FindStellarMCMSAddressRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) (frameworkdatastore.AddressRef, error) {
-	order, err := MCMSRefLookupOrder(input.TimelockAction)
+	addrType, err := MCMSRefTypeForAction(input.TimelockAction)
 	if err != nil {
 		return frameworkdatastore.AddressRef{}, err
 	}
 	refs := e.DataStore.Addresses().Filter()
-	v := deploy.MCMSVersion
-	for _, addrType := range order {
-		ref := ccipdatastore.GetAddressRef(refs, chainSelector, addrType, v, input.Qualifier)
-		if ref.Address != "" {
-			return ref, nil
-		}
+	ref := ccipdatastore.GetAddressRef(refs, chainSelector, addrType, deploy.MCMSVersion, input.Qualifier)
+	if ref.Address == "" {
+		return frameworkdatastore.AddressRef{}, fmt.Errorf(
+			"no Stellar MCMS address found for chain %d qualifier %q role %s (action %s); role refs are not interchangeable",
+			chainSelector, input.Qualifier, addrType, input.TimelockAction)
 	}
-	return frameworkdatastore.AddressRef{}, fmt.Errorf("no Stellar MCMS address found for chain %d qualifier %q (expected EVM-style MCM alias types or %s)",
-		chainSelector, input.Qualifier, mcmsops.ContractType)
+	return ref, nil
 }
 
-// FindStellarTimelockAddressRef resolves RBACTimelock from the datastore, or falls back to the
-// MCMS contract when no timelock row exists (pre-timelock Stellar deployments).
+// FindStellarTimelockAddressRef resolves RBACTimelock from the datastore. It fails closed:
+// there is no fallback to an MCMS contract (We deploy a distinct timelock).
 func FindStellarTimelockAddressRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) (frameworkdatastore.AddressRef, error) {
 	refs := e.DataStore.Addresses().Filter()
-	v := deploy.MCMSVersion
-	ref := ccipdatastore.GetAddressRef(refs, chainSelector, utils.RBACTimelock, v, input.Qualifier)
-	if ref.Address != "" {
-		return ref, nil
+	ref := ccipdatastore.GetAddressRef(refs, chainSelector, utils.RBACTimelock, deploy.MCMSVersion, input.Qualifier)
+	if ref.Address == "" {
+		return frameworkdatastore.AddressRef{}, fmt.Errorf(
+			"no Stellar RBACTimelock address found for chain %d qualifier %q",
+			chainSelector, input.Qualifier)
 	}
-	return FindStellarMCMSAddressRef(e, chainSelector, input)
+	return ref, nil
 }

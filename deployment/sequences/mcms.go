@@ -7,6 +7,7 @@ import (
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	mcmstypes "github.com/smartcontractkit/mcms/types"
 
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	seqcore "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
@@ -23,25 +24,33 @@ func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer
 	return stellardeployment.NewDeployerFromChain(ch)
 }
 
-// DeployStellarMCMS deploys a single Soroban MCMS instance and applies the merged signer config.
+func timelockMinDelay(in deploy.MCMSDeploymentConfigPerChainWithAddress) (uint64, error) {
+	if in.TimelockMinDelay == nil {
+		return 0, nil
+	}
+	if !in.TimelockMinDelay.IsUint64() {
+		return 0, fmt.Errorf("timelockMinDelay must fit uint64")
+	}
+	return in.TimelockMinDelay.Uint64(), nil
+}
+
+// DeployStellarMCMS deploys three role-specific Soroban MCMS instances (proposer, canceller,
+// bypasser) plus one self-administered RBACTimelock. Each MCMS gets an independent signer config,
+// its own deterministic salt/address, an immutable instance label, and is owned by the timelock
+// from initialization (no deployer ownership ever exists). Timelock roles follow the matrix:
+// proposer MCMS holds PROPOSER and CANCELLER, canceller MCMS holds CANCELLER
+// bypasser MCMS holds BYPASSER; execution is permissionless. Reruns are idempotent:
+// an already-deployed role instance is left untouched (config changes go through governance).
 var DeployStellarMCMS = cldfops.NewSequence(
 	"stellar-deploy-mcms",
 	deploy.MCMSVersion,
-	"Deploy single Soroban MCMS, set config, then deploy and initialize RBACTimelock (MCMS as proposer/bypasser/canceller)",
+	"Deploy three role-specific Soroban MCMS instances and a self-administered RBACTimelock",
 	func(b cldfops.Bundle, chains cldfchain.BlockChains, in deploy.MCMSDeploymentConfigPerChainWithAddress) (seqcore.OnChainOutput, error) {
 		ch, ok := chains.StellarChains()[in.ChainSelector]
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
 		qual := mcmsutil.QualifierStr(in.Qualifier)
-		merged, err := mcmsutil.MergeTripleMCMSConfig(in.Proposer, in.Bypasser, in.Canceller)
-		if err != nil {
-			return seqcore.OnChainOutput{}, err
-		}
-		signerAddrs, signerGroups, gq, gp, _, err := mcmsutil.ConfigToStellarSetConfig(merged, true)
-		if err != nil {
-			return seqcore.OnChainOutput{}, err
-		}
 
 		dep, err := stellarDeployerFromChain(ch)
 		if err != nil {
@@ -49,51 +58,41 @@ var DeployStellarMCMS = cldfops.NewSequence(
 		}
 		deps := stellardeps.FromDeployer(dep)
 
-		contractID, _ := mcmsutil.FindExistingStellarMCMS(in.ExistingAddresses, in.ChainSelector, qual)
-		freshDeploy := contractID == ""
-		if freshDeploy {
-			wasmPath, err := mcmsutil.ResolveMCMSWasmPath()
+		roleConfig := map[mcmsutil.MCMSRole]mcmstypes.Config{
+			mcmsutil.RoleProposer:  in.Proposer,
+			mcmsutil.RoleCanceller: in.Canceller,
+			mcmsutil.RoleBypasser:  in.Bypasser,
+		}
+
+		// Resolve or deploy each role instance. `fresh` marks the ones that still need initialize.
+		addrs := map[mcmsutil.MCMSRole]string{}
+		fresh := map[mcmsutil.MCMSRole]bool{}
+		var mcmsWasm string
+		for _, role := range mcmsutil.AllMCMSRoles {
+			existing, found, err := mcmsutil.FindExistingStellarMCMSByRole(in.ExistingAddresses, in.ChainSelector, qual, role)
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
 			}
-			salt := mcmsutil.MCMSDeploySalt(in.ChainSelector, qual)
-			depOut, err := cldfops.ExecuteOperation(b, mcmsops.Deploy, deps, stellarops.DeployInput{WasmPath: wasmPath, Salt: salt})
-			if err != nil {
-				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy: %w", err)
+			if found {
+				addrs[role] = existing
+				continue
 			}
-			contractID = depOut.Output.ContractID
-			// initialize applies the signer config atomically (config_version 1).
-			_, err = cldfops.ExecuteOperation(b, mcmsops.Initialize, deps, mcmsops.InitializeInput{
-				ContractID:      contractID,
-				Owner:           ch.Signer.Address(),
-				ChainNetworkID:  mcmsutil.ChainNetworkID(ch.NetworkPassphrase),
-				SignerAddresses: signerAddrs,
-				SignerGroups:    signerGroups,
-				GroupQuorums:    gq,
-				GroupParents:    gp,
-				InstanceLabel:   "PROPOSER",
-			})
-			if err != nil {
-				return seqcore.OnChainOutput{}, fmt.Errorf("mcms initialize: %w", err)
+			if mcmsWasm == "" {
+				if mcmsWasm, err = mcmsutil.ResolveMCMSWasmPath(); err != nil {
+					return seqcore.OnChainOutput{}, err
+				}
 			}
-		} else {
-			// Pre-existing instance: re-apply the config via set_config (initialize would revert).
-			_, err = cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
-				ContractID:      contractID,
-				SignerAddresses: signerAddrs,
-				SignerGroups:    signerGroups,
-				GroupQuorums:    gq,
-				GroupParents:    gp,
-				ClearRoot:       true,
-			})
+			salt := mcmsutil.MCMSRoleDeploySalt(in.ChainSelector, qual, role)
+			depOut, err := cldfops.ExecuteOperation(b, mcmsops.Deploy, deps, stellarops.DeployInput{WasmPath: mcmsWasm, Salt: salt})
 			if err != nil {
-				return seqcore.OnChainOutput{}, fmt.Errorf("mcms set_config: %w", err)
+				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy (%s): %w", role, err)
 			}
+			addrs[role] = depOut.Output.ContractID
+			fresh[role] = true
 		}
 
-		mcmsRefs := mcmsutil.StellarMCMSDatastoreRefs(in.ChainSelector, qual, contractID)
-		mergedRefs := append(append([]datastore.AddressRef{}, in.ExistingAddresses...), mcmsRefs...)
-		tlID, haveTL := mcmsutil.FindExistingStellarTimelock(mergedRefs, in.ChainSelector, qual)
+		// Resolve or deploy the timelock.
+		tlID, haveTL := mcmsutil.FindExistingStellarTimelock(in.ExistingAddresses, in.ChainSelector, qual)
 		if !haveTL {
 			tlWasm, err := mcmsutil.ResolveTimelockWasmPath()
 			if err != nil {
@@ -105,37 +104,82 @@ var DeployStellarMCMS = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
 			}
 			tlID = tlOut.Output.ContractID
-			var minDelay uint64
-			if in.TimelockMinDelay != nil {
-				if !in.TimelockMinDelay.IsUint64() {
-					return seqcore.OnChainOutput{}, fmt.Errorf("timelockMinDelay must fit uint64")
-				}
-				minDelay = in.TimelockMinDelay.Uint64()
+
+			minDelay, err := timelockMinDelay(in)
+			if err != nil {
+				return seqcore.OnChainOutput{}, err
 			}
-			roleHolders := []string{contractID}
+			// proposer also holds CANCELLER, same as EVM; execution is permissionless.
 			_, err = cldfops.ExecuteOperation(b, timelockops.Initialize, deps, timelockops.InitializeInput{
 				ContractID: tlID,
 				MinDelay:   minDelay,
-				Proposers:  roleHolders,
-				Cancellers: roleHolders,
-				Bypassers:  roleHolders,
+				Proposers:  []string{addrs[mcmsutil.RoleProposer]},
+				Cancellers: []string{addrs[mcmsutil.RoleProposer], addrs[mcmsutil.RoleCanceller]},
+				Bypassers:  []string{addrs[mcmsutil.RoleBypasser]},
 			})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock initialize: %w", err)
 			}
 		}
 
-		out := append(mcmsRefs, mcmsutil.StellarTimelockDatastoreRef(in.ChainSelector, qual, tlID))
-		return seqcore.OnChainOutput{Addresses: out}, nil
+		// Initialize freshly deployed instances: owner is the timelock, so no deployer ownership
+		// ever exists and config changes must go through governance thereafter.
+		chainNetID := mcmsutil.ChainNetworkID(ch.NetworkPassphrase)
+		for _, role := range mcmsutil.AllMCMSRoles {
+			if !fresh[role] {
+				continue
+			}
+			cfg := roleConfig[role]
+			signerAddrs, signerGroups, gq, gp, _, err := mcmsutil.ConfigToStellarSetConfig(&cfg, true)
+			if err != nil {
+				return seqcore.OnChainOutput{}, fmt.Errorf("mcms config (%s): %w", role, err)
+			}
+			_, err = cldfops.ExecuteOperation(b, mcmsops.Initialize, deps, mcmsops.InitializeInput{
+				ContractID:      addrs[role],
+				Owner:           tlID,
+				ChainNetworkID:  chainNetID,
+				SignerAddresses: signerAddrs,
+				SignerGroups:    signerGroups,
+				GroupQuorums:    gq,
+				GroupParents:    gp,
+				InstanceLabel:   role.InstanceLabel(),
+			})
+			if err != nil {
+				return seqcore.OnChainOutput{}, fmt.Errorf("mcms initialize (%s): %w", role, err)
+			}
+		}
+
+		refs := make([]datastore.AddressRef, 0, len(mcmsutil.AllMCMSRoles)+1)
+		for _, role := range mcmsutil.AllMCMSRoles {
+			ref, err := mcmsutil.StellarMCMSRoleDatastoreRef(in.ChainSelector, qual, role, addrs[role])
+			if err != nil {
+				return seqcore.OnChainOutput{}, err
+			}
+			refs = append(refs, ref)
+		}
+		refs = append(refs, mcmsutil.StellarTimelockDatastoreRef(in.ChainSelector, qual, tlID))
+		return seqcore.OnChainOutput{Addresses: refs}, nil
 	},
 )
 
-// FinalizeStellarDeployMCMS is a no-op (initialize runs in DeployStellarMCMS).
+// FinalizeStellarDeployMCMS verifies the post-deployment authority invariants and fails the
+// deployment if any residual deployer authority remains or the timelock does not own each MCMS.
 var FinalizeStellarDeployMCMS = cldfops.NewSequence(
 	"stellar-finalize-deploy-mcms",
 	deploy.MCMSVersion,
-	"No-op finalize for Stellar MCMS (initialize is synchronous with deploy)",
+	"Verify no residual deployer authority and timelock ownership of each MCMS after deploy",
 	func(b cldfops.Bundle, chains cldfchain.BlockChains, in deploy.MCMSDeploymentConfigPerChainWithAddress) (seqcore.OnChainOutput, error) {
+		ch, ok := chains.StellarChains()[in.ChainSelector]
+		if !ok {
+			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
+		}
+		dep, err := stellarDeployerFromChain(ch)
+		if err != nil {
+			return seqcore.OnChainOutput{}, err
+		}
+		if err := VerifyStellarMCMSGovernance(b.GetContext(), stellardeps.FromDeployer(dep), in.ExistingAddresses, in.ChainSelector, mcmsutil.QualifierStr(in.Qualifier), dep.SignerAddress()); err != nil {
+			return seqcore.OnChainOutput{}, fmt.Errorf("mcms deployment finalize: %w", err)
+		}
 		return seqcore.OnChainOutput{}, nil
 	},
 )

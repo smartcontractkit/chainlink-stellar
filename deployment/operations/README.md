@@ -13,7 +13,7 @@ Stellar bindings are hand-written Soroban clients under `bindings/contracts/…`
 
 - **Operation IDs:** `kebab-case`, namespaced by contract and action (e.g. `offramp:deploy`, `offramp:apply-source-chain-cfg-updates`).
 - **Semver:** Each `operations.NewOperation` gets a `*semver.Version`. Shared baseline for this repo: `operations.ContractDeploymentVersion` (`2.0.0`) until per-contract release lines exist.
-- **ContractType (datastore alignment):** Use PascalCase strings consistent with CCIP lane tooling, e.g. `OffRamp`, `OnRamp`, `Router`, `FeeQuoter`, `RmnRemote`, `RmnProxy`, `RampRegistry`, `TokenAdminRegistry`, `CommitteeVerifier`, `VersionedVerifierResolver`, `LockReleasePool`, `BurnMintPool`, `SiloedLockReleasePool`, `TokenLockBox`, `MCMS`, `Timelock`, `CCIPReceiver` (example receiver).
+- **ContractType (datastore alignment):** Use PascalCase strings consistent with CCIP lane tooling, e.g. `OffRamp`, `OnRamp`, `Router`, `FeeQuoter`, `RmnRemote`, `RmnProxy`, `RampRegistry`, `TokenAdminRegistry`, `CommitteeVerifier`, `VersionedVerifierResolver`, `LockReleasePool`, `BurnMintPool`, `SiloedLockReleasePool`, `TokenLockBox`, `MCMS`, `Timelock`, `CCIPReceiver` (example receiver), `CREForwarder`.
 - **WASM paths:** Built artifacts live at `target/wasm32v1-none/release/<crate>.wasm` relative to the repo root; `<crate>` follows Cargo’s underscore rules (hyphens in `[package].name` become underscores).
 
 ## Bundle usage (tests and runners)
@@ -53,6 +53,7 @@ Handlers use the signature `func(b operations.Bundle, deps DEP, input IN) (OUT, 
 | `mcms` | `MCMS` | `mcms.wasm` | MCMS roots, ops, role changes |
 | `timelock` | `Timelock` | `timelock.wasm` | Timelock schedule / execute |
 | `ccip_receiver` | `CCIPReceiver` | `ccip_receiver_example.wasm` | Example receiver (dev / tests) |
+| `cre` (forwarder client) | `CREForwarder` | `forwarder.wasm` | CRE report dispatch; owner-gated DON signer config + transmitter registry (MCMS/timelock-governed after handoff) |
 
 WASM filenames follow `cargo build --release` output for workspace members under `contracts/`.
 
@@ -60,7 +61,7 @@ WASM filenames follow `cargo build --release` output for workspace members under
 
 - `stellardeps/` — `StellarDeps` (`Deploy` + `Invoker`) and `FromDeployer(*deployment.Deployer)`.
 - `types.go` / `deploy.go` — shared `Void`, `DeployInput` / `DeployOutput`, and `NewDeployOperation(id, description)` for WASM deploy ops.
-- **Per-contract packages** (each exports `ContractType` and `operations.NewOperation` vars): `offramp/`, `onramp/`, `router/`, `rmn_remote/`, `rmn_proxy/`, `fee_quoter/`, `ramp_registry/`, `committee_verifier/`, `versioned_verifier_resolver/`, `ccip_receiver/`, `token_admin_registry/`, `token_pool/`, `burn_mint_pool/`, `siloed_lock_release_pool/`, `token_lock_box/`, `mcms/`, `timelock/`.
+- **Per-contract packages** (each exports `ContractType` and `operations.NewOperation` vars): `offramp/`, `onramp/`, `router/`, `rmn_remote/`, `rmn_proxy/`, `fee_quoter/`, `ramp_registry/`, `committee_verifier/`, `versioned_verifier_resolver/`, `ccip_receiver/`, `cre_forwarder/`, `token_admin_registry/`, `token_pool/`, `burn_mint_pool/`, `siloed_lock_release_pool/`, `token_lock_box/`, `mcms/`, `timelock/`.
 
 ## Stellar deploy stack (devenv / CCV)
 

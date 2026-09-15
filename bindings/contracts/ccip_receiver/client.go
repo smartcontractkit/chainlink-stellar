@@ -159,21 +159,6 @@ func (c *ExampleCcipReceiverClient) RequireOwner(ctx context.Context) (string, e
 	return v, nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *ExampleCcipReceiverClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // GetCcvConfig calls the get_ccv_config function on the contract.
 func (c *ExampleCcipReceiverClient) GetCcvConfig(ctx context.Context, sourceChainSelector uint64) (*CcvChainConfig, error) {
 	args := []xdr.ScVal{

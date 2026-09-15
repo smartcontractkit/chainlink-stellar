@@ -21,10 +21,6 @@ pub trait CommitteeVerifierInterface {
     ) -> Result<(), CCIPError>;
     fn version_tag(env: soroban_sdk::Env) -> soroban_sdk::BytesN<4>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn init_allowlist(
         env: soroban_sdk::Env,
         initial_allowlist: soroban_sdk::Map<u64, soroban_sdk::Vec<soroban_sdk::Address>>,

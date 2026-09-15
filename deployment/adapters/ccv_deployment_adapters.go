@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	dsutils "github.com/smartcontractkit/chainlink-ccip/deployment/utils/datastore"
@@ -90,6 +91,11 @@ func (a *StellarCCVDeploymentAggregatorConfigAdapter) resolveVerifierAddress(
 type StellarCCVDeploymentExecutorConfigAdapter struct{}
 
 var _ ccvdeploymentadapters.ExecutorConfigAdapter = (*StellarCCVDeploymentExecutorConfigAdapter)(nil)
+var _ ccvdeploymentadapters.ExecutorNodeChainJDSupport = (*StellarCCVDeploymentExecutorConfigAdapter)(nil)
+
+func (a *StellarCCVDeploymentExecutorConfigAdapter) RequiresNodeChainSupportInJD() bool {
+	return false
+}
 
 func (a *StellarCCVDeploymentExecutorConfigAdapter) GetDeployedChains(ds datastore.DataStore, qualifier string) []uint64 {
 	if ds == nil {
@@ -179,6 +185,11 @@ func (a *StellarCCVDeploymentExecutorConfigAdapter) BuildChainConfig(
 type StellarCCVDeploymentVerifierConfigAdapter struct{}
 
 var _ ccvdeploymentadapters.VerifierConfigAdapter = (*StellarCCVDeploymentVerifierConfigAdapter)(nil)
+var _ ccvdeploymentadapters.VerifierNodeChainJDSupport = (*StellarCCVDeploymentVerifierConfigAdapter)(nil)
+
+func (a *StellarCCVDeploymentVerifierConfigAdapter) RequiresNodeChainSupportInJD() bool {
+	return false
+}
 
 func (a *StellarCCVDeploymentVerifierConfigAdapter) GetSignerAddressFamily() string {
 	return chainsel.FamilyStellar

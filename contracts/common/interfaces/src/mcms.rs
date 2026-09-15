@@ -35,10 +35,6 @@ pub trait McmsInterface {
     ) -> Result<(), McmsError>;
     fn get_op_count(env: soroban_sdk::Env) -> Result<u64, McmsError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn extend_all_ttls(env: soroban_sdk::Env) -> Result<(), McmsError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn chain_network_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, McmsError>;
