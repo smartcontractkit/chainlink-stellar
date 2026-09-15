@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type stellarV2Fixture struct {
+type stellarFixture struct {
 	EncodingVersion uint32 `json:"encoding_version"`
 	Vectors         []struct {
 		NetworkIDHex          string `json:"network_id_hex"`
@@ -50,10 +50,10 @@ type stellarV2Fixture struct {
 	} `json:"vectors"`
 }
 
-func TestStellarV2GoldenVector(t *testing.T) {
+func TestStellarGoldenVector(t *testing.T) {
 	raw, err := os.ReadFile("../../contracts/mcms/testdata/stellar_golden_vectors.json")
 	require.NoError(t, err)
-	var fixture stellarV2Fixture
+	var fixture stellarFixture
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	require.Len(t, fixture.Vectors, 1)
 	v := fixture.Vectors[0]

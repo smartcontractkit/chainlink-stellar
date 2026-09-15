@@ -195,7 +195,7 @@ func HashTimelockCall(call timelockbindings.Call) ([32]byte, error) {
 	return out, nil
 }
 
-// TimelockOperationID computes the domain-separated Stellar v2 timelock batch operation id
+// TimelockOperationID computes the domain-separated Stellar timelock batch operation id
 // (matches contracts/timelock/src/encoding.rs hash_operation_batch).
 func TimelockOperationID(calls timelockbindings.Calls, predecessor, salt [32]byte) ([32]byte, error) {
 	if len(calls.Inner) == 0 {

@@ -95,8 +95,8 @@ func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
 	var saltSched [32]byte
 	saltSched[31] = 42
 
-	// The v2 timelock rejects empty batches; schedule a self-admin update_delay call, which
-	// also proves scheduled self-administration works through the full MCMS path (plan §7.9).
+	// Timelock rejects empty batches; schedule a self-admin update_delay call, which
+	// also proves scheduled self-administration works through the full MCMS path.
 	const updatedDelaySec uint64 = minDelaySec + 1
 	updateDelayArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{
 		scval.AddressToScVal(tlID),

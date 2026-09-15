@@ -14,8 +14,6 @@ import (
 )
 
 // MCMSRefTypeForAction returns the single datastore contract type for a timelock action.
-// v2 deploys three independent role instances, so resolution is exact and fail-closed:
-// there is no cross-role or base-MCMS fallback.
 func MCMSRefTypeForAction(action mcmstypes.TimelockAction) (cldf.ContractType, error) {
 	switch action {
 	case mcmstypes.TimelockActionSchedule:
@@ -47,7 +45,7 @@ func FindStellarMCMSAddressRef(e cldf.Environment, chainSelector uint64, input m
 }
 
 // FindStellarTimelockAddressRef resolves RBACTimelock from the datastore. It fails closed:
-// there is no fallback to an MCMS contract (v2 always deploys a distinct timelock).
+// there is no fallback to an MCMS contract (We deploy a distinct timelock).
 func FindStellarTimelockAddressRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) (frameworkdatastore.AddressRef, error) {
 	refs := e.DataStore.Addresses().Filter()
 	ref := ccipdatastore.GetAddressRef(refs, chainSelector, utils.RBACTimelock, deploy.MCMSVersion, input.Qualifier)

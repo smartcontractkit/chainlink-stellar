@@ -9,6 +9,7 @@ import (
 	burnmint "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
 	cciprecv "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cv "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
+	creforwarder "github.com/smartcontractkit/chainlink-stellar/deployment/operations/cre_forwarder"
 	fq "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	lrp "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
@@ -83,6 +84,9 @@ func ExecuteTransferOwnership(
 	case cciprecv.ContractType:
 		_, err := cldfops.ExecuteOperation(b, cciprecv.TransferOwnership, deps, cciprecv.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
 		return err
+	case creforwarder.ContractType:
+		_, err := cldfops.ExecuteOperation(b, creforwarder.TransferOwnership, deps, creforwarder.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
+		return err
 	default:
 		return fmt.Errorf("stellar transfer ownership: unsupported contract type %q for %s", ct, cid)
 	}
@@ -140,6 +144,9 @@ func ExecuteAcceptOwnership(b cldfops.Bundle, deps stellardeps.StellarDeps, ref 
 		return err
 	case cciprecv.ContractType:
 		_, err := cldfops.ExecuteOperation(b, cciprecv.AcceptOwnership, deps, cciprecv.AcceptOwnershipInput{ContractID: cid})
+		return err
+	case creforwarder.ContractType:
+		_, err := cldfops.ExecuteOperation(b, creforwarder.AcceptOwnership, deps, creforwarder.AcceptOwnershipInput{ContractID: cid})
 		return err
 	default:
 		return fmt.Errorf("stellar accept ownership: unsupported contract type %q for %s", ct, cid)

@@ -58,14 +58,14 @@ func ChainNetworkID(passphrase string) [32]byte {
 }
 
 // MCMSRoleDeploySalt derives a deterministic per-role deploy salt so the three role
-// instances land at distinct addresses. Domain is versioned (v2) to avoid v1 address reuse.
+// instances land at distinct addresses.
 func MCMSRoleDeploySalt(chainSelector uint64, qual string, role MCMSRole) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("stellar-mcms-v2:%s:%d:%s", role, chainSelector, qual)))
+	return sha256.Sum256([]byte(fmt.Sprintf("stellar-mcms:%s:%d:%s", role, chainSelector, qual)))
 }
 
 // TimelockDeploySalt derives a deterministic deploy salt for a Soroban timelock instance.
 func TimelockDeploySalt(chainSelector uint64, qual string) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("stellar-timelock-v2:%d:%s", chainSelector, qual)))
+	return sha256.Sum256([]byte(fmt.Sprintf("stellar-timelock:%d:%s", chainSelector, qual)))
 }
 
 // FindExistingStellarMCMSByRole returns the address for exactly one role, or (","false) if absent.

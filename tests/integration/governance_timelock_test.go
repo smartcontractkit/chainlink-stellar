@@ -84,8 +84,8 @@ func assertApplyOnrampUpdatesRejectsNonOwner(t *testing.T, ctx context.Context, 
 
 // Uses ccip-ramp-registry as the Ownable target: transfer_ownership → timelock schedules
 // accept_ownership → execute; owner-only apply_onramp_updates is denied for the former owner and
-// strangers, and only succeeds via schedule → wait → execute. Execution is permissionless in the
-// v2 timelock: an unrelated funded account submits execute_batch. Only PROPOSER can schedule.
+// strangers, and only succeeds via schedule → wait → execute. Execution is permissionless in the timelock
+// Only PROPOSER can schedule.
 func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -133,7 +133,7 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 
 	const minDelaySec uint64 = 3
 
-	// The v2 timelock grants ADMIN to itself; there is no admin input and no executor role.
+	// Timelock grants ADMIN to itself; there is no admin input and no executor role.
 	if err := tlReader.Initialize(ctx, minDelaySec,
 		[]string{proposerKP.Address()},
 		[]string{},

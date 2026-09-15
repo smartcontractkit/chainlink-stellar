@@ -50,9 +50,6 @@ type governanceExpectations struct {
 // VerifyStellarMCMSGovernance resolves the three role instances + timelock from refs and asserts
 // the post-deployment authority invariants (distinct addresses, correct labels, timelock ownership,
 // exact role matrix, no residual deployer authority). It fails closed on any missing ref.
-//
-// TODO(v2): also verify each contract's installed wasm_hash once a live-instance getter exists;
-// there is no client getter for a deployed contract's code hash today.
 func VerifyStellarMCMSGovernance(ctx context.Context, deps stellardeps.StellarDeps, refs []datastore.AddressRef, chainSelector uint64, qual, deployerAddr string) error {
 	topo, err := resolveGovernanceTopology(refs, chainSelector, qual, deployerAddr)
 	if err != nil {

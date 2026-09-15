@@ -38,8 +38,8 @@ func timelockMinDelay(in deploy.MCMSDeploymentConfigPerChainWithAddress) (uint64
 // bypasser) plus one self-administered RBACTimelock. Each MCMS gets an independent signer config,
 // its own deterministic salt/address, an immutable instance label, and is owned by the timelock
 // from initialization (no deployer ownership ever exists). Timelock roles follow the v2 matrix:
-// proposer MCMS holds PROPOSER (and CANCELLER, per redesign decision #1), canceller MCMS holds
-// CANCELLER, bypasser MCMS holds BYPASSER; execution is permissionless. Reruns are idempotent:
+// proposer MCMS holds PROPOSER and CANCELLER, canceller MCMS holds CANCELLER
+// bypasser MCMS holds BYPASSER; execution is permissionless. Reruns are idempotent:
 // an already-deployed role instance is left untouched (config changes go through governance).
 var DeployStellarMCMS = cldfops.NewSequence(
 	"stellar-deploy-mcms",
@@ -109,7 +109,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
 			}
-			// v2 role matrix: proposer also holds CANCELLER (decision #1); execution is permissionless.
+			// proposer also holds CANCELLER, same as EVM; execution is permissionless.
 			_, err = cldfops.ExecuteOperation(b, timelockops.Initialize, deps, timelockops.InitializeInput{
 				ContractID: tlID,
 				MinDelay:   minDelay,
