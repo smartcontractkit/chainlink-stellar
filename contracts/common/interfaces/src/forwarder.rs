@@ -42,10 +42,6 @@ pub trait creInterface {
         forwarder: soroban_sdk::Address,
     ) -> Result<(), ForwarderError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_relay_info(
         env: soroban_sdk::Env,
         receiver: soroban_sdk::Address,

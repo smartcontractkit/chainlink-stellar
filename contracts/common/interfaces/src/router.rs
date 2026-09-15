@@ -20,10 +20,7 @@ pub trait RouterInterface {
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn init_owner(
-        env: soroban_sdk::Env,
-        owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
+    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -44,12 +41,8 @@ pub trait RouterInterface {
         source_chain_selector: u64,
         offramp: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn get_onramps(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Vec<OnRampEntry>, CCIPError>;
-    fn get_offramps(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Vec<OffRampEntry>, CCIPError>;
+    fn get_onramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OnRampEntry>, CCIPError>;
+    fn get_offramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OffRampEntry>, CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn route_message(
         env: soroban_sdk::Env,

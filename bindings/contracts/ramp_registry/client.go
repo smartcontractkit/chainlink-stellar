@@ -224,21 +224,6 @@ func (c *RampRegistryClient) RequireOwner(ctx context.Context) (string, error) {
 	return v, nil
 }
 
-// SetNewOwner calls the set_new_owner function on the contract.
-func (c *RampRegistryClient) SetNewOwner(ctx context.Context, newOwner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(newOwner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_new_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_new_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // AcceptOwnership calls the accept_ownership function on the contract.
 func (c *RampRegistryClient) AcceptOwnership(ctx context.Context) error {
 	args := []xdr.ScVal{}

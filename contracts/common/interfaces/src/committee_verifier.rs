@@ -10,10 +10,7 @@ pub trait CommitteeVerifierInterface {
         block_confirmations: u32,
     ) -> Result<FeeResponse, CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(
-        env: soroban_sdk::Env,
-        owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
+    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -34,11 +31,7 @@ pub trait CommitteeVerifierInterface {
         message_hash: soroban_sdk::BytesN<32>,
         verifier_results: soroban_sdk::Bytes,
     ) -> Result<(), CCIPError>;
-    fn is_in_allowlist(
-        env: soroban_sdk::Env,
-        key: u64,
-        addr: soroban_sdk::Address,
-    ) -> bool;
+    fn is_in_allowlist(env: soroban_sdk::Env, key: u64, addr: soroban_sdk::Address) -> bool;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;

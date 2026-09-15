@@ -37,7 +37,7 @@ func timelockMinDelay(in deploy.MCMSDeploymentConfigPerChainWithAddress) (uint64
 // DeployStellarMCMS deploys three role-specific Soroban MCMS instances (proposer, canceller,
 // bypasser) plus one self-administered RBACTimelock. Each MCMS gets an independent signer config,
 // its own deterministic salt/address, an immutable instance label, and is owned by the timelock
-// from initialization (no deployer ownership ever exists). Timelock roles follow the v2 matrix:
+// from initialization (no deployer ownership ever exists). Timelock roles follow the matrix:
 // proposer MCMS holds PROPOSER and CANCELLER, canceller MCMS holds CANCELLER
 // bypasser MCMS holds BYPASSER; execution is permissionless. Reruns are idempotent:
 // an already-deployed role instance is left untouched (config changes go through governance).

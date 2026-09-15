@@ -30,10 +30,6 @@ pub trait SiloedLockReleasePoolInterface {
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_new_owner(
-        env: soroban_sdk::Env,
-        new_owner: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_remote_pool(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,
