@@ -991,22 +991,36 @@ func TestStellarService_GetTransaction(t *testing.T) {
 		rpc := mocks.NewMockRPCClient(t)
 		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "missinghash"}).
 			Return(protocol.GetTransactionResponse{
-				TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusNotFound},
+				TransactionDetails: protocol.TransactionDetails{
+					Status: protocol.TransactionStatusNotFound,
+				},
 			}, nil)
 
 		svc := newTestStellarService(t, rpc)
-		_, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "missinghash"})
-		require.ErrorContains(t, err, "transaction not found: missinghash")
+		resp, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "missinghash"})
+		require.NoError(t, err)
+		require.Equal(t, stellartypes.GetTransactionStatusNotFound, resp.Status)
+		require.Equal(t, "missinghash", resp.TxHash)
+		require.Nil(t, resp.FeeStroops)
+		require.Nil(t, resp.LedgerSequence)
+		require.Nil(t, resp.LedgerCloseTime)
+		require.Empty(t, resp.ResultXDR)
+		require.Empty(t, resp.ResultMetaXDR)
 	})
 
 	t.Run("Success", func(t *testing.T) {
 		ctx := t.Context()
+		resultXDR := encodeTransactionResult(t, 500)
+		resultMetaXDR := "bWV0YQ=="
 		rpc := mocks.NewMockRPCClient(t)
 		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "abc123hash"}).
 			Return(protocol.GetTransactionResponse{
 				TransactionDetails: protocol.TransactionDetails{
-					Status: protocol.TransactionStatusSuccess,
-					Ledger: 100,
+					Status:          protocol.TransactionStatusSuccess,
+					TransactionHash: "abc123hash",
+					Ledger:          100,
+					ResultXDR:       resultXDR,
+					ResultMetaXDR:   resultMetaXDR,
 				},
 				LedgerCloseTime: 1_700_000_000,
 			}, nil)
@@ -1014,8 +1028,58 @@ func TestStellarService_GetTransaction(t *testing.T) {
 		svc := newTestStellarService(t, rpc)
 		resp, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "abc123hash"})
 		require.NoError(t, err)
-		require.Equal(t, uint32(100), resp.LedgerSequence)
-		require.Equal(t, int64(1_700_000_000), resp.LedgerCloseTime)
+		require.Equal(t, stellartypes.GetTransactionStatusSuccess, resp.Status)
+		require.Equal(t, "abc123hash", resp.TxHash)
+		require.Equal(t, resultXDR, resp.ResultXDR)
+		require.Equal(t, resultMetaXDR, resp.ResultMetaXDR)
+		require.NotNil(t, resp.LedgerSequence)
+		require.Equal(t, uint32(100), *resp.LedgerSequence)
+		require.NotNil(t, resp.LedgerCloseTime)
+		require.Equal(t, int64(1_700_000_000), *resp.LedgerCloseTime)
+		require.NotNil(t, resp.FeeStroops)
+		require.Equal(t, uint64(500), *resp.FeeStroops)
+	})
+
+	t.Run("Failed", func(t *testing.T) {
+		ctx := t.Context()
+		resultXDR := encodeTransactionResult(t, 250)
+		rpc := mocks.NewMockRPCClient(t)
+		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "failhash"}).
+			Return(protocol.GetTransactionResponse{
+				TransactionDetails: protocol.TransactionDetails{
+					Status:          protocol.TransactionStatusFailed,
+					TransactionHash: "failhash",
+					Ledger:          200,
+					ResultXDR:       resultXDR,
+				},
+				LedgerCloseTime: 1_700_000_100,
+			}, nil)
+
+		svc := newTestStellarService(t, rpc)
+		resp, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "failhash"})
+		require.NoError(t, err)
+		require.Equal(t, stellartypes.GetTransactionStatusFailed, resp.Status)
+		require.Equal(t, "failhash", resp.TxHash)
+		require.Equal(t, resultXDR, resp.ResultXDR)
+		require.NotNil(t, resp.LedgerSequence)
+		require.Equal(t, uint32(200), *resp.LedgerSequence)
+		require.NotNil(t, resp.LedgerCloseTime)
+		require.Equal(t, int64(1_700_000_100), *resp.LedgerCloseTime)
+		require.NotNil(t, resp.FeeStroops)
+		require.Equal(t, uint64(250), *resp.FeeStroops)
+	})
+
+	t.Run("UnknownStatus", func(t *testing.T) {
+		ctx := t.Context()
+		rpc := mocks.NewMockRPCClient(t)
+		rpc.EXPECT().GetTransaction(ctx, protocol.GetTransactionRequest{Hash: "abc123hash"}).
+			Return(protocol.GetTransactionResponse{
+				TransactionDetails: protocol.TransactionDetails{Status: "WEIRD"},
+			}, nil)
+
+		svc := newTestStellarService(t, rpc)
+		_, err := svc.GetTransaction(ctx, stellartypes.GetTransactionRequest{TxHash: "abc123hash"})
+		require.ErrorContains(t, err, "unknown transaction status")
 	})
 
 	t.Run("RPCError", func(t *testing.T) {
@@ -1029,6 +1093,21 @@ func TestStellarService_GetTransaction(t *testing.T) {
 		require.ErrorContains(t, err, "rpc unavailable")
 		require.ErrorIs(t, err, multinode.ErrNodeError)
 	})
+}
+
+// encodeTransactionResult builds a base64-encoded TransactionResult XDR with the
+// given FeeCharged, for use in GetTransaction tests.
+func encodeTransactionResult(t *testing.T, fee int64) string {
+	t.Helper()
+	result := xdr.TransactionResult{
+		FeeCharged: xdr.Int64(fee),
+		Result: xdr.TransactionResultResult{
+			Code: xdr.TransactionResultCodeTxTooEarly,
+		},
+	}
+	encoded, err := xdr.MarshalBase64(result)
+	require.NoError(t, err)
+	return encoded
 }
 
 func TestStellarService_GetSigningAccount(t *testing.T) {
