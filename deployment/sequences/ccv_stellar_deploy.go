@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	ccvdeployment "github.com/smartcontractkit/chainlink-ccv/deployment"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
+	ccvdeployment "github.com/smartcontractkit/chainlink-ccv/deployment"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"

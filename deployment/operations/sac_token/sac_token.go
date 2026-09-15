@@ -37,11 +37,11 @@ var Transfer = cldfops.NewOperation(
 
 // ApproveInput is the input for a Soroban Asset Contract (SAC) `approve` call.
 type ApproveInput struct {
-	ContractID        string `json:"contract_id"`
-	From              string `json:"from"`
-	Spender           string `json:"spender"`
-	Amount            int64  `json:"amount"`
-	ExpirationLedger  uint32 `json:"expiration_ledger"`
+	ContractID       string `json:"contract_id"`
+	From             string `json:"from"`
+	Spender          string `json:"spender"`
+	Amount           int64  `json:"amount"`
+	ExpirationLedger uint32 `json:"expiration_ledger"`
 }
 
 // Approve calls `approve` on a SAC token contract.

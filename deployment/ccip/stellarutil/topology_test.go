@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
-	ccvdeployment "github.com/smartcontractkit/chainlink-ccv/deployment"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
+	ccvdeployment "github.com/smartcontractkit/chainlink-ccv/deployment"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

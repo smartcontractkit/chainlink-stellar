@@ -78,9 +78,9 @@ var AcceptOwnership = cldfops.NewOperation(
 
 // ApplyChainUpdatesInput adds or removes remote chain configs on the siloed lock-release pool.
 type ApplyChainUpdatesInput struct {
-	ContractID string                   `json:"contract_id"`
+	ContractID string                    `json:"contract_id"`
 	Adds       []slrbindings.ChainUpdate `json:"adds"`
-	Removes    []uint64                 `json:"removes"`
+	Removes    []uint64                  `json:"removes"`
 }
 
 // ApplyChainUpdates calls siloed lock-release pool `apply_chain_updates`.

@@ -3,8 +3,8 @@ package ccip
 import (
 	"testing"
 
-	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/rs/zerolog"
+	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
