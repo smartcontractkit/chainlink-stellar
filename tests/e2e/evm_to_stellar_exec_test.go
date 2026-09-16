@@ -282,7 +282,7 @@ func TestEVMToStellarExecutionCursedSource(t *testing.T) {
 
 		execEvent, err := stellarChain.ConfirmExecOnDest(t.Context(), evmDetails.ChainSelector, cciptestinterfaces.MessageEventKey{SeqNum: seqNo}, shortTimeout)
 		require.Error(t, err, "should timeout waiting for execution event since message is cursed")
-		require.Equal(t, cciptestinterfaces.ExecutionStateChangedEvent{}, execEvent, "execution event should be empty/zero value when cursed")
+		require.Equal(t, cciptestinterfaces.ExecEnvelope{}, execEvent, "execution event should be empty/zero value when cursed")
 
 		l.Info().
 			Str("messageID", hex.EncodeToString(messageID[:])).
