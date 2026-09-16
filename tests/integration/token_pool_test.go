@@ -191,14 +191,14 @@ func TestTokenPool(t *testing.T) {
 				Data:         []byte("integration token ccip_send"),
 				FeeToken:     feeToken,
 				ExtraArgs:    extraArgs,
-				TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: tokenTransferAmount}},
+				TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: big.NewInt(tokenTransferAmount)}},
 			}
 
 			requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
 			if err != nil {
 				t.Fatalf("Router GetFee: %v", err)
 			}
-			if requiredFee <= 0 {
+			if requiredFee.Sign() <= 0 {
 				t.Fatalf("expected positive fee for token message, got %d", requiredFee)
 			}
 			t.Logf("quoted fee (fee token base units): %d", requiredFee)
@@ -212,7 +212,7 @@ func TestTokenPool(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Router GetFee (no tokens): %v", err)
 			}
-			if feeNoTokens <= 0 {
+			if feeNoTokens.Sign() <= 0 {
 				t.Fatalf("expected positive fee, got %d", feeNoTokens)
 			}
 
@@ -575,7 +575,7 @@ func sacTransferOrFatal(ctx context.Context, t *testing.T, deployer *deployment.
 	args := []xdr.ScVal{
 		scval.AddressToScVal(fromStrkey),
 		scval.AddressToScVal(toStrkey),
-		scval.I128ToScVal(amount),
+		scval.I128ToScVal(big.NewInt(amount)),
 	}
 	_, err := deployer.InvokeContract(ctx, sacContract, "transfer", args)
 	if err != nil {

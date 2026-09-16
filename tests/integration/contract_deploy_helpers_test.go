@@ -550,7 +550,7 @@ func deployOutboundSendWire(
 
 	if err := wire.FeeQuoterClient.Initialize(ctx, deployerAddr, fqbindings.StaticConfig{
 		LinkToken:         linkToken,
-		MaxFeeJuelsPerMsg: 1_000_000_000_000_000_000,
+		MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
 	}, []string{deployerAddr}); err != nil {
 		t.Fatalf("FeeQuoter Initialize: %v", err)
 	}

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"math/big"
 	"path/filepath"
 	"testing"
 	"time"
@@ -224,7 +225,7 @@ func TestCommitteeVerifier(t *testing.T) {
 		var messageID [32]byte
 		mockFeeToken := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-token")
 
-		verifierResults, err := client.ForwardToVerifier(ctx, 1, mockedAllowlistedSender, messageID, mockFeeToken, 0, []byte{})
+		verifierResults, err := client.ForwardToVerifier(ctx, 1, mockedAllowlistedSender, messageID, mockFeeToken, big.NewInt(0), []byte{})
 		if err != nil {
 			t.Fatalf("Failed to call forward_to_verifier: %v", err)
 		}
