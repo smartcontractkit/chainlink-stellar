@@ -766,7 +766,7 @@ fn setup_fee_quoter(
 
     let link_token = Address::generate(env);
     let static_config = FqStaticConfig {
-        max_fee_juels_per_msg: 1_000_000_000_000_000_000,
+        max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
         link_token: link_token.clone(),
     };
 
@@ -1033,4 +1033,92 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
     assert_eq!(receipts.get(2).unwrap().issuer, default_executor);
     assert_eq!(receipts.get(3).unwrap().issuer, router_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")] // FeeExceedsMaxAllowed
+fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
+    // H-4: the OnRamp per-message fee cap (`max_usd_cents_per_message`) must be
+    // enforced on the TOTAL user-paid fee, mirroring EVM `OnRamp.sol:1104`
+    // (`FeeExceedsMaxAllowed`). Here the cap is set to 1 cent ($0.01) while the
+    // quoted fee (network fee alone is 50 cents) far exceeds it, so `get_fee`
+    // must revert. A data-only message with empty `default_ccvs` avoids the
+    // pool / token-admin-registry / router / ramp-registry setup, exercising the
+    // cap in isolation. The positive case (fee under cap) is already covered by
+    // `test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee`,
+    // which uses a $1000 cap and sends successfully.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    // RMN (required by the OnRamp curse check in `get_fee`).
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    // `get_fee` only prices the fee token (no transfer), so a bare address that
+    // `setup_fee_quoter` registers a price for is sufficient.
+    let fee_token = Address::generate(&env);
+    let transfer_token = Address::generate(&env);
+
+    let fee_quoter_id = setup_fee_quoter(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+    );
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: Address::generate(&env),
+        rmn_proxy: rmn_proxy_id.clone(),
+        // Deliberately tiny: $0.01. Any realistic quote (network fee = 50 cents)
+        // exceeds it, so the cap must trip.
+        max_usd_cents_per_message: 1,
+    };
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: Address::generate(&env),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: Address::generate(&env),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: Address::generate(&env),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, default_ccv.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(&env, &[0x33u8; 20]),
+        data: Bytes::from_slice(&env, b"trips the per-message fee cap"),
+        token_amounts: Vec::new(&env),
+        fee_token: fee_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
+    // Must revert with FeeExceedsMaxAllowed (#44), not quote a fee.
+    onramp_client.get_fee(&evm_chain_selector, &message);
 }
