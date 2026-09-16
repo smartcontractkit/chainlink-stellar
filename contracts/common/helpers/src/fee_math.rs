@@ -275,4 +275,149 @@ mod tests {
         let expected_lo = (100_000u128).wrapping_mul(10_u128.pow(34));
         assert_eq!(lo, expected_lo);
     }
+
+    // ----- Extreme-value coverage for the full-width math. The whole point of
+    // mul_128x128 / div_256x128 is that inputs which overflow naive u128
+    // arithmetic must still produce the correct floor (or revert cleanly) rather
+    // than abort the contract (release profile sets overflow-checks = true). -----
+
+    #[test]
+    fn test_zero_cents_yields_zero() {
+        // A free message quotes as 0 fee-token units for any supported price.
+        assert_eq!(
+            usd_cents_to_fee_token(0, 15_000_000_000_000_000_000).unwrap(),
+            0
+        );
+        assert_eq!(usd_cents_to_fee_token(0, 10_u128.pow(29)).unwrap(), 0);
+        assert_eq!(usd_cents_to_fee_token(0, u128::MAX).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_amount_above_i128_max_reverts() {
+        // price = 1 is a degenerate "worthless token" price (USD × 1e18 per 1e18
+        // units ⇒ USD/token = 1e-18), so amount = cents × 1e34. For cents = 20_000
+        // the quotient is 2e38: it fits u128 (MAX ≈ 3.4e38) so mul_div succeeds,
+        // but exceeds i128::MAX (≈ 1.7e38) ⇒ InvalidFeeCalculation, not a wrap via
+        // `as i128`. Verifies the i128 ceiling is enforced after the u128 division.
+        assert_eq!(
+            usd_cents_to_fee_token(20_000, 1).unwrap_err(),
+            CCIPError::InvalidFeeCalculation
+        );
+    }
+
+    #[test]
+    fn test_quotient_overflow_u128_reverts() {
+        // cents = u128::MAX, price = 1 ⇒ quotient ≈ 3.4e72 ≫ u128::MAX. The
+        // 256-bit product's high limb (1e34 - 1) ≥ denom = 1, so div_256x128
+        // returns None ⇒ InvalidFeeCalculation. Must not abort.
+        assert_eq!(
+            usd_cents_to_fee_token(u128::MAX, 1).unwrap_err(),
+            CCIPError::InvalidFeeCalculation
+        );
+        // Same with a realistic LINK price: max × 1e34 / 15e18 ≈ 2.2e53 ≫ u128.
+        assert_eq!(
+            usd_cents_to_fee_token(u128::MAX, 15_000_000_000_000_000_000).unwrap_err(),
+            CCIPError::InvalidFeeCalculation
+        );
+    }
+
+    #[test]
+    fn test_both_inputs_at_u128_max() {
+        // usd_cents = price = u128::MAX ⇒ amount = floor(MAX × 1e34 / MAX) = 1e34
+        // exactly (MAX divides MAX × 1e34 evenly, remainder 0). The product's high
+        // limb is 1e34 - 1 < MAX so the division proceeds; 1e34 fits i128.
+        assert_eq!(
+            usd_cents_to_fee_token(u128::MAX, u128::MAX).unwrap(),
+            10_u128.pow(34) as i128
+        );
+    }
+
+    #[test]
+    fn test_price_at_u128_max_rounds_to_zero() {
+        // A $1 fee (100 cents) for a token priced at u128::MAX (effectively
+        // priceless): 100 × 1e34 = 1e36 ≪ MAX ⇒ quot = floor(1e36 / MAX) = 0.
+        assert_eq!(usd_cents_to_fee_token(100, u128::MAX).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_div_256x128_high_limb_set() {
+        // dividend = 2^128 (hi=1, lo=0). Exercises bits above 127 of the dividend.
+        // 2^128 = 3·q + 1 (2^128 mod 3 = 1) ⇒ q = (2^128-1)/3 and q·3 = u128::MAX
+        // exactly (u128::MAX = 2^128-1 is divisible by 3).
+        let (q, r) = div_256x128(1, 0, 3).unwrap();
+        assert_eq!(r, 1);
+        assert_eq!(q * 3, u128::MAX);
+
+        // denom = 2: 2^128 / 2 = 2^127, remainder 0.
+        let (q, r) = div_256x128(1, 0, 2).unwrap();
+        assert_eq!(q, 1u128 << 127);
+        assert_eq!(r, 0);
+
+        // denom = u128::MAX = 2^128-1: 2^128 / (2^128-1) = 1 rem 1.
+        let (q, r) = div_256x128(1, 0, u128::MAX).unwrap();
+        assert_eq!((q, r), (1, 1));
+    }
+
+    #[test]
+    fn test_div_256x128_rem_msb_path() {
+        // dividend = 2^128 + (2^128-1) = 2^129 - 1 (hi=1, lo=u128::MAX), denom =
+        // u128::MAX = 2^128-1. The remainder climbs to ≈ 2^128-2 (bit 127 set)
+        // during the shift, exercising the `rem_msb` branch where `rem << 1`
+        // would set bit 128. 2^129-1 = 2·(2^128-1) + 1 ⇒ quotient 2, remainder 1.
+        let (q, r) = div_256x128(1, u128::MAX, u128::MAX).unwrap();
+        assert_eq!((q, r), (2, 1));
+    }
+
+    #[test]
+    fn test_div_256x128_rejects_quotient_overflow() {
+        // hi >= denom ⇒ quotient has bits above 128 ⇒ does not fit u128 ⇒ None.
+        assert!(div_256x128(2, 0, 1).is_none());
+        // hi == denom exactly: quotient would be exactly 2^128 (one past u128::MAX).
+        assert!(div_256x128(5, 0, 5).is_none());
+        // denom == 0 ⇒ None (caller guards, but the helper must be total).
+        assert!(div_256x128(0, 123, 0).is_none());
+    }
+
+    #[test]
+    fn test_div_256x128_invariant_extremes() {
+        // For hi < denom: quot·denom + rem == hi·2^128 + lo, with rem < denom.
+        // Reconstruct the 256-bit product with mul_128x128 and add rem with carry,
+        // so no expected-quotient literals are needed — the invariant is the oracle.
+        fn check(hi: u128, lo: u128, denom: u128) {
+            assert!(hi < denom, "case must satisfy hi < denom");
+            let (q, r) = div_256x128(hi, lo, denom).expect("hi < denom ⇒ Some");
+            assert!(r < denom, "remainder must be < denom");
+            let (ph, pl) = mul_128x128(q, denom);
+            let (pl, carry) = pl.overflowing_add(r);
+            let ph = ph.wrapping_add(carry as u128);
+            assert_eq!((ph, pl), (hi, lo), "q*denom + r != dividend");
+        }
+        check(0, 0, 7);
+        check(0, 1, 7);
+        check(0, u128::MAX, 7);
+        check(0, u128::MAX, u128::MAX);
+        check(1, 0, 3);
+        check(1, 0, 2);
+        check(1, u128::MAX, u128::MAX);
+        check(1, 1u128 << 100, (1u128 << 100) + 1);
+        check(u128::MAX - 1, u128::MAX, u128::MAX);
+    }
+
+    #[test]
+    fn test_mul_128x128_extremes() {
+        let max = u128::MAX;
+        // max × 1 = max ⇒ fits the low limb.
+        assert_eq!(mul_128x128(max, 1), (0, max));
+        assert_eq!(mul_128x128(1, max), (0, max));
+        // max × 2 = 2^129 - 2 = 1·2^128 + (2^128 - 2) ⇒ hi=1, lo=max-1.
+        assert_eq!(mul_128x128(max, 2), (1, max - 1));
+        // 3 × 2^127 = 2^128 + 2^127 ⇒ straddles the limb boundary, hi=1, lo=2^127.
+        assert_eq!(mul_128x128(1u128 << 127, 3), (1, 1u128 << 127));
+        // (2^64 - 1)^2 = 2^128 - 2^65 + 1 < 2^128 ⇒ hi=0; verify lo without
+        // materializing the literal via wrapping_mul (== value mod 2^128).
+        let m = (1u128 << 64) - 1;
+        let (hi, lo) = mul_128x128(m, m);
+        assert_eq!(hi, 0);
+        assert_eq!(lo, m.wrapping_mul(m));
+    }
 }
