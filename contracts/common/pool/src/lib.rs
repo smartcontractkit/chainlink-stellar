@@ -117,6 +117,24 @@ pub trait BaseTokenPool {
         Ok(config.remote_pool_address)
     }
 
+    /// True iff `source_pool_address` is the configured remote pool for
+    /// `remote_chain_selector`. Mirrors EVM `TokenPool.isRemotePool`
+    /// (`pools/TokenPool.sol:601`), used by `_validateReleaseOrMint` to reject
+    /// inbound messages whose claimed source pool is not configured here.
+    ///
+    /// Today the store holds a single pool per chain, so this is an equality
+    /// check. When H-14 widens `RemoteChainConfig.remote_pool_address` to a
+    /// per-chain set (`Vec<Bytes>`), only this body changes to set membership —
+    /// the call sites and the `InvalidSourcePoolAddress` revert stay identical.
+    fn is_remote_source_pool(
+        env: &Env,
+        remote_chain_selector: u64,
+        source_pool_address: &Bytes,
+    ) -> Result<bool, CCIPError> {
+        let configured = Self::get_remote_pool(env, remote_chain_selector)?;
+        Ok(configured == *source_pool_address)
+    }
+
     fn get_remote_token(env: &Env, remote_chain_selector: u64) -> Result<Bytes, CCIPError> {
         let config: RemoteChainConfig = env
             .storage()
