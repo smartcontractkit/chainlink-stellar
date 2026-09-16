@@ -560,7 +560,7 @@ func onrampReceiptsToReceiptWithBlobs(t *testing.T, receipts []onrampbindings.Re
 			ExtraArgs:         protocol.ByteSlice(r.ExtraArgs),
 			DestGasLimit:      uint64(r.DestGasLimit),
 			DestBytesOverhead: r.DestBytesOverhead,
-			FeeTokenAmount:    big.NewInt(r.FeeTokenAmount),
+			FeeTokenAmount:    new(big.Int).Set(r.FeeTokenAmount),
 		})
 	}
 	return out
@@ -598,5 +598,8 @@ func sacBalanceOrFatal(ctx context.Context, t *testing.T, deployer *deployment.D
 	if err != nil {
 		t.Fatalf("parse SAC balance: %v", err)
 	}
-	return bal
+	// SAC balances are 7-decimal and bounded by the devenv mint (≤1000 tokens =
+	// 1e10 base units), so they fit int64; the i128-widened binding returns
+	// *big.Int. Truncation is impossible for any balance these tests can observe.
+	return bal.Int64()
 }

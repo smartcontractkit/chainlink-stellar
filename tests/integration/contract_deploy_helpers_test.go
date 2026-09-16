@@ -441,8 +441,12 @@ func deployIntegrationTestSAC(
 		t.Fatalf("change trust for integration SAC asset: %v", err)
 	}
 	if err := issuerDeployer.SubmitClassicOperation(ctx, &txnbuild.Payment{
-		Destination:   deployerAddr,
-		Amount:        "100000000",
+		Destination: deployerAddr,
+		// 1000 tokens in 7-decimal base units. The fee token (a 7-dec SAC) must
+		// hold enough to cover a real CCIP fee (~$36 message → ~36 tokens under
+		// the USDPriceWith18Decimals convention); the old 10-token mint was
+		// insufficient. See sac_devenv_token.go + fee_math.rs.
+		Amount:        "10000000000",
 		Asset:         asset,
 		SourceAccount: issuerKP.Address(),
 	}); err != nil {
@@ -579,14 +583,24 @@ func deployOutboundSendWire(
 			UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 15_000_000_000_000_000_000}),
 		},
 		{
-			Token:       feeToken,
-			UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}),
+			Token: feeToken,
+			// Devenv fee/test tokens are 7-decimal SACs. USDPriceWith18Decimals
+			// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per 1e18
+			// smallest units", scaled by token decimals: $1 × 10^(36-7) = 1e29.
+			// Using 1e18 (only valid for 18-dec tokens) makes a 50¢ fee quote as
+			// 5e17 base units (50B tokens) — unpayable. See fee_math.rs.
+			UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+				Hi: 5421010862, Lo: 7886392056514347008,
+			}),
 		},
 	}
 	for _, tt := range transferTokens {
 		tokenUpdates = append(tokenUpdates, fqbindings.TokenPriceUpdate{
-			Token:       tt,
-			UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}),
+			Token: tt,
+			// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
+			UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+				Hi: 5421010862, Lo: 7886392056514347008,
+			}),
 		})
 	}
 	if err := wire.FeeQuoterClient.UpdatePrices(ctx, deployerAddr, fqbindings.PriceUpdates{
@@ -647,7 +661,7 @@ func deployOutboundSendWire(
 		ChainSelector:         localSourceChainSelector,
 		TokenAdminRegistry:    stack.TokenAdminRegistryID,
 		RmnProxy:              stack.RmnProxyID,
-		MaxUsdCentsPerMessage: 100_000,
+		MaxUsdCentsPerMessage: 500_000, // $5000 — Ethereum-spike-safe per-message fee cap (see stellar_ccip_full_deploy.go).
 	}, onrampbindings.DynamicConfig{
 		FeeQuoter:     wire.FeeQuoterID,
 		FeeAggregator: feeAgg,
