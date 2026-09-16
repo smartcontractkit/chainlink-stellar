@@ -169,7 +169,7 @@ func TestGenerateEnum_StructVariant(t *testing.T) {
 		"Mint *OpMint",
 		"type OpMint struct {",
 		"To string",
-		"Amount int64",
+		"Amount *big.Int",
 		// Struct-variant fields are passed positionally in the same order
 		// they appear in Rust, after the discriminant symbol.
 		"scval.AddressToScVal(e.Mint.To)",
