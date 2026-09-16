@@ -135,7 +135,12 @@ pub struct PoolFeeConfig {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteChainConfig {
-    pub remote_pool_address: Bytes,
+    /// Set of configured remote pool addresses for the chain (EVM
+    /// `EnumerableSet.Bytes32Set remotePools` + `mapping(bytes32=>bytes)
+    /// s_remotePoolAddresses`, `TokenPool.sol:101,152`). Inbound
+    /// `release_or_mint` accepts a message only if its `source_pool_address` is
+    /// a member of this set (H-14; was a single `Bytes` pre-H-14).
+    pub remote_pool_addresses: Vec<Bytes>,
     pub remote_token_address: Bytes,
 }
 
@@ -145,7 +150,11 @@ pub struct RemoteChainConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChainUpdate {
     pub remote_chain_selector: u64,
-    pub remote_pool_addresses: Bytes,
+    /// Initial set of remote pool addresses for the chain (EVM
+    /// `bytes[] remotePoolAddresses`, `TokenPool.sol:95`). Each element is
+    /// seeded into the per-chain set by `apply_chain_updates`; further pools
+    /// are added/removed individually via `add_remote_pool`/`remove_remote_pool`.
+    pub remote_pool_addresses: Vec<Bytes>,
     pub remote_token_address: Bytes,
     pub outbound_rate_limiter_config: RateLimitConfig,
     pub inbound_rate_limiter_config: RateLimitConfig,

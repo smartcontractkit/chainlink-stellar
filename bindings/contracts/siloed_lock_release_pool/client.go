@@ -243,26 +243,20 @@ func (c *SiloedLockReleasePoolClient) RequireOwner(ctx context.Context) (string,
 	return v, nil
 }
 
-// GetRemotePool calls the get_remote_pool function on the contract.
-func (c *SiloedLockReleasePoolClient) GetRemotePool(ctx context.Context, remoteChainSelector uint64) ([]byte, error) {
+// AddRemotePool calls the add_remote_pool function on the contract.
+func (c *SiloedLockReleasePoolClient) AddRemotePool(ctx context.Context, remoteChainSelector uint64, remotePoolAddress []byte) error {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(remoteChainSelector),
+		scval.BytesToScVal(remotePoolAddress),
 	}
 
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_pool", args)
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_remote_pool", args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call get_remote_pool: %w", err)
+		return fmt.Errorf("failed to call add_remote_pool: %w", err)
 	}
 
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_remote_pool")
-	}
-
-	v, ok := result.GetBytes()
-	if !ok {
-		return nil, fmt.Errorf("expected bytes return type")
-	}
-	return []byte(v), nil
+	_ = result // void return
+	return nil
 }
 
 // ReleaseOrMint calls the release_or_mint function on the contract.
@@ -296,6 +290,36 @@ func (c *SiloedLockReleasePoolClient) AcceptOwnership(ctx context.Context) error
 
 	_ = result // void return
 	return nil
+}
+
+// GetRemotePools calls the get_remote_pools function on the contract.
+func (c *SiloedLockReleasePoolClient) GetRemotePools(ctx context.Context, remoteChainSelector uint64) ([][]byte, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_pools", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_remote_pools: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_remote_pools")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([][]byte, len(*vec))
+	for i, item := range *vec {
+		v, ok := item.GetBytes()
+		if !ok {
+			return nil, fmt.Errorf("vec item is not bytes")
+		}
+		out[i] = []byte(v)
+	}
+	return out, nil
 }
 
 // GetRemoteToken calls the get_remote_token function on the contract.
@@ -476,6 +500,22 @@ func (c *SiloedLockReleasePoolClient) IsSupportedToken(ctx context.Context, toke
 		return false, fmt.Errorf("expected bool return type")
 	}
 	return v, nil
+}
+
+// RemoveRemotePool calls the remove_remote_pool function on the contract.
+func (c *SiloedLockReleasePoolClient) RemoveRemotePool(ctx context.Context, remoteChainSelector uint64, remotePoolAddress []byte) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+		scval.BytesToScVal(remotePoolAddress),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_remote_pool", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_remote_pool: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // TransferOwnership calls the transfer_ownership function on the contract.
@@ -1522,10 +1562,17 @@ func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, 
 			if err == nil {
 				result.RemoteChainSelector = v
 			}
-		case "remote_pool_address":
-			v, ok := entry.Val.GetBytes()
-			if ok {
-				result.RemotePoolAddress = []byte(v)
+		case "remote_pool_addresses":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.RemotePoolAddresses = parsed
 			}
 		case "remote_token_address":
 			v, ok := entry.Val.GetBytes()
@@ -1541,6 +1588,78 @@ func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, 
 			v, err := RateLimitConfigFromScVal(entry.Val)
 			if err == nil {
 				result.InboundRateLimiterConfig = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRemotePoolAddedEvent waits for a RemotePoolAddedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForRemotePoolAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolAddedEvent) bool) (*RemotePoolAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRemotePoolAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRemotePoolAddedEvent(e protocolrpc.EventInfo) (*RemotePoolAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RemotePoolAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "remote_pool_address":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.RemotePoolAddress = []byte(v)
 			}
 		}
 	}
@@ -1608,6 +1727,78 @@ func ParseFinalityConfigSetEvent(e protocolrpc.EventInfo) (*FinalityConfigSetEve
 			v, ok := entry.Val.GetU32()
 			if ok {
 				result.AllowedFinality = uint32(v)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRemotePoolRemovedEvent waits for a RemotePoolRemovedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForRemotePoolRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolRemovedEvent) bool) (*RemotePoolRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRemotePoolRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRemotePoolRemovedEvent(e protocolrpc.EventInfo) (*RemotePoolRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RemotePoolRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "remote_pool_address":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.RemotePoolAddress = []byte(v)
 			}
 		}
 	}

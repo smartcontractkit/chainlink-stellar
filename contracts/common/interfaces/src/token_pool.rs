@@ -54,10 +54,10 @@ pub trait TokenPoolInterface {
 
     fn get_token_decimals(env: soroban_sdk::Env) -> Result<u32, CCIPError>;
 
-    fn get_remote_pool(
+    fn get_remote_pools(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,
-    ) -> Result<soroban_sdk::Bytes, CCIPError>;
+    ) -> Result<soroban_sdk::Vec<soroban_sdk::Bytes>, CCIPError>;
 
     fn get_remote_token(
         env: soroban_sdk::Env,
@@ -68,6 +68,20 @@ pub trait TokenPoolInterface {
         env: soroban_sdk::Env,
         adds: soroban_sdk::Vec<ChainUpdate>,
         removes: soroban_sdk::Vec<u64>,
+    ) -> Result<(), CCIPError>;
+
+    /// Adds a remote pool to a chain's configured set (EVM `addRemotePool`). Owner-only.
+    fn add_remote_pool(
+        env: soroban_sdk::Env,
+        remote_chain_selector: u64,
+        remote_pool_address: soroban_sdk::Bytes,
+    ) -> Result<(), CCIPError>;
+
+    /// Removes a remote pool from a chain's configured set (EVM `removeRemotePool`). Owner-only.
+    fn remove_remote_pool(
+        env: soroban_sdk::Env,
+        remote_chain_selector: u64,
+        remote_pool_address: soroban_sdk::Bytes,
     ) -> Result<(), CCIPError>;
 
     fn set_rate_limit_config(
@@ -234,7 +248,7 @@ pub struct RateLimiterState {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ChainUpdate {
     pub remote_chain_selector: u64,
-    pub remote_pool_addresses: soroban_sdk::Bytes,
+    pub remote_pool_addresses: soroban_sdk::Vec<soroban_sdk::Bytes>,
     pub remote_token_address: soroban_sdk::Bytes,
     pub outbound_rate_limiter_config: RateLimitConfig,
     pub inbound_rate_limiter_config: RateLimitConfig,
