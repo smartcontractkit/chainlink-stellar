@@ -27,9 +27,9 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfdeployment "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	"github.com/smartcontractkit/chainlink-deployments-framework/operations"
-	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -492,6 +492,12 @@ func CurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, su
 
 	curseCS := fastcurse.CurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := curseCS.Apply(envCopy, fastcurse.RMNCurseConfig{
+		// These tests intentionally curse a single lane direction to verify
+		// unidirectional blocking. chainlink-ccip #2098 rejects single-direction
+		// v2.0.0 lane curses unless this escape hatch (#2163) is set, so the
+		// curse — and the matching uncurse in UncurseChain — opt out of the
+		// bidirectional validation gate.
+		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{
 				ChainSelector:        chainSelector,
@@ -527,6 +533,10 @@ func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, 
 
 	uncurseCS := fastcurse.UncurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := uncurseCS.Apply(*env, fastcurse.RMNCurseConfig{
+		// Mirror CurseChain: this is the reverse single-direction action for the
+		// same lane, so it must also set the escape hatch or it hits the same
+		// bidirectional validation gate (#2098/#2163).
+		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{
 				ChainSelector:        chainSelector,
