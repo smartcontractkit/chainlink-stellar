@@ -27,9 +27,9 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfdeployment "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	"github.com/smartcontractkit/chainlink-deployments-framework/operations"
-	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -492,6 +492,15 @@ func CurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, su
 
 	curseCS := fastcurse.CurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := curseCS.Apply(envCopy, fastcurse.RMNCurseConfig{
+		// These helpers curse a single subject chain from one peer's perspective
+		// (one direction of a lane). fastcurse's validateBidirectionalLaneActions
+		// (#2098) otherwise rejects a lone directional curse for v2.0.0 lanes,
+		// demanding the reverse direction be cursed too. The e2e tests
+		// intentionally exercise single-direction blocking (e.g. curse only the
+		// destination from the source's view, or only the source from the
+		// destination's view), so opt out of the bidirectional gate via the
+		// escape hatch added in #2163.
+		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{
 				ChainSelector:        chainSelector,
@@ -527,6 +536,12 @@ func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, 
 
 	uncurseCS := fastcurse.UncurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := uncurseCS.Apply(*env, fastcurse.RMNCurseConfig{
+		// Mirror CurseChain: the uncurse changeset runs the same
+		// validateBidirectionalLaneActions gate (#2098), so a lone directional
+		// uncurse is rejected without this opt-out (#2163). Keeping curse and
+		// uncurse symmetric ensures the round-trip works for single-direction
+		// lane tests.
+		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{
 				ChainSelector:        chainSelector,

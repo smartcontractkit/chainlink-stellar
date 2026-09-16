@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
@@ -189,7 +190,7 @@ func (c *Chain) GetConnectionProfile(_ *deployment.Environment, selector uint64)
 // Uses the EVM family selector (0x2812d52c) as a stand-in because Stellar does not
 // yet have its own registered ChainFamilySelector in the on-chain FeeQuoter contract.
 // TODO(NONEVM-4241): replace with a real Stellar family selector once registered.
-func stellarFeeQuoterDestChainConfigOverride(selector uint64) lanes.FeeQuoterDestChainConfigOverride {
+func stellarFeeQuoterDestChainConfigOverride(_ uint64) lanes.FeeQuoterDestChainConfigOverride {
 	// bytes4(keccak256("CCIP ChainFamilySelector EVM")) — used as stand-in for Stellar.
 	var evmFamilyBytes [4]byte
 	evmFamilyHex, _ := hex.DecodeString("2812d52c")
@@ -1270,6 +1271,18 @@ func (c *Chain) buildPoolChainUpdates(ds datastore.DataStore, remoteSelectors []
 		if err != nil {
 			return nil, fmt.Errorf("resolve remote pool/token for %d: %w", rs, err)
 		}
+		// The inbound message's token_transfer.source_pool_address is abi-encoded
+		// by the source chain's OnRamp. For an EVM source that is abi.encode(address),
+		// i.e. the 20-byte address left-padded to 32 bytes (Internal.SourceTokenData:
+		// "sourcePoolAddress ... abi encoded in the case of EVM chains"). The pool's
+		// is_remote_source_pool check (C-3) compares the stored remote_pool_address
+		// against that message field with exact byte equality, so the stored value
+		// must be in the SAME 32-byte abi-encoded form. resolveRemotePoolAndToken
+		// returns the raw EVM address (20 bytes); left-pad to 32 to match. For
+		// Stellar remotes the address is already 32 bytes, so LeftPadBytes is a
+		// no-op. This mirrors the EVM pool side, which stores the Stellar pool via
+		// common.LeftPadBytes(_, 32) in paddedAddressBytes.
+		remotePoolBytes = common.LeftPadBytes(remotePoolBytes, 32)
 		updates = append(updates, tokenpoolbindings.ChainUpdate{
 			RemoteChainSelector:       rs,
 			RemotePoolAddresses:       remotePoolBytes,
