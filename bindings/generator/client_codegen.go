@@ -55,11 +55,11 @@ func GenerateClient(pkg string, contract *Contract) string {
 
 func requiresBigIntImport(contract *Contract) bool {
 	for _, fn := range contract.Functions {
-		if strings.Contains(fn.Returns, "soroban_sdk::I256") {
+		if strings.Contains(fn.Returns, "i128") || strings.Contains(fn.Returns, "soroban_sdk::I256") {
 			return true
 		}
 		for _, in := range fn.Inputs {
-			if strings.Contains(in.Type, "soroban_sdk::I256") {
+			if strings.Contains(in.Type, "i128") || strings.Contains(in.Type, "soroban_sdk::I256") {
 				return true
 			}
 		}
@@ -199,7 +199,7 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 	case returnType == "i128":
 		b.WriteString("\tv, err := scval.I128FromScVal(*result)\n")
 		b.WriteString("\tif err != nil {\n")
-		b.WriteString("\t\treturn 0, err\n")
+		b.WriteString("\t\treturn nil, err\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn v, nil\n")
 	case returnType == "soroban_sdk::I256":
@@ -859,11 +859,11 @@ func zeroValue(rustType string) string {
 		return strings.Join(zeros, ", ")
 	}
 	switch rustType {
-	case "u64", "u32", "i128":
+	case "u64", "u32":
 		return "0"
 	case "u128":
 		return "scval.U128{}"
-	case "soroban_sdk::I256":
+	case "i128", "soroban_sdk::I256":
 		return "nil"
 	case "bool":
 		return "false"

@@ -71,16 +71,13 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 
 	var tokenAmounts []routerbindings.TokenAmount
 	if fields.TokenAmount.Amount != nil && fields.TokenAmount.Amount.Sign() > 0 && len(fields.TokenAmount.TokenAddress) > 0 {
-		if !fields.TokenAmount.Amount.IsInt64() {
-			return nil, fmt.Errorf("token amount out of int64 range: %s", fields.TokenAmount.Amount.String())
-		}
 		tokenAddr, encErr := strkey.Encode(strkey.VersionByteContract, []byte(fields.TokenAmount.TokenAddress))
 		if encErr != nil {
 			return nil, fmt.Errorf("encode token address for send: %w", encErr)
 		}
 		tokenAmounts = []routerbindings.TokenAmount{{
 			Token:  tokenAddr,
-			Amount: fields.TokenAmount.Amount.Int64(),
+			Amount: fields.TokenAmount.Amount,
 		}}
 	}
 
@@ -114,7 +111,7 @@ func (c *Chain) SendChainMessage(ctx context.Context, destChain uint64, msg ccip
 	if err != nil {
 		return cciptestinterfaces.MessageSentEvent{}, nil, fmt.Errorf("get fee from Router: %w", err)
 	}
-	c.logger.Info().Int64("requiredFee", requiredFee).Msg("Fee quote from Router (SendChainMessage)")
+	c.logger.Info().Str("requiredFee", requiredFee.String()).Msg("Fee quote from Router (SendChainMessage)")
 
 	messageID, err := c.routerClient.CcipSend(ctx, sender, destChain, routerMsg, requiredFee)
 	if err != nil {

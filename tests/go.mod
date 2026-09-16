@@ -549,3 +549,5 @@ replace (
 	// v1.3.0, causing MVS to select it and breaking the build. Force v1.2.12.
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
+
+replace github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings

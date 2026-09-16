@@ -4,6 +4,7 @@ package onramp
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -67,7 +68,7 @@ func (c *OnRampClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (int64, error) {
+func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (*big.Int, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),
@@ -75,16 +76,16 @@ func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, mes
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call get_fee: %w", err)
+		return nil, fmt.Errorf("failed to call get_fee: %w", err)
 	}
 
 	if result == nil {
-		return 0, fmt.Errorf("no return value from get_fee")
+		return nil, fmt.Errorf("no return value from get_fee")
 	}
 
 	v, err := scval.I128FromScVal(*result)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return v, nil
 }
@@ -330,7 +331,7 @@ func (c *OnRampClient) TransferOwnership(ctx context.Context, newOwner string) e
 }
 
 // ForwardFromRouter calls the forward_from_router function on the contract.
-func (c *OnRampClient) ForwardFromRouter(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage, feeTokenAmount int64, originalSender string) ([32]byte, error) {
+func (c *OnRampClient) ForwardFromRouter(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage, feeTokenAmount *big.Int, originalSender string) ([32]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),
@@ -892,6 +893,130 @@ func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
 				result.NewOwner = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForCCIPMessageSentEvent waits for a CCIPMessageSentEvent event.
+// Hand-restored from the published binding (lost in a regen).
+func (c *OnRampClient) WaitForCCIPMessageSentEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CCIPMessageSentEvent) bool) (*CCIPMessageSentEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{CCIPMessageSentEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseCCIPMessageSentEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+// ParseCCIPMessageSentEvent parses a CCIPMessageSentEvent from an EventInfo.
+// Hand-restored from the published binding (lost in a regen).
+func ParseCCIPMessageSentEvent(e protocolrpc.EventInfo) (*CCIPMessageSentEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &CCIPMessageSentEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "dest_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.DestChainSelector = v
+			}
+		case "sequence_number":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.SequenceNumber = v
+			}
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		case "message_id":
+			v, err := scval.Bytes32FromScVal(entry.Val)
+			if err == nil {
+				result.MessageId = v
+			}
+		case "fee_token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.FeeToken = v
+			}
+		case "token_amount_before_fees":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.TokenAmountBeforeFees = v
+			}
+		case "encoded_message":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.EncodedMessage = []byte(v)
+			}
+		case "receipts":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([]Receipt, 0, len(*vec))
+				for _, item := range *vec {
+					v, err := ReceiptFromScVal(item)
+					if err == nil {
+						parsed = append(parsed, *v)
+					}
+				}
+				result.Receipts = parsed
+			}
+		case "verifier_blobs":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.VerifierBlobs = parsed
 			}
 		}
 	}

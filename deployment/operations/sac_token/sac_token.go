@@ -1,6 +1,8 @@
 package sac_token
 
 import (
+	"math/big"
+
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
@@ -25,7 +27,7 @@ var Transfer = cldfops.NewOperation(
 		args := []xdr.ScVal{
 			scval.AddressToScVal(in.From),
 			scval.AddressToScVal(in.To),
-			scval.I128ToScVal(in.Amount),
+			scval.I128ToScVal(big.NewInt(in.Amount)),
 		}
 		_, err := d.Invoker.InvokeContract(b.GetContext(), in.ContractID, "transfer", args)
 		if err != nil {
@@ -53,7 +55,7 @@ var Approve = cldfops.NewOperation(
 		args := []xdr.ScVal{
 			scval.AddressToScVal(in.From),
 			scval.AddressToScVal(in.Spender),
-			scval.I128ToScVal(in.Amount),
+			scval.I128ToScVal(big.NewInt(in.Amount)),
 			scval.Uint32ToScVal(in.ExpirationLedger),
 		}
 		_, err := d.Invoker.InvokeContract(b.GetContext(), in.ContractID, "approve", args)

@@ -3,6 +3,7 @@ package sequences
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 
@@ -229,7 +230,7 @@ func RunStellarCCIPFullDeploy(
 		Owner:      h.DeployerKeypair().Address(),
 		StaticConfig: fqbindings.StaticConfig{
 			LinkToken:         feeTokenContractID,
-			MaxFeeJuelsPerMsg: 1_000_000_000_000_000_000,
+			MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
 		},
 		AuthorizedCallers: []string{h.DeployerKeypair().Address()},
 	}); err != nil {

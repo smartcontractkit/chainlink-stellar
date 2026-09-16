@@ -48,7 +48,7 @@ func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, nee
 		if strings.Contains(rustTypeToGo(f.Type), "scval.") {
 			needScval = true
 		}
-		if strings.Contains(f.Type, "soroban_sdk::I256") {
+		if strings.Contains(rustTypeToGo(f.Type), "big.Int") {
 			needBig = true
 		}
 	}
@@ -623,7 +623,7 @@ func rustTypeToGo(rustType string) string {
 	case "u128":
 		return "scval.U128"
 	case "i128":
-		return "int64"
+		return "*big.Int"
 	case "soroban_sdk::I256":
 		return "*big.Int"
 	case "bool":

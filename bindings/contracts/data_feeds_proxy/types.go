@@ -121,7 +121,7 @@ const UpgradedTopic = "Upgraded"
 type TokenRecovered struct {
 	Token  string
 	To     string
-	Amount int64
+	Amount *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string

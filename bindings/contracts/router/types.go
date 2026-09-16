@@ -3,6 +3,7 @@ package router
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -10,7 +11,7 @@ import (
 
 // TokenAmount represents the TokenAmount struct from the contract.
 type TokenAmount struct {
-	Amount int64
+	Amount *big.Int
 	Token  string
 }
 

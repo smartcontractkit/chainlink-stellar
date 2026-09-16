@@ -3,6 +3,7 @@ package onramp
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -10,7 +11,7 @@ import (
 
 // TokenAmount represents the TokenAmount struct from the contract.
 type TokenAmount struct {
-	Amount int64
+	Amount *big.Int
 	Token  string
 }
 
@@ -127,6 +128,117 @@ func StellarToAnyMessageFromScVal(val xdr.ScVal) (*StellarToAnyMessage, error) {
 				}
 				result.TokenAmounts[i] = *v
 			}
+		}
+	}
+
+	return result, nil
+}
+
+// GenericExtraArgsV3 represents the GenericExtraArgsV3 struct from the contract.
+// Hand-restored from the published binding (the onramp interface represents
+// extra_args as opaque bytes, but ccv/common encodes the typed struct via XDR).
+type GenericExtraArgsV3 struct {
+	BlockConfirmations uint32
+	CcvArgs            [][]byte
+	Ccvs               []string
+	Executor           string
+	ExecutorArgs       []byte
+	GasLimit           uint32
+	TokenArgs          []byte
+	TokenReceiver      []byte
+}
+
+// ToScVal converts GenericExtraArgsV3 to an xdr.ScVal for contract calls.
+func (s GenericExtraArgsV3) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"block_confirmations": scval.Uint32ToScVal(s.BlockConfirmations),
+		"ccv_args":            scval.BytesSliceToScVal(s.CcvArgs),
+		"ccvs":                scval.AddressSliceToScVal(s.Ccvs),
+		"executor":            scval.AddressToScVal(s.Executor),
+		"executor_args":       scval.BytesToScVal(s.ExecutorArgs),
+		"gas_limit":           scval.Uint32ToScVal(s.GasLimit),
+		"token_args":          scval.BytesToScVal(s.TokenArgs),
+		"token_receiver":      scval.BytesToScVal(s.TokenReceiver),
+	})
+}
+
+// GenericExtraArgsV3FromScVal parses an xdr.ScVal into GenericExtraArgsV3.
+func GenericExtraArgsV3FromScVal(val xdr.ScVal) (*GenericExtraArgsV3, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &GenericExtraArgsV3{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "block_confirmations":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("block_confirmations is not u32")
+			}
+			result.BlockConfirmations = uint32(v)
+		case "ccv_args":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("ccv_args is not a vec")
+			}
+			result.CcvArgs = make([][]byte, len(*vec))
+			for i, item := range *vec {
+				v, ok := item.GetBytes()
+				if !ok {
+					return nil, fmt.Errorf("vec item is not bytes")
+				}
+				result.CcvArgs[i] = []byte(v)
+			}
+		case "ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("ccvs is not a vec")
+			}
+			result.Ccvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.Ccvs[i] = v
+			}
+		case "executor":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("executor: %w", err)
+			}
+			result.Executor = v
+		case "executor_args":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("executor_args is not bytes")
+			}
+			result.ExecutorArgs = []byte(v)
+		case "gas_limit":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("gas_limit is not u32")
+			}
+			result.GasLimit = uint32(v)
+		case "token_args":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("token_args is not bytes")
+			}
+			result.TokenArgs = []byte(v)
+		case "token_receiver":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("token_receiver is not bytes")
+			}
+			result.TokenReceiver = []byte(v)
 		}
 	}
 
@@ -829,3 +941,98 @@ type OwnershipTransferStartedEvent struct {
 
 // OwnershipTransferStartedEventTopic is the event topic identifier.
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
+
+// Receipt represents the Receipt struct from the contract.
+// Hand-restored from the published binding (lost in a regen); fee_token_amount
+// widened to *big.Int for lossless i128 handling.
+type Receipt struct {
+	DestBytesOverhead uint32
+	DestGasLimit      uint32
+	ExtraArgs         []byte
+	FeeTokenAmount    *big.Int
+	Issuer            string
+}
+
+// ToScVal converts Receipt to an xdr.ScVal for contract calls.
+func (s Receipt) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"dest_bytes_overhead": scval.Uint32ToScVal(s.DestBytesOverhead),
+		"dest_gas_limit":      scval.Uint32ToScVal(s.DestGasLimit),
+		"extra_args":          scval.BytesToScVal(s.ExtraArgs),
+		"fee_token_amount":    scval.I128ToScVal(s.FeeTokenAmount),
+		"issuer":              scval.AddressToScVal(s.Issuer),
+	})
+}
+
+// ReceiptFromScVal parses an xdr.ScVal into Receipt.
+func ReceiptFromScVal(val xdr.ScVal) (*Receipt, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &Receipt{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "dest_bytes_overhead":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_bytes_overhead is not u32")
+			}
+			result.DestBytesOverhead = uint32(v)
+		case "dest_gas_limit":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_gas_limit is not u32")
+			}
+			result.DestGasLimit = uint32(v)
+		case "extra_args":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("extra_args is not bytes")
+			}
+			result.ExtraArgs = []byte(v)
+		case "fee_token_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("fee_token_amount: %w", err)
+			}
+			result.FeeTokenAmount = v
+		case "issuer":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("issuer: %w", err)
+			}
+			result.Issuer = v
+		}
+	}
+
+	return result, nil
+}
+
+// CCIPMessageSentEvent represents the CCIPMessageSentEvent event.
+// Topics: [onramp_1_7_CCIPMessageSent]
+// Hand-restored from the published binding (lost in a regen); token_amount_before_fees
+// widened to *big.Int for lossless i128 handling.
+type CCIPMessageSentEvent struct {
+	DestChainSelector     uint64
+	SequenceNumber        uint64
+	Sender                string
+	MessageId             [32]byte
+	FeeToken              string
+	TokenAmountBeforeFees *big.Int
+	EncodedMessage        []byte
+	Receipts              []Receipt
+	VerifierBlobs         [][]byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// CCIPMessageSentEventTopic is the event topic identifier.
+const CCIPMessageSentEventTopic = "onramp_1_7_CCIPMessageSent"
