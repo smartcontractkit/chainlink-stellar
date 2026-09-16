@@ -520,12 +520,32 @@ func CurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, su
 
 // UncurseChain uncurses a subject chain from the perspective of the given chain using fastcurse changeset.
 // This replaces the deprecated Chain.Uncurse() method.
+//
+// It is idempotent: if the subject is already not cursed on the target chain,
+// it short-circuits. The curse e2e tests register an uncurse in t.Cleanup as a
+// safety net AND call uncurse explicitly mid-test (to then send on the now-clean
+// lane); in the happy path the cleanup runs after the explicit uncurse, when
+// there is nothing left to uncurse. fastcurse's UncurseChangeset errors with
+// "no subjects are currently cursed" when every action skips, which would fail
+// that redundant cleanup even though the desired end state — subject not cursed
+// — is already satisfied. CurseChain verifies the curse landed, so a definitive
+// "not cursed" reading here means a prior uncurse already did the work.
 func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, subjectChainSelector uint64) {
 	t.Helper()
 
 	// Derive the correct curse adapter version for the chain family
 	curseRegistry := fastcurse.GetCurseRegistry()
 	version := deriveCurseAdapterVersion(t, env, curseRegistry, chainSelector)
+
+	adapter, ok := curseRegistry.GetCurseAdapter(chain_selectors.FamilyStellar, version)
+	require.True(t, ok, "no curse adapter registered for chain family '%s'", chain_selectors.FamilyStellar)
+
+	// Idempotency pre-check. Only short-circuit on a definitive "not cursed"
+	// reading; if the check itself errors (transient RPC), fall through to the
+	// uncurse so behaviour is no worse than before.
+	if isCursed, checkErr := adapter.IsSubjectCursedOnChain(*env, chainSelector, fastcurse.GenericSelectorToSubject(subjectChainSelector)); checkErr == nil && !isCursed {
+		return
+	}
 
 	// Reset the bundle so it doesn't cache previous uncurses
 	bundle := operations.NewBundle(env.GetContext, env.Logger, operations.NewMemoryReporter())
@@ -547,9 +567,6 @@ func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, 
 		},
 	})
 	require.NoError(t, err, "failed to uncurse chain %d from chain %d", subjectChainSelector, chainSelector)
-
-	adapter, ok := curseRegistry.GetCurseAdapter(chain_selectors.FamilyStellar, version)
-	require.True(t, ok, "no curse adapter registered for chain family '%s'", chain_selectors.FamilyStellar)
 
 	require.Eventually(t, func() bool {
 		isCursed, err := adapter.IsSubjectCursedOnChain(*env, chainSelector, fastcurse.GenericSelectorToSubject(subjectChainSelector))
