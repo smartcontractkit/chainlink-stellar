@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
 	"strings"
@@ -41,22 +42,7 @@ func BoolToScVal(v bool) xdr.ScVal {
 	}
 }
 
-// I128ToScVal converts an int64 to an xdr.ScVal representing i128.
-func I128ToScVal(v int64) xdr.ScVal {
-	var hi int64
-	if v < 0 {
-		hi = -1 // Sign extend for negative numbers
-	}
-	lo := uint64(v)
-	parts := xdr.Int128Parts{
-		Hi: xdr.Int64(hi),
-		Lo: xdr.Uint64(lo),
-	}
-	return xdr.ScVal{
-		Type: xdr.ScValTypeScvI128,
-		I128: &parts,
-	}
-}
+// I128ToScVal is defined below (lossless *big.Int variant).
 
 // BytesToScVal converts a byte slice to an xdr.ScVal.
 func BytesToScVal(b []byte) xdr.ScVal {
@@ -385,14 +371,45 @@ func Bytes64FromScVal(val xdr.ScVal) ([64]byte, error) {
 	return r, err
 }
 
-// I128FromScVal extracts an int64 from an xdr.ScVal containing i128.
-// Note: This truncates to int64 for simplicity.
-func I128FromScVal(val xdr.ScVal) (int64, error) {
+// I128FromScVal extracts a signed 128-bit integer from an xdr.ScVal containing
+// i128, returning it as a *big.Int so the full range is preserved. The previous
+// int64 return silently truncated any value above 2^63-1 (e.g. a ~$50 fee on an
+// 18-decimal $1 fee token ≈ 5e19 smallest units), which wrapped to a negative
+// int64 once CCIP fee math (C-2) produced correctly-sized fees.
+func I128FromScVal(val xdr.ScVal) (*big.Int, error) {
 	i128, ok := val.GetI128()
 	if !ok {
-		return 0, fmt.Errorf("not an i128 type: %v", val.Type)
+		return nil, fmt.Errorf("not an i128 type: %v", val.Type)
 	}
-	return int64(i128.Lo), nil
+	// Value = (Hi << 64) | Lo, interpreted as a signed 128-bit integer.
+	// big.Int bitwise ops use infinite two's-complement, so OR-ing the
+	// sign-extended high word with the low word reconstructs negatives too.
+	hi := new(big.Int).SetInt64(int64(i128.Hi))
+	lo := new(big.Int).SetUint64(uint64(i128.Lo))
+	return new(big.Int).Or(new(big.Int).Lsh(hi, 64), lo), nil
+}
+
+// I128ToScVal encodes a *big.Int as an xdr.ScVal containing i128. It panics if
+// the value is nil or falls outside the signed 128-bit range [-2^127, 2^127-1],
+// since that is a programmer error (the binding only passes values the contract
+// itself would accept). Kept as a single-value return so generated ToScVal map
+// literals can use it as an expression, matching the prior int64 signature.
+func I128ToScVal(v *big.Int) xdr.ScVal {
+	if v == nil {
+		panic("scval.I128ToScVal: nil value")
+	}
+	max := new(big.Int).Lsh(big.NewInt(1), 127)                   // 2^127
+	min := new(big.Int).Neg(new(big.Int).Sub(max, big.NewInt(1))) // -(2^127-1)
+	if v.Cmp(min) < 0 || v.Cmp(max) > 0 {
+		panic(fmt.Sprintf("scval.I128ToScVal: value %s out of i128 range", v.String()))
+	}
+	// Low 64 bits (two's-complement for negatives), high 64 bits via arithmetic shift.
+	lo := new(big.Int).And(v, new(big.Int).SetUint64(math.MaxUint64)).Uint64()
+	hi := new(big.Int).Rsh(v, 64).Int64()
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvI128,
+		I128: &xdr.Int128Parts{Hi: xdr.Int64(hi), Lo: xdr.Uint64(lo)},
+	}
 }
 
 // U128 represents a Soroban u128 value. It wraps xdr.UInt128Parts and implements ToScVal

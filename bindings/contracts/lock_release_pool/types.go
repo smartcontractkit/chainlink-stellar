@@ -3,6 +3,7 @@ package lock_release_pool
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -152,7 +153,7 @@ func TokenBucketFromScVal(val xdr.ScVal) (*TokenBucket, error) {
 
 // LockOrBurnIn represents the LockOrBurnIn struct from the contract.
 type LockOrBurnIn struct {
-	Amount              int64
+	Amount              *big.Int
 	LocalToken          string
 	OriginalSender      string
 	Receiver            []byte
@@ -411,7 +412,7 @@ func RateLimitConfigFromScVal(val xdr.ScVal) (*RateLimitConfig, error) {
 
 // ReleaseOrMintIn represents the ReleaseOrMintIn struct from the contract.
 type ReleaseOrMintIn struct {
-	Amount              int64
+	Amount              *big.Int
 	LocalToken          string
 	OriginalSender      []byte
 	Receiver            string
@@ -599,7 +600,7 @@ func RateLimiterStateFromScVal(val xdr.ScVal) (*RateLimiterState, error) {
 
 // ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
 type ReleaseOrMintOut struct {
-	DestinationAmount int64
+	DestinationAmount *big.Int
 }
 
 // ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.
@@ -947,7 +948,7 @@ const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 // Topics: [pool_Burned]
 type BurnedEvent struct {
 	Sender string
-	Amount int64
+	Amount *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -960,7 +961,7 @@ const BurnedEventTopic = "pool_Burned"
 // Topics: [pool_Locked]
 type LockedEvent struct {
 	Sender string
-	Amount int64
+	Amount *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -974,7 +975,7 @@ const LockedEventTopic = "pool_Locked"
 type MintedEvent struct {
 	Sender    string
 	Recipient string
-	Amount    int64
+	Amount    *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -988,7 +989,7 @@ const MintedEventTopic = "pool_Minted"
 type ReleasedEvent struct {
 	Sender    string
 	Recipient string
-	Amount    int64
+	Amount    *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1041,7 +1042,7 @@ const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
 // Topics: [pool_FtfInboundConsumed]
 type FtfInboundConsumedEvent struct {
 	RemoteChainSelector uint64
-	Amount              int64
+	Amount              *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1054,7 +1055,7 @@ const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
 // Topics: [pool_FtfOutboundConsumed]
 type FtfOutboundConsumedEvent struct {
 	RemoteChainSelector uint64
-	Amount              int64
+	Amount              *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1095,7 +1096,7 @@ const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
 // Topics: [pool_InboundRateLimitConsumed]
 type InboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
-	Amount              int64
+	Amount              *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string
@@ -1108,7 +1109,7 @@ const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
 // Topics: [pool_OutboundRateLimitConsumed]
 type OutboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
-	Amount              int64
+	Amount              *big.Int
 	// Event metadata
 	Ledger uint32
 	TxHash string

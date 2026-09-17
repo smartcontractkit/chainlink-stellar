@@ -4,6 +4,7 @@ package token_pool
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -422,7 +423,7 @@ func (c *TokenPoolClient) RemoveAdvancedPoolHooks(ctx context.Context) error {
 }
 
 // GetRequiredCcvs calls the get_required_ccvs function on the contract.
-func (c *TokenPoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount int64, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
+func (c *TokenPoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount *big.Int, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(localToken),
 		scval.Uint64ToScVal(remoteChainSelector),

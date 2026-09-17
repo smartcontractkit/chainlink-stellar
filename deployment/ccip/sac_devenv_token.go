@@ -59,8 +59,14 @@ func DeployDevenvSACToken(p DevenvSACTokenParams) (contractID string, issuerKP *
 	}
 
 	if err := issuerDeployer.SubmitClassicOperation(p.Ctx, &txnbuild.Payment{
-		Destination:   p.OwnerKeypair.Address(),
-		Amount:        "100000000",
+		Destination: p.OwnerKeypair.Address(),
+		// 1000 tokens in 7-decimal base units. The fee token must hold enough to
+		// cover a real CCIP fee: with the USDPriceWith18Decimals convention the
+		// fee-quoter quotes a ~$36 message (350k dest-gas overhead × gas price +
+		// network + token fees) as ~36 tokens, far more than the old 10-token
+		// mint. 1000 tokens covers fees up to ~$1000 with margin. See
+		// contracts/common/helpers/src/fee_math.rs.
+		Amount:        "10000000000",
 		Asset:         asset,
 		SourceAccount: issuerKP.Address(),
 	}); err != nil {

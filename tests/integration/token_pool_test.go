@@ -191,14 +191,14 @@ func TestTokenPool(t *testing.T) {
 				Data:         []byte("integration token ccip_send"),
 				FeeToken:     feeToken,
 				ExtraArgs:    extraArgs,
-				TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: tokenTransferAmount}},
+				TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: big.NewInt(tokenTransferAmount)}},
 			}
 
 			requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
 			if err != nil {
 				t.Fatalf("Router GetFee: %v", err)
 			}
-			if requiredFee <= 0 {
+			if requiredFee.Sign() <= 0 {
 				t.Fatalf("expected positive fee for token message, got %d", requiredFee)
 			}
 			t.Logf("quoted fee (fee token base units): %d", requiredFee)
@@ -212,7 +212,7 @@ func TestTokenPool(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Router GetFee (no tokens): %v", err)
 			}
-			if feeNoTokens <= 0 {
+			if feeNoTokens.Sign() <= 0 {
 				t.Fatalf("expected positive fee, got %d", feeNoTokens)
 			}
 
@@ -560,7 +560,7 @@ func onrampReceiptsToReceiptWithBlobs(t *testing.T, receipts []onrampbindings.Re
 			ExtraArgs:         protocol.ByteSlice(r.ExtraArgs),
 			DestGasLimit:      uint64(r.DestGasLimit),
 			DestBytesOverhead: r.DestBytesOverhead,
-			FeeTokenAmount:    big.NewInt(r.FeeTokenAmount),
+			FeeTokenAmount:    new(big.Int).Set(r.FeeTokenAmount),
 		})
 	}
 	return out
@@ -575,7 +575,7 @@ func sacTransferOrFatal(ctx context.Context, t *testing.T, deployer *deployment.
 	args := []xdr.ScVal{
 		scval.AddressToScVal(fromStrkey),
 		scval.AddressToScVal(toStrkey),
-		scval.I128ToScVal(amount),
+		scval.I128ToScVal(big.NewInt(amount)),
 	}
 	_, err := deployer.InvokeContract(ctx, sacContract, "transfer", args)
 	if err != nil {
@@ -598,5 +598,8 @@ func sacBalanceOrFatal(ctx context.Context, t *testing.T, deployer *deployment.D
 	if err != nil {
 		t.Fatalf("parse SAC balance: %v", err)
 	}
-	return bal
+	// SAC balances are 7-decimal and bounded by the devenv mint (≤1000 tokens =
+	// 1e10 base units), so they fit int64; the i128-widened binding returns
+	// *big.Int. Truncation is impossible for any balance these tests can observe.
+	return bal.Int64()
 }

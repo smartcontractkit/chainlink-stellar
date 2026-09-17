@@ -3,6 +3,7 @@ package token_pool
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -106,7 +107,7 @@ type LockOrBurnIn struct {
 	Receiver            []byte
 	RemoteChainSelector uint64
 	OriginalSender      string
-	Amount              int64
+	Amount              *big.Int
 	LocalToken          string
 }
 
@@ -224,7 +225,7 @@ type ReleaseOrMintIn struct {
 	OriginalSender      []byte
 	RemoteChainSelector uint64
 	Receiver            string
-	Amount              int64
+	Amount              *big.Int
 	LocalToken          string
 	SourcePoolAddress   []byte
 	SourcePoolData      []byte
@@ -308,7 +309,7 @@ func ReleaseOrMintInFromScVal(val xdr.ScVal) (*ReleaseOrMintIn, error) {
 
 // ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
 type ReleaseOrMintOut struct {
-	DestinationAmount int64
+	DestinationAmount *big.Int
 }
 
 // ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.

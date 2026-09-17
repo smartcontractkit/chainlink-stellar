@@ -3,6 +3,7 @@ package sequences
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 
@@ -229,7 +230,7 @@ func RunStellarCCIPFullDeploy(
 		Owner:      h.DeployerKeypair().Address(),
 		StaticConfig: fqbindings.StaticConfig{
 			LinkToken:         feeTokenContractID,
-			MaxFeeJuelsPerMsg: 1_000_000_000_000_000_000,
+			MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
 		},
 		AuthorizedCallers: []string{h.DeployerKeypair().Address()},
 	}); err != nil {
@@ -267,10 +268,18 @@ func RunStellarCCIPFullDeploy(
 		ContractID: onrampContractID,
 		Owner:      h.DeployerKeypair().Address(),
 		StaticConfig: onrampbindings.StaticConfig{
-			ChainSelector:         selector,
-			TokenAdminRegistry:    tarContractID,
-			RmnProxy:              rmnProxyContractID,
-			MaxUsdCentsPerMessage: 10000,
+			ChainSelector:      selector,
+			TokenAdminRegistry: tarContractID,
+			RmnProxy:           rmnProxyContractID,
+			// Per-message fee cap in USD cents. Enforced post-conversion via
+			// fee_math::usd_cents_to_fee_token (onramp lib.rs:224 → FeeExceedsMaxAllowed),
+			// so it is scale-correct under the USDPriceWith18Decimals convention.
+			// $5000: at the devenv gas price (~$100/M-gas ≈ 33 gwei) a 350k-gas
+			// message costs ~$35, but an Ethereum spike (200 gwei) + complex 1M-gas
+			// receiver + non-LINK premium (2×) can reach ~$1200. $5000 admits normal
+			// + spike sends while rejecting pathological (>$5k) quotes that signal a
+			// gas/oracle anomaly. u32 max is 4.29e9, so 500_000 cents fits easily.
+			MaxUsdCentsPerMessage: 500_000, // $5000
 		},
 		DynamicConfig: onrampbindings.DynamicConfig{
 			FeeQuoter:     feeQuoterContractID,
@@ -415,8 +424,16 @@ func RunStellarCCIPFullDeploy(
 		PriceUpdates: fqbindings.PriceUpdates{
 			TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
 				{
-					Token:       feeTokenContractID,
-					UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}),
+					Token: feeTokenContractID,
+					// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
+					// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
+					// 1e18 smallest units", scaled by token decimals:
+					// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
+					// makes a 50¢ fee quote as 5e17 base units (50B tokens) — unpayable.
+					// See contracts/common/helpers/src/fee_math.rs.
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
 				},
 			},
 			GasPriceUpdates: gasPriceUpdates,
@@ -431,8 +448,11 @@ func RunStellarCCIPFullDeploy(
 			Updater:    h.DeployerKeypair().Address(),
 			PriceUpdates: fqbindings.PriceUpdates{
 				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
-					Token:       testToken,
-					UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}),
+					Token: testToken,
+					// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
 				}},
 			},
 		}); err != nil {

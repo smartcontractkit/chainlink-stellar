@@ -252,3 +252,5 @@ replace (
 	// were removed in v1.3.0; force v1.2.12.
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
+
+replace github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings

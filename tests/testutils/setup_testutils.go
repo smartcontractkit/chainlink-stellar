@@ -492,14 +492,11 @@ func CurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, su
 
 	curseCS := fastcurse.CurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := curseCS.Apply(envCopy, fastcurse.RMNCurseConfig{
-		// These helpers curse a single subject chain from one peer's perspective
-		// (one direction of a lane). fastcurse's validateBidirectionalLaneActions
-		// (#2098) otherwise rejects a lone directional curse for v2.0.0 lanes,
-		// demanding the reverse direction be cursed too. The e2e tests
-		// intentionally exercise single-direction blocking (e.g. curse only the
-		// destination from the source's view, or only the source from the
-		// destination's view), so opt out of the bidirectional gate via the
-		// escape hatch added in #2163.
+		// These tests intentionally curse a single lane direction to verify
+		// unidirectional blocking. chainlink-ccip #2098 rejects single-direction
+		// v2.0.0 lane curses unless this escape hatch (#2163) is set, so the
+		// curse — and the matching uncurse in UncurseChain — opt out of the
+		// bidirectional validation gate.
 		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{
@@ -556,11 +553,9 @@ func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, 
 
 	uncurseCS := fastcurse.UncurseChangeset(curseRegistry, changesets.GetRegistry())
 	_, err := uncurseCS.Apply(*env, fastcurse.RMNCurseConfig{
-		// Mirror CurseChain: the uncurse changeset runs the same
-		// validateBidirectionalLaneActions gate (#2098), so a lone directional
-		// uncurse is rejected without this opt-out (#2163). Keeping curse and
-		// uncurse symmetric ensures the round-trip works for single-direction
-		// lane tests.
+		// Mirror CurseChain: this is the reverse single-direction action for the
+		// same lane, so it must also set the escape hatch or it hits the same
+		// bidirectional validation gate (#2098/#2163).
 		AllowAsymmetricLaneCurses: true,
 		CurseActions: []fastcurse.CurseActionInput{
 			{

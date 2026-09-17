@@ -4,6 +4,7 @@ package lock_release_pool
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -354,7 +355,7 @@ func (c *LockReleasePoolClient) GetRampRegistry(ctx context.Context) (*string, e
 }
 
 // GetRequiredCcvs calls the get_required_ccvs function on the contract.
-func (c *LockReleasePoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount int64, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
+func (c *LockReleasePoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount *big.Int, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(localToken),
 		scval.Uint64ToScVal(remoteChainSelector),

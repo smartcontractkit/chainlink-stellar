@@ -36,7 +36,7 @@ CONTRACTS=(
   "onramp|OnRamp|onramp|1|"
   "rmn_proxy|RmnProxy|rmn_proxy|0|"
   "rmn_remote|RmnRemote|rmn_remote|0|"
-  "offramp|OffRamp|offramp|0|"
+  "offramp|OffRamp|offramp|0|contracts/offramp/src/events.rs"
   "router|Router|router|0|"
   "ramp_registry|RampRegistry|ramp_registry|0|"
   "ccip_receiver|ExampleCcipReceiver|ccip_receiver|0|"

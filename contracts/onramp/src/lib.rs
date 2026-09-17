@@ -19,7 +19,7 @@ use soroban_sdk::{
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
-use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
+use common_helpers::{curse_checkable::CurseCheckable, fee_math, validation::Validatable};
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
     ToBytes, MESSAGE_V1_VERSION,
@@ -198,16 +198,36 @@ impl OnRampContract {
             .checked_add(dest_config.execution_fee_usd_cents as u128)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
-        let additional_in_fee_token = additional_usd_cents
-            .checked_mul(10_u128.pow(16))
-            .ok_or(CCIPError::InvalidFeeCalculation)?
-            .checked_div(message_fee.fee_token_price)
-            .ok_or(CCIPError::InvalidFeeCalculation)? as i128;
+        // Convert additional (pool + executor) USD-cents to fee-token units with
+        // the EVM 1e34 convention. See `common_helpers::fee_math` for why the
+        // naive `cents * 1e34` is split (u128 overflow avoidance, exact parity).
+        let additional_in_fee_token =
+            fee_math::usd_cents_to_fee_token(additional_usd_cents, message_fee.fee_token_price)?;
 
         let total_fee = message_fee
             .fee_token_amount
             .checked_add(additional_in_fee_token)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
+
+        // Enforce the per-message fee cap. Mirrors EVM `OnRamp.sol:1104`:
+        //   if (feeTokenAmount > (maxUSDCentsPerMsg * 1e34) / feeTokenPrice)
+        //       revert FeeExceedsMaxAllowed(...)
+        // The cap is denominated in USD cents (chain-agnostic) and converted to
+        // the fee token's units with the same 1e34 helper, so it is dimensionally
+        // correct for any fee token — unlike the legacy fee-quoter `juels` cap it
+        // supersedes (see fee-quoter `get_message_fee`). EVM enforces this in the
+        // shared fee computation used by both `getFee` and `forwardFromRouter`;
+        // enforcing it here covers both Stellar call paths (`get_fee` and
+        // `forward_from_router`) identically. `max_usd_cents_per_message` is
+        // validated `!= 0` at init (`initialize`), matching EVM's
+        // `maxUSDCentsPerMessage == 0` config rejection.
+        let max_fee_token = fee_math::usd_cents_to_fee_token(
+            static_config.max_usd_cents_per_message as u128,
+            message_fee.fee_token_price,
+        )?;
+        if total_fee > max_fee_token {
+            return Err(CCIPError::FeeExceedsMaxAllowed);
+        }
 
         Ok((total_fee, message_fee, ccv_fee_responses))
     }
@@ -646,11 +666,10 @@ impl OnRampContract {
             .checked_add(dest_config.execution_fee_usd_cents as u128)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
-        let additional_in_fee_token = additional_usd_cents
-            .checked_mul(10_u128.pow(16))
-            .ok_or(CCIPError::InvalidFeeCalculation)?
-            .checked_div(message_fee.fee_token_price)
-            .ok_or(CCIPError::InvalidFeeCalculation)? as i128;
+        // Convert additional (CCV + executor) USD-cents to fee-token units with
+        // the EVM 1e34 convention (see `common_helpers::fee_math`).
+        let additional_in_fee_token =
+            fee_math::usd_cents_to_fee_token(additional_usd_cents, message_fee.fee_token_price)?;
 
         let total_fee = message_fee
             .fee_token_amount
@@ -671,12 +690,10 @@ impl OnRampContract {
             let onramp_address = env.current_contract_address();
             let network_fee = network_fee_usd_cents as i128;
             if network_fee > 0 {
-                let network_fee_tokens = (network_fee as u128)
-                    .checked_mul(10_u128.pow(16))
-                    .ok_or(CCIPError::InvalidFeeCalculation)?
-                    .checked_div(message_fee.fee_token_price)
-                    .ok_or(CCIPError::InvalidFeeCalculation)?
-                    as i128;
+                let network_fee_tokens = fee_math::usd_cents_to_fee_token(
+                    network_fee as u128,
+                    message_fee.fee_token_price,
+                )?;
                 if network_fee_tokens > 0 {
                     fee_token_client.transfer(
                         &onramp_address,

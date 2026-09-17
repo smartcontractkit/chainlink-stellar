@@ -44,11 +44,21 @@ func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, nee
 			fields = append(fields, f.Field)
 		}
 	}
+	// Enum variant payloads carry their own fields (tuple and struct variants),
+	// which emit *big.Int for i128/I256 just like struct fields do. Without
+	// scanning them, an i128/I256 used solely in an enum payload produces a
+	// *big.Int field without importing math/big, so the generated file does not
+	// compile. Unit variants have an empty Payload and contribute nothing.
+	for _, e := range contract.Enums {
+		for _, v := range e.Variants {
+			fields = append(fields, v.Payload...)
+		}
+	}
 	for _, f := range fields {
 		if strings.Contains(rustTypeToGo(f.Type), "scval.") {
 			needScval = true
 		}
-		if strings.Contains(f.Type, "soroban_sdk::I256") {
+		if strings.Contains(rustTypeToGo(f.Type), "big.Int") {
 			needBig = true
 		}
 	}
@@ -623,7 +633,7 @@ func rustTypeToGo(rustType string) string {
 	case "u128":
 		return "scval.U128"
 	case "i128":
-		return "int64"
+		return "*big.Int"
 	case "soroban_sdk::I256":
 		return "*big.Int"
 	case "bool":

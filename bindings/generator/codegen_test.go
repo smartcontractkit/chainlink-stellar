@@ -169,7 +169,11 @@ func TestGenerateEnum_StructVariant(t *testing.T) {
 		"Mint *OpMint",
 		"type OpMint struct {",
 		"To string",
-		"Amount int64",
+		"Amount *big.Int",
+		// An i128 payload used solely in an enum variant must still pull in
+		// math/big; the import scan covers enum variant payloads, not just
+		// struct/event fields.
+		"\"math/big\"",
 		// Struct-variant fields are passed positionally in the same order
 		// they appear in Rust, after the discriminant symbol.
 		"scval.AddressToScVal(e.Mint.To)",

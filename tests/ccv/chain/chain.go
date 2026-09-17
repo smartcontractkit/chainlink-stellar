@@ -862,7 +862,7 @@ func (c *Chain) GetTokenBalanceForAddress(ctx context.Context, holderAddress str
 	if err != nil {
 		return nil, fmt.Errorf("parse balance: %w", err)
 	}
-	return big.NewInt(bal), nil
+	return bal, nil
 }
 
 // ManuallyExecuteMessage implements cciptestinterfaces.CCIP17.

@@ -3,6 +3,7 @@ package fee_quoter
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -10,7 +11,7 @@ import (
 
 // TokenAmount represents the TokenAmount struct from the contract.
 type TokenAmount struct {
-	Amount int64
+	Amount *big.Int
 	Token  string
 }
 
@@ -197,7 +198,7 @@ func PriceUpdatesFromScVal(val xdr.ScVal) (*PriceUpdates, error) {
 // StaticConfig represents the StaticConfig struct from the contract.
 type StaticConfig struct {
 	LinkToken         string
-	MaxFeeJuelsPerMsg int64
+	MaxFeeJuelsPerMsg *big.Int
 }
 
 // ToScVal converts StaticConfig to an xdr.ScVal for contract calls.
@@ -464,7 +465,7 @@ func DestChainConfigFromScVal(val xdr.ScVal) (*DestChainConfig, error) {
 
 // MessageFeeResult represents the MessageFeeResult struct from the contract.
 type MessageFeeResult struct {
-	FeeTokenAmount int64
+	FeeTokenAmount *big.Int
 	FeeTokenPrice  scval.U128
 	FeeUsdCents    scval.U128
 }
