@@ -65,7 +65,7 @@ pub trait ExampleCcipReceiverInterface {
     fn get_ccvs_and_finality_config(
         env: soroban_sdk::Env,
         source_chain_selector: u64,
-        unused: soroban_sdk::Bytes,
+        sender: soroban_sdk::Bytes,
     ) -> Result<CcvsAndFinalityConfig, CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]

@@ -36,6 +36,17 @@ pub trait OffRampInterface {
         env: soroban_sdk::Env,
         message_id: soroban_sdk::BytesN<32>,
     ) -> Result<MessageExecutionState, CCIPError>;
+    fn get_ccvs_for_message(
+        env: soroban_sdk::Env,
+        encoded_message: soroban_sdk::Bytes,
+    ) -> Result<
+        (
+            soroban_sdk::Vec<soroban_sdk::Address>,
+            soroban_sdk::Vec<soroban_sdk::Address>,
+            u32,
+        ),
+        CCIPError,
+    >;
     fn get_source_chain_config(
         env: soroban_sdk::Env,
         source_chain_selector: u64,

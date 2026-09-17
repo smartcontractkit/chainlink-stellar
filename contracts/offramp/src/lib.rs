@@ -514,6 +514,51 @@ impl OffRampContract {
         Ok(flattened)
     }
 
+    /// Public read-only view mirroring EVM `OffRamp.getCCVsForMessage(encodedMessage)`. Exists for
+    /// **off-chain** use — the CCV executor/aggregator calls it to gather attestations for exactly
+    /// the CCVs that on-chain `execute` will enforce, so the off-chain report and on-chain quorum
+    /// cannot drift (see C-1: the receiver consult added receiver-required/optional CCVs that the
+    /// old off-chain `GetCCVSForMessage` — lane-mandated + defaults only — never gathered). Calling
+    /// this on-chain is not gas-efficient (it re-runs the receiver/pool consult); the on-chain path
+    /// uses [`Self::get_ccvs_for_message_internal`] directly.
+    ///
+    /// Returns `(required, optional, optional_threshold)`:
+    /// - **token-only** (`data` empty AND `ccip_receive_gas_limit == 0`): `required` = lane-mandated,
+    ///   `optional` = lane defaults, threshold 1 when defaults exist — matching the existing off-chain
+    ///   reader output and the token-only "≥1 default when no lane-mandated" floor. Receiver
+    ///   consultation does NOT apply to token-only (mirroring EVM `_isTokenOnlyTransfer`).
+    /// - **non-token-only**: identical to what `verify_ccv_quorum` enforces — the receiver's
+    ///   `get_ccvs_and_finality_config` resolved + merged with pool-required + lane-mandated (+ lane
+    ///   defaults via the empty-config sentinel), and the receiver's optional/threshold. (`allowed_finality`
+    ///   is intentionally NOT returned here — EVM's view returns only the CCV triple; finality is
+    ///   enforced on-chain via H-7.)
+    pub fn get_ccvs_for_message(
+        env: Env,
+        encoded_message: Bytes,
+    ) -> Result<(Vec<Address>, Vec<Address>, u32), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        let static_config = Self::get_static_config_internal(&env)?;
+        let message = CcipMessageV1::from_bytes(&env, &encoded_message)?;
+        let source_config =
+            Self::get_source_chain_config_internal(&env, message.source_chain_selector)?;
+        let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+
+        if is_token_only {
+            // Match the existing off-chain reader / token-only quorum: lane-mandated required, lane
+            // defaults optional (≥1 when present). Receiver consultation does not apply to token-only.
+            let required = source_config.lane_mandated_ccvs.clone();
+            let optional = source_config.default_ccvs.clone();
+            let threshold = if optional.len() > 0 { 1 } else { 0 };
+            return Ok((required, optional, threshold));
+        }
+
+        // Non-token-only: same resolution `verify_ccv_quorum` enforces (C-1 receiver consult + merge),
+        // so off-chain gathering cannot drift from on-chain enforcement.
+        let (required, optional, threshold, _allowed_finality) =
+            Self::get_ccvs_for_message_internal(&env, &message, &source_config, &static_config)?;
+        Ok((required, optional, threshold))
+    }
+
     /// Resolve the required/optional CCVs and allowed-finality for a **non-token-only**
     /// message by consulting the receiver, mirroring EVM `OffRamp._getCCVsFromReceiver` +
     /// the merge in `_getCCVsForMessage`.
@@ -549,7 +594,7 @@ impl OffRampContract {
     /// message" only.
     ///
     /// Returns `(required, optional, optional_threshold, allowed_finality)`.
-    fn get_ccvs_for_message(
+    fn get_ccvs_for_message_internal(
         env: &Env,
         message: &CcipMessageV1,
         source_config: &SourceChainConfig,
@@ -840,7 +885,7 @@ impl OffRampContract {
 
         // === Non-token-only path: consult receiver (C-1) + receiver finality (H-7) ===
         let (required, optional, optional_threshold, allowed_finality) =
-            Self::get_ccvs_for_message(env, message, source_config, static_config)?;
+            Self::get_ccvs_for_message_internal(env, message, source_config, static_config)?;
 
         // H-7: enforce the receiver's allowed-finality config. When the receiver is not V2 /
         // not a contract, `get_ccvs_for_message` returned `WAIT_FOR_FINALITY_FLAG` (always allowed).

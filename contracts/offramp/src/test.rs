@@ -1117,3 +1117,60 @@ fn test_consult_forwards_message_sender() {
         "OffRamp must forward message.sender to the receiver consult"
     );
 }
+
+// ============================================================
+// C-1 review fix — public `get_ccvs_for_message` view for the off-chain
+// CCV executor/aggregator (mirrors EVM `OffRamp.getCCVsForMessage`). The view
+// returns exactly what on-chain `execute` enforces, so off-chain gathering
+// cannot drift from on-chain quorum.
+// ============================================================
+
+#[test]
+fn test_get_ccvs_for_message_non_token_only_resolves_receiver_config() {
+    // Non-token-only: the view must return the receiver-resolved CCV set (the C-1 path), NOT just
+    // lane-mandated/defaults. A receiver requiring CCV X ⇒ X appears in `required`. This is the
+    // gap comment 1 flagged: the old off-chain reader never resolved receiver config, so it would
+    // never gather X and on-chain `execute` would fail with `RequiredCCVMissing`.
+    let (env, client, _default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let required_ccv = Address::generate(&env);
+    let receiver = env.register(MockConfigReceiver, ());
+    MockConfigReceiverClient::new(&env, &receiver).set_config(&CcvsAndFinalityConfig {
+        required_ccvs: {
+            let mut v = Vec::new(&env);
+            v.push_back(required_ccv.clone());
+            v
+        },
+        optional_ccvs: Vec::new(&env),
+        optional_threshold: 0,
+        allowed_finality_config: 0,
+    });
+
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+
+    let (required, optional, threshold) = client.get_ccvs_for_message(&encoded);
+    // required = receiver.required([X]) + pool([]) + lane_mandated([]); defaults NOT folded
+    // (receiver.required is non-empty). So required == [X].
+    assert_eq!(required.len(), 1);
+    assert_eq!(required.get(0).unwrap(), required_ccv);
+    assert_eq!(optional.len(), 0);
+    assert_eq!(threshold, 0);
+}
+
+#[test]
+fn test_get_ccvs_for_message_token_only_returns_lane_defaults() {
+    // Token-only: the view returns the existing off-chain reader shape — lane-mandated required,
+    // lane defaults optional (threshold 1 when defaults exist). Receiver consultation does NOT
+    // apply (mirroring EVM `_isTokenOnlyTransfer`), so token-only off-chain behavior is unchanged.
+    let (env, client, default_ccv, onramp) = setup_lane_with_default_ccv();
+    // setup_lane_with_default_ccv configures one default_ccv and no lane-mandated CCVs.
+    let msg = valid_execute_message(&env, &client.address, onramp); // data empty, gas 0 ⇒ token-only
+    let encoded = msg.to_bytes(&env);
+
+    let (required, optional, threshold) = client.get_ccvs_for_message(&encoded);
+    assert_eq!(required.len(), 0); // no lane-mandated CCVs
+    assert_eq!(optional.len(), 1);
+    assert_eq!(optional.get(0).unwrap(), default_ccv);
+    assert_eq!(threshold, 1);
+}
