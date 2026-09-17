@@ -5,8 +5,12 @@ use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec};
 
-use crate::types::{DataKey, MessageExecutionState, SourceChainConfigArgs, StaticConfig};
+use crate::types::{
+    DataKey, MessageExecutionState, SourceChainConfig, SourceChainConfigArgs, StaticConfig,
+};
 use crate::{OffRampContract, OffRampContractClient};
+use common_error::CCIPError;
+use common_interfaces::ccip_receiver::CcvsAndFinalityConfig;
 
 fn setup_env() -> (Env, Address, OffRampContractClient<'static>) {
     let env = Env::default();
@@ -496,6 +500,208 @@ fn test_execute_reexecute_after_failure_succeeds() {
         client.get_execution_state(&message_id),
         MessageExecutionState::Failure
     );
+
+    assert!(client
+        .try_execute(&encoded, &ccvs, &verifier_results, &0u32)
+        .is_ok());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+}
+
+// ============================================================
+// C-1 + H-7 — receiver CCV/finality consultation (non-token-only)
+//
+// `merge_receiver_ccvs` and `ensure_quorum_present` are factored as pure helpers so the
+// merge / threshold / defaults-sentinel / quorum logic is unit-testable without a deployed
+// receiver or a live verifier (neither is available in this env). The end-to-end receiver
+// `try_invoke` arms (V2 receiver returns config; receiver returns `Err(CCIPError)`) need a
+// mock receiver wasm and are a nix follow-up. The one `execute` test below proves the
+// not-V2 fallback (`try_invoke` on a non-contract address) is non-trapping and records Failure.
+// ============================================================
+
+fn src_config(
+    env: &Env,
+    default_ccvs: Vec<Address>,
+    lane_mandated_ccvs: Vec<Address>,
+) -> SourceChainConfig {
+    SourceChainConfig {
+        router: Address::generate(env),
+        is_enabled: true,
+        on_ramps: Vec::new(env),
+        default_ccvs,
+        lane_mandated_ccvs,
+    }
+}
+
+fn ccvs_and_finality(
+    required_ccvs: Vec<Address>,
+    optional_ccvs: Vec<Address>,
+    optional_threshold: u32,
+    allowed_finality_config: u32,
+) -> CcvsAndFinalityConfig {
+    CcvsAndFinalityConfig {
+        allowed_finality_config,
+        optional_ccvs,
+        optional_threshold,
+        required_ccvs,
+    }
+}
+
+#[test]
+fn test_merge_receiver_ccvs_threshold_validation() {
+    // optional_threshold (1) > optional_ccvs.len() (0) ⇒ #117 (EVM InvalidOptionalThreshold).
+    let env = Env::default();
+    let config = ccvs_and_finality(Vec::new(&env), Vec::new(&env), 1, 0);
+    let sc = src_config(&env, Vec::new(&env), Vec::new(&env));
+    let res = OffRampContract::merge_receiver_ccvs(&env, &config, &Vec::new(&env), &sc);
+    assert_eq!(res, Err(CCIPError::InvalidOptionalThreshold));
+}
+
+#[test]
+fn test_merge_receiver_ccvs_empty_required_uses_defaults() {
+    // Empty receiver-required + threshold 0 ⇒ fold in the lane default CCVs (Stellar sentinel;
+    // EVM uses an `address(0)` marker). Lane-mandated is always merged.
+    let env = Env::default();
+    let default_ccv = Address::generate(&env);
+    let lane_ccv = Address::generate(&env);
+    let mut defaults = Vec::new(&env);
+    defaults.push_back(default_ccv.clone());
+    let mut lane = Vec::new(&env);
+    lane.push_back(lane_ccv.clone());
+    let sc = src_config(&env, defaults, lane);
+
+    let config = ccvs_and_finality(Vec::new(&env), Vec::new(&env), 0, 0);
+    let (required, optional, threshold) =
+        OffRampContract::merge_receiver_ccvs(&env, &config, &Vec::new(&env), &sc).unwrap();
+    // Merge order is receiver → pool → lane-mandated → defaults (EVM); with receiver/pool empty,
+    // lane-mandated comes first, then the defaults sentinel.
+    assert_eq!(required.len(), 2);
+    assert_eq!(required.get(0).unwrap(), lane_ccv);
+    assert_eq!(required.get(1).unwrap(), default_ccv);
+    assert_eq!(optional.len(), 0);
+    assert_eq!(threshold, 0);
+}
+
+#[test]
+fn test_merge_receiver_ccvs_merges_receiver_pool_lane_deduped() {
+    // required = receiver.required + pool-required + lane-mandated, deduped. Receiver-required
+    // is non-empty so the defaults sentinel does not fire.
+    let env = Env::default();
+    let r1 = Address::generate(&env);
+    let pool1 = Address::generate(&env);
+    let lane1 = Address::generate(&env);
+    let mut req = Vec::new(&env);
+    req.push_back(r1.clone());
+    let mut pool = Vec::new(&env);
+    pool.push_back(pool1.clone());
+    let mut lane = Vec::new(&env);
+    lane.push_back(lane1.clone());
+    let sc = src_config(&env, Vec::new(&env), lane);
+
+    let config = ccvs_and_finality(req, Vec::new(&env), 0, 0);
+    let (required, optional, threshold) =
+        OffRampContract::merge_receiver_ccvs(&env, &config, &pool, &sc).unwrap();
+    assert_eq!(required.len(), 3);
+    assert_eq!(required.get(0).unwrap(), r1);
+    assert_eq!(required.get(1).unwrap(), pool1);
+    assert_eq!(required.get(2).unwrap(), lane1);
+    assert_eq!(optional.len(), 0);
+    assert_eq!(threshold, 0);
+}
+
+#[test]
+fn test_merge_receiver_ccvs_optional_minus_required_decrements_threshold() {
+    // An optional entry that is also in `required` is dropped and the threshold is decremented.
+    let env = Env::default();
+    let r1 = Address::generate(&env);
+    let o_keep = Address::generate(&env); // not in required ⇒ stays
+    let mut req = Vec::new(&env);
+    req.push_back(r1.clone());
+    let mut opt = Vec::new(&env);
+    opt.push_back(o_keep.clone());
+    opt.push_back(r1.clone()); // duplicates a required ⇒ removed, threshold 2 → 1
+    let sc = src_config(&env, Vec::new(&env), Vec::new(&env));
+
+    let config = ccvs_and_finality(req, opt, 2, 0);
+    let (required, optional, threshold) =
+        OffRampContract::merge_receiver_ccvs(&env, &config, &Vec::new(&env), &sc).unwrap();
+    assert_eq!(required.len(), 1);
+    assert_eq!(required.get(0).unwrap(), r1);
+    assert_eq!(optional.len(), 1);
+    assert_eq!(optional.get(0).unwrap(), o_keep);
+    assert_eq!(threshold, 1);
+}
+
+#[test]
+fn test_ensure_quorum_required_missing() {
+    // A required CCV absent from `ccvs` ⇒ #116.
+    let env = Env::default();
+    let mut required = Vec::new(&env);
+    required.push_back(Address::generate(&env));
+    let res =
+        OffRampContract::ensure_quorum_present(&required, &Vec::new(&env), 0, &Vec::new(&env));
+    assert_eq!(res, Err(CCIPError::RequiredCCVMissing));
+}
+
+#[test]
+fn test_ensure_quorum_optional_not_reached() {
+    // Fewer than `optional_threshold` optional CCVs present ⇒ #118.
+    let env = Env::default();
+    let o1 = Address::generate(&env);
+    let o2 = Address::generate(&env);
+    let mut optional = Vec::new(&env);
+    optional.push_back(o1.clone());
+    optional.push_back(o2);
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(o1); // only 1 of 2 required optional present
+    let res = OffRampContract::ensure_quorum_present(&Vec::new(&env), &optional, 2, &ccvs);
+    assert_eq!(res, Err(CCIPError::OptionalCCVQuorumNotReached));
+}
+
+#[test]
+fn test_ensure_quorum_ok() {
+    // All required present and ≥ optional_threshold optional present ⇒ Ok.
+    let env = Env::default();
+    let r1 = Address::generate(&env);
+    let o1 = Address::generate(&env);
+    let o2 = Address::generate(&env);
+    let mut required = Vec::new(&env);
+    required.push_back(r1.clone());
+    let mut optional = Vec::new(&env);
+    optional.push_back(o1.clone());
+    optional.push_back(o2);
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(r1);
+    ccvs.push_back(o1); // 1 optional present ≥ threshold 1
+    let res = OffRampContract::ensure_quorum_present(&required, &optional, 1, &ccvs);
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_execute_non_token_only_not_v2_receiver_defaults_non_trapping() {
+    // A non-token-only message (data non-empty) routes through the C-1 receiver-consultation
+    // path. The receiver bytes ([0u8;32]) decode to a contract address with no ledger entry, so
+    // `try_invoke_contract(get_ccvs_and_finality_config)` returns `Err` (not V2) and the defaults
+    // arm runs (required = lane default_ccvs). With empty `ccvs`, required-present fails with
+    // #116, which `execute` wraps as `Failure` + outer `Ok`. Crucially this proves the not-V2
+    // fallback is **non-trapping**: had `try_invoke` aborted instead of returning `Err`,
+    // `try_execute` would be `Err` and the state would be `InProgress`, not `Failure`.
+    let (env, client) = setup_initialized_offramp_for_execute();
+
+    let router = Address::generate(&env);
+    let default_ccv = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
+
+    let mut msg = valid_execute_message(&env, &client.address, onramp);
+    msg.data = Bytes::from_array(&env, &[0xAA, 0xBB, 0xCC, 0xDD]); // ⇒ non-token-only
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = Vec::new(&env);
+    let verifier_results = Vec::new(&env);
 
     assert!(client
         .try_execute(&encoded, &ccvs, &verifier_results, &0u32)

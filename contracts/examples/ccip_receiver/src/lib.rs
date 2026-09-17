@@ -14,7 +14,9 @@
 //!   outbound sends use stored `extra_args` only ([`ExampleCcipReceiver::send_data_pay_fee_token`]).
 //! - **Per-source CCV lists**: [`ExampleCcipReceiver::apply_ccv_config_updates`] (EVM `applyCCVConfigUpdates`).
 //! - **`get_ccvs_and_finality_config`**: EVM-shaped view combining CCV lists + `allowed_finality_config` for a selector.
-//!   Stellar OffRamp does **not** invoke this (unlike EVM static-call); for tooling / future protocol integration only.
+//!   The Stellar OffRamp consults this for **non-token-only** messages (via `try_invoke_contract`, mirroring the EVM
+//!   static-call) to obtain required/optional CCVs + allowed finality; a receiver that is not a V2 CCIP receiver (missing
+//!   fn / not a contract / traps) falls back to lane defaults + `WAIT_FOR_FINALITY` instead of aborting.
 //! - **`get_remote_chain_selectors`**: Bounded enumeration of selectors configured via `enable_remote_chain` (EVM `getRemoteChainSelectors`).
 
 mod events;

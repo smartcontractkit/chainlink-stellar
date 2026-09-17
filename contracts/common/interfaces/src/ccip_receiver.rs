@@ -205,6 +205,8 @@ pub enum CCIPError {
     ReceiverDoesNotExist = 114,
     ReceiverNotWasmContract = 115,
     RequiredCCVMissing = 116,
+    InvalidOptionalThreshold = 117,
+    OptionalCCVQuorumNotReached = 118,
     OnlyRegistryModuleOrOwner = 201,
     OnlyAdministrator = 202,
     OnlyPendingAdministrator = 203,

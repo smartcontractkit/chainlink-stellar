@@ -4,13 +4,17 @@ mod events;
 pub mod types;
 
 use common_interfaces::{
+    ccip_receiver::CcvsAndFinalityConfig,
     token_admin_registry::TokenAdminRegistryClient,
     token_pool::{MessageDirection, ReleaseOrMintIn, TokenPoolClient},
     versioned_verifier_resolver::VersionedVerifierResolverClient,
 };
+// `finality_codec` lives in `common-pool` (the inbound pools already use it in `release_or_mint`);
+// OffRamp reuses it for the receiver allowed-finality check (H-7) so the rule stays identical.
+use common_pool::finality_codec;
 use soroban_sdk::{
     contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, Executable,
-    IntoVal, Map, Symbol, Vec,
+    IntoVal, InvokeError, Map, Symbol, Vec,
 };
 use stellar_strkey::Contract as StrkeyContract;
 
@@ -510,13 +514,172 @@ impl OffRampContract {
         Ok(flattened)
     }
 
-    /// Verify that the CCV quorum is met for a message.
+    /// Resolve the required/optional CCVs and allowed-finality for a **non-token-only**
+    /// message by consulting the receiver, mirroring EVM `OffRamp._getCCVsFromReceiver` +
+    /// the merge in `_getCCVsForMessage`.
     ///
-    /// Each CCV address is resolved via VersionedVerifierResolver to get
-    /// the concrete verifier implementation, then `verify_message` is called.
+    /// The receiver's `get_ccvs_and_finality_config` is invoked via `try_invoke_contract`, so a
+    /// receiver that is not a V2 CCIP receiver (missing fn / not a contract / traps) does **not**
+    /// abort execution — it falls back to lane defaults + `WAIT_FOR_FINALITY` (EVM
+    /// `_supportsInterfaceReverting` ⇒ defaults). A receiver that *returns* a `CCIPError` is
+    /// propagated unchanged.
     ///
-    /// The quorum requires that all lane-mandated CCVs have verified,
-    /// plus at least one default CCV if no lane-mandated CCVs exist.
+    /// Returns `(required, optional, optional_threshold, allowed_finality)`.
+    fn get_ccvs_for_message(
+        env: &Env,
+        message: &CcipMessageV1,
+        source_config: &SourceChainConfig,
+        static_config: &StaticConfig,
+    ) -> Result<(Vec<Address>, Vec<Address>, u32, u32), CCIPError> {
+        let receiver = Self::ccip_receiver_contract_address(env, &message.receiver)?;
+
+        let pool_required = Self::get_inbound_pool_required_ccvs(
+            env,
+            message.source_chain_selector,
+            message.finality,
+            &message.token_transfer,
+            static_config,
+            &source_config.default_ccvs,
+        )?;
+
+        // `get_ccvs_and_finality_config(source_chain_selector, unused: Bytes)`.
+        let mut args = soroban_sdk::Vec::new(env);
+        args.push_back(message.source_chain_selector.into_val(env));
+        args.push_back(Bytes::new(env).into_val(env));
+
+        let mut required: Vec<Address> = Vec::new(env);
+        let mut optional: Vec<Address> = Vec::new(env);
+        let mut optional_threshold: u32 = 0;
+        let mut allowed_finality: u32 = finality_codec::WAIT_FOR_FINALITY_FLAG;
+
+        match env.try_invoke_contract::<Result<CcvsAndFinalityConfig, CCIPError>, InvokeError>(
+            &receiver,
+            &Symbol::new(env, "get_ccvs_and_finality_config"),
+            args,
+        ) {
+            Ok(Ok(Ok(config))) => {
+                allowed_finality = config.allowed_finality_config;
+                let (req, opt, thr) =
+                    Self::merge_receiver_ccvs(env, &config, &pool_required, source_config)?;
+                required = req;
+                optional = opt;
+                optional_threshold = thr;
+            }
+            // Receiver returned a CCIPError ⇒ propagate (do not silently default).
+            Ok(Ok(Err(e))) => return Err(e),
+            // Receiver not V2 / not a contract / not invokeable ⇒ defaults-only + WAIT_FOR_FINALITY.
+            _ => {
+                Self::dedup_append(&mut required, &source_config.default_ccvs);
+                Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
+            }
+        }
+
+        Ok((required, optional, optional_threshold, allowed_finality))
+    }
+
+    /// Append each address from `src` to `dst` unless already present (dedup via `is_in_list`).
+    fn dedup_append(dst: &mut Vec<Address>, src: &Vec<Address>) {
+        for i in 0..src.len() {
+            if let Some(a) = src.get(i) {
+                if !Self::is_in_list(&a, dst) {
+                    dst.push_back(a);
+                }
+            }
+        }
+    }
+
+    /// Pure merge of a receiver-reported `CcvsAndFinalityConfig` with the pool-required and
+    /// lane CCV lists (EVM `_getCCVsFromReceiver` validation + the `_getCCVsForMessage` merge).
+    /// Factored out of `get_ccvs_for_message` so the merge/threshold/defaults logic is unit-
+    /// testable without a deployed receiver contract.
+    ///
+    /// Returns `(required, optional, optional_threshold)`.
+    fn merge_receiver_ccvs(
+        env: &Env,
+        config: &CcvsAndFinalityConfig,
+        pool_required: &Vec<Address>,
+        source_config: &SourceChainConfig,
+    ) -> Result<(Vec<Address>, Vec<Address>, u32), CCIPError> {
+        // EVM `_getCCVsFromReceiver`: optionalThreshold must be ≤ optionalCCVs.length.
+        if config.optional_threshold > config.optional_ccvs.len() {
+            return Err(CCIPError::InvalidOptionalThreshold);
+        }
+
+        // required = receiver.required + pool-required + lane-mandated, deduped.
+        let mut required: Vec<Address> = Vec::new(env);
+        Self::dedup_append(&mut required, &config.required_ccvs);
+        Self::dedup_append(&mut required, pool_required);
+        Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
+
+        // Stellar "include defaults" sentinel (EVM uses an `address(0)` marker): an empty
+        // receiver-required list with threshold 0 ⇒ fold in the lane default CCVs.
+        if config.required_ccvs.is_empty() && config.optional_threshold == 0 {
+            Self::dedup_append(&mut required, &source_config.default_ccvs);
+        }
+
+        // optional = receiver.optional minus any entry already in required; for each removed
+        // optional, decrement the threshold (≥0) — EVM :589-614.
+        let mut optional: Vec<Address> = Vec::new(env);
+        let mut optional_threshold = config.optional_threshold;
+        for i in 0..config.optional_ccvs.len() {
+            if let Some(opt) = config.optional_ccvs.get(i) {
+                if Self::is_in_list(&opt, &required) {
+                    optional_threshold = optional_threshold.saturating_sub(1);
+                } else {
+                    optional.push_back(opt);
+                }
+            }
+        }
+
+        Ok((required, optional, optional_threshold))
+    }
+
+    /// Pure quorum-presence check: every `required` CCV must be in `ccvs` (`RequiredCCVMissing`),
+    /// and at least `optional_threshold` of `optional` must be present (`OptionalCCVQuorumNotReached`).
+    /// Factored out of `verify_ccv_quorum` so the quorum logic is unit-testable without a live
+    /// verifier. Does not invoke any verifier (the `verify_message` loop runs separately, after).
+    fn ensure_quorum_present(
+        required: &Vec<Address>,
+        optional: &Vec<Address>,
+        optional_threshold: u32,
+        ccvs: &Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        for i in 0..required.len() {
+            if let Some(req) = required.get(i) {
+                if !Self::is_in_list(&req, ccvs) {
+                    return Err(CCIPError::RequiredCCVMissing);
+                }
+            }
+        }
+
+        let mut optional_present: u32 = 0;
+        for i in 0..optional.len() {
+            if let Some(opt) = optional.get(i) {
+                if Self::is_in_list(&opt, ccvs) {
+                    optional_present += 1;
+                }
+            }
+        }
+        if optional_present < optional_threshold {
+            return Err(CCIPError::OptionalCCVQuorumNotReached);
+        }
+
+        Ok(())
+    }
+
+    /// Verify that the CCV quorum is met for a message (EVM `OffRamp._getCCVsForMessage` +
+    /// `_ensureCCVQuorumIsReached`).
+    ///
+    /// **Token-only** messages (`data` empty AND `ccip_receive_gas_limit == 0`) take the original
+    /// path unchanged: pool-required present, all CCVs verified, all lane-mandated verified, and a
+    /// "≥1 default CCV" floor when no lane-mandated CCVs exist. (H-10 — dropping that floor for
+    /// token-only — and M-12 — ignoring extra CCVs — are deferred; token-only behavior is
+    /// intentionally left as-is in this fix.)
+    ///
+    /// **Non-token-only** messages consult the receiver (`get_ccvs_for_message`, C-1) for
+    /// required/optional/threshold + allowed-finality, enforce the receiver's finality config
+    /// (H-7), require every required CCV present (`RequiredCCVMissing`), require ≥`optional_threshold`
+    /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify every attested CCV.
     fn verify_ccv_quorum(
         env: &Env,
         source_chain_selector: u64,
@@ -527,43 +690,103 @@ impl OffRampContract {
         source_config: &SourceChainConfig,
         static_config: &StaticConfig,
     ) -> Result<(), CCIPError> {
-        if ccvs.is_empty() {
-            return Err(CCIPError::CCVQuorumNotMet);
-        }
+        let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
 
-        let pool_required = Self::get_inbound_pool_required_ccvs(
-            env,
-            source_chain_selector,
-            message.finality,
-            &message.token_transfer,
-            static_config,
-            &source_config.default_ccvs,
-        )?;
-        for i in 0..pool_required.len() {
-            if let Some(req) = pool_required.get(i) {
-                if !Self::is_in_list(&req, ccvs) {
-                    return Err(CCIPError::RequiredCCVMissing);
+        if is_token_only {
+            // === Token-only path (UNCHANGED — H-10/M-12 deferred) ===
+            if ccvs.is_empty() {
+                return Err(CCIPError::CCVQuorumNotMet);
+            }
+
+            let pool_required = Self::get_inbound_pool_required_ccvs(
+                env,
+                source_chain_selector,
+                message.finality,
+                &message.token_transfer,
+                static_config,
+                &source_config.default_ccvs,
+            )?;
+            for i in 0..pool_required.len() {
+                if let Some(req) = pool_required.get(i) {
+                    if !Self::is_in_list(&req, ccvs) {
+                        return Err(CCIPError::RequiredCCVMissing);
+                    }
                 }
             }
+
+            // Track which mandated CCVs have been verified
+            let mut mandated_verified = 0u32;
+            let mut default_verified = 0u32;
+
+            for i in 0..ccvs.len() {
+                let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
+                let result = verifier_results
+                    .get(i)
+                    .ok_or(CCIPError::CCVLengthMismatch)?;
+
+                // Resolve the inbound verifier implementation from the CCV resolver
+                let vvr = VersionedVerifierResolverClient::new(env, &ccv);
+                let verifier_address = vvr.get_inbound_implementation(&result);
+
+                // Call verify_message on the resolved verifier
+                let message_hash: BytesN<32> = message_id.clone();
+                let mut verify_args = soroban_sdk::Vec::new(env);
+                verify_args.push_back(source_chain_selector.into_val(env));
+                verify_args.push_back(message_hash.into_val(env));
+                verify_args.push_back(result.into_val(env));
+
+                env.invoke_contract::<Result<(), CCIPError>>(
+                    &verifier_address,
+                    &Symbol::new(env, "verify_message"),
+                    verify_args,
+                )?;
+
+                // Check if this CCV is a mandated or default one
+                if Self::is_in_list(&ccv, &source_config.lane_mandated_ccvs) {
+                    mandated_verified += 1;
+                }
+                if Self::is_in_list(&ccv, &source_config.default_ccvs) {
+                    default_verified += 1;
+                }
+            }
+
+            // All lane-mandated CCVs must have verified
+            let mandated_count = source_config.lane_mandated_ccvs.len();
+            if mandated_verified < mandated_count {
+                return Err(CCIPError::CCVQuorumNotMet);
+            }
+
+            // If no mandated CCVs, at least one default CCV must verify
+            if mandated_count == 0 && default_verified == 0 {
+                return Err(CCIPError::CCVQuorumNotMet);
+            }
+
+            return Ok(());
         }
 
-        // Track which mandated CCVs have been verified
-        let mut mandated_verified = 0u32;
-        let mut default_verified = 0u32;
+        // === Non-token-only path: consult receiver (C-1) + receiver finality (H-7) ===
+        let (required, optional, optional_threshold, allowed_finality) =
+            Self::get_ccvs_for_message(env, message, source_config, static_config)?;
 
+        // H-7: enforce the receiver's allowed-finality config. When the receiver is not V2 /
+        // not a contract, `get_ccvs_for_message` returned `WAIT_FOR_FINALITY_FLAG` (always allowed).
+        finality_codec::ensure_requested_finality_allowed(message.finality, allowed_finality)?;
+
+        // Every required CCV present (`RequiredCCVMissing`); ≥`optional_threshold` optional
+        // present (`OptionalCCVQuorumNotReached`).
+        Self::ensure_quorum_present(&required, &optional, optional_threshold, ccvs)?;
+
+        // Verify every attested CCV. (M-12 — verifying only required + counted-optional and
+        // ignoring extras — is deferred; an extra CCV that fails `verify_message` still rejects.)
         for i in 0..ccvs.len() {
             let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
             let result = verifier_results
                 .get(i)
                 .ok_or(CCIPError::CCVLengthMismatch)?;
 
-            // TODO: is the ccv address here referring to the verifier or resolver contract?
-
-            // Resolve the inbound verifier implementation from the CCV resolver
             let vvr = VersionedVerifierResolverClient::new(env, &ccv);
             let verifier_address = vvr.get_inbound_implementation(&result);
 
-            // Call verify_message on the resolved verifier
             let message_hash: BytesN<32> = message_id.clone();
             let mut verify_args = soroban_sdk::Vec::new(env);
             verify_args.push_back(source_chain_selector.into_val(env));
@@ -575,25 +798,6 @@ impl OffRampContract {
                 &Symbol::new(env, "verify_message"),
                 verify_args,
             )?;
-
-            // Check if this CCV is a mandated or default one
-            if Self::is_in_list(&ccv, &source_config.lane_mandated_ccvs) {
-                mandated_verified += 1;
-            }
-            if Self::is_in_list(&ccv, &source_config.default_ccvs) {
-                default_verified += 1;
-            }
-        }
-
-        // All lane-mandated CCVs must have verified
-        let mandated_count = source_config.lane_mandated_ccvs.len();
-        if mandated_verified < mandated_count {
-            return Err(CCIPError::CCVQuorumNotMet);
-        }
-
-        // If no mandated CCVs, at least one default CCV must verify
-        if mandated_count == 0 && default_verified == 0 {
-            return Err(CCIPError::CCVQuorumNotMet);
         }
 
         Ok(())
