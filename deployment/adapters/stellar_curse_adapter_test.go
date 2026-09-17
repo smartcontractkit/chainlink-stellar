@@ -119,7 +119,8 @@ func TestStellarContractIDOnChain_routerResolvesToStrkey(t *testing.T) {
 }
 
 // sdkOnlySigner reports an address without a keypair, so contract reads against
-// a client-less chain fail and Initialize's best-effort owner/admin reads degrade.
+// a client-less chain fail: Initialize's mandatory owner read surfaces the
+// failure, while its advisory admin read degrades.
 type sdkOnlySigner struct{ addr string }
 
 func (sdkOnlySigner) Sign([]byte) ([]byte, error) { return nil, nil }
@@ -171,8 +172,15 @@ func TestStellarCurseAdapter_InitializeCachesRoutingFacts(t *testing.T) {
 
 	rmnStrkey := stellarutil.MustGenerateMockContractID("deployer", "rmn-curse-adapter-test")
 	a := NewStellarCurseAdapter()
-	require.NoError(t, a.Initialize(env, sel))
 
+	// The owner read is mandatory: against the dead RPC endpoint it fails loudly
+	// instead of silently degrading to an empty Owner (which would surface much
+	// later as a misleading proposal-build error).
+	err := a.Initialize(env, sel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read RMN Remote owner")
+
+	// Everything resolved from the datastore before the mandatory read is cached.
 	// RMN ref is stored hex and cached as the strkey form the ownership helpers need.
 	require.Equal(t, rmnStrkey, a.rmnContractID[sel])
 
@@ -181,8 +189,8 @@ func TestStellarCurseAdapter_InitializeCachesRoutingFacts(t *testing.T) {
 	require.Equal(t, fastTL, a.timelocks[sel][utils.UltraFastCurseMCMSQualifier])
 	require.Equal(t, cclTL, a.timelocks[sel][utils.CLLQualifier])
 
-	// Owner/admin reads fail against the client-less chain and degrade to empty,
-	// never an error: direct-only deployments are legitimate.
+	// The advisory admin read never ran (the owner read failed first) and stays
+	// uncached so a later Initialize retries both.
 	require.Empty(t, a.owners[sel])
 	require.Empty(t, a.curseAdmins[sel])
 }
@@ -191,7 +199,10 @@ func TestStellarCurseAdapter_InitializeAbsentTimelocksDegrade(t *testing.T) {
 	sel := uint64(424242420102)
 	env := adapterTestEnv(t, sel, true, utils.RMNTimelockQualifier)
 	a := NewStellarCurseAdapter()
-	require.NoError(t, a.Initialize(env, sel))
+	// The owner read fails against the dead RPC endpoint (mandatory, fatal)…
+	require.Error(t, a.Initialize(env, sel))
+	// …but the datastore-only timelock cache still degraded quietly: absent
+	// qualifiers are simply missing keys, never an error.
 	require.Contains(t, a.timelocks[sel], utils.RMNTimelockQualifier)
 	require.NotContains(t, a.timelocks[sel], utils.UltraFastCurseMCMSQualifier)
 	require.NotContains(t, a.timelocks[sel], utils.CLLQualifier)

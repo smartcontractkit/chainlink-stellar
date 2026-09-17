@@ -44,18 +44,19 @@ type StellarCurseInput struct {
 // the invoking address, so on MCMS runs it is the executing timelock's contract ID.
 //
 // Order:
-//  1. the deployer is the owner or a curse admin → direct execution, no proposal;
-//  2. MCMSQualifier set → that qualifier's timelock, verified to be owner-or-admin;
-//     a missing stack or an unauthorized timelock is a build-time error;
-//  3. MCMSQualifier empty (direct/no-MCMS or pre-qualifier callers) → documented
-//     fallback: the RMNMCMS timelock when authorized, else the UltraFastCurse
-//     timelock, with a warning naming the assumption;
+//  1. MCMSQualifier set → that qualifier's timelock, verified to be owner-or-admin;
+//     a missing stack or an unauthorized timelock is a build-time error. The explicit
+//     qualifier wins over the deployer-direct arm: an operator who asked for a
+//     governed route gets a proposal even when the deployer could still curse
+//     directly, and an unauthorized pick fails at build time instead of silently
+//     signing with the deployer key;
+//  2. MCMSQualifier empty and the deployer is the owner or a curse admin → direct
+//     execution, no proposal;
+//  3. MCMSQualifier empty and the deployer is not authorized → documented fallback:
+//     the RMNMCMS timelock when authorized, else the UltraFastCurse timelock, with a
+//     warning naming the assumption;
 //  4. nothing authorized → fail closed with an actionable error.
 func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, error) {
-	if in.Owner == deployerAddr || slices.Contains(in.CurseAdmins, deployerAddr) {
-		return deployerAddr, nil
-	}
-
 	if in.MCMSQualifier != "" {
 		tl, ok := in.Timelocks[in.MCMSQualifier]
 		if !ok {
@@ -71,6 +72,10 @@ func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, er
 			)
 		}
 		return tl, nil
+	}
+
+	if in.Owner == deployerAddr || slices.Contains(in.CurseAdmins, deployerAddr) {
+		return deployerAddr, nil
 	}
 
 	// Fallback order: RMNMCMS (owner) first, then UltraFastCurse (curse-admin).
@@ -171,7 +176,8 @@ var StellarUncurse = cldfops.NewSequence(
 
 		if in.Owner == "" {
 			return seqcore.OnChainOutput{}, fmt.Errorf(
-				"uncurse on chain %d: RMN Remote owner is unknown; populate Owner in the input", in.ChainSelector)
+				"uncurse on chain %d: RMN Remote owner is unknown and uncurse is owner-only, so it cannot be routed; "+
+					"the curse adapter reads the owner (failing loudly on RPC errors), so an empty Owner means the input bypassed it — populate Owner in the input", in.ChainSelector)
 		}
 
 		if deployerAddr == in.Owner {

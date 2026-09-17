@@ -60,6 +60,35 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, deployer, caller)
 	})
+	t.Run("explicit qualifier wins over the deployer-direct arm", func(t *testing.T) {
+		t.Parallel()
+		in := baseInput()
+		in.Owner = deployer // the deployer could curse directly…
+		in.CurseInput = curseAPIInput(subjects, utils.UltraFastCurseMCMSQualifier)
+		in.CurseAdmins = []string{fastTL}
+		caller, err := authorizeCurseCaller(in, deployer)
+		require.NoError(t, err)
+		require.Equal(t, fastTL, caller, "an explicit qualifier must produce a governed proposal, not a direct sign-and-submit")
+	})
+	t.Run("explicit qualifier wins when the deployer is a curse admin", func(t *testing.T) {
+		t.Parallel()
+		in := baseInput()
+		in.CurseAdmins = []string{deployer, govTL}
+		in.CurseInput = curseAPIInput(subjects, utils.RMNTimelockQualifier)
+		caller, err := authorizeCurseCaller(in, deployer)
+		require.NoError(t, err)
+		require.Equal(t, govTL, caller)
+	})
+	t.Run("explicit unauthorized qualifier errors even when the deployer is owner", func(t *testing.T) {
+		t.Parallel()
+		in := baseInput()
+		in.Owner = deployer
+		in.CurseInput = curseAPIInput(subjects, utils.CLLQualifier)
+		_, err := authorizeCurseCaller(in, deployer)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not authorized")
+		require.Contains(t, err.Error(), "CLLCCIP")
+	})
 	t.Run("UltraFastCurse qualifier resolves its timelock", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
