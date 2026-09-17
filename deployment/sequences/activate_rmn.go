@@ -16,6 +16,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
@@ -80,7 +81,7 @@ var StellarActivateRMN = cldfops.NewSequence(
 			return output, fmt.Errorf("no RBACTimelock deployed for qualifier %q on chain %d; deploy the fast-curse MCMS stack first", fastQual, in.ChainSelector)
 		}
 
-		rmnRef, err := resolveRMNRemoteRef(in)
+		rmnRecordedRef, opsRef, err := resolveRMNRemoteRefs(in)
 		if err != nil {
 			return output, err
 		}
@@ -99,11 +100,9 @@ var StellarActivateRMN = cldfops.NewSequence(
 
 		// The canonical RMN Remote ref type is the upstream "RMNRemote" (kept for
 		// datastore compatibility); the ownership helpers and ops match the
-		// stellar-local "RmnRemote" constant. Remap only the in-memory ref — never
-		// the recorded ref — so ownership lookups resolve.
-		opsRef := rmnRef
-		opsRef.Type = datastore.ContractType(rmnremoteops.ContractType)
-
+		// stellar-local "RmnRemote" constant. resolveRMNRemoteRefs already remapped
+		// only the in-memory ops ref — the recorded ref is untouched — so ownership
+		// lookups resolve.
 		owner, err := ownership.ContractOwner(ctx, deps, opsRef)
 		if err != nil {
 			return output, fmt.Errorf("read RMN Remote owner: %w", err)
@@ -185,22 +184,39 @@ var StellarActivateRMN = cldfops.NewSequence(
 		batchOps = append(batchOps, transferReport.Output.BatchOps...)
 
 		output.BatchOps = batchOps
-		output.Addresses = append(output.Addresses, rmnRef)
+		// Emit the recorded (hex-addressed, upstream-typed) ref — the datastore
+		// convention every RMN lookup relies on. The strkey opsRef never leaves
+		// this sequence.
+		output.Addresses = append(output.Addresses, rmnRecordedRef)
 		return output, nil
 	},
 )
 
-// resolveRMNRemoteRef resolves the RMN Remote ref as the strkey-addressed form the
-// ownership helpers require. The explicit RMNRemoteRef wins when set; otherwise the
-// ref is looked up in ExistingAddresses by its canonical (type, version, qualifier)
-// and the stored hex address is converted to the contract strkey.
-func resolveRMNRemoteRef(in StellarActivateRMNInput) (datastore.AddressRef, error) {
+// resolveRMNRemoteRefs resolves the RMN Remote ref in two forms:
+//   - recorded: exactly as it must be persisted in the datastore — upstream
+//     "RMNRemote" type, hex address (the convention every RMN lookup relies on;
+//     a strkey stored there fails hex decoding);
+//   - ops: the strkey-addressed, stellar-local-typed form the ownership helpers
+//     and ops require.
+//
+// The explicit RMNRemoteRef (strkey-addressed) wins when set; its address is
+// converted back to hex for the recorded form. Remap only the in-memory ops
+// ref — never the recorded ref.
+func resolveRMNRemoteRefs(in StellarActivateRMNInput) (recorded datastore.AddressRef, ops datastore.AddressRef, err error) {
 	if in.RMNRemoteRef != nil {
 		ref := *in.RMNRemoteRef
 		if ref.Address == "" {
-			return datastore.AddressRef{}, fmt.Errorf("RMNRemoteRef set but Address is empty")
+			return datastore.AddressRef{}, datastore.AddressRef{}, fmt.Errorf("RMNRemoteRef set but Address is empty")
 		}
-		return ref, nil
+		hexAddr, err := stellarutil.StrkeyToHex(ref.Address)
+		if err != nil {
+			return datastore.AddressRef{}, datastore.AddressRef{}, fmt.Errorf("convert RMNRemoteRef address %s to hex: %w", ref.Address, err)
+		}
+		recorded = ref
+		recorded.Address = hexAddr
+		ops = ref
+		ops.Type = datastore.ContractType(rmnremoteops.ContractType)
+		return recorded, ops, nil
 	}
 	want := stellarccip.RMNRemoteDatastoreRef().PartialAddressRef()
 	for _, r := range in.ExistingAddresses {
@@ -212,13 +228,14 @@ func resolveRMNRemoteRef(in StellarActivateRMNInput) (datastore.AddressRef, erro
 		}
 		strkeyAddr, err := scval.HexToContractStrkey(r.Address)
 		if err != nil {
-			return datastore.AddressRef{}, fmt.Errorf("convert RMN Remote ref %s to strkey: %w", r.Address, err)
+			return datastore.AddressRef{}, datastore.AddressRef{}, fmt.Errorf("convert RMN Remote ref %s to strkey: %w", r.Address, err)
 		}
-		ref := r
-		ref.Address = strkeyAddr
-		return ref, nil
+		ops = r
+		ops.Address = strkeyAddr
+		ops.Type = datastore.ContractType(rmnremoteops.ContractType)
+		return r, ops, nil
 	}
-	return datastore.AddressRef{}, fmt.Errorf("no RMN Remote ref found for chain %d in ExistingAddresses", in.ChainSelector)
+	return datastore.AddressRef{}, datastore.AddressRef{}, fmt.Errorf("no RMN Remote ref found for chain %d in ExistingAddresses", in.ChainSelector)
 }
 
 func dedupeStrkeys(in []string) []string {
