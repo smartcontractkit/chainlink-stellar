@@ -179,6 +179,18 @@ impl LockReleaseTokenPoolContract {
             return Err(CCIPError::ChainNotSupported);
         }
 
+        // Validate the inbound source pool is configured for this remote chain.
+        // Mirrors EVM `TokenPool._validateReleaseOrMint` (TokenPool.sol:480):
+        // the source-pool membership check runs before the inbound rate-limit
+        // consume, reverting `InvalidSourcePoolAddress` for an unknown source.
+        if !<Self as BaseTokenPool>::is_remote_source_pool(
+            &env,
+            input.remote_chain_selector,
+            &input.source_pool_address,
+        )? {
+            return Err(CCIPError::InvalidSourcePoolAddress);
+        }
+
         let local_decimals = <Self as BaseTokenPool>::get_token_decimals(&env)?;
         let remote_decimals = parse_remote_decimals(&input.source_pool_data, local_decimals)?;
         let local_amount = calculate_local_amount(input.amount, remote_decimals, local_decimals)?;

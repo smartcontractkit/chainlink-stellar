@@ -354,6 +354,7 @@ pub enum CCIPError {
     InvalidRequestedFinality = 315,
     RequestedFinalityCanOnlyHaveOneMode = 316,
     RouterNotConfigured = 318,
+    InvalidSourcePoolAddress = 319,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
 }

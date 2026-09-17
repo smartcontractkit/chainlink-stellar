@@ -200,6 +200,9 @@ pub enum CCIPError {
     InvalidChainForClient = 317,
     /// Pool requires a configured ramp registry for ramp caller checks (`lock_or_burn` / `release_or_mint`).
     RouterNotConfigured = 318,
+    /// Inbound `source_pool_address` is not a configured remote pool for the remote chain
+    /// (EVM `TokenPool._validateReleaseOrMint` / `InvalidSourcePoolAddress`).
+    InvalidSourcePoolAddress = 319,
 
     // ============================================================
     // Calculation errors

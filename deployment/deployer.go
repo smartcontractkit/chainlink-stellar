@@ -614,11 +614,31 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 		return nil, fmt.Errorf("failed to marshal account key: %w", err)
 	}
 
-	resp, err := d.rpcClient.GetLedgerEntries(ctx, protocolrpc.GetLedgerEntriesRequest{
-		Keys: []string{keyXDR},
-	})
+	// GetLedgerEntries is a pure read, but the captive-core backend can
+	// transiently return HTTP non-200 (e.g. 404 when captive core restarts or
+	// prunes mid-test), surfacing as an `[-32603] could not query captive core`
+	// JSON-RPC error. Retry with backoff so a momentary backend hiccup does not
+	// fail an otherwise-healthy integration run.
+	var resp protocolrpc.GetLedgerEntriesResponse
+	const maxAttempts = 5
+	backoff := 2 * time.Second
+	var lastErr error
+	for range maxAttempts {
+		resp, err = d.rpcClient.GetLedgerEntries(ctx, protocolrpc.GetLedgerEntriesRequest{
+			Keys: []string{keyXDR},
+		})
+		if err == nil {
+			break
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ledger entries: %w", err)
+		return nil, fmt.Errorf("failed to get ledger entries after %d attempts: %w", maxAttempts, lastErr)
 	}
 
 	if len(resp.Entries) == 0 {

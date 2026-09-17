@@ -352,7 +352,7 @@ fn test_lock_and_release() {
         receiver: receiver.clone(),
         amount: lock_amount,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
 
@@ -536,7 +536,7 @@ fn test_release_or_mint_zero_amount_succeeds_without_pool_balance() {
         receiver: receiver.clone(),
         amount: 0,
         local_token: token_address,
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
 
@@ -656,13 +656,55 @@ fn test_release_or_mint_insufficient_pool_liquidity() {
         receiver,
         amount: locked + 1,
         local_token: token_address,
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
 
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
     let result = stub_client.try_release(&pool_client.address, &release_input, &0u32);
     assert_eq!(result, Err(Ok(CCIPError::InsufficientPoolLiquidity)));
+}
+
+#[test]
+fn test_release_or_mint_rejects_wrong_source_pool() {
+    // Inbound `release_or_mint` must revert `InvalidSourcePoolAddress` when the
+    // message's `source_pool_address` is not the configured remote pool for the
+    // source chain. Mirrors EVM `TokenPool._validateReleaseOrMint`
+    // (`pools/TokenPool.sol:480`), which checks `isRemotePool` before the
+    // inbound rate-limit consume.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        registry_client,
+        stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    // Configure the chain with remote_pool = [1u8;20].
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Claim to originate from a different pool ([9u8;20]).
+    let release_input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: Address::generate(&env),
+        amount: 100,
+        local_token: token_address,
+        source_pool_address: Bytes::from_slice(&env, &[9u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+
+    register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
+    let result = stub_client.try_release(&pool_client.address, &release_input, &0u32);
+    assert_eq!(result, Err(Ok(CCIPError::InvalidSourcePoolAddress)));
 }
 
 #[test]
@@ -846,7 +888,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
         receiver: receiver.clone(),
         amount: 1_000_000_000,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: encode_local_decimals(&env, remote_decimals).unwrap(),
     };
 
@@ -1035,7 +1077,7 @@ fn test_release_or_mint_exceeds_inbound_capacity_rejected() {
         receiver: Address::generate(&env),
         amount: 501,
         local_token: token_address,
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
@@ -1088,7 +1130,7 @@ fn test_release_or_mint_inbound_refills_over_time() {
         receiver: receiver.clone(),
         amount: 1000,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
@@ -1103,7 +1145,7 @@ fn test_release_or_mint_inbound_refills_over_time() {
         receiver: receiver.clone(),
         amount: 300,
         local_token: token_address,
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     stub_client.release(&pool_client.address, &release_input2, &0u32);
@@ -1317,7 +1359,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         receiver: receiver.clone(),
         amount: 200,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
@@ -1332,7 +1374,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         receiver: receiver.clone(),
         amount: 3,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     let r = stub_client.try_release(&pool_client.address, &release_input2, &WAIT_FOR_SAFE);
@@ -1345,7 +1387,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         receiver: receiver.clone(),
         amount: 500,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     stub_client.release(&pool_client.address, &release_default, &0u32);
@@ -1399,7 +1441,7 @@ fn test_ftf_inbound_falls_back_to_default_bucket_when_not_configured() {
         receiver: receiver.clone(),
         amount: 500,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
@@ -1414,7 +1456,7 @@ fn test_ftf_inbound_falls_back_to_default_bucket_when_not_configured() {
         receiver: receiver.clone(),
         amount: 6,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     let r = stub_client.try_release(&pool_client.address, &release_input2, &WAIT_FOR_SAFE);
@@ -1592,7 +1634,7 @@ fn test_ftf_and_default_buckets_are_independent() {
         receiver: receiver.clone(),
         amount: 300,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
@@ -1606,7 +1648,7 @@ fn test_ftf_and_default_buckets_are_independent() {
         receiver: receiver.clone(),
         amount: 1000,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
     stub_client.release(&pool_client.address, &release_default, &0u32);
@@ -1864,7 +1906,7 @@ fn test_postflight_hook_rejects_release_or_mint() {
         receiver: receiver.clone(),
         amount: 1_000_000_000,
         local_token: token_address.clone(),
-        source_pool_address: Bytes::from_slice(&env, &[5u8; 20]),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: Bytes::new(&env),
     };
 

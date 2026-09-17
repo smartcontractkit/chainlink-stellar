@@ -799,6 +799,7 @@ const (
 	CCIPErrorRequestedFinalityCanOnlyHaveOneMode = 316
 	CCIPErrorInvalidChainForClient               = 317
 	CCIPErrorRouterNotConfigured                 = 318
+	CCIPErrorInvalidSourcePoolAddress            = 319
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -919,6 +920,7 @@ var CCIPErrorMessage = map[int]string{
 	316: "requested finality can only have one mode",
 	317: "invalid chain for client",
 	318: "router not configured",
+	319: "invalid source pool address",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",

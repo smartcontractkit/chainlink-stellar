@@ -867,6 +867,32 @@ fn release_rejects_unsupported_chain() {
     assert!(r.is_err());
 }
 
+#[test]
+fn release_rejects_wrong_source_pool() {
+    // Inbound `release_or_mint` must revert `InvalidSourcePoolAddress` when the
+    // message's `source_pool_address` is not the configured remote pool for the
+    // source chain. Mirrors EVM `TokenPool._validateReleaseOrMint`
+    // (`pools/TokenPool.sol:480`), which checks `isRemotePool` before the
+    // inbound rate-limit consume. `setup()` configures REMOTE_CHAIN with
+    // remote_pool = [0xaa;32] (see `add_chain`); here we claim [0x99;32].
+    let t = setup();
+    let receiver = Address::generate(&t.env);
+
+    let release_in = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        receiver: receiver,
+        amount: 100,
+        local_token: t.token_addr.clone(),
+        source_pool_address: Bytes::from_slice(&t.env, &[0x99; 32]),
+        source_pool_data: Bytes::new(&t.env),
+    };
+    let r = t
+        .stub_client
+        .try_release(&t.pool_client.address, &release_in, &0);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidSourcePoolAddress);
+}
+
 // ============================================================
 // Pool fee (BaseTokenPool re-exports)
 // ============================================================
