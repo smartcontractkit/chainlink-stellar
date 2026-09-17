@@ -640,6 +640,37 @@ fn test_merge_receiver_ccvs_optional_minus_required_decrements_threshold() {
 }
 
 #[test]
+fn test_merge_receiver_ccvs_rejects_duplicate_required() {
+    // EVM `CCVConfigValidation._assertNoDuplicates(requiredCCV)`: a duplicate in the receiver's
+    // required list is rejected (InvalidConfig) before the threshold/merge.
+    let env = Env::default();
+    let a = Address::generate(&env);
+    let mut req = Vec::new(&env);
+    req.push_back(a.clone());
+    req.push_back(a); // duplicate
+    let config = ccvs_and_finality(req, Vec::new(&env), 0, 0);
+    let sc = src_config(&env, Vec::new(&env), Vec::new(&env));
+    let res = OffRampContract::merge_receiver_ccvs(&env, &config, &Vec::new(&env), &sc);
+    assert_eq!(res, Err(CCIPError::InvalidConfig));
+}
+
+#[test]
+fn test_merge_receiver_ccvs_rejects_duplicate_optional() {
+    // Reviewer's example: optional=[A,A], threshold=2 ⇒ without the dup check,
+    // `ensure_quorum_present` would count one attestation twice and accept a 2-of-2 policy with a
+    // single CCV. `merge_receiver_ccvs` must reject it (InvalidConfig) before that can happen.
+    let env = Env::default();
+    let a = Address::generate(&env);
+    let mut opt = Vec::new(&env);
+    opt.push_back(a.clone());
+    opt.push_back(a); // duplicate
+    let config = ccvs_and_finality(Vec::new(&env), opt, 2, 0);
+    let sc = src_config(&env, Vec::new(&env), Vec::new(&env));
+    let res = OffRampContract::merge_receiver_ccvs(&env, &config, &Vec::new(&env), &sc);
+    assert_eq!(res, Err(CCIPError::InvalidConfig));
+}
+
+#[test]
 fn test_ensure_quorum_required_missing() {
     // A required CCV absent from `ccvs` ⇒ #116.
     let env = Env::default();
@@ -1016,4 +1047,73 @@ fn test_consult_success_finality_disallowed() {
     verifier_results.push_back(Bytes::new(&env));
 
     assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+// ============================================================
+// C-1 review fix — forward message.sender to the receiver consult
+// (EVM `getCCVsAndFinalityConfig(sourceChainSelector, sender)`).
+// ============================================================
+
+/// A V2-shaped receiver that records the `sender` it was consulted with, then returns an empty
+/// config (success). Used to prove the OffRamp forwards `message.sender`, not an empty `Bytes`.
+#[contract]
+pub struct MockSenderReceiver;
+const MOCK_SENDER_KEY: Symbol = symbol_short!("SND");
+#[contractimpl]
+impl MockSenderReceiver {
+    pub fn get_ccvs_and_finality_config(
+        env: Env,
+        _source_chain_selector: u64,
+        sender: Bytes,
+    ) -> Result<CcvsAndFinalityConfig, CCIPError> {
+        env.storage().instance().set(&MOCK_SENDER_KEY, &sender);
+        Ok(CcvsAndFinalityConfig {
+            required_ccvs: Vec::new(&env),
+            optional_ccvs: Vec::new(&env),
+            optional_threshold: 0,
+            allowed_finality_config: 0,
+        })
+    }
+    pub fn last_sender(env: Env) -> Bytes {
+        env.storage()
+            .instance()
+            .get(&MOCK_SENDER_KEY)
+            .unwrap_or(Bytes::new(&env))
+    }
+}
+
+#[test]
+fn test_consult_forwards_message_sender() {
+    // The OffRamp must forward `message.sender` as the second consult arg (EVM `bytes sender`), so
+    // sender-dependent receiver policies receive the correct input. The mock records whatever it
+    // receives; we assert it equals the message's `sender` field (a distinctive non-empty value),
+    // NOT the empty `Bytes` the old code passed.
+    let (env, client, _default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let receiver = env.register(MockSenderReceiver, ());
+    let sender_bytes = Bytes::from_array(&env, &[0x5E, 0x4D, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6]);
+
+    let mut msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    msg.sender = sender_bytes.clone();
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // Empty `ccvs`: the consult succeeds (empty config ⇒ defaults sentinel ⇒ required=[default_ccv]),
+    // then `ensure_quorum_present` rejects with `RequiredCCVMissing` (Failure). We don't care about
+    // the outcome here — only that the receiver saw the real sender.
+    let ccvs = Vec::new(&env);
+    let verifier_results = Vec::new(&env);
+    assert!(client
+        .try_execute(&encoded, &ccvs, &verifier_results, &0u32)
+        .is_ok());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+
+    assert_eq!(
+        MockSenderReceiverClient::new(&env, &receiver).last_sender(),
+        sender_bytes,
+        "OffRamp must forward message.sender to the receiver consult"
+    );
 }

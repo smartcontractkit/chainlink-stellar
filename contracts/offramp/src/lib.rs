@@ -577,10 +577,13 @@ impl OffRampContract {
             &source_config.default_ccvs,
         )?;
 
-        // `get_ccvs_and_finality_config(source_chain_selector, unused: Bytes)`.
+        // `get_ccvs_and_finality_config(source_chain_selector, sender)`: the second arg is the
+        // message sender on the source chain (EVM `bytes sender`, forwarded by `OffRamp._getCCVsFromReceiver`).
+        // Receivers may key required/optional CCVs or allowed finality off the sender, so forward the real
+        // `message.sender` — not an empty `Bytes`, which would silently bypass sender-dependent policies.
         let mut args = soroban_sdk::Vec::new(env);
         args.push_back(message.source_chain_selector.into_val(env));
-        args.push_back(Bytes::new(env).into_val(env));
+        args.push_back(message.sender.clone().into_val(env));
 
         // Every non-success arm below returns early, so these are assigned exactly once on the
         // only fall-through path (the `Ok(Ok(Ok(config)))` arm) — no pre-init / dead store.
@@ -617,6 +620,25 @@ impl OffRampContract {
         Ok((required, optional, optional_threshold, allowed_finality))
     }
 
+    /// Reject within-list duplicate CCVs (EVM `CCVConfigValidation._assertNoDuplicates`). Returns
+    /// `InvalidConfig` on the first duplicate. Cross-list (required↔optional) overlap is intentionally
+    /// NOT rejected here — EVM handles that by removing an optional that is also required and
+    /// decrementing the threshold (see the optional-minus-required loop below).
+    fn assert_no_duplicates(list: &Vec<Address>) -> Result<(), CCIPError> {
+        for i in 0..list.len() {
+            if let Some(a) = list.get(i) {
+                for j in (i + 1)..list.len() {
+                    if let Some(b) = list.get(j) {
+                        if a == b {
+                            return Err(CCIPError::InvalidConfig);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Append each address from `src` to `dst` unless already present (dedup via `is_in_list`).
     fn dedup_append(dst: &mut Vec<Address>, src: &Vec<Address>) {
         for i in 0..src.len() {
@@ -640,6 +662,14 @@ impl OffRampContract {
         pool_required: &Vec<Address>,
         source_config: &SourceChainConfig,
     ) -> Result<(Vec<Address>, Vec<Address>, u32), CCIPError> {
+        // EVM `_getCCVsFromReceiver` calls `CCVConfigValidation._assertNoDuplicates` on both the
+        // required and optional lists before the threshold check. Without this, a duplicate optional
+        // (e.g. optional=[A,A], threshold=2) lets `ensure_quorum_present` count one attestation twice,
+        // accepting a 2-of-2 policy with a single CCV. Reuse `InvalidConfig` (no dedicated code yet;
+        // the EVM `DuplicateCCVNotAllowed` slot, 119, stays reserved for a future FIX-GROUP-D pass).
+        Self::assert_no_duplicates(&config.required_ccvs)?;
+        Self::assert_no_duplicates(&config.optional_ccvs)?;
+
         // EVM `_getCCVsFromReceiver`: optionalThreshold must be ≤ optionalCCVs.length.
         if config.optional_threshold > config.optional_ccvs.len() {
             return Err(CCIPError::InvalidOptionalThreshold);
