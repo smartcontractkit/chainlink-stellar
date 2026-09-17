@@ -22,6 +22,20 @@ type DeployStellarCCIPInnerInput struct {
 	ChainSelector     uint64
 	AllSelectors      []uint64
 	ExistingAddresses []datastore.AddressRef
+	// CurseAdmins seeds the RMN Remote curse-admin list at deploy time (strkeys).
+	// Zero value keeps the previous behavior: no curse admins.
+	CurseAdmins []string
+	// EnableFastCurse prepends the fast-curse RBACTimelock (resolved by
+	// FastCurseQualifier, default the UltraFastCurse qualifier) to CurseAdmins,
+	// mirroring EVM where the Ultra Fast Curse timelock is always the curse admin
+	// on a newly deployed RMN. Errors if that timelock is not deployed.
+	EnableFastCurse bool
+	// FastCurseQualifier overrides the qualifier used to resolve the fast-curse
+	// timelock when EnableFastCurse is set. Defaults to the UltraFastCurse qualifier.
+	FastCurseQualifier string
+	// GovernanceQualifier is carried for downstream activation wiring; the deploy
+	// itself does not use it. Defaults to the RMNMCMS qualifier.
+	GovernanceQualifier string
 }
 
 // StellarDeployChainContracts is the adapter sequence: DEP is BlockChains.
