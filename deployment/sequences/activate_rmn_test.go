@@ -13,7 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
+	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 )
 
 func TestStellarActivateRMN_sequenceMetadata(t *testing.T) {
@@ -129,40 +131,51 @@ func TestRouteCurseAdminGrant(t *testing.T) {
 	})
 }
 
-func TestResolveRMNRemoteRef(t *testing.T) {
+func TestResolveRMNRemoteRefs(t *testing.T) {
 	t.Parallel()
 	sel := chainsel.STELLAR_LOCALNET.Selector
 	refs := fullActivateRMNRefs(t, sel)
+	var storedRMNRef datastore.AddressRef
+	for _, r := range refs {
+		if r.Type == datastore.ContractType(stellarccip.RMNRemoteContractType) {
+			storedRMNRef = r
+		}
+	}
 
-	t.Run("resolves hex ref to strkey", func(t *testing.T) {
+	t.Run("resolves hex ref to strkey ops form, recorded ref stays hex", func(t *testing.T) {
 		t.Parallel()
-		ref, err := resolveRMNRemoteRef(StellarActivateRMNInput{
+		recorded, ops, err := resolveRMNRemoteRefs(StellarActivateRMNInput{
 			ChainSelector:     sel,
 			ExistingAddresses: refs,
 		})
 		require.NoError(t, err)
-		require.Equal(t, datastore.ContractType(stellarccip.RMNRemoteContractType), ref.Type)
-		require.NotEmpty(t, ref.Address)
-		require.Equal(t, "C", string(ref.Address[0]), "resolved address must be a contract strkey")
+		require.Equal(t, stellarccip.RMNRemoteContractType, string(recorded.Type), "recorded ref keeps the canonical upstream type")
+		require.Equal(t, storedRMNRef.Address, recorded.Address, "recorded ref keeps the stored hex address verbatim")
+		require.NotEmpty(t, ops.Address)
+		require.Equal(t, "C", string(ops.Address[0]), "ops address must be a contract strkey")
+		require.Equal(t, rmnremoteops.ContractType, string(ops.Type), "ops ref uses the stellar-local contract type")
 	})
-	t.Run("explicit override wins", func(t *testing.T) {
+	t.Run("explicit override wins, recorded form converted to hex", func(t *testing.T) {
 		t.Parallel()
 		override := &datastore.AddressRef{
 			ChainSelector: sel,
 			Type:          datastore.ContractType(stellarccip.RMNRemoteContractType),
-			Address:       "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK54",
+			Address:       stellarutil.MustGenerateMockContractID("deployer", "rmn-override-ref"),
 		}
-		ref, err := resolveRMNRemoteRef(StellarActivateRMNInput{
+		recorded, ops, err := resolveRMNRemoteRefs(StellarActivateRMNInput{
 			ChainSelector:     sel,
 			ExistingAddresses: refs,
 			RMNRemoteRef:      override,
 		})
 		require.NoError(t, err)
-		require.Equal(t, override.Address, ref.Address)
+		require.Equal(t, override.Address, ops.Address)
+		hexAddr, err := stellarutil.StrkeyToHex(override.Address)
+		require.NoError(t, err)
+		require.Equal(t, hexAddr, recorded.Address, "recorded form of an explicit strkey override must be hex")
 	})
 	t.Run("override with empty address errors", func(t *testing.T) {
 		t.Parallel()
-		_, err := resolveRMNRemoteRef(StellarActivateRMNInput{
+		_, _, err := resolveRMNRemoteRefs(StellarActivateRMNInput{
 			ChainSelector: sel,
 			RMNRemoteRef:  &datastore.AddressRef{ChainSelector: sel},
 		})
@@ -171,7 +184,7 @@ func TestResolveRMNRemoteRef(t *testing.T) {
 	})
 	t.Run("missing ref errors", func(t *testing.T) {
 		t.Parallel()
-		_, err := resolveRMNRemoteRef(StellarActivateRMNInput{ChainSelector: sel})
+		_, _, err := resolveRMNRemoteRefs(StellarActivateRMNInput{ChainSelector: sel})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no RMN Remote ref found")
 	})
