@@ -43,6 +43,7 @@ pub trait RouterInterface {
     ) -> Result<(), CCIPError>;
     fn get_onramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OnRampEntry>, CCIPError>;
     fn get_offramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OffRampEntry>, CCIPError>;
+    fn remove_onramp(env: soroban_sdk::Env, dest_chain_selector: u64) -> Result<(), CCIPError>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn route_message(
         env: soroban_sdk::Env,
@@ -278,6 +279,12 @@ pub struct OnRampSetEvent {
 pub struct OffRampAddedEvent {
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["router_OnRampRemoved"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct OnRampRemovedEvent {
+    pub dest_chain_selector: u64,
+    pub onramp: soroban_sdk::Address,
 }
 #[soroban_sdk::contractevent(topics = ["router_OffRampRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

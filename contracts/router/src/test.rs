@@ -239,6 +239,79 @@ fn test_set_onramp() {
 }
 
 #[test]
+fn test_remove_onramp_pauses_lane() {
+    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let client = RouterContractClient::new(&env, &contract_id);
+
+    client.initialize(&owner, &rmn_proxy);
+
+    let onramp = Address::generate(&env);
+    let dest_chain_selector: u64 = 123;
+
+    client.set_onramp(&dest_chain_selector, &onramp);
+    assert!(client.is_chain_supported(&dest_chain_selector));
+
+    // Remove the OnRamp — this is the source-side lane pause (EVM sets router=address(0);
+    // Soroban has no zero address, so removal is the pause).
+    client.remove_onramp(&dest_chain_selector);
+
+    // Lane is now paused: chain unsupported, onramp lookup reverts, send + get_fee revert.
+    assert!(!client.is_chain_supported(&dest_chain_selector));
+    assert!(client.try_get_onramp(&dest_chain_selector).is_err());
+
+    let message = common_message::StellarToAnyMessage {
+        receiver: Bytes::from_array(&env, &[1u8; 20]),
+        data: Bytes::new(&env),
+        token_amounts: Vec::new(&env),
+        fee_token: Address::generate(&env),
+        extra_args: Bytes::new(&env),
+    };
+    let sender = Address::generate(&env);
+    assert!(
+        client.try_get_fee(&dest_chain_selector, &message).is_err(),
+        "get_fee must revert while the lane is paused"
+    );
+    assert!(
+        client
+            .try_ccip_send(&sender, &dest_chain_selector, &message, &0i128)
+            .is_err(),
+        "ccip_send must revert while the lane is paused"
+    );
+}
+
+#[test]
+fn test_remove_onramp_re_add_unpauses() {
+    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let client = RouterContractClient::new(&env, &contract_id);
+
+    client.initialize(&owner, &rmn_proxy);
+
+    let onramp = Address::generate(&env);
+    let dest_chain_selector: u64 = 123;
+
+    client.set_onramp(&dest_chain_selector, &onramp);
+    client.remove_onramp(&dest_chain_selector);
+    assert!(!client.is_chain_supported(&dest_chain_selector));
+
+    // Re-enabling the lane with set_onramp unpauses it.
+    client.set_onramp(&dest_chain_selector, &onramp);
+    assert!(client.is_chain_supported(&dest_chain_selector));
+    assert_eq!(client.get_onramp(&dest_chain_selector), onramp);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #63)")]
+fn test_remove_nonexistent_onramp() {
+    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let client = RouterContractClient::new(&env, &contract_id);
+
+    client.initialize(&owner, &rmn_proxy);
+
+    // Removing an OnRamp that was never configured reverts with UnsupportedDestinationChain (#4).
+    client.remove_onramp(&999u64);
+}
+
+#[test]
 fn test_add_remove_offramp() {
     let (env, contract_id, owner, rmn_proxy, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
