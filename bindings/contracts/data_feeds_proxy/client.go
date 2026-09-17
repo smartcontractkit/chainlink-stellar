@@ -4,6 +4,7 @@ package data_feeds_proxy
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -201,7 +202,7 @@ func (c *DataFeedsProxyClient) LatestRound(ctx context.Context, dataId [32]byte,
 }
 
 // RecoverTokens calls the recover_tokens function on the contract.
-func (c *DataFeedsProxyClient) RecoverTokens(ctx context.Context, token string, to string, amount int64) error {
+func (c *DataFeedsProxyClient) RecoverTokens(ctx context.Context, token string, to string, amount *big.Int) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(token),
 		scval.AddressToScVal(to),

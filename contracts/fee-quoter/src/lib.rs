@@ -602,25 +602,26 @@ impl FeeQuoterContract {
         // Apply premium multiplier (percentage)
         total_usd_cents = total_usd_cents * gas_quote.premium_multiplier as u128 / 100;
 
-        // Convert from USD cents to fee token amount
-        // total_usd_cents is in 1e2 (cents), fee_token_price is in 1e18 USD
-        // fee_amount = total_usd_cents * 1e16 / fee_token_price (1e18 / 1e2 = 1e16)
-        let fee_amount = if gas_quote.fee_token_price > 0 {
-            (total_usd_cents * 10_u128.pow(16) / gas_quote.fee_token_price) as i128
-        } else {
-            return Err(CCIPError::FeeTokenNotSupported);
-        };
+        // Convert USD cents to fee-token smallest units. Mirrors EVM
+        // `usdCents * 1e34 / feeTokenPrice` (USDPriceWith18Decimals convention:
+        // price = USD × 1e18 per 1e18 smallest units, e.g. LINK @ $15 → 15e18).
+        // The helper splits the 1e34 scaling to avoid u128 overflow for large
+        // fees and returns FeeTokenNotSupported when the price is zero.
+        let fee_amount = common_helpers::fee_math::usd_cents_to_fee_token(
+            total_usd_cents,
+            gas_quote.fee_token_price,
+        )?;
 
-        // Check against max fee
-        let static_config: StaticConfig = env
-            .storage()
-            .instance()
-            .get(&STATIC_CFG)
-            .ok_or(CCIPError::NotInitialized)?;
-
-        if fee_amount > static_config.max_fee_juels_per_msg {
-            return Err(CCIPError::MessageFeeTooHigh);
-        }
+        // Per-message fee cap is enforced by the OnRamp against
+        // `StaticConfig.max_usd_cents_per_message`, converted to the fee token's
+        // units via the same 1e34 helper (EVM `OnRamp.sol:1104`,
+        // `FeeExceedsMaxAllowed`). That cap is dimensionally correct for any fee
+        // token and covers the TOTAL user-paid fee (gas + network + token +
+        // additional CCV/pool/executor fees). The legacy `max_fee_juels_per_msg`
+        // field here was denominated in LINK juels and compared against arbitrary
+        // fee-token units — mis-scaled for non-LINK fee tokens and covering only
+        // the message-fee portion — so it is no longer enforced. The field is
+        // retained in `StaticConfig` for deployment-schema compatibility.
 
         Ok(MessageFeeResult {
             fee_usd_cents: total_usd_cents,

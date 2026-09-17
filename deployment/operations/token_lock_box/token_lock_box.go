@@ -1,6 +1,8 @@
 package token_lock_box
 
 import (
+	"math/big"
+
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	tlbbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_lock_box"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
@@ -127,7 +129,7 @@ var Deposit = cldfops.NewOperation(
 	"Deposits tokens from an allowed caller into the lock box",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in DepositInput) (stellarops.Void, error) {
 		c := tlbbindings.NewTokenLockBoxClient(d.Invoker, in.ContractID)
-		if err := c.Deposit(b.GetContext(), in.Caller, in.Amount); err != nil {
+		if err := c.Deposit(b.GetContext(), in.Caller, big.NewInt(in.Amount)); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil
@@ -149,7 +151,7 @@ var Withdraw = cldfops.NewOperation(
 	"Withdraws tokens from the lock box to a recipient on behalf of an allowed caller",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in WithdrawInput) (stellarops.Void, error) {
 		c := tlbbindings.NewTokenLockBoxClient(d.Invoker, in.ContractID)
-		if err := c.Withdraw(b.GetContext(), in.Caller, in.Amount, in.Recipient); err != nil {
+		if err := c.Withdraw(b.GetContext(), in.Caller, big.NewInt(in.Amount), in.Recipient); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

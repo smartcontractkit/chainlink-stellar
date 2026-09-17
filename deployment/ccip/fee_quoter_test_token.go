@@ -30,8 +30,14 @@ func ApplyFeeQuoterTestTokenConfig(
 	}
 	tokenPriceUpdates := fee_quoter.PriceUpdates{
 		TokenPriceUpdates: []fee_quoter.TokenPriceUpdate{{
-			Token:       testToken,
-			UsdPerToken: scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 1_000_000_000_000_000_000}), // $1
+			Token: testToken,
+			// Devenv test token is a 7-decimal SAC. USDPriceWith18Decimals
+			// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per 1e18
+			// smallest units", scaled by decimals: $1 × 10^(36-7) = 1e29.
+			// See contracts/common/helpers/src/fee_math.rs.
+			UsdPerToken: scval.U128(xdr.UInt128Parts{ // $1 (7-dec SAC) = 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+				Hi: 5421010862, Lo: 7886392056514347008,
+			}),
 		}},
 		GasPriceUpdates: []fee_quoter.GasPriceUpdate{},
 	}

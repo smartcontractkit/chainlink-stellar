@@ -51,7 +51,7 @@ func TestOnRamp(t *testing.T) {
 			ChainSelector:         12345, // Test chain selector
 			TokenAdminRegistry:    mockTokenAdminRegistry,
 			RmnProxy:              mockRMNRemote,
-			MaxUsdCentsPerMessage: 10000, // $100
+			MaxUsdCentsPerMessage: 500_000, // $5000 — Ethereum-spike-safe per-message fee cap (see stellar_ccip_full_deploy.go).
 		}
 
 		dynamicConfig := onrampbindings.DynamicConfig{

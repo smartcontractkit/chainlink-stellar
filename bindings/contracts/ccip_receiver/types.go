@@ -3,6 +3,7 @@ package ccip_receiver
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -280,7 +281,7 @@ func CcvsAndFinalityConfigFromScVal(val xdr.ScVal) (*CcvsAndFinalityConfig, erro
 
 // TokenAmount represents the TokenAmount struct from the contract.
 type TokenAmount struct {
-	Amount int64
+	Amount *big.Int
 	Token  string
 }
 

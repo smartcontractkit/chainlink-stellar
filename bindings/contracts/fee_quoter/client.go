@@ -4,6 +4,7 @@ package fee_quoter
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -353,7 +354,7 @@ func (c *FeeQuoterClient) TransferOwnership(ctx context.Context, newOwner string
 }
 
 // ConvertTokenAmount calls the convert_token_amount function on the contract.
-func (c *FeeQuoterClient) ConvertTokenAmount(ctx context.Context, fromToken string, fromTokenAmount int64, toToken string) (int64, error) {
+func (c *FeeQuoterClient) ConvertTokenAmount(ctx context.Context, fromToken string, fromTokenAmount *big.Int, toToken string) (*big.Int, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(fromToken),
 		scval.I128ToScVal(fromTokenAmount),
@@ -362,16 +363,16 @@ func (c *FeeQuoterClient) ConvertTokenAmount(ctx context.Context, fromToken stri
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "convert_token_amount", args)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call convert_token_amount: %w", err)
+		return nil, fmt.Errorf("failed to call convert_token_amount: %w", err)
 	}
 
 	if result == nil {
-		return 0, fmt.Errorf("no return value from convert_token_amount")
+		return nil, fmt.Errorf("no return value from convert_token_amount")
 	}
 
 	v, err := scval.I128FromScVal(*result)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return v, nil
 }

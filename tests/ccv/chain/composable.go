@@ -3,6 +3,7 @@ package ccvchain
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
@@ -71,8 +72,17 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 
 	var tokenAmounts []routerbindings.TokenAmount
 	if fields.TokenAmount.Amount != nil && fields.TokenAmount.Amount.Sign() > 0 && len(fields.TokenAmount.TokenAddress) > 0 {
-		if !fields.TokenAmount.Amount.IsInt64() {
-			return nil, fmt.Errorf("token amount out of int64 range: %s", fields.TokenAmount.Amount.String())
+		// TokenAmount.Amount is a *big.Int from the external CCV test interface.
+		// The on-chain field is i128, so reject out-of-range amounts here with
+		// an error rather than accepting the message and letting scval.I128ToScVal
+		// panic during send. This restores the fail-fast guard dropped when Amount
+		// widened from int64 to *big.Int. The window matches scval.I128ToScVal's
+		// acceptance range [-(2^127-1), 2^127]; only the upper bound is reachable
+		// here because Sign() > 0 already excludes non-positive values.
+		i128Max := new(big.Int).Lsh(big.NewInt(1), 127)
+		i128Min := new(big.Int).Neg(new(big.Int).Sub(i128Max, big.NewInt(1)))
+		if fields.TokenAmount.Amount.Cmp(i128Min) < 0 || fields.TokenAmount.Amount.Cmp(i128Max) > 0 {
+			return nil, fmt.Errorf("token amount out of i128 range: %s", fields.TokenAmount.Amount.String())
 		}
 		tokenAddr, encErr := strkey.Encode(strkey.VersionByteContract, []byte(fields.TokenAmount.TokenAddress))
 		if encErr != nil {
@@ -80,7 +90,7 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 		}
 		tokenAmounts = []routerbindings.TokenAmount{{
 			Token:  tokenAddr,
-			Amount: fields.TokenAmount.Amount.Int64(),
+			Amount: fields.TokenAmount.Amount,
 		}}
 	}
 
@@ -114,7 +124,7 @@ func (c *Chain) SendChainMessage(ctx context.Context, destChain uint64, msg ccip
 	if err != nil {
 		return cciptestinterfaces.MessageSentEvent{}, nil, fmt.Errorf("get fee from Router: %w", err)
 	}
-	c.logger.Info().Int64("requiredFee", requiredFee).Msg("Fee quote from Router (SendChainMessage)")
+	c.logger.Info().Str("requiredFee", requiredFee.String()).Msg("Fee quote from Router (SendChainMessage)")
 
 	messageID, err := c.routerClient.CcipSend(ctx, sender, destChain, routerMsg, requiredFee)
 	if err != nil {

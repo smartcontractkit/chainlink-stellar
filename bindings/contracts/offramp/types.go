@@ -560,6 +560,47 @@ type OwnershipTransferStartedEvent struct {
 // OwnershipTransferStartedEventTopic is the event topic identifier.
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
+// ExecutionStateChangedEvent represents the ExecutionStateChangedEvent event.
+// Topics: [offramp_1_7_ExecStateChanged]
+type ExecutionStateChangedEvent struct {
+	SourceChainSelector uint64
+	SequenceNumber      uint64
+	MessageId           [32]byte
+	State               MessageExecutionState
+	ReturnData          []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ExecutionStateChangedEventTopic is the event topic identifier.
+const ExecutionStateChangedEventTopic = "offramp_1_7_ExecStateChanged"
+
+// SourceChainConfigSetEvent represents the SourceChainConfigSetEvent event.
+// Topics: [offramp_1_7_SrcChainCfgSet]
+type SourceChainConfigSetEvent struct {
+	SourceChainSelector uint64
+	SourceConfig        SourceChainConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// SourceChainConfigSetEventTopic is the event topic identifier.
+const SourceChainConfigSetEventTopic = "offramp_1_7_SrcChainCfgSet"
+
+// StaticConfigSetEvent represents the StaticConfigSetEvent event.
+// Topics: [offramp_1_7_StaticConfigSet]
+type StaticConfigSetEvent struct {
+	StaticConfig StaticConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// StaticConfigSetEventTopic is the event topic identifier.
+const StaticConfigSetEventTopic = "offramp_1_7_StaticConfigSet"
+
 // MessageExecutionState represents the MessageExecutionState enum (unit-only Soroban contracttype, encoded as ScVal::U32).
 type MessageExecutionState uint32
 

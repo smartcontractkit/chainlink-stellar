@@ -5,11 +5,12 @@ package integration
 import (
 	"bytes"
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	slrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/siloed_lock_release_pool"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -92,7 +93,7 @@ func testTokenPoolSiloedMigration(
 			Data:         []byte("siloed-migration-outbound"),
 			FeeToken:     feeToken,
 			ExtraArgs:    extraArgs,
-			TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: transferAmount}},
+			TokenAmounts: []routerbindings.TokenAmount{{Token: sacToken, Amount: big.NewInt(transferAmount)}},
 		}
 
 		requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)

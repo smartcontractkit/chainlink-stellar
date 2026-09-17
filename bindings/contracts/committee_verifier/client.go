@@ -4,6 +4,7 @@ package committee_verifier
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -304,7 +305,7 @@ func (c *CommitteeVerifierClient) TransferOwnership(ctx context.Context, newOwne
 }
 
 // ForwardToVerifier calls the forward_to_verifier function on the contract.
-func (c *CommitteeVerifierClient) ForwardToVerifier(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount int64, verifierArgs []byte) ([]byte, error) {
+func (c *CommitteeVerifierClient) ForwardToVerifier(ctx context.Context, destChainSelector uint64, sender string, messageId [32]byte, feeToken string, feeTokenAmount *big.Int, verifierArgs []byte) ([]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.AddressToScVal(sender),

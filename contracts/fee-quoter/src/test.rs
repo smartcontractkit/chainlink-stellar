@@ -31,7 +31,7 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
 
 fn create_static_config(link_token: Address) -> StaticConfig {
     StaticConfig {
-        max_fee_juels_per_msg: 1_000_000_000_000_000_000, // 1e18
+        max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
         link_token,
     }
 }
@@ -518,11 +518,11 @@ fn test_get_message_fee() {
     // Get message fee
     let fee = client.get_message_fee(&1, &message);
 
-    // Fee should be positive (gas cost + network fee, with LINK discount applied)
-    // Gas: (350000 + 100*16) * 1e14 = 351600 * 1e14 gas cost
-    // gas_cost_usd_cents ~= 3516, + network_fee 100 = 3616
-    // With 90% LINK discount: 3254 cents
-    // In LINK: 3254 * 1e16 / 15e18 = ~2 LINK units
+    // Fee should be positive (gas cost + network fee, with LINK discount applied).
+    // Gas: (350000 + 100*16) = 351600 units; gas_cost_usd_cents = 3516 (ceil).
+    // + network_fee 100 = 3616 cents. With 90% LINK premium: 3254 cents.
+    // In LINK (EVM 1e34 convention): 3254 * 1e34 / 15e18 ≈ 2.169e18 smallest units
+    // (≈ 2.17 LINK), well under the 1000-LINK cap.
     assert!(fee.fee_token_amount > 0);
 }
 

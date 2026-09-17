@@ -338,3 +338,5 @@ replace (
 	// since been removed from the root module; the v1.3.x pull comes from chainlink-ccv.)
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
+
+replace github.com/smartcontractkit/chainlink-stellar/bindings => ./bindings

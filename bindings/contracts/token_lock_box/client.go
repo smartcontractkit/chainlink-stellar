@@ -4,6 +4,7 @@ package token_lock_box
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -52,7 +53,7 @@ func (c *TokenLockBoxClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // Deposit calls the deposit function on the contract.
-func (c *TokenLockBoxClient) Deposit(ctx context.Context, caller string, amount int64) error {
+func (c *TokenLockBoxClient) Deposit(ctx context.Context, caller string, amount *big.Int) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.I128ToScVal(amount),
@@ -90,7 +91,7 @@ func (c *TokenLockBoxClient) IsOwner(ctx context.Context, addr string) (bool, er
 }
 
 // Withdraw calls the withdraw function on the contract.
-func (c *TokenLockBoxClient) Withdraw(ctx context.Context, caller string, amount int64, recipient string) error {
+func (c *TokenLockBoxClient) Withdraw(ctx context.Context, caller string, amount *big.Int, recipient string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.I128ToScVal(amount),

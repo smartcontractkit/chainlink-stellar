@@ -98,7 +98,7 @@ fn setup_fee_quoter(
 
     let link_token = Address::generate(env);
     let static_config = StaticConfig {
-        max_fee_juels_per_msg: 1_000_000_000_000_000_000,
+        max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
         link_token: link_token.clone(),
     };
 

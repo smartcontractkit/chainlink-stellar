@@ -4,6 +4,7 @@ package onramp
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -67,7 +68,7 @@ func (c *OnRampClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (int64, error) {
+func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage) (*big.Int, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),
@@ -75,16 +76,16 @@ func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, mes
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call get_fee: %w", err)
+		return nil, fmt.Errorf("failed to call get_fee: %w", err)
 	}
 
 	if result == nil {
-		return 0, fmt.Errorf("no return value from get_fee")
+		return nil, fmt.Errorf("no return value from get_fee")
 	}
 
 	v, err := scval.I128FromScVal(*result)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return v, nil
 }
@@ -330,7 +331,7 @@ func (c *OnRampClient) TransferOwnership(ctx context.Context, newOwner string) e
 }
 
 // ForwardFromRouter calls the forward_from_router function on the contract.
-func (c *OnRampClient) ForwardFromRouter(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage, feeTokenAmount int64, originalSender string) ([32]byte, error) {
+func (c *OnRampClient) ForwardFromRouter(ctx context.Context, destChainSelector uint64, message StellarToAnyMessage, feeTokenAmount *big.Int, originalSender string) ([32]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),

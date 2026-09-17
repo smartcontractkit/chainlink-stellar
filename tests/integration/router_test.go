@@ -343,7 +343,7 @@ func TestRouterCcipSendUnhappyPaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetFee before curse: %v", err)
 		}
-		if fee <= 0 {
+		if fee.Sign() <= 0 {
 			t.Fatalf("expected positive fee before curse, got %d", fee)
 		}
 

@@ -4,6 +4,7 @@ package siloed_lock_release_pool
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -376,7 +377,7 @@ func (c *SiloedLockReleasePoolClient) GetRampRegistry(ctx context.Context) (*str
 }
 
 // GetRequiredCcvs calls the get_required_ccvs function on the contract.
-func (c *SiloedLockReleasePoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount int64, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
+func (c *SiloedLockReleasePoolClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount *big.Int, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(localToken),
 		scval.Uint64ToScVal(remoteChainSelector),

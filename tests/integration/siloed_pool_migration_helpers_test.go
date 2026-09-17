@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"math/big"
 	"path/filepath"
 	"testing"
 
@@ -19,9 +20,9 @@ import (
 )
 
 const (
-	siloedPoolDecimals        uint32 = 7
-	lockBoxSeedLiquidity      int64  = 10_000_000 // 1 INTG at 7 decimals
-	sacApproveLedgerBuffer    uint32 = 1000
+	siloedPoolDecimals     uint32 = 7
+	lockBoxSeedLiquidity   int64  = 10_000_000 // 1 INTG at 7 decimals
+	sacApproveLedgerBuffer uint32 = 1000
 )
 
 // siloedPoolAssets tracks siloed lock-release pool + token lock box wiring for migration tests.
@@ -127,7 +128,7 @@ func (s *fullStack) deploySiloedTokenPool(
 	}
 
 	sacApproveOrFatal(ctx, t, deployer, rpcClient, tokenID, deployerAddr, lockBoxID, lockBoxSeedLiquidity)
-	if err := lockBoxClient.Deposit(ctx, deployerAddr, lockBoxSeedLiquidity); err != nil {
+	if err := lockBoxClient.Deposit(ctx, deployerAddr, big.NewInt(lockBoxSeedLiquidity)); err != nil {
 		t.Fatalf("TokenLockBox Deposit: %v", err)
 	}
 
@@ -241,7 +242,7 @@ func sacApproveOrFatal(
 	args := []xdr.ScVal{
 		scval.AddressToScVal(from),
 		scval.AddressToScVal(spender),
-		scval.I128ToScVal(amount),
+		scval.I128ToScVal(big.NewInt(amount)),
 		scval.Uint32ToScVal(expiration),
 	}
 	if _, err := deployer.InvokeContract(ctx, sacContract, "approve", args); err != nil {
