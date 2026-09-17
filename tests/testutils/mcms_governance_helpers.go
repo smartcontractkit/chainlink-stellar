@@ -567,6 +567,13 @@ func DeployMCMSStackWithRoles(
 ) *MCMSGovernanceStack {
 	t.Helper()
 
+	// DeployStellarMCMS resolves its WASM via mcmsutil.ResolveMCMSWasmPath, which only
+	// consults STELLAR_*_WASM / CHAINLINK_STELLAR_ROOT / the process cwd — there is no
+	// upward walk from the test binary's package directory. Set the root from the
+	// environment so the sequence finds target/wasm32v1-none/release/*.wasm from any cwd.
+	require.NotEmpty(t, env.StellarRoot, "E2ETestEnv.StellarRoot must be set: DeployStellarMCMS resolves WASM from CHAINLINK_STELLAR_ROOT")
+	t.Setenv("CHAINLINK_STELLAR_ROOT", env.StellarRoot)
+
 	pk, err := crypto.HexToECDSA(Anvil0SKHex)
 	require.NoError(t, err)
 
