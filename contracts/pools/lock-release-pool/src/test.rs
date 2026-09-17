@@ -319,7 +319,7 @@ fn test_lock_and_release() {
 
     let chain_update = ChainUpdate {
         remote_chain_selector: remote_chain,
-        remote_pool_addresses: remote_pool,
+        remote_pool_addresses: Vec::from_array(&env, [remote_pool]),
         remote_token_address: remote_token.clone(),
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -426,7 +426,7 @@ fn test_wrong_token_rejected() {
 fn chain_update(env: &Env, selector: u64, pool_byte: u8, token_byte: u8) -> ChainUpdate {
     ChainUpdate {
         remote_chain_selector: selector,
-        remote_pool_addresses: Bytes::from_slice(env, &[pool_byte; 20]),
+        remote_pool_addresses: Vec::from_array(env, [Bytes::from_slice(env, &[pool_byte; 20])]),
         remote_token_address: Bytes::from_slice(env, &[token_byte; 20]),
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -443,7 +443,7 @@ fn chain_update_with_limits(
 ) -> ChainUpdate {
     ChainUpdate {
         remote_chain_selector: selector,
-        remote_pool_addresses: Bytes::from_slice(env, &[pool_byte; 20]),
+        remote_pool_addresses: Vec::from_array(env, [Bytes::from_slice(env, &[pool_byte; 20])]),
         remote_token_address: Bytes::from_slice(env, &[token_byte; 20]),
         outbound_rate_limiter_config: outbound,
         inbound_rate_limiter_config: inbound,
@@ -786,10 +786,9 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         pool_client.get_remote_token(&remote_chain),
         Bytes::from_slice(&env, &[4u8; 20])
     );
-    assert_eq!(
-        pool_client.get_remote_pool(&remote_chain),
-        Bytes::from_slice(&env, &[3u8; 20])
-    );
+    let pools = pool_client.get_remote_pools(&remote_chain);
+    assert_eq!(pools.len(), 1);
+    assert_eq!(pools.get(0).unwrap(), Bytes::from_slice(&env, &[3u8; 20]));
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1);
@@ -1667,7 +1666,7 @@ fn add_remote_chain(env: &Env, pool_client: &LockReleaseTokenPoolContractClient,
             env,
             [ChainUpdate {
                 remote_chain_selector: chain,
-                remote_pool_addresses: remote_pool,
+                remote_pool_addresses: Vec::from_array(env, [remote_pool]),
                 remote_token_address: remote_token,
                 outbound_rate_limiter_config: RateLimitConfig::disabled(),
                 inbound_rate_limiter_config: RateLimitConfig::disabled(),

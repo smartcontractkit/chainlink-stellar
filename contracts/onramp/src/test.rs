@@ -921,7 +921,7 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
             &env,
             ChainUpdate {
                 remote_chain_selector: evm_chain_selector,
-                remote_pool_addresses: remote_pool,
+                remote_pool_addresses: vec![&env, remote_pool],
                 remote_token_address: remote_token,
                 outbound_rate_limiter_config: RateLimitConfig::disabled(),
                 inbound_rate_limiter_config: RateLimitConfig::disabled(),

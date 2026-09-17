@@ -14,7 +14,7 @@ type ChainUpdate struct {
 	InboundRateLimiterConfig  RateLimitConfig
 	OutboundRateLimiterConfig RateLimitConfig
 	RemoteChainSelector       uint64
-	RemotePoolAddresses       []byte
+	RemotePoolAddresses       [][]byte
 	RemoteTokenAddress        []byte
 }
 
@@ -24,7 +24,7 @@ func (s ChainUpdate) ToScVal() (xdr.ScVal, error) {
 		"inbound_rate_limiter_config":  scval.MustToScVal((s.InboundRateLimiterConfig).ToScVal()),
 		"outbound_rate_limiter_config": scval.MustToScVal((s.OutboundRateLimiterConfig).ToScVal()),
 		"remote_chain_selector":        scval.Uint64ToScVal(s.RemoteChainSelector),
-		"remote_pool_addresses":        scval.BytesToScVal(s.RemotePoolAddresses),
+		"remote_pool_addresses":        scval.BytesSliceToScVal(s.RemotePoolAddresses),
 		"remote_token_address":         scval.BytesToScVal(s.RemoteTokenAddress),
 	})
 }
@@ -63,11 +63,18 @@ func ChainUpdateFromScVal(val xdr.ScVal) (*ChainUpdate, error) {
 			}
 			result.RemoteChainSelector = v
 		case "remote_pool_addresses":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("remote_pool_addresses is not bytes")
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("remote_pool_addresses is not a vec")
 			}
-			result.RemotePoolAddresses = []byte(v)
+			result.RemotePoolAddresses = make([][]byte, len(*vec))
+			for i, item := range *vec {
+				v, ok := item.GetBytes()
+				if !ok {
+					return nil, fmt.Errorf("vec item is not bytes")
+				}
+				result.RemotePoolAddresses[i] = []byte(v)
+			}
 		case "remote_token_address":
 			v, ok := entry.Val.GetBytes()
 			if !ok {
@@ -1061,7 +1068,7 @@ const ChainRemovedEventTopic = "pool_ChainRemoved"
 // Topics: [pool_ChainConfigured]
 type ChainConfiguredEvent struct {
 	RemoteChainSelector       uint64
-	RemotePoolAddress         []byte
+	RemotePoolAddresses       [][]byte
 	RemoteTokenAddress        []byte
 	OutboundRateLimiterConfig RateLimitConfig
 	InboundRateLimiterConfig  RateLimitConfig
@@ -1072,6 +1079,19 @@ type ChainConfiguredEvent struct {
 
 // ChainConfiguredEventTopic is the event topic identifier.
 const ChainConfiguredEventTopic = "pool_ChainConfigured"
+
+// RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
+// Topics: [pool_RemotePoolAdded]
+type RemotePoolAddedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolAddedEventTopic is the event topic identifier.
+const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
 
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
 // Topics: [pool_FinalityConfigSet]
@@ -1084,6 +1104,19 @@ type FinalityConfigSetEvent struct {
 
 // FinalityConfigSetEventTopic is the event topic identifier.
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
+
+// RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
+// Topics: [pool_RemotePoolRemoved]
+type RemotePoolRemovedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolRemovedEventTopic is the event topic identifier.
+const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
 
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
 // Topics: [pool_FtfInboundConsumed]
