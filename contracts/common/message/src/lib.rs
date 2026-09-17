@@ -132,10 +132,11 @@ impl StellarToAnyMessage {
             token_amount.validate()?;
         }
 
-        // TODO: add other validations
-        // if self.receiver.len() != 32 {
-        //     return Err(CCIPError::InvalidReceiverAddress);
-        // }
+        // NOTE: the destination `receiver` length is NOT checked here because
+        // `StellarToAnyMessage` does not know the destination chain's
+        // `address_bytes_length`. That check is enforced on the OnRamp
+        // (`OnRamp::validate_dest_address`, mirroring EVM `OnRamp._validateDestChainAddress`)
+        // in both `get_fee` and `forward_from_router`, where `DestChainConfig` is in scope.
 
         Ok(())
     }
@@ -257,6 +258,12 @@ impl FromBytes for CcipTokenTransferV1 {
 
         let version = bytes.get(pos).ok_or(CCIPError::MessageDecodingError)?;
         pos += 1;
+        // INV-MSG-2: reject token transfers carrying an unexpected version byte.
+        // Mirrors `CcipMessageV1::from_bytes` below and EVM `MessageV1Codec._decodeTokenTransferV1`
+        // (`if (version != 1) revert InvalidEncodingVersion`, MessageV1Codec.sol:269).
+        if version != MESSAGE_V1_VERSION {
+            return Err(CCIPError::MessageDecodingError);
+        }
 
         let mut amount_arr = [0u8; 32];
         for i in 0..32u32 {
@@ -294,6 +301,13 @@ impl FromBytes for CcipTokenTransferV1 {
             return Err(CCIPError::MessageDecodingError);
         }
         let extra_data = bytes.slice(pos..pos + ed_len);
+
+        // INV-MSG-3/11: reject trailing bytes — the entire payload must be consumed.
+        // Mirrors EVM `MessageV1Codec` (`if (offset != encoded.length) revert ... MESSAGE_FINAL_OFFSET`,
+        // MessageV1Codec.sol:512) and the sub-field end check at :499.
+        if pos + ed_len != len {
+            return Err(CCIPError::MessageDecodingError);
+        }
 
         Ok(CcipTokenTransferV1 {
             version,
@@ -572,6 +586,13 @@ impl FromBytes for CcipMessageV1 {
         let dest_blob = r.read_2lp_field()?;
         let token_transfer = r.read_2lp_field()?;
         let data = r.read_2lp_field()?;
+
+        // INV-MSG-3: reject trailing bytes — the entire payload must be consumed.
+        // Mirrors EVM `MessageV1Codec._decodeMessageV1`
+        // (`if (offset != encoded.length) revert ... MESSAGE_FINAL_OFFSET`, MessageV1Codec.sol:512).
+        if r.remaining() != 0 {
+            return Err(CCIPError::MessageDecodingError);
+        }
 
         Ok(CcipMessageV1 {
             source_chain_selector,

@@ -17,7 +17,9 @@ use ccvs_versioned_verifier_resolver::{
 };
 use common_error::CCIPError;
 use common_interfaces::committee_verifier::FeeResponse;
-use common_message::{StellarToAnyMessage, TokenAmount};
+use common_message::{
+    CcipMessageV1, CcipTokenTransferV1, FromBytes, StellarToAnyMessage, TokenAmount,
+};
 use common_pool::{ChainUpdate, RateLimitConfig};
 use fee_quoter::{
     types::{
@@ -863,6 +865,30 @@ fn receipts_from_last_onramp_ccip_event(env: &Env, onramp: &Address) -> Vec<Rece
     panic!("expected CCIPMessageSent event with receipts from onramp");
 }
 
+/// Extract the `encoded_message` field from the last `CCIPMessageSent` event emitted by
+/// `onramp`. `encoded_message` is >9 chars so it is encoded as a long `Symbol`.
+fn encoded_message_from_last_onramp_event(env: &Env, onramp: &Address) -> Bytes {
+    let evs = env.events().all().filter_by_contract(onramp);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(mval) = map.get(Symbol::new(env, "encoded_message")) else {
+            continue;
+        };
+        if let Ok(encoded) = Bytes::try_from_val(env, &mval) {
+            return encoded;
+        }
+    }
+    panic!("expected CCIPMessageSent event with encoded_message from onramp");
+}
+
 #[test]
 fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let env = Env::default();
@@ -1033,6 +1059,17 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
     assert_eq!(receipts.get(2).unwrap().issuer, default_executor);
     assert_eq!(receipts.get(3).unwrap().issuer, router_id);
+
+    // H-2 / INV-TR-3: with empty `extra_args` (no `token_receiver`), the encoded token
+    // transfer's `token_receiver` must default to `message.receiver` (EVM `OnRamp.sol:311`).
+    let encoded = encoded_message_from_last_onramp_event(&env, &onramp_id);
+    let decoded = CcipMessageV1::from_bytes(&env, &encoded).expect("decode encoded message");
+    let token_transfer = CcipTokenTransferV1::from_bytes(&env, &decoded.token_transfer)
+        .expect("decode token transfer");
+    assert_eq!(
+        token_transfer.token_receiver, message.receiver,
+        "empty tokenReceiver must default to the message receiver"
+    );
 }
 
 #[test]
@@ -1120,5 +1157,86 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
     };
 
     // Must revert with FeeExceedsMaxAllowed (#44), not quote a fee.
+    onramp_client.get_fee(&evm_chain_selector, &message);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #43)")] // InvalidDestChainAddress
+fn test_get_fee_reverts_when_receiver_length_mismatch() {
+    // M-2 / INV-MSG-8: the destination `receiver` must be exactly
+    // `dest_config.address_bytes_length` bytes, mirroring EVM `OnRamp._validateDestChainAddress`
+    // (`if (len != addressBytesLength) revert InvalidDestChainAddress`, OnRamp.sol:471-503). Here
+    // the lane is configured with `address_bytes_length: 20` but the message carries a 19-byte
+    // receiver, so `get_fee` must revert before quoting. The per-message fee cap is set high so
+    // the address-length check is the only thing that can trip.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let fee_token = Address::generate(&env);
+    let transfer_token = Address::generate(&env);
+
+    let fee_quoter_id = setup_fee_quoter(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+    );
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: Address::generate(&env),
+        rmn_proxy: rmn_proxy_id.clone(),
+        // High cap so the address-length check is the sole revert reason.
+        max_usd_cents_per_message: 100_000,
+    };
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: Address::generate(&env),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: Address::generate(&env),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: Address::generate(&env),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, default_ccv.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+
+    let message = StellarToAnyMessage {
+        // 19 bytes ≠ address_bytes_length (20) ⇒ InvalidDestChainAddress.
+        receiver: Bytes::from_array(&env, &[0x33u8; 19]),
+        data: Bytes::from_slice(&env, b"receiver length mismatch"),
+        token_amounts: Vec::new(&env),
+        fee_token: fee_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
     onramp_client.get_fee(&evm_chain_selector, &message);
 }
