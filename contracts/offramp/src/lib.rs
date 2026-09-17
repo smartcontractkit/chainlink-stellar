@@ -518,11 +518,35 @@ impl OffRampContract {
     /// message by consulting the receiver, mirroring EVM `OffRamp._getCCVsFromReceiver` +
     /// the merge in `_getCCVsForMessage`.
     ///
-    /// The receiver's `get_ccvs_and_finality_config` is invoked via `try_invoke_contract`, so a
-    /// receiver that is not a V2 CCIP receiver (missing fn / not a contract / traps) does **not**
-    /// abort execution — it falls back to lane defaults + `WAIT_FOR_FINALITY` (EVM
-    /// `_supportsInterfaceReverting` ⇒ defaults). A receiver that *returns* a `CCIPError` is
-    /// propagated unchanged.
+    /// **Require-V2, fail-fast policy.** A non-contract receiver is rejected *before* any
+    /// consultation (the Wasm-existence check below) — Stellar, unlike EVM, does not treat a
+    /// non-contract receiver as token-only, and already rejects non-Wasm receivers at delivery
+    /// (`execute_single_message`). For a Wasm receiver, `get_ccvs_and_finality_config` is invoked
+    /// via `try_invoke_contract`; a receiver that *returns* a `CCIPError` has it propagated
+    /// unchanged, and **any other consult failure** (missing symbol / trap / non-convertible
+    /// result) fails the message with `ReceiverError` (recorded as `Failure`, retryable) — it does
+    /// **not** fall back to defaults. EVM splits these two cases (non-V2 ⇒ defaults via the
+    /// `supportsInterface` staticcall that swallows reverts; V2-trap ⇒ revert propagates ⇒
+    /// `Failure`), but Soroban's `InvokeError` cannot distinguish "symbol absent" from "trapped"
+    /// (both are `Abort`) and there is no symbol-presence probe short of invoking, so the two are
+    /// collapsed to the fail branch. Conformant V2 receivers with empty config still receive lane
+    /// defaults via the success-path sentinel in `merge_receiver_ccvs`.
+    ///
+    /// **Purity strategy** (Soroban has no `staticcall`; `try_invoke_contract` is a writable call,
+    /// and `execute` wraps inner errors as `Failure` + outer `Ok`, so a callee's writes can persist
+    /// on a later-rejected message):
+    /// (a) the fail-fast Wasm pre-check below means non-contracts are never invoked;
+    /// (b) this runs inside `verify_ccv_quorum`, which precedes token release in
+    /// `execute_single_message`, so a rejected message moves no tokens — the only possible
+    /// persistent side effect is the receiver's own storage;
+    /// (c) Soroban rolls back a *trapping* invocation's writes, and under this policy a trap also
+    /// fails the message, so a trapping receiver leaves no persisted writes;
+    /// (d) residual, accepted: a malicious *conformant-V2* receiver that successfully returns config
+    /// yet writes storage, where the message is then rejected, persists those writes. This cannot
+    /// be prevented without a Soroban read-only-call primitive; documented as a known chain-specific
+    /// divergence. Trust boundary: the receiver is the sender-chosen destination, already fully
+    /// empowered at delivery (`ccip_receive`), so the marginal exposure is "view-writes on a doomed
+    /// message" only.
     ///
     /// Returns `(required, optional, optional_threshold, allowed_finality)`.
     fn get_ccvs_for_message(
@@ -532,6 +556,17 @@ impl OffRampContract {
         static_config: &StaticConfig,
     ) -> Result<(Vec<Address>, Vec<Address>, u32, u32), CCIPError> {
         let receiver = Self::ccip_receiver_contract_address(env, &message.receiver)?;
+
+        // Fail fast: a non-token-only message must be deliverable to a Wasm contract that can
+        // implement `ccip_receive` (and, for CCV consultation, `get_ccvs_and_finality_config`).
+        // Reject before the pool cross-contract call and before invoking the receiver.
+        match receiver.executable() {
+            Some(Executable::Wasm(_)) => {}
+            None => return Err(CCIPError::ReceiverDoesNotExist),
+            Some(Executable::Account) | Some(Executable::StellarAsset) => {
+                return Err(CCIPError::ReceiverNotWasmContract);
+            }
+        }
 
         let pool_required = Self::get_inbound_pool_required_ccvs(
             env,
@@ -547,10 +582,12 @@ impl OffRampContract {
         args.push_back(message.source_chain_selector.into_val(env));
         args.push_back(Bytes::new(env).into_val(env));
 
-        let mut required: Vec<Address> = Vec::new(env);
-        let mut optional: Vec<Address> = Vec::new(env);
-        let mut optional_threshold: u32 = 0;
-        let mut allowed_finality: u32 = finality_codec::WAIT_FOR_FINALITY_FLAG;
+        // Every non-success arm below returns early, so these are assigned exactly once on the
+        // only fall-through path (the `Ok(Ok(Ok(config)))` arm) — no pre-init / dead store.
+        let required: Vec<Address>;
+        let optional: Vec<Address>;
+        let optional_threshold: u32;
+        let allowed_finality: u32;
 
         match env.try_invoke_contract::<Result<CcvsAndFinalityConfig, CCIPError>, InvokeError>(
             &receiver,
@@ -565,13 +602,16 @@ impl OffRampContract {
                 optional = opt;
                 optional_threshold = thr;
             }
-            // Receiver returned a CCIPError ⇒ propagate (do not silently default).
+            // Receiver returned a typed CCIPError ⇒ propagate (do not silently default).
             Ok(Ok(Err(e))) => return Err(e),
-            // Receiver not V2 / not a contract / not invokeable ⇒ defaults-only + WAIT_FOR_FINALITY.
-            _ => {
-                Self::dedup_append(&mut required, &source_config.default_ccvs);
-                Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
-            }
+            // Wasm receiver that is not a V2 CCIP receiver (missing `get_ccvs_and_finality_config`
+            // symbol) or that trapped / returned a non-convertible value. EVM splits "non-V2 ⇒
+            // defaults" from "V2-trap ⇒ Failure", but Soroban's `InvokeError` cannot tell them
+            // apart (both surface as `Abort`) and there is no symbol-presence probe short of
+            // invoking. Per the require-V2 policy we fail the message (`Failure`, retryable) —
+            // mirroring EVM's no-catch trap behavior — rather than silently defaulting (which would
+            // also drop `pool_required`, see the purity/pool-merge rationale in the fn doc).
+            _ => return Err(CCIPError::ReceiverError),
         }
 
         Ok((required, optional, optional_threshold, allowed_finality))
@@ -679,7 +719,11 @@ impl OffRampContract {
     /// **Non-token-only** messages consult the receiver (`get_ccvs_for_message`, C-1) for
     /// required/optional/threshold + allowed-finality, enforce the receiver's finality config
     /// (H-7), require every required CCV present (`RequiredCCVMissing`), require ≥`optional_threshold`
-    /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify every attested CCV.
+    /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify every attested CCV. A
+    /// non-contract receiver, or a Wasm receiver whose consult fails (missing symbol / trap / typed
+    /// error), is rejected up front with `ReceiverDoesNotExist` / `ReceiverNotWasmContract` /
+    /// `ReceiverError` (recorded as `Failure`, retryable) — there is **no** defaults fallback (see
+    /// `get_ccvs_for_message` for the require-V2 policy and purity strategy).
     fn verify_ccv_quorum(
         env: &Env,
         source_chain_selector: u64,

@@ -3,7 +3,10 @@
 use common_message::{CcipMessageV1, MessageIdCompute, ToBytes, MESSAGE_V1_VERSION};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
-use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, testutils::Address as _, xdr::ToXdr, Address, Bytes,
+    BytesN, Env, Symbol, Vec,
+};
 
 use crate::types::{
     DataKey, MessageExecutionState, SourceChainConfig, SourceChainConfigArgs, StaticConfig,
@@ -515,10 +518,12 @@ fn test_execute_reexecute_after_failure_succeeds() {
 //
 // `merge_receiver_ccvs` and `ensure_quorum_present` are factored as pure helpers so the
 // merge / threshold / defaults-sentinel / quorum logic is unit-testable without a deployed
-// receiver or a live verifier (neither is available in this env). The end-to-end receiver
-// `try_invoke` arms (V2 receiver returns config; receiver returns `Err(CCIPError)`) need a
-// mock receiver wasm and are a nix follow-up. The one `execute` test below proves the
-// not-V2 fallback (`try_invoke` on a non-contract address) is non-trapping and records Failure.
+// receiver or a live verifier. The `execute` test below proves the fail-fast Wasm check on a
+// non-contract receiver is non-trapping and records `Failure`. The `try_invoke` arms (non-V2
+// missing symbol / trap / typed `Err` / successful config) are covered by the mock-receiver
+// tests at the bottom of this file. The one path NOT coverable here is the full happy path
+// (consult ok → quorum ok → verify-all loop), which needs a live verifier — that stays a
+// Go/integration (nix) follow-up.
 // ============================================================
 
 fn src_config(
@@ -680,28 +685,43 @@ fn test_ensure_quorum_ok() {
 }
 
 #[test]
-fn test_execute_non_token_only_not_v2_receiver_defaults_non_trapping() {
+fn test_execute_non_token_only_non_contract_receiver_rejected_non_trapping() {
     // A non-token-only message (data non-empty) routes through the C-1 receiver-consultation
     // path. The receiver bytes ([0u8;32]) decode to a contract address with no ledger entry, so
-    // `try_invoke_contract(get_ccvs_and_finality_config)` returns `Err` (not V2) and the defaults
-    // arm runs (required = lane default_ccvs). With empty `ccvs`, required-present fails with
-    // #116, which `execute` wraps as `Failure` + outer `Ok`. Crucially this proves the not-V2
-    // fallback is **non-trapping**: had `try_invoke` aborted instead of returning `Err`,
-    // `try_execute` would be `Err` and the state would be `InProgress`, not `Failure`.
+    // the fail-fast Wasm-existence check in `get_ccvs_for_message` rejects it up front with
+    // `ReceiverDoesNotExist` (#114) — *before* the pool call, *before* invoking the receiver, and
+    // *before* consulting `ccvs`. `execute` wraps this as `Failure` + outer `Ok`.
+    //
+    // `ccvs` is deliberately NON-empty (it carries the lane `default_ccv`) to make the fail-fast
+    // path observable: under the *old* defaults-fallback behavior the receiver consult would have
+    // "succeeded" (not-V2 ⇒ defaults ⇒ required = [default_ccv]), the required CCV would be
+    // present, and execution would proceed into the verify-all loop — which traps invoking the
+    // verifier on the generated `default_ccv` address, leaving `try_execute` `Err` and the state
+    // `InProgress`. The new fail-fast path instead returns `Failure` + `Ok` regardless of `ccvs`,
+    // proving both that the reject-before-consult path is taken AND that it is non-trapping.
     let (env, client) = setup_initialized_offramp_for_execute();
 
     let router = Address::generate(&env);
     let default_ccv = Address::generate(&env);
     let onramp = sample_onramp_bytes(&env);
-    apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
+    apply_source_lane(
+        &env,
+        &client,
+        router,
+        default_ccv.clone(),
+        onramp.clone(),
+        true,
+    );
 
     let mut msg = valid_execute_message(&env, &client.address, onramp);
     msg.data = Bytes::from_array(&env, &[0xAA, 0xBB, 0xCC, 0xDD]); // ⇒ non-token-only
     let encoded = msg.to_bytes(&env);
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
 
-    let ccvs = Vec::new(&env);
-    let verifier_results = Vec::new(&env);
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(default_ccv.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
 
     assert!(client
         .try_execute(&encoded, &ccvs, &verifier_results, &0u32)
@@ -710,4 +730,290 @@ fn test_execute_non_token_only_not_v2_receiver_defaults_non_trapping() {
         client.get_execution_state(&message_id),
         MessageExecutionState::Failure
     );
+}
+
+// ============================================================
+// C-1 receiver-consultation arms — mock receivers
+// (get_ccvs_and_finality_config). Inline `#[contract]` types
+// registered via `env.register(.., ())`; no extra crate deps.
+// ============================================================
+
+/// A Wasm contract that does NOT export `get_ccvs_and_finality_config` (a legacy / non-V2
+/// receiver). The OffRamp consult must fail fast with `ReceiverError`.
+#[contract]
+pub struct MockNonV2Receiver;
+#[contractimpl]
+impl MockNonV2Receiver {
+    pub fn noop(_env: Env) {}
+}
+
+/// A V2-shaped receiver that traps inside `get_ccvs_and_finality_config`. The trap must surface
+/// as `ReceiverError` + `Failure` (retryable), NOT as an OffRamp trap (`InProgress`).
+#[contract]
+pub struct MockTrappingReceiver;
+#[contractimpl]
+impl MockTrappingReceiver {
+    pub fn get_ccvs_and_finality_config(
+        _env: Env,
+        _source_chain_selector: u64,
+        _unused: Bytes,
+    ) -> Result<CcvsAndFinalityConfig, CCIPError> {
+        panic!("receiver consult trap");
+    }
+}
+
+/// A V2-shaped receiver that returns a typed `CCIPError`. It must be propagated (recorded as
+/// `Failure`), not silently defaulted.
+#[contract]
+pub struct MockErrReceiver;
+#[contractimpl]
+impl MockErrReceiver {
+    pub fn get_ccvs_and_finality_config(
+        _env: Env,
+        _source_chain_selector: u64,
+        _unused: Bytes,
+    ) -> Result<CcvsAndFinalityConfig, CCIPError> {
+        Err(CCIPError::InvalidConfig)
+    }
+}
+
+/// A V2-shaped receiver that returns a config staged via `set_config`. Used to exercise the
+/// success arm of the consult + the merge + quorum + finality logic.
+#[contract]
+pub struct MockConfigReceiver;
+const MOCK_CFG_KEY: Symbol = symbol_short!("CFG");
+#[contractimpl]
+impl MockConfigReceiver {
+    pub fn set_config(env: Env, cfg: CcvsAndFinalityConfig) {
+        env.storage().instance().set(&MOCK_CFG_KEY, &cfg);
+    }
+    pub fn get_ccvs_and_finality_config(
+        env: Env,
+        _source_chain_selector: u64,
+        _unused: Bytes,
+    ) -> Result<CcvsAndFinalityConfig, CCIPError> {
+        Ok(env
+            .storage()
+            .instance()
+            .get(&MOCK_CFG_KEY)
+            .unwrap_or(CcvsAndFinalityConfig {
+                required_ccvs: Vec::new(&env),
+                optional_ccvs: Vec::new(&env),
+                optional_threshold: 0,
+                allowed_finality_config: 0,
+            }))
+    }
+}
+
+/// Build a non-token-only message (`data` non-empty) addressed to `receiver`, with the given
+/// `finality`. Reuses [`valid_execute_message`] and overrides the receiver bytes + data + finality.
+fn non_token_only_message(
+    env: &Env,
+    offramp_contract: &Address,
+    onramp: Bytes,
+    receiver: &Address,
+    finality: u32,
+) -> CcipMessageV1 {
+    let mut msg = valid_execute_message(env, offramp_contract, onramp);
+    msg.receiver = offramp_address_field_from_contract(env, receiver);
+    msg.data = Bytes::from_array(env, &[0xAA, 0xBB, 0xCC, 0xDD]); // ⇒ non-token-only
+    msg.finality = finality;
+    msg
+}
+
+/// Assert the OffRamp records `Failure` and returns outer `Ok` — i.e. the inner rejection is
+/// non-trapping. For the consult-failure arms `ccvs` is `[default_ccv]` (quorum-satisfying) so
+/// fail-fast (`Failure`+`Ok`) is distinguishable from any "default-and-proceed" path, which would
+/// reach the verify-all loop and trap (`Err`+`InProgress`).
+fn assert_rejected_non_trapping(
+    client: &OffRampContractClient,
+    encoded: &Bytes,
+    message_id: &BytesN<32>,
+    ccvs: Vec<Address>,
+    verifier_results: Vec<Bytes>,
+) {
+    assert!(
+        client
+            .try_execute(encoded, &ccvs, &verifier_results, &0u32)
+            .is_ok(),
+        "execute should return outer Ok (Failure), not trap"
+    );
+    assert_eq!(
+        client.get_execution_state(message_id),
+        MessageExecutionState::Failure,
+        "state should be Failure, not InProgress (a trap would leave InProgress)"
+    );
+}
+
+/// Common scaffolding: initialized OffRamp + a source lane with one `default_ccv` and no
+/// lane-mandated CCVs. Returns `(env, client, default_ccv, onramp)`.
+fn setup_lane_with_default_ccv() -> (Env, OffRampContractClient<'static>, Address, Bytes) {
+    let (env, client) = setup_initialized_offramp_for_execute();
+    let router = Address::generate(&env);
+    let default_ccv = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(
+        &env,
+        &client,
+        router,
+        default_ccv.clone(),
+        onramp.clone(),
+        true,
+    );
+    (env, client, default_ccv, onramp)
+}
+
+#[test]
+fn test_consult_non_v2_receiver_rejected() {
+    // Wasm receiver missing `get_ccvs_and_finality_config` ⇒ consult Abort ⇒ `ReceiverError`
+    // (fail-fast), recorded as `Failure` + outer `Ok`. `ccvs = [default_ccv]` makes this
+    // observable: a "default-and-proceed" path would satisfy quorum and then trap in the
+    // verify-all loop on the non-contract verifier address.
+    let (env, client, default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let receiver = env.register(MockNonV2Receiver, ());
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(default_ccv.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+#[test]
+fn test_consult_trapping_receiver_rejected_non_trapping() {
+    // V2-shaped receiver that panics inside the consult. The trap must be caught by
+    // `try_invoke_contract` and mapped to `ReceiverError` (Failure + Ok), NOT propagate as an
+    // OffRamp trap. A trap would leave `try_execute` `Err` and the state `InProgress`.
+    let (env, client, default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let receiver = env.register(MockTrappingReceiver, ());
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(default_ccv.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+#[test]
+fn test_consult_receiver_returning_error_propagated() {
+    // V2-shaped receiver returning `Err(CCIPError::InvalidConfig)` ⇒ propagated (Failure + Ok),
+    // not silently defaulted. `ccvs = [default_ccv]` distinguishes propagation (Failure) from a
+    // default-and-proceed path (which would trap in verify-all).
+    let (env, client, default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let receiver = env.register(MockErrReceiver, ());
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(default_ccv.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+#[test]
+fn test_consult_success_required_ccv_missing() {
+    // Conformant V2 receiver returns required=[X]; `ccvs` does not contain X ⇒ consult succeeds,
+    // merge runs, `ensure_quorum_present` rejects with `RequiredCCVMissing` (#116) before the
+    // verify-all loop. Exercises the real `Ok(Ok(Ok(config)))` arm.
+    let (env, client, _default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let required_ccv = Address::generate(&env);
+    let receiver = env.register(MockConfigReceiver, ());
+    MockConfigReceiverClient::new(&env, &receiver).set_config(&CcvsAndFinalityConfig {
+        required_ccvs: {
+            let mut v = Vec::new(&env);
+            v.push_back(required_ccv.clone());
+            v
+        },
+        optional_ccvs: Vec::new(&env),
+        optional_threshold: 0,
+        allowed_finality_config: 0,
+    });
+
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // ccvs deliberately empty and NOT containing the required CCV.
+    let ccvs = Vec::new(&env);
+    let verifier_results = Vec::new(&env);
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+#[test]
+fn test_consult_success_optional_quorum_not_reached() {
+    // Conformant V2 receiver returns optional=[X,Y], threshold=2; `ccvs` contains only X ⇒
+    // `OptionalCCVQuorumNotReached` (#118) before the verify-all loop.
+    let (env, client, _default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let opt_a = Address::generate(&env);
+    let opt_b = Address::generate(&env);
+    let receiver = env.register(MockConfigReceiver, ());
+    MockConfigReceiverClient::new(&env, &receiver).set_config(&CcvsAndFinalityConfig {
+        required_ccvs: Vec::new(&env),
+        optional_ccvs: {
+            let mut v = Vec::new(&env);
+            v.push_back(opt_a.clone());
+            v.push_back(opt_b.clone());
+            v
+        },
+        optional_threshold: 2,
+        allowed_finality_config: 0,
+    });
+
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // Only one of the two optional CCVs is present (< threshold 2).
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(opt_a.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
+}
+
+#[test]
+fn test_consult_success_finality_disallowed() {
+    // H-7: receiver returns `allowed_finality_config = 0` (no fast-finality flags, no depth), and
+    // the message requests `WAIT_FOR_SAFE` (0x10000). `ensure_requested_finality_allowed` rejects
+    // with `InvalidRequestedFinality` BEFORE quorum. With `ccvs = [default_ccv]` (quorum-satisfying
+    // via the empty-config defaults sentinel) and a consult that succeeds, the only reject is the
+    // finality check — proving H-7 fires ahead of quorum/verify-all.
+    let (env, client, default_ccv, onramp) = setup_lane_with_default_ccv();
+
+    let receiver = env.register(MockConfigReceiver, ());
+    MockConfigReceiverClient::new(&env, &receiver).set_config(&CcvsAndFinalityConfig {
+        required_ccvs: Vec::new(&env),
+        optional_ccvs: Vec::new(&env),
+        optional_threshold: 0,
+        allowed_finality_config: 0, // disallows WAIT_FOR_SAFE
+    });
+
+    let msg = non_token_only_message(&env, &client.address, onramp, &receiver, 0x0001_0000);
+    let encoded = msg.to_bytes(&env);
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let mut ccvs = Vec::new(&env);
+    ccvs.push_back(default_ccv.clone());
+    let mut verifier_results = Vec::new(&env);
+    verifier_results.push_back(Bytes::new(&env));
+
+    assert_rejected_non_trapping(&client, &encoded, &message_id, ccvs, verifier_results);
 }
