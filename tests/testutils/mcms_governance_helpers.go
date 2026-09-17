@@ -4,16 +4,24 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"fmt"
+	"math/big"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
+	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
+	mcmstypes "github.com/smartcontractkit/mcms/types"
 	"github.com/stretchr/testify/require"
 
+	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
+
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	lrpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
@@ -24,6 +32,7 @@ import (
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	timelockops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/timelock"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -45,6 +54,16 @@ type MCMSGovernanceStack struct {
 	ChainNetID     [32]byte
 	SignerPK       *ecdsa.PrivateKey
 	MinDelaySec    uint64
+
+	// Qualifier labels the MCMS stack this governance set was deployed for.
+	Qualifier string
+	// ProposerMCMSID / CancellerMCMSID / BypasserMCMSID are the role-specific
+	// MCMS instances (strkeys); the legacy single-instance stack sets them to MCMSID.
+	ProposerMCMSID  string
+	CancellerMCMSID string
+	BypasserMCMSID  string
+	// BypasserClient signs bypasser roots for the no-delay execution path.
+	BypasserClient *mcmsbindings.McmsClient
 }
 
 // ContractIDToBytes32 decodes a Soroban contract strkey into a 32-byte contract id.
@@ -453,6 +472,172 @@ func mcmsSetRootAndExecute(
 		return fmt.Errorf("%s %s: %w", label, function, err)
 	}
 	return nil
+}
+
+// MCMSBypassAndExecute drives bypasser_execute_batch through the bypasser MCMS
+// SetRoot + Execute: no delay wait. This is the production fast-curse path.
+func MCMSBypassAndExecute(
+	t *testing.T,
+	ctx context.Context,
+	env *E2ETestEnv,
+	gov *MCMSGovernanceStack,
+	calls timelockbindings.Calls,
+) {
+	t.Helper()
+	require.NoError(t, MCMSBypassAndExecuteErr(ctx, env, gov, calls))
+}
+
+// MCMSBypassAndExecuteErr is the error-returning variant of MCMSBypassAndExecute.
+func MCMSBypassAndExecuteErr(
+	ctx context.Context,
+	env *E2ETestEnv,
+	gov *MCMSGovernanceStack,
+	calls timelockbindings.Calls,
+) error {
+	bypasserID := gov.BypasserMCMSID
+	if bypasserID == "" {
+		bypasserID = gov.MCMSID
+	}
+	client := gov.BypasserClient
+	if client == nil {
+		client = gov.MCMSClient
+	}
+
+	preOpCount, err := client.GetOpCount(ctx)
+	if err != nil {
+		return fmt.Errorf("get bypasser mcms op count: %w", err)
+	}
+
+	callsVal, err := calls.ToScVal()
+	if err != nil {
+		return fmt.Errorf("encode bypasser calls: %w", err)
+	}
+	args, err := mcmsutil.EncodeSorobanInvokeArgs([]xdr.ScVal{
+		scval.AddressToScVal(bypasserID),
+		callsVal,
+	})
+	if err != nil {
+		return fmt.Errorf("encode bypasser_execute_batch: %w", err)
+	}
+
+	validUntil, err := MCMSValidUntilSeconds(ctx, env.RPCClient)
+	if err != nil {
+		return fmt.Errorf("mcms valid_until: %w", err)
+	}
+
+	if err := mcmsSetRootAndExecute(ctx, client, gov.ChainNetID, bypasserID, gov.SignerPK,
+		preOpCount, validUntil, gov.TimelockID, "bypasser_execute_batch", args, "bypass"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TimelockCallsFromProposalTx converts an MCMS proposal transaction into timelock
+// Calls: it decodes the Soroban invoke payload into the function name and args,
+// then re-encodes the args as ArgsXdr. This is the missing proposal→Calls
+// conversion for executing Stellar proposals against a timelock.
+func TimelockCallsFromProposalTx(tx mcmstypes.Transaction) (timelockbindings.Calls, error) {
+	function, args, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
+	if err != nil {
+		return timelockbindings.Calls{}, fmt.Errorf("decode proposal tx data: %w", err)
+	}
+	argsXdr, err := mcmsutil.EncodeSorobanInvokeArgs(args)
+	if err != nil {
+		return timelockbindings.Calls{}, fmt.Errorf("re-encode proposal args: %w", err)
+	}
+	return timelockbindings.Calls{
+		Inner: []timelockbindings.Call{{
+			Target:   tx.To,
+			Function: function,
+			ArgsXdr:  argsXdr,
+		}},
+	}, nil
+}
+
+// DeployMCMSStackWithRoles deploys a full qualifier-keyed MCMS stack via the real
+// DeployStellarMCMS sequence: Proposer/Canceller/Bypasser multisigs (one shared
+// 1-of-1 test signer in all three roles) plus a self-administered RBACTimelock.
+func DeployMCMSStackWithRoles(
+	t *testing.T,
+	ctx context.Context,
+	env *E2ETestEnv,
+	chainSelector uint64,
+	qualifier string,
+	minDelaySec uint64,
+) *MCMSGovernanceStack {
+	t.Helper()
+
+	pk, err := crypto.HexToECDSA(Anvil0SKHex)
+	require.NoError(t, err)
+
+	chainNetID := mcmsutil.ChainNetworkID(env.NetworkPassphrase)
+
+	bundle := cldfops.NewBundle(
+		func() context.Context { return ctx },
+		cldflogger.Test(t),
+		cldfops.NewMemoryReporter(),
+	)
+
+	ch := cldf_stellar.Chain{
+		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: chainSelector},
+		Signer:            stellarbindings.NewStellarKeypairSigner(env.DeployerKP),
+		Client:            env.RPCClient,
+		NetworkPassphrase: env.NetworkPassphrase,
+	}
+	chains := cldf_chain.NewBlockChains(map[uint64]cldf_chain.BlockChain{chainSelector: ch})
+
+	delay := new(big.Int).SetUint64(minDelaySec)
+	// The deploy sequence pads EVM-style addresses to the 32-byte form the
+	// Soroban MCMS expects (mcmsutil.ConfigToStellarSetConfig).
+	signerAddr := crypto.PubkeyToAddress(pk.PublicKey)
+	cfg := mcmstypes.Config{Quorum: 1, Signers: []common.Address{signerAddr}}
+	out, err := cldfops.ExecuteSequence(bundle, sequences.DeployStellarMCMS, chains, deploy.MCMSDeploymentConfigPerChainWithAddress{
+		MCMSDeploymentConfigPerChain: deploy.MCMSDeploymentConfigPerChain{
+			Canceller:        cfg,
+			Bypasser:         cfg,
+			Proposer:         cfg,
+			TimelockMinDelay: delay,
+			Qualifier:        &qualifier,
+			ContractVersion:  deploy.MCMSVersion.String(),
+		},
+		ChainSelector:     chainSelector,
+		ExistingAddresses: nil,
+	})
+	require.NoError(t, err)
+	refs := out.Output.Addresses
+
+	proposerID, _, err := mcmsutil.FindExistingStellarMCMSByRole(refs, chainSelector, qualifier, mcmsutil.RoleProposer)
+	require.NoError(t, err)
+	cancellerID, _, err := mcmsutil.FindExistingStellarMCMSByRole(refs, chainSelector, qualifier, mcmsutil.RoleCanceller)
+	require.NoError(t, err)
+	bypasserID, _, err := mcmsutil.FindExistingStellarMCMSByRole(refs, chainSelector, qualifier, mcmsutil.RoleBypasser)
+	require.NoError(t, err)
+	tlID, ok := mcmsutil.FindExistingStellarTimelock(refs, chainSelector, qualifier)
+	require.True(t, ok, "timelock ref must resolve for qualifier %q", qualifier)
+
+	// The proposer MCMS drives schedule_batch/execute_batch (PROPOSER role on the
+	// timelock); the bypasser MCMS drives bypasser_execute_batch.
+	mcmsRaw, err := ContractIDToBytes32(proposerID)
+	require.NoError(t, err)
+	tlRaw, err := ContractIDToBytes32(tlID)
+	require.NoError(t, err)
+
+	return &MCMSGovernanceStack{
+		MCMSID:          proposerID,
+		TimelockID:      tlID,
+		MCMSClient:      mcmsbindings.NewMcmsClient(env.Deployer, proposerID),
+		TimelockClient:  timelockbindings.NewTimelockClient(env.Deployer, tlID),
+		MCMSRaw:         mcmsRaw,
+		TimelockRaw:     tlRaw,
+		ChainNetID:      chainNetID,
+		SignerPK:        pk,
+		MinDelaySec:     minDelaySec,
+		Qualifier:       qualifier,
+		ProposerMCMSID:  proposerID,
+		CancellerMCMSID: cancellerID,
+		BypasserMCMSID:  bypasserID,
+		BypasserClient:  mcmsbindings.NewMcmsClient(env.Deployer, bypasserID),
+	}
 }
 
 func waitTimelockOperationReadyErr(

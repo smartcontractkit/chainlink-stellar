@@ -1,15 +1,27 @@
 package adapters
 
 import (
+	"context"
+	"fmt"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/smartcontractkit/chainlink-ccip/deployment/fastcurse"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/utils"
+	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
+	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
+	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+	"github.com/stellar/go-stellar-sdk/keypair"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
-
+	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 )
 
@@ -104,4 +116,92 @@ func TestStellarContractIDOnChain_routerResolvesToStrkey(t *testing.T) {
 	got, err := stellarContractIDOnChain(env, sel, stellarccip.RouterDatastoreRef())
 	require.NoError(t, err)
 	require.Equal(t, routerStrkey, got)
+}
+
+// sdkOnlySigner reports an address without a keypair, so contract reads against
+// a client-less chain fail and Initialize's best-effort owner/admin reads degrade.
+type sdkOnlySigner struct{ addr string }
+
+func (sdkOnlySigner) Sign([]byte) ([]byte, error) { return nil, nil }
+func (sdkOnlySigner) SignDecorated([]byte) (xdr.DecoratedSignature, error) {
+	return xdr.DecoratedSignature{}, nil
+}
+func (s sdkOnlySigner) Address() string          { return s.addr }
+func (sdkOnlySigner) KeypairFull() *keypair.Full { return nil }
+
+func adapterTestEnv(t *testing.T, sel uint64, seedHexRMN bool, quals ...string) cldf.Environment {
+	t.Helper()
+	ds := datastore.NewMemoryDataStore()
+	if seedHexRMN {
+		rmnStrkey := stellarutil.MustGenerateMockContractID("deployer", "rmn-curse-adapter-test")
+		require.NoError(t, stellarccip.RecordRMNRemote(ds, sel, rmnStrkey))
+	}
+	routerStrkey := stellarutil.MustGenerateMockContractID("deployer", "router-curse-adapter-test")
+	require.NoError(t, stellarccip.RecordRouter(ds, sel, routerStrkey))
+	for i, qual := range quals {
+		tl := stellarutil.MustGenerateMockContractID("deployer", fmt.Sprintf("timelock-%d", i))
+		ref := mcmsutil.StellarTimelockDatastoreRef(sel, qual, tl)
+		require.NoError(t, ds.Addresses().Upsert(ref))
+	}
+	// A dead RPC endpoint makes the owner/admin reads fail with a transport
+	// error (not a panic), exercising Initialize's best-effort degradation.
+	ch := cldf_stellar.Chain{
+		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
+		Signer:            sdkOnlySigner{addr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+		Client:            rpcclient.NewClient("http://127.0.0.1:1", &http.Client{Timeout: 2 * time.Second}),
+		NetworkPassphrase: "Standalone Network ; February 2017",
+	}
+	return cldf.Environment{
+		Logger:      cldflogger.Test(t),
+		GetContext:  func() context.Context { return context.Background() },
+		DataStore:   ds.Seal(),
+		BlockChains: cldf_chain.NewBlockChains(map[uint64]cldf_chain.BlockChain{sel: ch}),
+	}
+}
+
+func TestStellarCurseAdapter_InitializeCachesRoutingFacts(t *testing.T) {
+	sel := uint64(424242420101)
+	// adapterTestEnv seeds qualifiers in call order: CLL(0), RMNMCMS(1), UFC(2).
+	cclTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-0")
+	govTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-1")
+	fastTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-2")
+
+	env := adapterTestEnv(t, sel, true,
+		utils.CLLQualifier, utils.RMNTimelockQualifier, utils.UltraFastCurseMCMSQualifier)
+
+	rmnStrkey := stellarutil.MustGenerateMockContractID("deployer", "rmn-curse-adapter-test")
+	a := NewStellarCurseAdapter()
+	require.NoError(t, a.Initialize(env, sel))
+
+	// RMN ref is stored hex and cached as the strkey form the ownership helpers need.
+	require.Equal(t, rmnStrkey, a.rmnContractID[sel])
+
+	// All three qualifiers resolve, including CLLCCIP (diagnostics only).
+	require.Equal(t, govTL, a.timelocks[sel][utils.RMNTimelockQualifier])
+	require.Equal(t, fastTL, a.timelocks[sel][utils.UltraFastCurseMCMSQualifier])
+	require.Equal(t, cclTL, a.timelocks[sel][utils.CLLQualifier])
+
+	// Owner/admin reads fail against the client-less chain and degrade to empty,
+	// never an error: direct-only deployments are legitimate.
+	require.Empty(t, a.owners[sel])
+	require.Empty(t, a.curseAdmins[sel])
+}
+
+func TestStellarCurseAdapter_InitializeAbsentTimelocksDegrade(t *testing.T) {
+	sel := uint64(424242420102)
+	env := adapterTestEnv(t, sel, true, utils.RMNTimelockQualifier)
+	a := NewStellarCurseAdapter()
+	require.NoError(t, a.Initialize(env, sel))
+	require.Contains(t, a.timelocks[sel], utils.RMNTimelockQualifier)
+	require.NotContains(t, a.timelocks[sel], utils.UltraFastCurseMCMSQualifier)
+	require.NotContains(t, a.timelocks[sel], utils.CLLQualifier)
+}
+
+func TestStellarCurseAdapter_InitializeFailsClosedWithoutRMN(t *testing.T) {
+	sel := uint64(424242420103)
+	env := adapterTestEnv(t, sel, false, utils.RMNTimelockQualifier)
+	a := NewStellarCurseAdapter()
+	err := a.Initialize(env, sel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "resolve RMN Remote")
 }

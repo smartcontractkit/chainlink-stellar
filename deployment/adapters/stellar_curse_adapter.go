@@ -20,8 +20,14 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ownership"
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
+
+	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 )
 
 var (
@@ -30,9 +36,17 @@ var (
 )
 
 // StellarCurseAdapter implements both CurseAdapter and CurseSubjectAdapter for Stellar.
+// Initialize caches the on-chain facts the curse sequences need to route proposals:
+// the RMN Remote / Router contract IDs (strkeys), the RMN owner and curse-admin
+// list, and the RBACTimelock of every deployed MCMS stack keyed by qualifier.
+// Direct-only deployments (no MCMS stacks) are legitimate: missing timelocks and
+// unreadable owner/admins degrade to empty values, never an error.
 type StellarCurseAdapter struct {
 	rmnContractID    map[uint64]string
 	routerContractID map[uint64]string
+	owners           map[uint64]string
+	curseAdmins      map[uint64][]string
+	timelocks        map[uint64]map[string]string
 }
 
 func NewStellarCurseAdapter() *StellarCurseAdapter {
@@ -66,7 +80,66 @@ func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) er
 		}
 		a.routerContractID[selector] = addr
 	}
+
+	if a.owners == nil {
+		a.owners = make(map[uint64]string)
+	}
+	if a.curseAdmins == nil {
+		a.curseAdmins = make(map[uint64][]string)
+	}
+	if a.timelocks == nil {
+		a.timelocks = make(map[uint64]map[string]string)
+	}
+	if _, exists := a.owners[selector]; !exists {
+		rmnID := a.rmnContractID[selector]
+		// Canonical datastore type "RMNRemote"; the ownership helpers match the
+		// stellar-local "RmnRemote" constant, so remap the in-memory ref type.
+		rmnRef := stellarccip.RMNRemoteDatastoreRef().FullAddressRef(selector, rmnID)
+		rmnRef.Type = datastore.ContractType(rmnremoteops.ContractType)
+		ch, _ := e.BlockChains.StellarChains()[selector]
+		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		if err != nil {
+			return fmt.Errorf("build deployer on chain %d: %w", selector, err)
+		}
+		deps := stellardeps.FromDeployer(dep)
+		if owner, err := ownership.ContractOwner(e.GetContext(), deps, rmnRef); err != nil {
+			e.Logger.Debugw("RMN Remote owner unavailable; curse routing will fail closed for non-deployer runs",
+				"chainSelector", selector, "error", err.Error())
+		} else {
+			a.owners[selector] = owner
+		}
+		if admins, err := ownership.CurseAdmins(e.GetContext(), deps, rmnRef); err != nil {
+			e.Logger.Debugw("RMN Remote curse admins unavailable; only owner-based routing will be available",
+				"chainSelector", selector, "error", err.Error())
+		} else {
+			a.curseAdmins[selector] = admins
+		}
+	}
+
+	if _, exists := a.timelocks[selector]; !exists {
+		tls := make(map[string]string)
+		// All three governance stacks are resolved: CLLCCIP is cached for
+		// diagnostics only — it holds no RMN role, but naming its timelock in
+		// build-time errors makes the likeliest operator mistake actionable.
+		for _, qual := range []string{cciputils.CLLQualifier, cciputils.RMNTimelockQualifier, cciputils.UltraFastCurseMCMSQualifier} {
+			if tl, ok := mcmsutil.FindExistingStellarTimelock(datastoreRefs(e), selector, qual); ok {
+				tls[qual] = tl
+			} else {
+				e.Logger.Debugw("no RBACTimelock deployed for qualifier; it will be unavailable for curse routing",
+					"chainSelector", selector, "qualifier", qual)
+			}
+		}
+		a.timelocks[selector] = tls
+	}
 	return nil
+}
+
+// datastoreRefs extracts the AddressRefs recorded in the environment datastore.
+func datastoreRefs(e cldf.Environment) []datastore.AddressRef {
+	if e.DataStore == nil {
+		return nil
+	}
+	return e.DataStore.Addresses().Filter()
 }
 
 func (a *StellarCurseAdapter) IsSubjectCursedOnChain(e cldf.Environment, selector uint64, subject api.Subject) (bool, error) {
@@ -146,6 +219,9 @@ func wrapCurseSequence(
 			report, err := cldf_ops.ExecuteSequence(b, inner, chains, stellarsequences.StellarCurseInput{
 				CurseInput:    in,
 				RMNContractID: rmnID,
+				Owner:         a.owners[in.ChainSelector],
+				CurseAdmins:   a.curseAdmins[in.ChainSelector],
+				Timelocks:     a.timelocks[in.ChainSelector],
 			})
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
