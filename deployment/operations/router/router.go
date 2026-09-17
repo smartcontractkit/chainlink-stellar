@@ -56,6 +56,27 @@ var ApplyRampUpdates = cldfops.NewOperation(
 	},
 )
 
+// RemoveOnrampInput removes the OnRamp for a destination chain, pausing the lane.
+type RemoveOnrampInput struct {
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
+}
+
+// RemoveOnramp calls Router `remove_onramp`. ccip_send and get_fee revert with
+// UnsupportedDestinationChain while no OnRamp is configured; re-enable with ApplyRampUpdates.
+var RemoveOnramp = cldfops.NewOperation(
+	"router:remove-onramp",
+	stellarops.ContractDeploymentVersion,
+	"Removes the Router OnRamp for a destination chain, pausing the lane",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in RemoveOnrampInput) (stellarops.Void, error) {
+		c := routerbindings.NewRouterClient(d.Invoker, in.ContractID)
+		if err := c.RemoveOnramp(b.GetContext(), in.DestChainSelector); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
 // TransferOwnershipInput starts two-step ownership transfer.
 type TransferOwnershipInput struct {
 	ContractID string `json:"contract_id"`

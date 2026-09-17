@@ -302,6 +302,21 @@ func (c *RouterClient) GetOfframps(ctx context.Context) ([]OffRampEntry, error) 
 	return out, nil
 }
 
+// RemoveOnramp calls the remove_onramp function on the contract.
+func (c *RouterClient) RemoveOnramp(ctx context.Context, destChainSelector uint64) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(destChainSelector),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_onramp", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_onramp: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // RequireOwner calls the require_owner function on the contract.
 func (c *RouterClient) RequireOwner(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
@@ -969,6 +984,78 @@ func ParseOffRampAddedEvent(e protocolrpc.EventInfo) (*OffRampAddedEvent, error)
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
 				result.Offramp = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForOnRampRemovedEvent waits for a OnRampRemovedEvent event.
+func (c *RouterClient) WaitForOnRampRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OnRampRemovedEvent) bool) (*OnRampRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{OnRampRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseOnRampRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseOnRampRemovedEvent(e protocolrpc.EventInfo) (*OnRampRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &OnRampRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "dest_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.DestChainSelector = v
+			}
+		case "onramp":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Onramp = v
 			}
 		}
 	}

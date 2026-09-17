@@ -17,7 +17,7 @@ use common_interfaces::rmn_remote::RmnRemoteClient;
 use common_message::{AnyToStellarMessage, StellarToAnyMessage};
 use events::{
     CCIPSendRequestedEvent, MessageExecutedEvent, OffRampAddedEvent, OffRampRemovedEvent,
-    OnRampSetEvent,
+    OnRampRemovedEvent, OnRampSetEvent,
 };
 use types::{OffRampEntry, OnRampEntry, RouterConfig};
 
@@ -432,6 +432,44 @@ impl RouterContract {
         Ok(())
     }
 
+    /// Remove the OnRamp for a destination chain, pausing the lane. Only callable by owner.
+    ///
+    /// `ccip_send` and `get_fee` revert with `UnsupportedDestinationChain` once no OnRamp is
+    /// configured for the selector. Soroban has no zero-address sentinel, so removal is the
+    /// source-side lane pause (EVM pauses a lane by setting the router to `address(0)`). Re-enable
+    /// the lane with `set_onramp`.
+    ///
+    /// # Arguments
+    /// * `dest_chain_selector` - The destination chain identifier whose OnRamp should be removed
+    ///
+    /// # Errors
+    /// * `UnsupportedDestinationChain` - If no OnRamp is configured for `dest_chain_selector`
+    pub fn remove_onramp(env: Env, dest_chain_selector: u64) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+
+        let mut onramps: Map<u64, Address> = env
+            .storage()
+            .persistent()
+            .get(&ONRAMPS)
+            .ok_or(CCIPError::UnsupportedDestinationChain)?;
+
+        let onramp = onramps
+            .get(dest_chain_selector)
+            .ok_or(CCIPError::UnsupportedDestinationChain)?;
+
+        onramps.remove(dest_chain_selector);
+        env.storage().persistent().set(&ONRAMPS, &onramps);
+
+        OnRampRemovedEvent {
+            dest_chain_selector,
+            onramp,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Add an OffRamp for a source chain. Only callable by owner.
     ///
     /// # Arguments
@@ -541,7 +579,7 @@ impl RouterContract {
     /// This allows setting multiple OnRamps and adding/removing multiple OffRamps atomically.
     ///
     /// # Arguments
-    /// * `onramp_updates` - OnRamps to set (can include zero address to disable)
+    /// * `onramp_updates` - OnRamps to set (removal/pause is via `remove_onramp`, not this batch)
     /// * `offramp_removes` - OffRamps to remove
     /// * `offramp_adds` - OffRamps to add
     pub fn apply_ramp_updates(

@@ -10,7 +10,20 @@ use soroban_sdk::{contractevent, Address, BytesN};
 pub struct OnRampSetEvent {
     /// Destination chain selector
     pub dest_chain_selector: u64,
-    /// OnRamp contract address (can be zero/None to disable)
+    /// OnRamp contract address
+    pub onramp: Address,
+}
+
+/// Emitted when an OnRamp is removed for a destination chain, pausing the lane.
+/// `ccip_send` and `get_fee` revert with `UnsupportedDestinationChain` while no OnRamp is
+/// configured; re-enable via `set_onramp`. Soroban has no zero-address sentinel, so removal is
+/// the source-side lane pause (EVM pauses by setting the router to `address(0)`).
+#[contractevent(topics = ["router_OnRampRemoved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OnRampRemovedEvent {
+    /// Destination chain selector
+    pub dest_chain_selector: u64,
+    /// OnRamp contract address that was removed
     pub onramp: Address,
 }
 
