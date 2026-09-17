@@ -38,10 +38,14 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// fastCurseSubject is an inert firedrill-style subject: cursing it exercises the
-// full MCMS path without touching a real lane.
-func fastCurseSubject() api.Subject {
-	return api.FiredrillSubject()
+// fastCurseSubjectFor returns an inert firedrill-style subject keyed by tag:
+// no lane derives these bytes, so cursing them exercises the full MCMS path
+// without touching a real lane. Distinct tags give distinct subjects so each
+// curse arm can assert its own false → true transition.
+func fastCurseSubjectFor(tag byte) api.Subject {
+	s := api.FiredrillSubject()
+	s[1] = tag
+	return s
 }
 
 // TestStellarFastCurseViaMCMS exercises the full fast-curse governance flow on a
@@ -152,10 +156,11 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	// The adapter now routes: owner=govTL (from chain), admins=[fastTL], both timelocks cached.
 	curseAdapter := adapters.NewStellarCurseAdapter()
 	require.NoError(t, curseAdapter.Initialize(adapterEnv, sel))
-	subject := fastCurseSubject()
+	govSubject := fastCurseSubjectFor(1)
+	fastSubject := fastCurseSubjectFor(2)
 
 	// ⑤ Regular curse via the governance stack's bypasser: the ≤2-minute path.
-	govProposal := curseViaAdapter(t, ctx, curseAdapter, chains, sel, subject, cciputils.RMNTimelockQualifier)
+	govProposal := curseViaAdapter(t, ctx, curseAdapter, chains, sel, govSubject, cciputils.RMNTimelockQualifier)
 	require.Len(t, govProposal, 1)
 	govCalls, err := helpers.TimelockCallsFromProposalTx(govProposal[0])
 	require.NoError(t, err)
@@ -168,14 +173,19 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, govStack.TimelockID, govCaller, "caller must be the executing (governance) timelock")
 
-	helpers.MCMSBypassAndExecute(t, ctx, env, govStack, govCalls)
-	cursed, err := rmnClient.IsCursedBySubject(ctx, subject)
+	cursed, err := rmnClient.IsCursedBySubject(ctx, govSubject)
 	require.NoError(t, err)
-	require.True(t, cursed, "subject must be cursed after the governance bypasser path")
+	require.False(t, cursed, "governance-arm subject must start uncursed")
+	helpers.MCMSBypassAndExecute(t, ctx, env, govStack, govCalls)
+	cursed, err = rmnClient.IsCursedBySubject(ctx, govSubject)
+	require.NoError(t, err)
+	require.True(t, cursed, "governance-arm subject must be cursed after the governance bypasser path")
 
 	// ⑥ Ultra fast curse via the fast stack's bypasser — the whole point of the
-	// third stack: same fully-wired RMN, different qualifier.
-	fastProposal := curseViaAdapter(t, ctx, curseAdapter, chains, sel, subject, cciputils.UltraFastCurseMCMSQualifier)
+	// third stack: same fully-wired RMN, different qualifier. A distinct subject
+	// makes the assertion a real transition test: curse silently skips
+	// already-cursed subjects, so reusing the ⑤ subject could never fail here.
+	fastProposal := curseViaAdapter(t, ctx, curseAdapter, chains, sel, fastSubject, cciputils.UltraFastCurseMCMSQualifier)
 	require.Len(t, fastProposal, 1)
 	fastCalls, err := helpers.TimelockCallsFromProposalTx(fastProposal[0])
 	require.NoError(t, err)
@@ -186,13 +196,16 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fastStack.TimelockID, fastCaller, "caller must be the fast-curse timelock")
 
-	helpers.MCMSBypassAndExecute(t, ctx, env, fastStack, fastCalls)
-	cursed, err = rmnClient.IsCursedBySubject(ctx, subject)
+	cursed, err = rmnClient.IsCursedBySubject(ctx, fastSubject)
 	require.NoError(t, err)
-	require.True(t, cursed, "subject must remain cursed after the ultra-fast path")
+	require.False(t, cursed, "ultra-fast-arm subject must start uncursed")
+	helpers.MCMSBypassAndExecute(t, ctx, env, fastStack, fastCalls)
+	cursed, err = rmnClient.IsCursedBySubject(ctx, fastSubject)
+	require.NoError(t, err)
+	require.True(t, cursed, "ultra-fast-arm subject must be cursed after the fast bypasser path")
 
 	// ⑧ Uncurse via the governance path (schedule + wait + execute).
-	uncurseProposal := uncurseViaAdapter(t, ctx, curseAdapter, chains, sel, subject, cciputils.RMNTimelockQualifier)
+	uncurseProposal := uncurseViaAdapter(t, ctx, curseAdapter, chains, sel, govSubject, cciputils.RMNTimelockQualifier)
 	require.Len(t, uncurseProposal, 1)
 	fn, args, err = mcmsutil.DecodeSorobanMCMSInvokePayload(uncurseProposal[0].Data)
 	require.NoError(t, err)
@@ -204,9 +217,9 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	uncSalt[31] = 11
 	helpers.MCMSTimelockScheduleAndExecute(t, ctx, env, govStack, uncurseCalls, uncPred, uncSalt)
 
-	cursed, err = rmnClient.IsCursedBySubject(ctx, subject)
+	cursed, err = rmnClient.IsCursedBySubject(ctx, govSubject)
 	require.NoError(t, err)
-	require.False(t, cursed, "subject must be uncursed after the governance path")
+	require.False(t, cursed, "governance-arm subject must be uncursed after the governance path")
 
 	// ⑦ Role separation: the proposer cannot bypass, the bypasser cannot schedule,
 	// and the fast timelock cannot uncurse (owner-only).
@@ -224,7 +237,7 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	require.Error(t, helpers.MCMSTimelockScheduleAndExecuteErr(ctx, env, &bypasserAsProposer, fastCalls, schedPred, schedSalt),
 		"bypasser MCMS must not be able to schedule_batch")
 
-	uncurseArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{scval.Bytes16SliceToScVal([][16]byte{subject})})
+	uncurseArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{scval.Bytes16SliceToScVal([][16]byte{fastSubject})})
 	require.NoError(t, err)
 	fastUncurse := timelockCallsFor(rmnID, "uncurse", uncurseArgs)
 	require.Error(t, helpers.MCMSBypassAndExecuteErr(ctx, env, fastStack, fastUncurse),
@@ -250,7 +263,7 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	}
 	strangerAdapter := adapters.NewStellarCurseAdapter()
 	require.NoError(t, strangerAdapter.Initialize(strangerEnv, sel))
-	_, err = executeCurseSequence(t, ctx, strangerAdapter, chains, sel, subject, "")
+	_, err = executeCurseSequence(t, ctx, strangerAdapter, chains, sel, fastSubject, "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no authorized curse caller")
 }
@@ -338,8 +351,14 @@ func executeCurseSequence(t *testing.T, ctx context.Context, a *adapters.Stellar
 		return nil, err
 	}
 	if len(report.Output.BatchOps) != 1 || len(report.Output.BatchOps[0].Transactions) != 1 {
+		// Guard the index: with zero batch ops the naive message would panic with
+		// index-out-of-range instead of reporting the routing regression.
+		txCount := 0
+		if len(report.Output.BatchOps) == 1 {
+			txCount = len(report.Output.BatchOps[0].Transactions)
+		}
 		return nil, fmt.Errorf("expected exactly one proposal transaction, got %d ops / %d txs",
-			len(report.Output.BatchOps), len(report.Output.BatchOps[0].Transactions))
+			len(report.Output.BatchOps), txCount)
 	}
 	return report.Output.BatchOps[0].Transactions, nil
 }
