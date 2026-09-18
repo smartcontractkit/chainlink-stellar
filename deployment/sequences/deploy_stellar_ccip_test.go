@@ -10,6 +10,7 @@ import (
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	"github.com/stretchr/testify/require"
 
@@ -110,7 +111,7 @@ func TestStellarDeployChainContracts_RejectsMissingStashedTopology(t *testing.T)
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}

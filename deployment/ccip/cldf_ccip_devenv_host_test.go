@@ -5,6 +5,7 @@ import (
 
 	"github.com/rs/zerolog"
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -15,7 +16,7 @@ func TestNewCLDFStellarCCIPDevenvHost_rejectsNilDeployer(t *testing.T) {
 	t.Parallel()
 	kp := keypair.MustRandom()
 	ch := cldfstellar.Chain{
-		Signer: cldfstellar.NewStellarKeypairSigner(kp),
+		Signer: stellarbindings.NewStellarKeypairSigner(kp),
 	}
 	_, err := NewCLDFStellarCCIPDevenvHost(ch, zerolog.Nop(), nil)
 	require.Error(t, err)
@@ -31,7 +32,7 @@ func TestNewCLDFStellarCCIPDevenvHost_rejectsNilSigner(t *testing.T) {
 }
 
 type stellarSignerNilKeypair struct {
-	inner cldfstellar.StellarSigner
+	inner stellarbindings.Signer
 }
 
 func (s stellarSignerNilKeypair) Sign(message []byte) ([]byte, error) {
@@ -49,7 +50,7 @@ func (s stellarSignerNilKeypair) KeypairFull() *keypair.Full { return nil }
 func TestNewCLDFStellarCCIPDevenvHost_rejectsNilKeypairFull(t *testing.T) {
 	t.Parallel()
 	kp := keypair.MustRandom()
-	inner := cldfstellar.NewStellarKeypairSigner(kp)
+	inner := stellarbindings.NewStellarKeypairSigner(kp)
 	ch := cldfstellar.Chain{
 		Signer: stellarSignerNilKeypair{inner: inner},
 	}
@@ -59,4 +60,4 @@ func TestNewCLDFStellarCCIPDevenvHost_rejectsNilKeypairFull(t *testing.T) {
 	require.Contains(t, err.Error(), "KeypairFull is nil")
 }
 
-var _ cldfstellar.StellarSigner = stellarSignerNilKeypair{}
+var _ stellarbindings.Signer = stellarSignerNilKeypair{}

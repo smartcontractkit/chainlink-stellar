@@ -49,6 +49,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
+	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
@@ -698,7 +699,7 @@ func (c *Chain) ConfirmSendOnSource(ctx context.Context, to uint64, key cciptest
 		return cciptestinterfaces.MessageSentEvent{}, fmt.Errorf("failed to get latest ledger: %w", err)
 	}
 
-	var filter func(*onrampbindings.CCIPMessageSentEvent) bool
+	var filter func(*CCIPMessageSentEvent) bool
 	if key.MessageID != (protocol.Bytes32{}) {
 		want := [32]byte(key.MessageID)
 		c.logger.Info().
@@ -707,7 +708,7 @@ func (c *Chain) ConfirmSendOnSource(ctx context.Context, to uint64, key cciptest
 			Uint32("startLedger", latestLedger.Sequence).
 			Dur("timeout", timeout).
 			Msg("Waiting for CCIPMessageSent event from Stellar OnRamp (by message ID)")
-		filter = func(e *onrampbindings.CCIPMessageSentEvent) bool {
+		filter = func(e *CCIPMessageSentEvent) bool {
 			return e.DestChainSelector == to && e.MessageId == want
 		}
 	} else {
@@ -718,12 +719,12 @@ func (c *Chain) ConfirmSendOnSource(ctx context.Context, to uint64, key cciptest
 			Uint32("startLedger", latestLedger.Sequence).
 			Dur("timeout", timeout).
 			Msg("Waiting for CCIPMessageSent event from Stellar OnRamp (by sequence)")
-		filter = func(e *onrampbindings.CCIPMessageSentEvent) bool {
+		filter = func(e *CCIPMessageSentEvent) bool {
 			return e.DestChainSelector == to && e.SequenceNumber == seq
 		}
 	}
 
-	event, err := c.onRampClient.WaitForCCIPMessageSentEvent(
+	event, err := c.waitForCCIPMessageSentEvent(
 		ctx, latestLedger.Sequence, timeout,
 		filter,
 	)
@@ -752,7 +753,7 @@ func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptest
 		return cciptestinterfaces.ExecEnvelope{}, fmt.Errorf("failed to get latest ledger: %w", err)
 	}
 
-	var filter func(*offrampbindings.ExecutionStateChangedEvent) bool
+	var filter func(*destinationreader.ExecutionStateChangedEvent) bool
 	if key.MessageID != (protocol.Bytes32{}) {
 		want := [32]byte(key.MessageID)
 		c.logger.Info().
@@ -761,7 +762,7 @@ func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptest
 			Uint32("startLedger", latestLedger.Sequence).
 			Dur("timeout", timeout).
 			Msg("Waiting for ExecutionStateChanged event from Stellar OffRamp (by message ID)")
-		filter = func(e *offrampbindings.ExecutionStateChangedEvent) bool {
+		filter = func(e *destinationreader.ExecutionStateChangedEvent) bool {
 			return e.SourceChainSelector == from && e.MessageId == want
 		}
 	} else {
@@ -772,12 +773,12 @@ func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptest
 			Uint32("startLedger", latestLedger.Sequence).
 			Dur("timeout", timeout).
 			Msg("Waiting for ExecutionStateChanged event from Stellar OffRamp (by sequence)")
-		filter = func(e *offrampbindings.ExecutionStateChangedEvent) bool {
+		filter = func(e *destinationreader.ExecutionStateChangedEvent) bool {
 			return e.SourceChainSelector == from && e.SequenceNumber == seq
 		}
 	}
 
-	event, err := c.offRampClient.WaitForExecutionStateChangedEvent(
+	event, err := c.waitForExecutionStateChangedEvent(
 		ctx, latestLedger.Sequence, timeout,
 		filter,
 	)
@@ -896,9 +897,9 @@ func (c *Chain) ManuallyExecuteMessage(ctx context.Context, message protocol.Mes
 	if err != nil {
 		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("failed to get latest ledger: %w", err)
 	}
-	event, err := c.offRampClient.WaitForExecutionStateChangedEvent(
+	event, err := c.waitForExecutionStateChangedEvent(
 		ctx, latestLedger.Sequence, 2*time.Minute,
-		func(e *offrampbindings.ExecutionStateChangedEvent) bool {
+		func(e *destinationreader.ExecutionStateChangedEvent) bool {
 			return e.SourceChainSelector == uint64(message.SourceChainSelector) && e.SequenceNumber == uint64(message.SequenceNumber)
 		},
 	)

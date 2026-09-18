@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 )
 
-var _ cldfstellar.StellarSigner = (sdkOnlyStellarSigner{})
+var _ stellarbindings.Signer = (sdkOnlyStellarSigner{})
 
 func TestNewDeployerFromChain_rejectsNilSigner(t *testing.T) {
 	t.Parallel()
@@ -25,7 +26,7 @@ func TestNewDeployerFromChain_usesKeypairWhenKeypairFullAvailable(t *testing.T) 
 	t.Parallel()
 	kp := keypair.MustRandom()
 	ch := cldfstellar.Chain{
-		Signer:            cldfstellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}
 	dep, err := NewDeployerFromChain(ch)
@@ -46,7 +47,7 @@ func TestNewDeployerFromChain_usesSDKSignerWhenKeypairFullNil(t *testing.T) {
 	require.Equal(t, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", dep.SignerAddress())
 }
 
-// sdkOnlyStellarSigner implements cldfstellar.StellarSigner with nil KeypairFull,
+// sdkOnlyStellarSigner implements stellarbindings.Signer with nil KeypairFull,
 // matching keystore-style signers that only expose SignDecorated.
 type sdkOnlyStellarSigner struct{ addr string }
 
