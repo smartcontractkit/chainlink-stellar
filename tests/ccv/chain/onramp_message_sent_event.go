@@ -3,6 +3,7 @@ package ccvchain
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -23,7 +24,7 @@ type CCIPMessageSentEvent struct {
 	Sender                string
 	MessageId             [32]byte
 	FeeToken              string
-	TokenAmountBeforeFees int64
+	TokenAmountBeforeFees *big.Int
 	EncodedMessage        []byte
 	Receipts              []onrampbindings.Receipt
 	VerifierBlobs         [][]byte
