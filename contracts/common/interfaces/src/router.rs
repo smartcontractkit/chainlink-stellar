@@ -234,6 +234,7 @@ pub enum CCIPError {
     InvalidChainForClient = 317,
     RouterNotConfigured = 318,
     InvalidSourcePoolAddress = 319,
+    DuplicateCCVNotAllowed = 320,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,

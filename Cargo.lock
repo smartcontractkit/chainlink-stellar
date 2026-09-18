@@ -383,6 +383,7 @@ name = "common-pool"
 version = "0.0.0"
 dependencies = [
  "common-error",
+ "common-helpers",
  "common-interfaces",
  "soroban-sdk",
 ]

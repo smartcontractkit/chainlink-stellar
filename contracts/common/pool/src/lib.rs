@@ -2,15 +2,16 @@
 
 pub mod decimals;
 pub mod events;
-pub mod finality_codec;
 pub mod rate_limit;
 pub mod types;
 
-#[cfg(test)]
-mod decimals_tests;
+// `finality_codec` lives in `common-helpers` so the ramps can use it without a
+// hard dependency on this pool-implementation crate. Re-exported here for
+// back-compat with existing pool imports (`common_pool::finality_codec`).
+pub use common_helpers::finality_codec;
 
 #[cfg(test)]
-mod finality_codec_tests;
+mod decimals_tests;
 
 #[cfg(test)]
 mod rate_limit_tests;
@@ -263,6 +264,16 @@ pub trait BaseTokenPool {
         }
 
         for update in adds.iter() {
+            // M-14 / INV-POOL-ENC-2/4, INV-PCFG-1: reject empty remote pool and token
+            // addresses at config time. EVM `TokenPool._validateTokenPoolConfig` requires
+            // a non-empty `remoteTokenAddress`, and the remote pool is only ever set
+            // (never emptied) via `setRemotePool`. An empty address here would silently
+            // create a degenerate lane whose source-pool validation (C-3) and
+            // release/mint destination can never match.
+            if update.remote_pool_addresses.len() == 0 || update.remote_token_address.len() == 0 {
+                return Err(CCIPError::InvalidConfig);
+            }
+
             let config = RemoteChainConfig {
                 remote_pool_address: update.remote_pool_addresses.clone(),
                 remote_token_address: update.remote_token_address.clone(),

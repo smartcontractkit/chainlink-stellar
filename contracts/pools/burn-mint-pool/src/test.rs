@@ -451,6 +451,47 @@ fn chain_update_with_limits(
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_apply_chain_updates_rejects_empty_remote_pool_address() {
+    // M-14 / INV-POOL-ENC-2/4, INV-PCFG-1: a chain update with an empty remote pool
+    // address must be rejected at config time. Mirrors EVM `TokenPool
+    // ._validateTokenPoolConfig`, which requires a non-empty `remoteTokenAddress` and a
+    // remote pool that is only ever set (never emptied) via `setRemotePool`. An empty
+    // pool address would create a degenerate lane whose source-pool validation (C-3) and
+    // release/mint destination could never match.
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+
+    let update = ChainUpdate {
+        remote_chain_selector: remote_chain,
+        remote_pool_addresses: Bytes::new(&env), // empty ⇒ rejected
+        remote_token_address: Bytes::from_slice(&env, &[2u8; 20]),
+        outbound_rate_limiter_config: RateLimitConfig::disabled(),
+        inbound_rate_limiter_config: RateLimitConfig::disabled(),
+    };
+    pool_client.apply_chain_updates(&Vec::from_array(&env, [update]), &Vec::new(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_apply_chain_updates_rejects_empty_remote_token_address() {
+    // M-14 / INV-POOL-ENC-2/4, INV-PCFG-1: companion to the empty-pool test — an empty
+    // remote token address is likewise rejected at config time, before the lane is
+    // materialized into storage.
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+
+    let update = ChainUpdate {
+        remote_chain_selector: remote_chain,
+        remote_pool_addresses: Bytes::from_slice(&env, &[1u8; 20]),
+        remote_token_address: Bytes::new(&env), // empty ⇒ rejected
+        outbound_rate_limiter_config: RateLimitConfig::disabled(),
+        inbound_rate_limiter_config: RateLimitConfig::disabled(),
+    };
+    pool_client.apply_chain_updates(&Vec::from_array(&env, [update]), &Vec::new(&env));
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
 fn test_initialize_twice_rejected() {
     let (

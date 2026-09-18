@@ -12,6 +12,7 @@ doctest = false
 soroban-sdk = { workspace = true }
 common-error = { workspace = true }
 common-interfaces = { workspace = true }
+common-helpers = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

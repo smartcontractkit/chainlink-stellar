@@ -19,7 +19,9 @@ use soroban_sdk::{
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
-use common_helpers::{curse_checkable::CurseCheckable, fee_math, validation::Validatable};
+use common_helpers::{
+    curse_checkable::CurseCheckable, fee_math, finality_codec, validation::Validatable,
+};
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
     ToBytes, MESSAGE_V1_VERSION,
@@ -383,6 +385,15 @@ impl OnRampContract {
                 .map_err(|_| CCIPError::InvalidExtraArgsData)?
         };
 
+        // M-8 / INV-FIN-SRC-1/3: reject malformed requested finality (a flag combined with
+        // a block depth, or multiple flags) before it is committed verbatim into the
+        // message ID for data-only messages. Mirrors EVM `FinalityCodec
+        // ._validateRequestedFinality`, invoked on the parsed extraArgs. On Stellar the
+        // finality value is carried in `extra_args.block_confirmations` (see `finality:`
+        // field assignment below); `WAIT_FOR_FINALITY_FLAG` (0) and any single-mode value
+        // (pure depth or a lone flag) pass.
+        finality_codec::validate_requested_finality(extra_args.block_confirmations)?;
+
         Self::validate_token_receiver_allowed(&dest_config, &extra_args)?;
 
         let (merged_ccvs, merged_ccv_args) = Self::build_merged_outbound_ccv_lists(
@@ -481,6 +492,15 @@ impl OnRampContract {
             GenericExtraArgsV3::from_xdr(&env, &message.extra_args.clone())
                 .map_err(|_| CCIPError::InvalidExtraArgsData)?
         };
+
+        // M-8 / INV-FIN-SRC-1/3: reject malformed requested finality (a flag combined with
+        // a block depth, or multiple flags) before it is committed verbatim into the
+        // message ID for data-only messages. Mirrors EVM `FinalityCodec
+        // ._validateRequestedFinality`, invoked on the parsed extraArgs. On Stellar the
+        // finality value is carried in `extra_args.block_confirmations` (see `finality:`
+        // field assignment below); `WAIT_FOR_FINALITY_FLAG` (0) and any single-mode value
+        // (pure depth or a lone flag) pass.
+        finality_codec::validate_requested_finality(extra_args.block_confirmations)?;
 
         Self::validate_token_receiver_allowed(&dest_config, &extra_args)?;
 
@@ -1052,6 +1072,21 @@ impl OnRampContract {
         BytesN::from_array(env, &padded)
     }
 
+    /// Reject duplicate addresses within a single CCV list. Mirrors EVM
+    /// `CCVConfigValidation._assertNoDuplicates` (used for user-supplied CCVs at
+    /// `OnRamp.sol:812`).
+    fn assert_no_duplicate_ccvs(ccvs: &Vec<Address>) -> Result<(), CCIPError> {
+        let len = ccvs.len();
+        for i in 0..len {
+            for j in (i + 1)..len {
+                if ccvs.get(i) == ccvs.get(j) {
+                    return Err(CCIPError::DuplicateCCVNotAllowed);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Merge CCV address lists (user + lane-mandated + defaults) and build parallel
     /// `ccv_args` (empty bytes for lane-only and default-fallback entries), matching
     /// EVM `OnRamp._mergeCCVLists` empty-arg slots for non-user CCVs.
@@ -1065,6 +1100,15 @@ impl OnRampContract {
         if user_ccvs.len() != user_ccv_args.len() {
             return Err(CCIPError::CCVLengthMismatch);
         }
+
+        // M-16 / INV-SRC-1/17: user-supplied CCVs (from ExtraArgsV3) must not contain
+        // duplicates, otherwise duplicate fee receipts are emitted and the
+        // `ccv_and_executor_hash` committed to the message won't match offchain
+        // expectations. Mirrors EVM `CCVConfigValidation._assertNoDuplicates(userCCVs)`
+        // (OnRamp.sol:812), invoked before the merge. Lane-mandated and pool-required
+        // CCVs are deduped against the running list below; only the user list needs this
+        // explicit rejection since it is cloned verbatim.
+        Self::assert_no_duplicate_ccvs(user_ccvs)?;
 
         if user_ccvs.is_empty() && lane_mandated_ccvs.is_empty() {
             let merged = default_ccvs.clone();

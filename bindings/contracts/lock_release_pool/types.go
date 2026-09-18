@@ -753,6 +753,7 @@ const (
 	CCIPErrorInvalidChainForClient               = 317
 	CCIPErrorRouterNotConfigured                 = 318
 	CCIPErrorInvalidSourcePoolAddress            = 319
+	CCIPErrorDuplicateCCVNotAllowed              = 320
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -874,6 +875,7 @@ var CCIPErrorMessage = map[int]string{
 	317: "invalid chain for client",
 	318: "router not configured",
 	319: "invalid source pool address",
+	320: "duplicate c c v not allowed",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
