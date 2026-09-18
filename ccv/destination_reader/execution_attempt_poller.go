@@ -15,7 +15,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
-	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
@@ -207,7 +206,7 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 		return nil
 	}
 
-	topicScVal := scval.SymbolToScValPtr(offrampbindings.ExecutionStateChangedEventTopic)
+	topicScVal := scval.SymbolToScValPtr(ExecutionStateChangedEventTopic)
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 
 	resp, err := p.rpcClient.GetEvents(ctx, protocolrpc.GetEventsRequest{
@@ -232,7 +231,7 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 
 	eventCount := 0
 	for _, e := range resp.Events {
-		parsed, err := offrampbindings.ParseExecutionStateChangedEvent(e)
+		parsed, err := ParseExecutionStateChangedEvent(e)
 		if err != nil {
 			p.lggr.Warn().
 				Int("ledger", int(e.Ledger)).
@@ -267,7 +266,7 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 
 // processExecutionStateChanged fetches the transaction that triggered the event,
 // parses the InvokeHostFunction args, and caches the resulting ExecutionAttempt.
-func (p *StellarExecutionAttemptPoller) processExecutionStateChanged(ctx context.Context, event *offrampbindings.ExecutionStateChangedEvent) error {
+func (p *StellarExecutionAttemptPoller) processExecutionStateChanged(ctx context.Context, event *ExecutionStateChangedEvent) error {
 	txResp, err := p.rpcClient.GetTransaction(ctx, protocolrpc.GetTransactionRequest{
 		Hash: event.TxHash,
 	})
