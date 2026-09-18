@@ -307,7 +307,7 @@ fn test_execute_source_chain_not_enabled() {
     apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), false);
 
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     assert_eq!(encoded.get(0).unwrap(), MESSAGE_V1_VERSION);
 
     let ccvs = Vec::new(&env);
@@ -322,7 +322,7 @@ fn test_execute_source_chain_not_configured() {
 
     let onramp = sample_onramp_bytes(&env);
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
@@ -341,7 +341,7 @@ fn test_execute_invalid_onramp() {
 
     let bad_onramp = Bytes::from_array(&env, &[99u8; 32]);
     let msg = valid_execute_message(&env, &client.address, bad_onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
@@ -360,7 +360,7 @@ fn test_execute_invalid_offramp_address() {
 
     let mut msg = valid_execute_message(&env, &client.address, onramp);
     msg.offramp_address = Bytes::from_array(&env, &[0xEEu8; 32]);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
@@ -379,7 +379,7 @@ fn test_execute_invalid_message_destination() {
 
     let mut msg = valid_execute_message(&env, &client.address, onramp);
     msg.dest_chain_selector = 999_999;
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
@@ -397,7 +397,7 @@ fn test_execute_ccv_length_mismatch() {
     apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
 
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let mut ccvs = Vec::new(&env);
     ccvs.push_back(Address::generate(&env));
@@ -417,7 +417,7 @@ fn test_execute_gas_limit_override_too_low() {
 
     let mut msg = valid_execute_message(&env, &client.address, onramp);
     msg.ccip_receive_gas_limit = 10_000;
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
@@ -435,7 +435,7 @@ fn test_execute_message_already_success() {
     apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
 
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
     let state_key = DataKey::ExecState(message_id);
 
@@ -464,7 +464,7 @@ fn test_execute_message_already_in_progress() {
     apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
 
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
     let state_key = DataKey::ExecState(message_id);
 
@@ -492,7 +492,7 @@ fn test_execute_reexecute_after_failure_succeeds() {
     apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
 
     let msg = valid_execute_message(&env, &client.address, onramp);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
 
     let ccvs = Vec::new(&env);
@@ -512,6 +512,69 @@ fn test_execute_reexecute_after_failure_succeeds() {
     assert_eq!(
         client.get_execution_state(&message_id),
         MessageExecutionState::Failure
+    );
+}
+
+// ============================================================
+// M-3: uint256 → i128 narrowing (INV-ENC-10/12)
+// ============================================================
+
+#[test]
+fn test_bytes32_to_i128_zero_ok() {
+    let env = Env::default();
+    let bytes = BytesN::from_array(&env, &[0u8; 32]);
+    assert_eq!(OffRampContract::bytes32_to_i128(&env, &bytes), Ok(0));
+}
+
+#[test]
+fn test_bytes32_to_i128_small_ok() {
+    let env = Env::default();
+    let mut arr = [0u8; 32];
+    arr[31] = 42;
+    let bytes = BytesN::from_array(&env, &arr);
+    assert_eq!(OffRampContract::bytes32_to_i128(&env, &bytes), Ok(42));
+}
+
+#[test]
+fn test_bytes32_to_i128_max_i128_ok() {
+    // 2^127 - 1 = i128::MAX: high bit of byte 16 is clear ⇒ accepted.
+    let env = Env::default();
+    let mut arr = [0u8; 32];
+    arr[16] = 0x7f;
+    for b in &mut arr[17..32] {
+        *b = 0xff;
+    }
+    let bytes = BytesN::from_array(&env, &arr);
+    assert_eq!(
+        OffRampContract::bytes32_to_i128(&env, &bytes),
+        Ok(i128::MAX)
+    );
+}
+
+#[test]
+fn test_bytes32_to_i128_upper_bytes_nonzero_rejected() {
+    // Value ≥ 2^128 (upper 16 bytes non-zero) ⇒ TokenHandlingError.
+    let env = Env::default();
+    let mut arr = [0u8; 32];
+    arr[0] = 0x01;
+    let bytes = BytesN::from_array(&env, &arr);
+    assert_eq!(
+        OffRampContract::bytes32_to_i128(&env, &bytes),
+        Err(CCIPError::TokenHandlingError)
+    );
+}
+
+#[test]
+fn test_bytes32_to_i128_sign_bit_rejected() {
+    // INV-ENC-10/12: value ∈ [2^127, 2^128) — bit 127 set, upper 16 bytes zero.
+    // Pre-fix this decoded to i128::MIN (-2^127); it must now be cleanly rejected.
+    let env = Env::default();
+    let mut arr = [0u8; 32];
+    arr[16] = 0x80;
+    let bytes = BytesN::from_array(&env, &arr);
+    assert_eq!(
+        OffRampContract::bytes32_to_i128(&env, &bytes),
+        Err(CCIPError::TokenHandlingError)
     );
 }
 
@@ -699,10 +762,10 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         sender: Bytes::from_array(&env, &[2u8; 20]),
         receiver: receiver_field,
         dest_blob: Bytes::new(&env),
-        token_transfer: token_transfer.to_bytes(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
         data: Bytes::new(&env),
     };
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
 
     let ccvs = vec![&env, vvr_id.clone()];
