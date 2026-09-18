@@ -138,3 +138,14 @@ func TestRunStellarCCIPFullDeploy_ErrorsWhenCCIPDevenvHostNil(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CCIPDevenvHost")
 }
+
+func TestDeployStellarCCIPInnerInput_ZeroValuePreservesDefaultBehavior(t *testing.T) {
+	t.Parallel()
+	// The governance fields are additive: a zero-value input must keep the
+	// pre-fast-curse deploy behavior (no curse admins, no timelock resolution).
+	in := DeployStellarCCIPInnerInput{}
+	require.Nil(t, in.CurseAdmins)
+	require.False(t, in.EnableFastCurse)
+	require.Empty(t, in.FastCurseQualifier)
+	require.Empty(t, in.GovernanceQualifier)
+}
