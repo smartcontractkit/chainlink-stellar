@@ -21,6 +21,8 @@ var _ fees.FeeAggregatorAdapter = (*StellarFeeAggregatorAdapter)(nil)
 
 // StellarFeeAggregatorAdapter implements fees.FeeAggregatorAdapter.
 // SetFeeAggregator updates OnRamp dynamic config, VVR, and CommitteeVerifier (see [stellarsequences.ApplyStellarFeeAggregator]).
+// WithdrawFeeTokens sweeps accumulated fee token balances to the configured fee aggregator
+// on the same contracts (see [stellarsequences.ApplyStellarWithdrawFeeTokens]).
 // GetFeeAggregator reads the canonical value from the Versioned Verifier Resolver.
 type StellarFeeAggregatorAdapter struct{}
 
@@ -31,6 +33,17 @@ func (a *StellarFeeAggregatorAdapter) SetFeeAggregator(e cldf.Environment) *cldf
 		"Sets fee aggregator on Stellar OnRamp, VVR, and CommitteeVerifier",
 		func(b cldf_ops.Bundle, chains cldf_chain.BlockChains, in fees.FeeAggregatorForChain) (seqcore.OnChainOutput, error) {
 			return stellarsequences.ApplyStellarFeeAggregator(b, chains, e, in)
+		},
+	)
+}
+
+func (a *StellarFeeAggregatorAdapter) WithdrawFeeTokens(e cldf.Environment) *cldf_ops.Sequence[fees.WithdrawFeeTokensForChain, seqcore.OnChainOutput, cldf_chain.BlockChains] {
+	return cldf_ops.NewSequence(
+		stellarsequences.StellarWithdrawFeeTokensSequenceID,
+		stellarops.ContractDeploymentVersion,
+		"Withdraws accumulated fee token balances to the fee aggregator on Stellar OnRamp, VVR, and CommitteeVerifier",
+		func(b cldf_ops.Bundle, chains cldf_chain.BlockChains, in fees.WithdrawFeeTokensForChain) (seqcore.OnChainOutput, error) {
+			return stellarsequences.ApplyStellarWithdrawFeeTokens(b, chains, e, in)
 		},
 	)
 }

@@ -110,6 +110,15 @@ func TestStellarFeeAggregatorAdapter_SetFeeAggregator_nonNil(t *testing.T) {
 	require.Equal(t, stellarops.ContractDeploymentVersion.String(), seq.Version())
 }
 
+func TestStellarFeeAggregatorAdapter_WithdrawFeeTokens_nonNil(t *testing.T) {
+	a := &StellarFeeAggregatorAdapter{}
+	env := envWithDatastore(newSealedDatastore())
+	seq := a.WithdrawFeeTokens(env)
+	require.NotNil(t, seq)
+	require.Equal(t, stellarsequences.StellarWithdrawFeeTokensSequenceID, seq.ID())
+	require.Equal(t, stellarops.ContractDeploymentVersion.String(), seq.Version())
+}
+
 func TestStellarFeeAggregatorAdapter_GetFeeAggregator_requiresChainAndDatastore(t *testing.T) {
 	a := &StellarFeeAggregatorAdapter{}
 	env := envWithDatastore(newSealedDatastore())
