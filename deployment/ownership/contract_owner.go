@@ -50,6 +50,22 @@ func optionalStellarOwner(o *string) (string, error) {
 	return *o, nil
 }
 
+// CurseAdmins returns the stored curse-admin list for a Soroban contract ref
+// (simulation read). The returned list is the raw stored list: the owner is
+// implicitly curse-authorized on chain but is never inserted into it, and
+// nothing filters it out — treat the owner as authorized independently of the
+// list. Only RMN Remote supports curse admins; other contract types error.
+// The ref address must be the contract strkey.
+func CurseAdmins(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) ([]string, error) {
+	cid := ref.Address
+	switch string(ref.Type) {
+	case rmnremoteops.ContractType:
+		return rmnremotebindings.NewRmnRemoteClient(deps.Invoker, cid).GetCurseAdmins(ctx)
+	default:
+		return nil, fmt.Errorf("stellar curse admins: unsupported contract type %q for %s", ref.Type, cid)
+	}
+}
+
 // ContractOwner returns the current owner address string for a Soroban CCIP contract ref (simulation read).
 func ContractOwner(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) (string, error) {
 	cid := ref.Address

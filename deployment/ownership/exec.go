@@ -152,3 +152,27 @@ func ExecuteAcceptOwnership(b cldfops.Bundle, deps stellardeps.StellarDeps, ref 
 		return fmt.Errorf("stellar accept ownership: unsupported contract type %q for %s", ct, cid)
 	}
 }
+
+// ExecuteApplyCurseAdminUpdates runs the Soroban apply_curse_admin_updates op
+// for the contract type in ref (owner-only on chain). Only RMN Remote supports
+// curse admins; other contract types error.
+func ExecuteApplyCurseAdminUpdates(
+	b cldfops.Bundle,
+	deps stellardeps.StellarDeps,
+	ref datastore.AddressRef,
+	added, removed []string,
+) error {
+	cid := ref.Address
+	ct := string(ref.Type)
+	switch ct {
+	case rmnremote.ContractType:
+		_, err := cldfops.ExecuteOperation(b, rmnremote.ApplyCurseAdminUpdates, deps, rmnremote.ApplyCurseAdminUpdatesInput{
+			ContractID:    cid,
+			AddedAdmins:   added,
+			RemovedAdmins: removed,
+		})
+		return err
+	default:
+		return fmt.Errorf("stellar apply curse admin updates: unsupported contract type %q for %s", ct, cid)
+	}
+}
