@@ -44,3 +44,9 @@ jobs:
         run: |
           pkgs=$(go list ./... | grep -v '/e2e' || true)
           go test -v -race -fullpath -shuffle on -short -coverprofile=coverage-tests.out $pkgs
+
+      # The /deployment directory is also a separate Go module (deployment/go.mod).
+      # It carries the MCMS converter guard and the sequence/adapter unit tests.
+      - name: Run unit tests (deployment module)
+        working-directory: deployment
+        run: go test -v -race -fullpath -shuffle on ./...

@@ -9,6 +9,7 @@ import (
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stretchr/testify/require"
 )
@@ -103,7 +104,7 @@ func TestStellarTransferOwnershipViaMCMS_EmptyContractRefsReturnsNoBatchOps(t *t
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}
@@ -146,7 +147,7 @@ func TestStellarAcceptOwnership_EmptyContractRefsReturnsNoBatchOps(t *testing.T)
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}
