@@ -962,6 +962,10 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         &router_id,
         &ramp_registry_client.address,
     );
+    // M-6: the pool's lock_or_burn curse check reads the RMN proxy from pool storage
+    // (set via `set_rmn_proxy`), not via `Router.get_config()` (which would re-enter
+    // the Router mid-`ccip_send`). Wire the same RMN proxy the Router uses.
+    pool_client.set_rmn_proxy(&rmn_proxy_id);
 
     let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
     let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);

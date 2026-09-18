@@ -25,7 +25,12 @@ pub trait LockReleasePoolInterface {
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
+    fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
+    fn set_rmn_proxy(
+        env: soroban_sdk::Env,
+        rmn_proxy: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn get_remote_pool(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,

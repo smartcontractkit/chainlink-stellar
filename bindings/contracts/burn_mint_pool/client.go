@@ -201,6 +201,26 @@ func (c *BurnMintPoolClient) LockOrBurn(ctx context.Context, caller string, inpu
 	return LockOrBurnOutFromScVal(*result)
 }
 
+// GetRmnProxy calls the get_rmn_proxy function on the contract.
+func (c *BurnMintPoolClient) GetRmnProxy(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_rmn_proxy", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_rmn_proxy: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_rmn_proxy")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
 // RequireOwner calls the require_owner function on the contract.
 func (c *BurnMintPoolClient) RequireOwner(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
@@ -219,6 +239,21 @@ func (c *BurnMintPoolClient) RequireOwner(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return v, nil
+}
+
+// SetRmnProxy calls the set_rmn_proxy function on the contract.
+func (c *BurnMintPoolClient) SetRmnProxy(ctx context.Context, rmnProxy string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(rmnProxy),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_rmn_proxy", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_rmn_proxy: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetRemotePool calls the get_remote_pool function on the contract.

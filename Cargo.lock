@@ -1200,6 +1200,9 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 
@@ -1213,6 +1216,9 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 
@@ -1227,6 +1233,9 @@ dependencies = [
  "common-interfaces",
  "common-pool",
  "pools-token-lock-box",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 

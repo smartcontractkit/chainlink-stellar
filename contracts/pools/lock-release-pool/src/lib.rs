@@ -96,6 +96,15 @@ impl LockReleaseTokenPoolContract {
             return Err(CCIPError::ChainNotSupported);
         }
 
+        // M-6 / INV-POOL-RMN-1: reject the operation if the RMN has cursed the
+        // network globally or the remote chain specifically. Mirrors EVM
+        // `TokenPool._validateLockOrBurn` (TokenPool.sol:422,
+        // `IRMN(i_rmnProxy).isCursed(bytes16(uint128(remoteChainSelector)))`).
+        <Self as BaseTokenPool>::require_remote_chain_not_cursed(
+            &env,
+            input.remote_chain_selector,
+        )?;
+
         // TODO: Remove FTF outbound rate limiting from lock_or_burn. Stellar has
         // deterministic ~5s finality with no reorg risk, so there is no meaningful
         // "fast finality" concept when Stellar is the source chain. Senders on
@@ -178,6 +187,16 @@ impl LockReleaseTokenPoolContract {
         if !<Self as BaseTokenPool>::is_supported_chain(&env, input.remote_chain_selector)? {
             return Err(CCIPError::ChainNotSupported);
         }
+
+        // M-6 / INV-POOL-RMN-1: reject the operation if the RMN has cursed the
+        // network globally or the remote chain specifically. Mirrors EVM
+        // `TokenPool._validateReleaseOrMint` (TokenPool.sol:479,
+        // `IRMN(i_rmnProxy).isCursed(bytes16(uint128(remoteChainSelector)))`),
+        // which runs before the source-pool membership check.
+        <Self as BaseTokenPool>::require_remote_chain_not_cursed(
+            &env,
+            input.remote_chain_selector,
+        )?;
 
         // Validate the inbound source pool is configured for this remote chain.
         // Mirrors EVM `TokenPool._validateReleaseOrMint` (TokenPool.sol:480):
@@ -384,6 +403,22 @@ impl LockReleaseTokenPoolContract {
 
     pub fn get_ramp_registry(env: Env) -> Option<Address> {
         <Self as BaseTokenPool>::get_ramp_registry(&env)
+    }
+
+    /// Set the RMN proxy address used for curse checks in `lock_or_burn` /
+    /// `release_or_mint` (EVM `TokenPool` constructor `rmnProxy` / `setRmnProxy`).
+    /// Owner-only. Must be set before any pool operation — the pool stores it
+    /// directly (NOT via `Router.get_config()`) to avoid re-entering the Router
+    /// during `ccip_send` (M-6).
+    pub fn set_rmn_proxy(env: Env, rmn_proxy: Address) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_rmn_proxy(&env, &rmn_proxy);
+        Ok(())
+    }
+
+    pub fn get_rmn_proxy(env: Env) -> Option<Address> {
+        <Self as BaseTokenPool>::get_rmn_proxy(&env)
     }
 
     /// Set the advanced pool hooks contract (EVM `updateAdvancedPoolHooks`). Owner-only.

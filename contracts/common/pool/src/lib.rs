@@ -23,11 +23,13 @@ pub use types::*;
 use common_error::CCIPError;
 use common_interfaces::pool_hooks::PoolHooksClient;
 use common_interfaces::ramp_registry::RampRegistryClient;
+use common_interfaces::rmn_proxy::RmnProxyClient;
+use common_interfaces::rmn_remote::RmnRemoteClient;
 use common_interfaces::token_pool::{
     LockOrBurnIn as IfaceLockOrBurnIn, MessageDirection as IfaceMessageDirection,
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
-use soroban_sdk::{contracttrait, Address, Bytes, Env, Vec};
+use soroban_sdk::{contracttrait, Address, Bytes, BytesN, Env, Vec};
 
 pub use types::{PoolFeeResult, PoolRequiredCCVs};
 
@@ -420,6 +422,59 @@ pub trait BaseTokenPool {
 
     fn get_ramp_registry(env: &Env) -> Option<Address> {
         env.storage().instance().get(&PoolDataKey::RampRegistry)
+    }
+
+    /// Store the RMN proxy address. Owner-only — caller must enforce (the public
+    /// entrypoints below gate on `require_owner`). The pool stores this directly —
+    /// like the ramp registry — rather than resolving it via `Router.get_config()`,
+    /// because `lock_or_burn` runs inside `ccip_send` (Router → OnRamp → Pool) and
+    /// Soroban forbids re-entering an ancestor contract on the call stack.
+    fn set_rmn_proxy(env: &Env, rmn_proxy: &Address) {
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::RmnProxy, rmn_proxy);
+    }
+
+    fn get_rmn_proxy(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&PoolDataKey::RmnProxy)
+    }
+
+    /// Require that neither the RMN network globally nor `remote_chain_selector`
+    /// specifically is cursed, mirroring EVM `TokenPool._validateLockOrBurn`
+    /// (`TokenPool.sol:422`) and `_validateReleaseOrMint` (`:479`): both call
+    /// `IRMN(i_rmnProxy).isCursed(bytes16(uint128(remoteChainSelector)))`, which
+    /// checks the global curse *and* the per-subject curse in one call.
+    ///
+    /// The RMN proxy is read from pool storage (set via `set_rmn_proxy`), NOT
+    /// resolved via `Router.get_config()` — see `set_rmn_proxy` for the re-entry
+    /// rationale. Reuses `CursedByRMN=47` (binding-neutral).
+    fn require_remote_chain_not_cursed(
+        env: &Env,
+        remote_chain_selector: u64,
+    ) -> Result<(), CCIPError> {
+        let rmn_proxy = Self::get_rmn_proxy(env).ok_or(CCIPError::RouterNotConfigured)?;
+        let rmn_proxy_client = RmnProxyClient::new(env, &rmn_proxy);
+
+        // Global curse.
+        if rmn_proxy_client.is_cursed() {
+            return Err(CCIPError::CursedByRMN);
+        }
+
+        // Per-chain (subject) curse: bytes16(uint128(remoteChainSelector)) — the
+        // selector occupies the low 8 bytes of the 16-byte subject. Mirrors
+        // `CurseCheckable::require_chain_not_cursed`.
+        let selector_bytes = remote_chain_selector.to_be_bytes();
+        let mut subject_array = [0u8; 16];
+        subject_array[8..16].copy_from_slice(&selector_bytes);
+        let subject = BytesN::<16>::from_array(env, &subject_array);
+
+        let rmn_remote = rmn_proxy_client.get_rmn();
+        let rmn_remote_client = RmnRemoteClient::new(env, &rmn_remote);
+        if rmn_remote_client.is_cursed_by_subject(&subject) {
+            return Err(CCIPError::CursedByRMN);
+        }
+
+        Ok(())
     }
 
     /// Require `caller` to be the configured OnRamp for `dest_chain_selector` on the ramp

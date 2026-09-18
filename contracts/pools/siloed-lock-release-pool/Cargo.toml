@@ -20,3 +20,6 @@ common-interfaces = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 pools-token-lock-box = { path = "../token-lock-box" }
 ccip-ramp-registry = { workspace = true }
+router = { workspace = true }
+rmn_proxy = { workspace = true }
+rmn_remote = { workspace = true }
