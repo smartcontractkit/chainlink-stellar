@@ -148,13 +148,14 @@ func (c *LockReleasePoolClient) InitOwner(ctx context.Context, owner string) err
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *LockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string) error {
+func (c *LockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string, rmnProxy string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressToScVal(token),
 		scval.Uint32ToScVal(tokenDecimals),
 		scval.AddressToScVal(router),
 		scval.AddressToScVal(rampRegistry),
+		scval.AddressToScVal(rmnProxy),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -239,21 +240,6 @@ func (c *LockReleasePoolClient) RequireOwner(ctx context.Context) (string, error
 		return "", err
 	}
 	return v, nil
-}
-
-// SetRmnProxy calls the set_rmn_proxy function on the contract.
-func (c *LockReleasePoolClient) SetRmnProxy(ctx context.Context, rmnProxy string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(rmnProxy),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_rmn_proxy", args)
-	if err != nil {
-		return fmt.Errorf("failed to call set_rmn_proxy: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // GetRemotePool calls the get_remote_pool function on the contract.

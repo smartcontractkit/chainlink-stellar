@@ -386,11 +386,17 @@ func (s *fullStack) deployTokenPool(
 
 	// Initialize pool with the token (decimals must match pool math; SAC test asset uses 7).
 	// Router and ramp registry must match the deployed stack so ramp checks succeed.
+	// RMN proxy is set immutably at initialize (EVM `immutable i_rmnProxy` parity — no
+	// set_rmn_proxy entrypoint); it must match the Router's RMN proxy so curse checks in
+	// lock_or_burn/release_or_mint resolve from pool storage instead of reverting #318.
 	const tokenPoolDecimals uint32 = 7
 	if s.RouterID == "" {
 		t.Fatal("fullStack.RouterID is empty; deployFullStack must run before deployTokenPool")
 	}
-	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID); err != nil {
+	if s.RmnProxyID == "" {
+		t.Fatal("fullStack.RmnProxyID is empty; deployFullStack must run before deployTokenPool")
+	}
+	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID); err != nil {
 		t.Fatalf("TokenPool Initialize: %v", err)
 	}
 

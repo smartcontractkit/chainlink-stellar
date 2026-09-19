@@ -424,8 +424,10 @@ pub trait BaseTokenPool {
         env.storage().instance().get(&PoolDataKey::RampRegistry)
     }
 
-    /// Store the RMN proxy address. Owner-only — caller must enforce (the public
-    /// entrypoints below gate on `require_owner`). The pool stores this directly —
+    /// Store the RMN proxy address. Internal helper called once from each pool's
+    /// `initialize` (mirrors EVM `TokenPool`'s `immutable i_rmnProxy` constructor
+    /// arg — there is NO public `set_rmn_proxy` entrypoint, so the value is
+    /// immutable after the one-shot `initialize`). The pool stores this directly —
     /// like the ramp registry — rather than resolving it via `Router.get_config()`,
     /// because `lock_or_burn` runs inside `ccip_send` (Router → OnRamp → Pool) and
     /// Soroban forbids re-entering an ancestor contract on the call stack.

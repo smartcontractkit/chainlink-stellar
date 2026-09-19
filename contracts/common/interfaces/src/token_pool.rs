@@ -14,6 +14,7 @@ pub trait TokenPoolInterface {
         token_decimals: u32,
         router: soroban_sdk::Address,
         ramp_registry: soroban_sdk::Address,
+        rmn_proxy: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
 
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
@@ -141,6 +142,12 @@ pub trait TokenPoolInterface {
     ) -> Result<(), CCIPError>;
 
     fn get_ramp_registry(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+
+    /// RMN proxy set once at `initialize` and immutable thereafter (mirrors EVM
+    /// `TokenPool`'s `immutable i_rmnProxy` constructor arg — there is NO
+    /// `set_rmn_proxy` entrypoint). Consulted by `lock_or_burn` / `release_or_mint`
+    /// for remote-chain curse checks.
+    fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
 }
 
 /// Declarative CCV requirements returned by a pool (EVM parity for the `address(0)` sentinel

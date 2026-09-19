@@ -17,6 +17,7 @@ pub trait LockReleasePoolInterface {
         token_decimals: u32,
         router: soroban_sdk::Address,
         ramp_registry: soroban_sdk::Address,
+        rmn_proxy: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
     fn set_router(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn lock_or_burn(
@@ -25,12 +26,12 @@ pub trait LockReleasePoolInterface {
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
+    /// RMN proxy set once at `initialize` and immutable thereafter (mirrors EVM
+    /// `TokenPool`'s `immutable i_rmnProxy` constructor arg — there is NO
+    /// `set_rmn_proxy` entrypoint). Consulted by `lock_or_burn` / `release_or_mint`
+    /// for remote-chain curse checks.
     fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn set_rmn_proxy(
-        env: soroban_sdk::Env,
-        rmn_proxy: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_remote_pool(
         env: soroban_sdk::Env,
         remote_chain_selector: u64,

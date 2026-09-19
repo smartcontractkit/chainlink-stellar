@@ -255,8 +255,8 @@ fn setup_env() -> (
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
-    pool_client.set_rmn_proxy(&rmn_proxy);
 
     (
         env,
@@ -491,12 +491,14 @@ fn test_initialize_twice_rejected() {
         _auth_onramp,
     ) = setup_env();
     let router = Address::generate(&_env);
+    let rmn_proxy = Address::generate(&_env);
     pool_client.initialize(
         &owner,
         &token_address,
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 }
 
@@ -895,8 +897,8 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
         &local_decimals,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
-    pool_client.set_rmn_proxy(&rmn_proxy);
 
     let remote_chain: u64 = DEFAULT_REMOTE_CHAIN;
     pool_client.apply_chain_updates(
@@ -939,8 +941,16 @@ fn test_initialize_rejects_decimals_above_uint8() {
     let token_address = token_contract.address();
     let router = Address::generate(&env);
     let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
 
-    let r = pool_client.try_initialize(&owner, &token_address, &256u32, &router, &ramp_registry);
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
     assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
 

@@ -102,7 +102,13 @@ func (s *fullStack) deploySiloedTokenPool(
 	if s.RouterID == "" {
 		t.Fatal("fullStack.RouterID is empty; deployFullStack must run before deploySiloedTokenPool")
 	}
-	if err := poolClient.Initialize(ctx, deployerAddr, tokenID, siloedPoolDecimals, s.RouterID, s.RampRegistryID); err != nil {
+	if s.RmnProxyID == "" {
+		t.Fatal("fullStack.RmnProxyID is empty; deployFullStack must run before deploySiloedTokenPool")
+	}
+	// RMN proxy set immutably at initialize (EVM `immutable i_rmnProxy` parity — no
+	// set_rmn_proxy entrypoint); same proxy the Router uses, so curse checks resolve
+	// from pool storage instead of reverting #318.
+	if err := poolClient.Initialize(ctx, deployerAddr, tokenID, siloedPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID); err != nil {
 		t.Fatalf("SiloedLockReleasePool Initialize: %v", err)
 	}
 
@@ -187,7 +193,9 @@ func migrateSiloedTokenPool(
 	}
 	newPoolClient := slrbindings.NewSiloedLockReleasePoolClient(deployer, newPoolID)
 
-	if err := newPoolClient.Initialize(ctx, deployerAddr, tokenID, siloedPoolDecimals, stack.RouterID, stack.RampRegistryID); err != nil {
+	// RMN proxy set immutably at initialize (EVM `immutable i_rmnProxy` parity — no
+	// set_rmn_proxy entrypoint); same proxy the Router uses.
+	if err := newPoolClient.Initialize(ctx, deployerAddr, tokenID, siloedPoolDecimals, stack.RouterID, stack.RampRegistryID, stack.RmnProxyID); err != nil {
 		t.Fatalf("SiloedLockReleasePool v2 Initialize: %v", err)
 	}
 	if err := newPoolClient.ApplyChainUpdates(ctx, []slrbindings.ChainUpdate{{
