@@ -286,6 +286,48 @@ fn test_token_transfer_v1_from_bytes_too_short_returns_decoding_error() {
     assert!(matches!(err, Err(CCIPError::MessageDecodingError)));
 }
 
+// ---- M-1: strict decoding (version byte + trailing bytes) ----
+
+#[test]
+fn test_token_transfer_v1_from_bytes_wrong_version_returns_decoding_error() {
+    // INV-MSG-2: a token transfer carrying an unexpected version byte must be rejected.
+    let env = Env::default();
+    let tt = CcipTokenTransferV1 {
+        version: 1,
+        amount: BytesN::from_array(&env, &[1u8; 32]),
+        source_pool_address: Bytes::from_array(&env, &[2u8; 5]),
+        source_token_address: Bytes::new(&env),
+        dest_token_address: Bytes::new(&env),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+    let mut encoded = tt.to_bytes(&env);
+    // Overwrite the version byte (index 0) with a non-v1 version.
+    encoded.set(0, MESSAGE_V1_VERSION + 1);
+    let err = CcipTokenTransferV1::from_bytes(&env, &encoded);
+    assert!(matches!(err, Err(CCIPError::MessageDecodingError)));
+}
+
+#[test]
+fn test_token_transfer_v1_from_bytes_trailing_bytes_returns_decoding_error() {
+    // INV-MSG-3/11: trailing bytes after the final field must be rejected (strict consumption).
+    let env = Env::default();
+    let tt = CcipTokenTransferV1 {
+        version: 1,
+        amount: BytesN::from_array(&env, &[1u8; 32]),
+        source_pool_address: Bytes::from_array(&env, &[2u8; 5]),
+        source_token_address: Bytes::new(&env),
+        dest_token_address: Bytes::new(&env),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+    let encoded = tt.to_bytes(&env);
+    let mut padded = encoded.clone();
+    padded.append(&Bytes::from_array(&env, &[0xFF]));
+    let err = CcipTokenTransferV1::from_bytes(&env, &padded);
+    assert!(matches!(err, Err(CCIPError::MessageDecodingError)));
+}
+
 // ============================================================
 // CcipMessageV1 Tests
 // ============================================================
@@ -325,6 +367,46 @@ fn test_message_v1_to_bytes_layout() {
 
     // First byte must be MESSAGE_V1_VERSION
     assert_eq!(encoded.get(0).unwrap(), MESSAGE_V1_VERSION);
+}
+
+// ---- M-1: strict decoding for CcipMessageV1 (trailing bytes) ----
+
+#[test]
+fn test_message_v1_from_bytes_roundtrip() {
+    let env = Env::default();
+    let msg = make_ccip_message_v1(&env);
+    let encoded = msg.to_bytes(&env);
+    let decoded = CcipMessageV1::from_bytes(&env, &encoded).unwrap();
+    assert_eq!(decoded.source_chain_selector, msg.source_chain_selector);
+    assert_eq!(decoded.dest_chain_selector, msg.dest_chain_selector);
+    assert_eq!(decoded.sequence_number, msg.sequence_number);
+    assert_eq!(decoded.execution_gas_limit, msg.execution_gas_limit);
+    assert_eq!(decoded.ccip_receive_gas_limit, msg.ccip_receive_gas_limit);
+    assert_eq!(decoded.finality, msg.finality);
+    assert_eq!(
+        decoded.ccv_and_executor_hash.to_array(),
+        msg.ccv_and_executor_hash.to_array()
+    );
+    assert_eq!(decoded.onramp_address, msg.onramp_address);
+    assert_eq!(decoded.offramp_address, msg.offramp_address);
+    assert_eq!(decoded.sender, msg.sender);
+    assert_eq!(decoded.receiver, msg.receiver);
+    assert_eq!(decoded.dest_blob, msg.dest_blob);
+    assert_eq!(decoded.token_transfer, msg.token_transfer);
+    assert_eq!(decoded.data, msg.data);
+}
+
+#[test]
+fn test_message_v1_from_bytes_trailing_bytes_returns_decoding_error() {
+    // INV-MSG-3: trailing bytes after the final `data` field must be rejected (strict consumption),
+    // mirroring EVM `MessageV1Codec` `MESSAGE_FINAL_OFFSET` (MessageV1Codec.sol:512).
+    let env = Env::default();
+    let msg = make_ccip_message_v1(&env);
+    let encoded = msg.to_bytes(&env);
+    let mut padded = encoded.clone();
+    padded.append(&Bytes::from_array(&env, &[0xFF]));
+    let err = CcipMessageV1::from_bytes(&env, &padded);
+    assert!(matches!(err, Err(CCIPError::MessageDecodingError)));
 }
 
 #[test]

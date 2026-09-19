@@ -11,6 +11,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,7 @@ func TestStellarSetTokenTransferFee_EmptySettingsSkipsOnChainCall(t *testing.T) 
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}
@@ -105,7 +106,7 @@ func TestStellarSetTokenTransferFee_OnlyNilFeeArgsSkipsOnChainCall(t *testing.T)
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}
@@ -149,7 +150,7 @@ func TestStellarApplyDestChainConfig_EmptySettingsSkipsOnChainCall(t *testing.T)
 	kp := keypair.MustRandom()
 	ch := cldf_stellar.Chain{
 		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
-		Signer:            cldf_stellar.NewStellarKeypairSigner(kp),
+		Signer:            stellarbindings.NewStellarKeypairSigner(kp),
 		Client:            nil,
 		NetworkPassphrase: "Standalone Network ; February 2017",
 	}

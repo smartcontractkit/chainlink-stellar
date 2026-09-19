@@ -399,6 +399,7 @@ impl OffRampContract {
                 env,
                 &message.token_transfer,
                 &message.sender,
+                &message.receiver,
                 message.source_chain_selector,
                 message.finality,
                 static_config,
@@ -991,10 +992,20 @@ impl OffRampContract {
     /// FTF inbound rate limit bucket selection in the pool. When the source is an
     /// EVM chain, this may be non-zero (WAIT_FOR_SAFE, block depth, etc.),
     /// reflecting higher reorg risk that the pool's FTF inbound limits guard.
+    ///
+    /// `message_receiver` is the message-level receiver (a 32-byte Stellar contract
+    /// id hash on this destination chain). When the transfer's `token_receiver` is
+    /// empty, tokens are released/minted to `message_receiver` — EVM parity
+    /// (INV-TR-3): EVM defaults an empty `tokenReceiver` to `message.receiver`
+    /// outbound (`OnRamp.sol:311`); this defends inbound for sources that don't
+    /// default. `message_receiver` is in the exact 32-byte format
+    /// `address_from_token_bytes` resolves, so the fallback yields the same
+    /// `Address` as `ccip_receiver_contract_address`.
     fn release_or_mint_single_token(
         env: &Env,
         token_transfer_bytes: &Bytes,
         original_sender: &Bytes,
+        message_receiver: &Bytes,
         source_chain_selector: u64,
         requested_finality: u32,
         static_config: &StaticConfig,
@@ -1013,7 +1024,13 @@ impl OffRampContract {
 
         let amount = Self::bytes32_to_i128(env, &token_transfer.amount)?;
 
-        let receiver_address = Self::address_from_token_bytes(env, &token_transfer.token_receiver)?;
+        // EVM parity (INV-TR-3): empty tokenReceiver ⇒ message receiver.
+        let receiver_bytes = if token_transfer.token_receiver.len() != 0 {
+            &token_transfer.token_receiver
+        } else {
+            message_receiver
+        };
+        let receiver_address = Self::address_from_token_bytes(env, receiver_bytes)?;
 
         let release_result = pool_client.release_or_mint(
             &env.current_contract_address(),
@@ -1044,6 +1061,16 @@ impl OffRampContract {
         }
         // Take the last 32 bytes (XDR-encoded addresses have a discriminant prefix)
         let offset = bytes.len() - 32;
+        // INV-MSG-8: any dropped prefix must be all-zero. Stellar destination addresses are the
+        // raw 32-byte contract hash (offset 0 ⇒ no prefix ⇒ trivially satisfied); a longer input is
+        // only acceptable when the leading bytes are zero padding, matching EVM's ABI-padded
+        // address check (`if (word >> (addressBytesLength*8) != 0) revert InvalidDestChainAddress`,
+        // OnRamp.sol:483). A non-zero discriminant/prefix is rejected rather than silently dropped.
+        for i in 0..offset {
+            if bytes.get(i).ok_or(CCIPError::InvalidReceiverLength)? != 0 {
+                return Err(CCIPError::InvalidReceiverAddress);
+            }
+        }
         let mut hash = [0u8; 32];
         for i in 0..32u32 {
             hash[i as usize] = bytes

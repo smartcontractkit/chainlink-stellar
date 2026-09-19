@@ -247,6 +247,23 @@ impl OnRampContract {
         Ok(())
     }
 
+    /// INV-MSG-8 / INV-LCFG-3: the destination `receiver` must be exactly
+    /// `dest_config.address_bytes_length` bytes long. Mirrors EVM
+    /// `OnRamp._validateDestChainAddress` (`if (len != addressBytesLength) revert
+    /// InvalidDestChainAddress`, OnRamp.sol:471-503, invoked at :250), which the Stellar side was
+    /// missing — the check was commented out in `StellarToAnyMessage::validate`. The dest chain's
+    /// `address_bytes_length` lives on `DestChainConfig`, which `validate()` cannot see, so the
+    /// check belongs here on the ramp where the config is in scope.
+    fn validate_dest_address(
+        dest_config: &DestChainConfig,
+        receiver: &Bytes,
+    ) -> Result<(), CCIPError> {
+        if receiver.len() as u32 != dest_config.address_bytes_length {
+            return Err(CCIPError::InvalidDestChainAddress);
+        }
+        Ok(())
+    }
+
     /// Build the final outbound CCV plan (addresses + parallel args) used for both
     /// [`Self::get_fee`] and [`Self::forward_from_router`].
     ///
@@ -356,6 +373,8 @@ impl OnRampContract {
         let dynamic_config = Self::get_dynamic_config_internal(&env)?;
         let static_config = Self::get_static_config_internal(&env)?;
 
+        Self::validate_dest_address(&dest_config, &message.receiver)?;
+
         // Parse extra args with defaults
         let extra_args = if message.extra_args.len() == 0 {
             GenericExtraArgsV3::new(&env, dest_config.default_executor.clone())
@@ -437,6 +456,8 @@ impl OnRampContract {
         let mut dest_config = Self::get_dest_chain_config_internal(&env, dest_chain_selector)?;
         let dynamic_config = Self::get_dynamic_config_internal(&env)?;
         let static_config = Self::get_static_config_internal(&env)?;
+
+        Self::validate_dest_address(&dest_config, &message.receiver)?;
 
         // Verify caller is the router
         dest_config.router.require_auth();
@@ -534,7 +555,16 @@ impl OnRampContract {
                 source_pool_address: pool_address.to_xdr(&env),
                 source_token_address: token_amount.token.clone().to_xdr(&env),
                 dest_token_address: lock_result.dest_token_address,
-                token_receiver: extra_args.token_receiver.clone(),
+                // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
+                // message receiver, so the destination pool releases/mints to the same account
+                // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
+                // accept this — the empty case is the default, gated only by
+                // `validate_token_receiver_allowed` above (INV-TR-3).
+                token_receiver: if extra_args.token_receiver.len() != 0 {
+                    extra_args.token_receiver.clone()
+                } else {
+                    message.receiver.clone()
+                },
                 extra_data: lock_result.dest_pool_data,
             };
             token_transfer.to_bytes(&env)

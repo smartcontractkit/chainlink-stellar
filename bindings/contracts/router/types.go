@@ -682,6 +682,19 @@ type OffRampAddedEvent struct {
 // OffRampAddedEventTopic is the event topic identifier.
 const OffRampAddedEventTopic = "router_OffRampAdded"
 
+// OnRampRemovedEvent represents the OnRampRemovedEvent event.
+// Topics: [router_OnRampRemoved]
+type OnRampRemovedEvent struct {
+	DestChainSelector uint64
+	Onramp            string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OnRampRemovedEventTopic is the event topic identifier.
+const OnRampRemovedEventTopic = "router_OnRampRemoved"
+
 // OffRampRemovedEvent represents the OffRampRemovedEvent event.
 // Topics: [router_OffRampRemoved]
 type OffRampRemovedEvent struct {
