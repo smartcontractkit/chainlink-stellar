@@ -202,18 +202,25 @@ func TestDestinationReader_GetCCVSForMessage(t *testing.T) {
 	ctx := context.Background()
 	msg := mustTestMessage(t)
 
-	t.Run("optional threshold 1 when defaults present", func(t *testing.T) {
+	// ccvsTupleScVal builds the `(Vec<Address>, Vec<Address>, u32)` ScVal tuple returned by the
+	// OffRamp's on-chain `get_ccvs_for_message` view, mirroring what the binding decodes.
+	ccvsTupleScVal := func(required, optional []string, threshold uint32) xdr.ScVal {
+		return scval.VecToScVal([]xdr.ScVal{
+			scval.AddressSliceToScVal(required),
+			scval.AddressSliceToScVal(optional),
+			scval.Uint32ToScVal(threshold),
+		})
+	}
+
+	t.Run("forwards required/optional/threshold from the on-chain view", func(t *testing.T) {
 		inv := mocks.NewMockInvoker(t)
-		cfg := offrampbindings.SourceChainConfig{
-			DefaultCcvs:      []string{testStellarContractID},
-			IsEnabled:        true,
-			LaneMandatedCcvs: []string{testStellarContractID2},
-			Router:           testStellarContractID,
-		}
-		cfgScVal, err := cfg.ToScVal()
-		require.NoError(t, err)
-		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_source_chain_config", mock.Anything).
-			Return(&cfgScVal, nil).Once()
+		tupleScVal := ccvsTupleScVal(
+			[]string{testStellarContractID2}, // lane-mandated / required
+			[]string{testStellarContractID},  // defaults / optional
+			1,                                // optional threshold
+		)
+		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
+			Return(&tupleScVal, nil).Once()
 
 		d, err := New(inv, testRPCClient(t), testStellarContractID, testStellarContractID2, testLogger(t), time.Minute)
 		require.NoError(t, err)
@@ -226,16 +233,15 @@ func TestDestinationReader_GetCCVSForMessage(t *testing.T) {
 		assert.Equal(t, uint8(1), info.OptionalThreshold)
 	})
 
-	t.Run("optional threshold 0 when no defaults", func(t *testing.T) {
+	t.Run("optional threshold 0 when no optional CCVs", func(t *testing.T) {
 		inv := mocks.NewMockInvoker(t)
-		cfg := offrampbindings.SourceChainConfig{
-			LaneMandatedCcvs: []string{testStellarContractID2},
-			Router:           testStellarContractID,
-		}
-		cfgScVal, err := cfg.ToScVal()
-		require.NoError(t, err)
-		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_source_chain_config", mock.Anything).
-			Return(&cfgScVal, nil).Once()
+		tupleScVal := ccvsTupleScVal(
+			[]string{testStellarContractID2}, // required
+			nil,                              // no optional
+			0,                                // threshold 0
+		)
+		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
+			Return(&tupleScVal, nil).Once()
 
 		d, err := New(inv, testRPCClient(t), testStellarContractID, testStellarContractID2, testLogger(t), time.Minute)
 		require.NoError(t, err)
@@ -247,9 +253,9 @@ func TestDestinationReader_GetCCVSForMessage(t *testing.T) {
 		assert.Equal(t, uint8(0), info.OptionalThreshold)
 	})
 
-	t.Run("wraps error when get_source_chain_config fails", func(t *testing.T) {
+	t.Run("wraps error when get_ccvs_for_message fails", func(t *testing.T) {
 		inv := mocks.NewMockInvoker(t)
-		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_source_chain_config", mock.Anything).
+		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
 			Return((*xdr.ScVal)(nil), assert.AnError).Once()
 
 		d, err := New(inv, testRPCClient(t), testStellarContractID, testStellarContractID2, testLogger(t), time.Minute)
@@ -258,7 +264,7 @@ func TestDestinationReader_GetCCVSForMessage(t *testing.T) {
 
 		_, err = d.GetCCVSForMessage(ctx, msg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get source chain config")
+		assert.Contains(t, err.Error(), "failed to get CCVs for message")
 	})
 }
 

@@ -126,51 +126,57 @@ func (d *DestinationReader) GetMessageSuccess(ctx context.Context, message proto
 }
 
 // GetCCVSForMessage returns the cross-chain verification addresses for the message.
-// It queries the OffRamp's source chain config to determine which CCVs are required
-// (lane-mandated) and which are optional (defaults). The Stellar OffRamp quorum logic
-// requires all lane-mandated CCVs plus at least one default CCV to verify.
+//
+// It calls the OffRamp's on-chain `get_ccvs_for_message(encodedMessage)` view (EVM
+// `OffRamp.getCCVsForMessage` analogue) rather than reading the source-chain config directly, so
+// the off-chain aggregator gathers attestations for exactly the CCVs that on-chain `execute`
+// enforces and the two cannot drift. For non-token-only messages the view resolves the receiver's
+// `get_ccvs_and_finality_config` + pool-required + lane-mandated + lane-default CCVs (the C-1
+// receiver consult); for token-only messages it returns lane-mandated required + lane-default
+// optional (threshold 1 when defaults exist). The threshold returned by the view is the exact
+// optional-threshold the OffRamp's `ensure_quorum_present` will apply.
 func (d *DestinationReader) GetCCVSForMessage(ctx context.Context, message protocol.Message) (protocol.CCVAddressInfo, error) {
 	sourceSelector := uint64(message.SourceChainSelector)
 
-	sourceConfig, err := d.offrampClient.GetSourceChainConfig(ctx, sourceSelector)
+	encoded, err := message.Encode()
 	if err != nil {
-		return protocol.CCVAddressInfo{}, fmt.Errorf("failed to get source chain config for selector %d: %w", sourceSelector, err)
+		return protocol.CCVAddressInfo{}, fmt.Errorf("failed to encode message for selector %d: %w", sourceSelector, err)
 	}
 
-	requiredCCVs := make([]protocol.UnknownAddress, len(sourceConfig.LaneMandatedCcvs))
-	for i, addr := range sourceConfig.LaneMandatedCcvs {
+	requiredStr, optionalStr, optionalThresholdU32, err := d.offrampClient.GetCcvsForMessage(ctx, encoded)
+	if err != nil {
+		return protocol.CCVAddressInfo{}, fmt.Errorf("failed to get CCVs for message for selector %d: %w", sourceSelector, err)
+	}
+
+	requiredCCVs := make([]protocol.UnknownAddress, len(requiredStr))
+	for i, addr := range requiredStr {
 		parsedAddr := scval.ParseAddress(addr)
 		if parsedAddr == nil {
-			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse address: %s", addr)
+			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse required CCV address: %s", addr)
 		}
 		requiredCCVs[i] = protocol.UnknownAddress((*parsedAddr.ContractId)[:])
 	}
 
-	optionalCCVs := make([]protocol.UnknownAddress, len(sourceConfig.DefaultCcvs))
-	for i, addr := range sourceConfig.DefaultCcvs {
+	optionalCCVs := make([]protocol.UnknownAddress, len(optionalStr))
+	for i, addr := range optionalStr {
 		parsedAddr := scval.ParseAddress(addr)
 		if parsedAddr == nil {
-			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse address: %s", addr)
+			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse optional CCV address: %s", addr)
 		}
 		optionalCCVs[i] = protocol.UnknownAddress((*parsedAddr.ContractId)[:])
-	}
-
-	var optionalThreshold uint8
-	if len(optionalCCVs) > 0 {
-		optionalThreshold = 1
 	}
 
 	ccvInfo := protocol.CCVAddressInfo{
 		RequiredCCVs:      requiredCCVs,
 		OptionalCCVs:      optionalCCVs,
-		OptionalThreshold: optionalThreshold,
+		OptionalThreshold: uint8(optionalThresholdU32),
 	}
 
 	d.lggr.Info().
 		Uint64("sourceChainSelector", sourceSelector).
 		Int("requiredCCVs", len(requiredCCVs)).
 		Int("optionalCCVs", len(optionalCCVs)).
-		Uint8("optionalThreshold", optionalThreshold).
+		Uint8("optionalThreshold", ccvInfo.OptionalThreshold).
 		Msg("Resolved CCV info for message")
 
 	return ccvInfo, nil

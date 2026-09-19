@@ -154,6 +154,12 @@ pub enum CCIPError {
     /// A CCV required by the token pool for this transfer is absent from the attested `ccvs` list
     /// (EVM `OffRamp.RequiredCCVMissing`).
     RequiredCCVMissing = 116,
+    /// Receiver-reported optional CCV threshold exceeds its optional CCV list length
+    /// (EVM `OffRamp.InvalidOptionalThreshold`).
+    InvalidOptionalThreshold = 117,
+    /// Fewer than the receiver's `optional_threshold` optional CCVs are present in the attested
+    /// `ccvs` list (EVM `OffRamp.OptionalCCVQuorumNotReached`).
+    OptionalCCVQuorumNotReached = 118,
 
     // ============================================================
     // TokenAdminRegistry errors
