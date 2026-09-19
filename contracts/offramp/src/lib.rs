@@ -541,19 +541,53 @@ impl OffRampContract {
         let message = CcipMessageV1::from_bytes(&env, &encoded_message)?;
         let source_config =
             Self::get_source_chain_config_internal(&env, message.source_chain_selector)?;
-        let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+
+        // EVM `_isTokenOnlyTransfer` (`OffRamp.sol:426`):
+        //   `(dataLength == 0 && ccipReceiveGasLimit == 0) || receiver.code.length == 0
+        //    || !supportsInterface(IAny2EVMMessageReceiver)`
+        // This **view** is the off-chain source of truth for which CCVs the DON must gather before
+        // it can transmit. EVM's `getCCVsForMessage` returns token-only defaults when the receiver is
+        // not a contract (`receiver.code.length == 0`), so aggregation/transmission is never blocked
+        // by an undeliverable receiver — the message is still transmitted and `_executeSingleMessage`
+        // decides its fate on-chain. The previous Stellar view omitted the `receiver.code.length == 0`
+        // clause and instead fell through to `get_ccvs_for_message_internal`, which fail-fasts with
+        // `ReceiverDoesNotExist` — so the view reverted, the DON could never gather CCVs, `execute`
+        // was never called, and the test timed out waiting for an execution event.
+        //
+        // `receiver.code.length == 0` ⇔ Soroban `executable()` returning a non-`Wasm` variant (or
+        // `None` for a contract that was never deployed). Soroban has no cheap `supportsInterface`
+        // probe; a Wasm contract that does not implement `ccip_receive` is caught at delivery (its
+        // invocation traps ⇒ `Failure`) rather than pre-classified as token-only here.
+        //
+        // INTENTIONAL VIEW↔EXECUTE DIVERGENCE for a non-Wasm receiver: this view returns lane
+        // defaults (gatherable) so the DON transmits, while the on-chain `execute` path
+        // (`verify_ccv_quorum` → `get_ccvs_for_message_internal`) keeps the require-V2 fail-fast and
+        // rejects with `ReceiverDoesNotExist`/`ReceiverNotWasmContract` (recorded as `Failure`,
+        // retryable). The divergence is benign: `execute` rejects at the pre-quorum existence check
+        // (`get_ccvs_for_message_internal`, before `ensure_quorum_present`), so the CCVs the DON
+        // gathered from the defaults never affect the outcome. This is the C-1 require-V2 policy,
+        // preserved on-chain; the view simply mirrors EVM in not blocking transmission.
+        let no_payload = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+        let receiver_not_wasm = match Self::ccip_receiver_contract_address(&env, &message.receiver)
+        {
+            Ok(addr) => !matches!(addr.executable(), Some(Executable::Wasm(_))),
+            // Malformed receiver (not 32 bytes): EVM `getCCVsForMessage` reverts `InvalidEVMAddress`.
+            Err(e) => return Err(e),
+        };
+        let is_token_only = no_payload || receiver_not_wasm;
 
         if is_token_only {
-            // Match the existing off-chain reader / token-only quorum: lane-mandated required, lane
-            // defaults optional (≥1 when present). Receiver consultation does not apply to token-only.
+            // Token-only quorum (EVM `_getCCVsForMessage` token-only arm): lane-mandated required,
+            // lane defaults optional (≥1 when present). Receiver consultation does not apply.
             let required = source_config.lane_mandated_ccvs.clone();
             let optional = source_config.default_ccvs.clone();
             let threshold = if optional.len() > 0 { 1 } else { 0 };
             return Ok((required, optional, threshold));
         }
 
-        // Non-token-only: same resolution `verify_ccv_quorum` enforces (C-1 receiver consult + merge),
-        // so off-chain gathering cannot drift from on-chain enforcement.
+        // Non-token-only with a Wasm receiver: same resolution `verify_ccv_quorum` enforces
+        // (C-1 receiver consult + merge), so off-chain gathering cannot drift from on-chain
+        // enforcement on the only path where the receiver is actually consulted.
         let (required, optional, threshold, _allowed_finality) =
             Self::get_ccvs_for_message_internal(&env, &message, &source_config, &static_config)?;
         Ok((required, optional, threshold))
