@@ -27,6 +27,7 @@ func TestDatastoreLookup_GetStrkeyHelpers_NotFound(t *testing.T) {
 		{"CommitteeVerifier", GetCommitteeVerifierStrkey},
 		{"RampRegistry", GetRampRegistryStrkey},
 		{"RMNRemote", GetRMNRemoteStrkey},
+		{"RMNProxy", GetRMNProxyStrkey},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +58,7 @@ func TestDatastoreLookup_GetStrkeyHelpers_RecordRoundTrip(t *testing.T) {
 		{"CommitteeVerifier", RecordCommitteeVerifier, GetCommitteeVerifierStrkey, "cv"},
 		{"RampRegistry", RecordRampRegistry, GetRampRegistryStrkey, "rr"},
 		{"RMNRemote", RecordRMNRemote, GetRMNRemoteStrkey, "rmn"},
+		{"RMNProxy", RecordRMNProxy, GetRMNProxyStrkey, "rmnp"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

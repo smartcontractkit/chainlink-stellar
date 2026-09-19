@@ -187,6 +187,9 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy RMN Proxy: %w", err)
 	}
 	rmnProxyContractID = rmnProxyOut.ContractID
+	if err := stellarccip.RecordRMNProxy(ds, selector, rmnProxyContractID); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
 	if _, err := execStellarCCIPOp(b, deps, rmnproxyops.Initialize, rmnproxyops.InitializeInput{
 		ContractID: rmnProxyContractID,
 		Owner:      h.DeployerKeypair().Address(),
