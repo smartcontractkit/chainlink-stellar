@@ -155,6 +155,8 @@ const (
 	CCIPErrorReceiverDoesNotExist                = 114
 	CCIPErrorReceiverNotWasmContract             = 115
 	CCIPErrorRequiredCCVMissing                  = 116
+	CCIPErrorInvalidOptionalThreshold            = 117
+	CCIPErrorOptionalCCVQuorumNotReached         = 118
 	CCIPErrorOnlyRegistryModuleOrOwner           = 201
 	CCIPErrorOnlyAdministrator                   = 202
 	CCIPErrorOnlyPendingAdministrator            = 203
@@ -277,6 +279,8 @@ var CCIPErrorMessage = map[int]string{
 	114: "receiver does not exist",
 	115: "receiver not wasm contract",
 	116: "required c c v missing",
+	117: "invalid optional threshold",
+	118: "optional c c v quorum not reached",
 	201: "only registry module or owner",
 	202: "only administrator",
 	203: "only pending administrator",

@@ -14,7 +14,11 @@
 //!   outbound sends use stored `extra_args` only ([`ExampleCcipReceiver::send_data_pay_fee_token`]).
 //! - **Per-source CCV lists**: [`ExampleCcipReceiver::apply_ccv_config_updates`] (EVM `applyCCVConfigUpdates`).
 //! - **`get_ccvs_and_finality_config`**: EVM-shaped view combining CCV lists + `allowed_finality_config` for a selector.
-//!   Stellar OffRamp does **not** invoke this (unlike EVM static-call); for tooling / future protocol integration only.
+//!   The Stellar OffRamp consults this for **non-token-only** messages (via `try_invoke_contract`, mirroring the EVM
+//!   static-call) to obtain required/optional CCVs + allowed finality, forwarding the message `sender` as the second
+//!   arg (EVM `bytes sender`). A receiver that is not a Wasm contract, or whose consult fails (missing symbol / trap /
+//!   typed error), is rejected up front (`Failure`, retryable) — there is no defaults fallback (Stellar has a single
+//!   receiver version and already rejects non-Wasm receivers at delivery).
 //! - **`get_remote_chain_selectors`**: Bounded enumeration of selectors configured via `enable_remote_chain` (EVM `getRemoteChainSelectors`).
 
 mod events;
@@ -231,15 +235,17 @@ impl ExampleCcipReceiver {
         Ok(load_remote_chain_selector_list(&env))
     }
 
-    /// EVM `IAny2EVMMessageReceiverV2.getCCVsAndFinalityConfig` shape. `unused` mirrors unused EVM calldata.
-    /// **Not called by Stellar OffRamp** today; returns stored CCV row + `allowed_finality_config` from
-    /// [`RemoteChainConfig`] for the same `source_chain_selector` (EVM uses one mapping per selector).
+    /// EVM `IAny2EVMMessageReceiverV2.getCCVsAndFinalityConfig` shape. The second arg is the message
+    /// `sender` on the source chain (EVM `bytes sender`), forwarded so sender-dependent receiver policies
+    /// receive the correct input; this example ignores it and keys config only on `source_chain_selector`.
+    /// Returns the stored CCV row + `allowed_finality_config` from [`RemoteChainConfig`] for the same
+    /// `source_chain_selector` (EVM uses one mapping per selector).
     pub fn get_ccvs_and_finality_config(
         env: Env,
         source_chain_selector: u64,
-        unused: Bytes,
+        sender: Bytes,
     ) -> Result<CcvsAndFinalityConfig, CCIPError> {
-        let _ = unused;
+        let _ = sender;
         <Self as Initializable>::require_initialized(&env)?;
         let ccv = Self::get_ccv_config(env.clone(), source_chain_selector)?;
         let rem = Self::get_remote_chain_config(env, source_chain_selector)?;

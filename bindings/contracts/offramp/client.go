@@ -310,6 +310,64 @@ func (c *OffRampClient) GetExecutionState(ctx context.Context, messageId [32]byt
 	return MessageExecutionStateFromScVal(*result)
 }
 
+// GetCcvsForMessage calls the get_ccvs_for_message function on the contract.
+func (c *OffRampClient) GetCcvsForMessage(ctx context.Context, encodedMessage []byte) ([]string, []string, uint32, error) {
+	args := []xdr.ScVal{
+		scval.BytesToScVal(encodedMessage),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_ccvs_for_message", args)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to call get_ccvs_for_message: %w", err)
+	}
+
+	if result == nil {
+		return nil, nil, 0, fmt.Errorf("no return value from get_ccvs_for_message")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, nil, 0, fmt.Errorf("expected vec for tuple return")
+	}
+	if len(*vec) != 3 {
+		return nil, nil, 0, fmt.Errorf("expected 3 elements, got %d", len(*vec))
+	}
+
+	v0Vec, ok := (*vec)[0].GetVec()
+	if !ok || v0Vec == nil {
+		return nil, nil, 0, fmt.Errorf("tuple[0]: expected vec")
+	}
+	v0 := make([]string, len(*v0Vec))
+	for i, item := range *v0Vec {
+		val, err := scval.AddressFromScVal(item)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("tuple[0][%d]: %w", i, err)
+		}
+		v0[i] = val
+	}
+
+	v1Vec, ok := (*vec)[1].GetVec()
+	if !ok || v1Vec == nil {
+		return nil, nil, 0, fmt.Errorf("tuple[1]: expected vec")
+	}
+	v1 := make([]string, len(*v1Vec))
+	for i, item := range *v1Vec {
+		val, err := scval.AddressFromScVal(item)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("tuple[1][%d]: %w", i, err)
+		}
+		v1[i] = val
+	}
+
+	v2Raw, ok := (*vec)[2].GetU32()
+	if !ok {
+		return nil, nil, 0, fmt.Errorf("tuple[2]: expected u32")
+	}
+	v2 := uint32(v2Raw)
+
+	return v0, v1, v2, nil
+}
+
 // GetSourceChainConfig calls the get_source_chain_config function on the contract.
 func (c *OffRampClient) GetSourceChainConfig(ctx context.Context, sourceChainSelector uint64) (*SourceChainConfig, error) {
 	args := []xdr.ScVal{

@@ -9,8 +9,15 @@ use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec};
 
 /// Trait for types that can be serialized to Bytes.
 /// Unlike `Into<Bytes>`, this takes `&Env` which is required by Soroban's `Bytes` type.
+///
+/// Encoding is fallible: the canonical CCIP v1 wire format prefixes variable
+/// fields with a 1-byte (max 255) or 2-byte (max 65535) length. A field whose
+/// length exceeds the prefix width cannot be encoded faithfully — the `as u8` /
+/// `as u16` cast would silently wrap and produce a corrupt message ID. Such
+/// inputs are rejected with `CCIPError::MessageTooLarge` (INV-ENC-11) rather
+/// than mis-encoded.
 pub trait ToBytes {
-    fn to_bytes(&self, env: &Env) -> Bytes;
+    fn to_bytes(&self, env: &Env) -> Result<Bytes, CCIPError>;
 }
 
 /// Trait for deserializing from Bytes.
@@ -23,16 +30,34 @@ pub trait FromBytes: Sized {
 /// message identifiers based on message content.
 pub trait MessageIdCompute: ToBytes {
     /// Computes the message ID for a CCIP message.
-    fn compute_message_id(&self, env: &Env) -> BytesN<32> {
-        let bytes = self.to_bytes(env);
+    fn compute_message_id(&self, env: &Env) -> Result<BytesN<32>, CCIPError> {
+        let bytes = self.to_bytes(env)?;
         let hash = env.crypto().keccak256(&bytes);
-        hash.into()
+        Ok(hash.into())
     }
 
     fn compute_message_id_from_bytes(env: &Env, bytes: &Bytes) -> BytesN<32> {
         let hash = env.crypto().keccak256(bytes);
         hash.into()
     }
+}
+
+/// INV-ENC-11: length-prefix cast helpers that fail closed instead of silently
+/// wrapping. The CCIP v1 format encodes address-field lengths in 1 byte and
+/// data/blob lengths in 2 bytes; an oversized field cannot be represented and
+/// must be rejected with `MessageTooLarge` rather than truncated.
+fn len_as_u8(len: u32) -> Result<u8, CCIPError> {
+    if len > u8::MAX as u32 {
+        return Err(CCIPError::MessageTooLarge);
+    }
+    Ok(len as u8)
+}
+
+fn len_as_u16(len: u32) -> Result<u16, CCIPError> {
+    if len > u16::MAX as u32 {
+        return Err(CCIPError::MessageTooLarge);
+    }
+    Ok(len as u16)
 }
 
 // ============================================================
@@ -59,13 +84,13 @@ impl TokenAmount {
 }
 
 impl ToBytes for TokenAmount {
-    fn to_bytes(&self, env: &Env) -> Bytes {
+    fn to_bytes(&self, env: &Env) -> Result<Bytes, CCIPError> {
         let mut bytes = Bytes::new(env);
         // Convert Address to its XDR byte representation
         bytes.append(&self.token.clone().to_xdr(env));
         // Convert i128 to big-endian bytes (16 bytes)
         bytes.append(&Bytes::from_array(env, &self.amount.to_be_bytes()));
-        bytes
+        Ok(bytes)
     }
 }
 
@@ -143,16 +168,16 @@ impl StellarToAnyMessage {
 }
 
 impl ToBytes for StellarToAnyMessage {
-    fn to_bytes(&self, env: &Env) -> Bytes {
+    fn to_bytes(&self, env: &Env) -> Result<Bytes, CCIPError> {
         let mut bytes = Bytes::new(env);
         bytes.append(&self.receiver);
         bytes.append(&self.data);
         for token_amount in self.token_amounts.iter() {
-            bytes.append(&token_amount.to_bytes(env));
+            bytes.append(&token_amount.to_bytes(env)?);
         }
         bytes.append(&self.fee_token.clone().to_xdr(env));
         bytes.append(&self.extra_args);
-        bytes
+        Ok(bytes)
     }
 }
 
@@ -211,40 +236,45 @@ pub struct CcipTokenTransferV1 {
 }
 
 impl ToBytes for CcipTokenTransferV1 {
-    fn to_bytes(&self, env: &Env) -> Bytes {
+    fn to_bytes(&self, env: &Env) -> Result<Bytes, CCIPError> {
         let mut buf = Bytes::new(env);
 
         buf.append(&Bytes::from_array(env, &[self.version]));
         buf.append(&Bytes::from_slice(env, &self.amount.to_array()));
 
+        // INV-ENC-11: 1-byte length-prefixed fields must fit in u8 (≤ 255).
         buf.append(&Bytes::from_array(
             env,
-            &[self.source_pool_address.len() as u8],
+            &[len_as_u8(self.source_pool_address.len())?],
         ));
         buf.append(&self.source_pool_address);
 
         buf.append(&Bytes::from_array(
             env,
-            &[self.source_token_address.len() as u8],
+            &[len_as_u8(self.source_token_address.len())?],
         ));
         buf.append(&self.source_token_address);
 
         buf.append(&Bytes::from_array(
             env,
-            &[self.dest_token_address.len() as u8],
+            &[len_as_u8(self.dest_token_address.len())?],
         ));
         buf.append(&self.dest_token_address);
 
-        buf.append(&Bytes::from_array(env, &[self.token_receiver.len() as u8]));
-        buf.append(&self.token_receiver);
-
         buf.append(&Bytes::from_array(
             env,
-            &(self.extra_data.len() as u16).to_be_bytes(),
+            &[len_as_u8(self.token_receiver.len())?],
+        ));
+        buf.append(&self.token_receiver);
+
+        // INV-ENC-11: 2-byte length-prefixed field must fit in u16 (≤ 65535).
+        buf.append(&Bytes::from_array(
+            env,
+            &len_as_u16(self.extra_data.len())?.to_be_bytes(),
         ));
         buf.append(&self.extra_data);
 
-        buf
+        Ok(buf)
     }
 }
 
@@ -355,7 +385,7 @@ pub struct CcipMessageV1 {
 }
 
 impl ToBytes for CcipMessageV1 {
-    fn to_bytes(&self, env: &Env) -> Bytes {
+    fn to_bytes(&self, env: &Env) -> Result<Bytes, CCIPError> {
         let mut buf = Bytes::new(env);
 
         // Version (1 byte)
@@ -391,44 +421,45 @@ impl ToBytes for CcipMessageV1 {
             &self.ccv_and_executor_hash.to_array(),
         ));
 
-        // On-ramp address (1 byte length + bytes)
-        buf.append(&Bytes::from_array(env, &[self.onramp_address.len() as u8]));
-        buf.append(&self.onramp_address);
-
-        // Off-ramp address (1 byte length + bytes)
-        buf.append(&Bytes::from_array(env, &[self.offramp_address.len() as u8]));
-        buf.append(&self.offramp_address);
-
-        // Sender (1 byte length + bytes)
-        buf.append(&Bytes::from_array(env, &[self.sender.len() as u8]));
-        buf.append(&self.sender);
-
-        // Receiver (1 byte length + bytes)
-        buf.append(&Bytes::from_array(env, &[self.receiver.len() as u8]));
-        buf.append(&self.receiver);
-
-        // Dest blob (2 bytes length, big-endian + bytes)
+        // INV-ENC-11: 1-byte length-prefixed address fields must fit in u8 (≤ 255).
         buf.append(&Bytes::from_array(
             env,
-            &(self.dest_blob.len() as u16).to_be_bytes(),
+            &[len_as_u8(self.onramp_address.len())?],
+        ));
+        buf.append(&self.onramp_address);
+
+        buf.append(&Bytes::from_array(
+            env,
+            &[len_as_u8(self.offramp_address.len())?],
+        ));
+        buf.append(&self.offramp_address);
+
+        buf.append(&Bytes::from_array(env, &[len_as_u8(self.sender.len())?]));
+        buf.append(&self.sender);
+
+        buf.append(&Bytes::from_array(env, &[len_as_u8(self.receiver.len())?]));
+        buf.append(&self.receiver);
+
+        // INV-ENC-11: 2-byte length-prefixed fields must fit in u16 (≤ 65535).
+        buf.append(&Bytes::from_array(
+            env,
+            &len_as_u16(self.dest_blob.len())?.to_be_bytes(),
         ));
         buf.append(&self.dest_blob);
 
-        // Token transfer (2 bytes length, big-endian + pre-encoded bytes)
         buf.append(&Bytes::from_array(
             env,
-            &(self.token_transfer.len() as u16).to_be_bytes(),
+            &len_as_u16(self.token_transfer.len())?.to_be_bytes(),
         ));
         buf.append(&self.token_transfer);
 
-        // Data (2 bytes length, big-endian + bytes)
         buf.append(&Bytes::from_array(
             env,
-            &(self.data.len() as u16).to_be_bytes(),
+            &len_as_u16(self.data.len())?.to_be_bytes(),
         ));
         buf.append(&self.data);
 
-        buf
+        Ok(buf)
     }
 }
 

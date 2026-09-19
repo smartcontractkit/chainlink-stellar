@@ -1128,6 +1128,7 @@ dependencies = [
  "common-helpers",
  "common-interfaces",
  "common-message",
+ "common-pool",
  "rmn_proxy",
  "rmn_remote",
  "soroban-sdk",

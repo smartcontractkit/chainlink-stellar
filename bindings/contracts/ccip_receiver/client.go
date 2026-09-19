@@ -421,10 +421,10 @@ func (c *ExampleCcipReceiverClient) GetRemoteChainExtraArgs(ctx context.Context,
 }
 
 // GetCcvsAndFinalityConfig calls the get_ccvs_and_finality_config function on the contract.
-func (c *ExampleCcipReceiverClient) GetCcvsAndFinalityConfig(ctx context.Context, sourceChainSelector uint64, unused []byte) (*CcvsAndFinalityConfig, error) {
+func (c *ExampleCcipReceiverClient) GetCcvsAndFinalityConfig(ctx context.Context, sourceChainSelector uint64, sender []byte) (*CcvsAndFinalityConfig, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(sourceChainSelector),
-		scval.BytesToScVal(unused),
+		scval.BytesToScVal(sender),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_ccvs_and_finality_config", args)
