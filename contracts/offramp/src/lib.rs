@@ -1083,6 +1083,13 @@ impl OffRampContract {
     }
 
     /// Convert a 32-byte big-endian uint256 to i128 (lower 16 bytes).
+    ///
+    /// EVM carries token amounts as `uint256`; Stellar narrows to `i128`. Two
+    /// ranges are out of `i128`'s non-negative envelope and must be rejected
+    /// cleanly rather than silently mis-decoded (INV-ENC-10/12):
+    ///   * upper 16 bytes non-zero  ⇒ value ≥ 2^128 (far above `i128::MAX`)
+    ///   * bit 127 set (`arr[16] & 0x80 != 0`) ⇒ value ∈ [2^127, 2^128), which
+    ///     `i128::from_be_bytes` would re-interpret as a *negative* amount.
     fn bytes32_to_i128(_env: &Env, bytes: &BytesN<32>) -> Result<i128, CCIPError> {
         let arr = bytes.to_array();
         // Ensure upper 16 bytes are zero (value fits in i128)
@@ -1090,6 +1097,12 @@ impl OffRampContract {
             if *b != 0 {
                 return Err(CCIPError::TokenHandlingError);
             }
+        }
+        // INV-ENC-10/12: reject the sign bit. A high bit set on byte 16 means the
+        // value is ≥ 2^127, which is outside `i128`'s positive range and would
+        // decode to a negative amount if copied verbatim into `from_be_bytes`.
+        if arr[16] & 0x80 != 0 {
+            return Err(CCIPError::TokenHandlingError);
         }
         let mut amount_bytes = [0u8; 16];
         amount_bytes.copy_from_slice(&arr[16..]);

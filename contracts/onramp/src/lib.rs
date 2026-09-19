@@ -152,7 +152,7 @@ impl OnRampContract {
             return Err(CCIPError::CCVLengthMismatch);
         }
 
-        let message_bytes = message.to_bytes(env);
+        let message_bytes = message.to_bytes(env)?;
 
         let fee_quoter = FeeQuoterClient::new(env, &dynamic_config.fee_quoter);
         let message_fee = fee_quoter.get_message_fee(&dest_chain_selector, message);
@@ -567,7 +567,7 @@ impl OnRampContract {
                 },
                 extra_data: lock_result.dest_pool_data,
             };
-            token_transfer.to_bytes(&env)
+            token_transfer.to_bytes(&env)?
         } else {
             Bytes::new(&env)
         };
@@ -613,7 +613,7 @@ impl OnRampContract {
             data: message.data.clone(),
         };
 
-        let message_id = ccip_msg.compute_message_id(&env);
+        let message_id = ccip_msg.compute_message_id(&env)?;
 
         // TODO: check if message ID already exists in storage for idempotency
 
@@ -746,7 +746,7 @@ impl OnRampContract {
                 .get(0)
                 .map(|token_amount| token_amount.amount)
                 .unwrap_or(0),
-            encoded_message: ccip_msg.to_bytes(&env),
+            encoded_message: ccip_msg.to_bytes(&env)?,
             receipts,
             verifier_blobs,
         }

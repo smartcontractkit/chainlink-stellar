@@ -49,7 +49,7 @@ fn test_token_amount_to_bytes() {
         token: Address::generate(&env),
         amount: 100,
     };
-    let bytes = ta.to_bytes(&env);
+    let bytes = ta.to_bytes(&env).unwrap();
     // Address XDR + 16-byte big-endian i128
     let addr_xdr_len = ta.token.clone().to_xdr(&env).len();
     assert_eq!(bytes.len(), addr_xdr_len + 16);
@@ -120,8 +120,8 @@ fn test_validate_negative_token_amount_fails() {
 fn test_to_bytes_deterministic() {
     let env = Env::default();
     let msg = make_message(&env, Vec::new(&env));
-    let b1 = msg.to_bytes(&env);
-    let b2 = msg.to_bytes(&env);
+    let b1 = msg.to_bytes(&env).unwrap();
+    let b2 = msg.to_bytes(&env).unwrap();
     assert_eq!(b1, b2);
 }
 
@@ -129,8 +129,8 @@ fn test_to_bytes_deterministic() {
 fn test_compute_message_id_deterministic() {
     let env = Env::default();
     let msg = make_message(&env, Vec::new(&env));
-    let id1 = msg.compute_message_id(&env);
-    let id2 = msg.compute_message_id(&env);
+    let id1 = msg.compute_message_id(&env).unwrap();
+    let id2 = msg.compute_message_id(&env).unwrap();
     assert_eq!(id1, id2);
     assert_eq!(id1.len(), 32);
 }
@@ -142,8 +142,8 @@ fn test_compute_message_id_differs_on_data_change() {
     let msg2 = make_message(&env, Vec::new(&env));
 
     msg1.data = Bytes::from_array(&env, &[99, 98, 97]);
-    let id1 = msg1.compute_message_id(&env);
-    let id2 = msg2.compute_message_id(&env);
+    let id1 = msg1.compute_message_id(&env).unwrap();
+    let id2 = msg2.compute_message_id(&env).unwrap();
     assert_ne!(id1, id2);
 }
 
@@ -173,7 +173,7 @@ fn test_token_transfer_v1_to_bytes_layout() {
         extra_data: extra_data.clone(),
     };
 
-    let encoded = tt.to_bytes(&env);
+    let encoded = tt.to_bytes(&env).unwrap();
 
     // version(1) + amount(32) + src_pool(1+10) + src_token(1+8)
     // + dest_token(1+12) + token_receiver(1+6) + extra_data(2+4)
@@ -199,7 +199,7 @@ fn test_token_transfer_v1_empty_fields() {
         extra_data: Bytes::new(&env),
     };
 
-    let encoded = tt.to_bytes(&env);
+    let encoded = tt.to_bytes(&env).unwrap();
     // version(1) + amount(32) + 4 * (1+0) + (2+0) = 1 + 32 + 4 + 2 = 39
     assert_eq!(encoded.len(), 39);
 }
@@ -227,7 +227,7 @@ fn test_token_transfer_v1_to_bytes_from_bytes_roundtrip() {
         extra_data: extra_data.clone(),
     };
 
-    let encoded = original.to_bytes(&env);
+    let encoded = original.to_bytes(&env).unwrap();
     let decoded = CcipTokenTransferV1::from_bytes(&env, &encoded).unwrap();
 
     assert_eq!(decoded.version, original.version);
@@ -252,7 +252,7 @@ fn test_token_transfer_v1_from_bytes_roundtrip_empty_variable_fields() {
         extra_data: Bytes::new(&env),
     };
 
-    let encoded = original.to_bytes(&env);
+    let encoded = original.to_bytes(&env).unwrap();
     let decoded = CcipTokenTransferV1::from_bytes(&env, &encoded).unwrap();
     assert_eq!(decoded.version, 1);
     assert_eq!(decoded.amount.to_array(), [0u8; 32]);
@@ -271,7 +271,7 @@ fn test_token_transfer_v1_from_bytes_truncated_returns_decoding_error() {
         token_receiver: Bytes::new(&env),
         extra_data: Bytes::new(&env),
     };
-    let encoded = tt.to_bytes(&env);
+    let encoded = tt.to_bytes(&env).unwrap();
     let truncated = encoded.slice(0..encoded.len() - 1);
 
     let err = CcipTokenTransferV1::from_bytes(&env, &truncated);
@@ -301,7 +301,7 @@ fn test_token_transfer_v1_from_bytes_wrong_version_returns_decoding_error() {
         token_receiver: Bytes::new(&env),
         extra_data: Bytes::new(&env),
     };
-    let mut encoded = tt.to_bytes(&env);
+    let mut encoded = tt.to_bytes(&env).unwrap();
     // Overwrite the version byte (index 0) with a non-v1 version.
     encoded.set(0, MESSAGE_V1_VERSION + 1);
     let err = CcipTokenTransferV1::from_bytes(&env, &encoded);
@@ -321,11 +321,49 @@ fn test_token_transfer_v1_from_bytes_trailing_bytes_returns_decoding_error() {
         token_receiver: Bytes::new(&env),
         extra_data: Bytes::new(&env),
     };
-    let encoded = tt.to_bytes(&env);
+    let encoded = tt.to_bytes(&env).unwrap();
     let mut padded = encoded.clone();
     padded.append(&Bytes::from_array(&env, &[0xFF]));
     let err = CcipTokenTransferV1::from_bytes(&env, &padded);
     assert!(matches!(err, Err(CCIPError::MessageDecodingError)));
+}
+
+// ---- M-4: checked length casts (INV-ENC-11) ----
+
+#[test]
+fn test_token_transfer_v1_to_bytes_oversized_u8_field_rejected() {
+    // INV-ENC-11: a 1-byte length-prefixed field exceeding 255 bytes must be
+    // rejected with `MessageTooLarge` instead of silently wrapping the cast.
+    let env = Env::default();
+    let tt = CcipTokenTransferV1 {
+        version: 1,
+        amount: BytesN::from_array(&env, &[0u8; 32]),
+        source_pool_address: Bytes::from_array(&env, &[0u8; 256]),
+        source_token_address: Bytes::new(&env),
+        dest_token_address: Bytes::new(&env),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+    let err = tt.to_bytes(&env);
+    assert!(matches!(err, Err(CCIPError::MessageTooLarge)));
+}
+
+#[test]
+fn test_token_transfer_v1_to_bytes_oversized_u16_field_rejected() {
+    // INV-ENC-11: a 2-byte length-prefixed field exceeding 65535 bytes must be
+    // rejected with `MessageTooLarge` instead of silently wrapping the cast.
+    let env = Env::default();
+    let tt = CcipTokenTransferV1 {
+        version: 1,
+        amount: BytesN::from_array(&env, &[0u8; 32]),
+        source_pool_address: Bytes::new(&env),
+        source_token_address: Bytes::new(&env),
+        dest_token_address: Bytes::new(&env),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::from_array(&env, &[0u8; 65536]),
+    };
+    let err = tt.to_bytes(&env);
+    assert!(matches!(err, Err(CCIPError::MessageTooLarge)));
 }
 
 // ============================================================
@@ -355,7 +393,7 @@ fn make_ccip_message_v1(env: &Env) -> CcipMessageV1 {
 fn test_message_v1_to_bytes_layout() {
     let env = Env::default();
     let msg = make_ccip_message_v1(&env);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
 
     // Fixed portion: version(1) + src_chain(8) + dst_chain(8) + seq(8) +
     //   exec_gas(4) + recv_gas(4) + finality(4) + ccv_hash(32) = 69
@@ -375,7 +413,7 @@ fn test_message_v1_to_bytes_layout() {
 fn test_message_v1_from_bytes_roundtrip() {
     let env = Env::default();
     let msg = make_ccip_message_v1(&env);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let decoded = CcipMessageV1::from_bytes(&env, &encoded).unwrap();
     assert_eq!(decoded.source_chain_selector, msg.source_chain_selector);
     assert_eq!(decoded.dest_chain_selector, msg.dest_chain_selector);
@@ -402,7 +440,7 @@ fn test_message_v1_from_bytes_trailing_bytes_returns_decoding_error() {
     // mirroring EVM `MessageV1Codec` `MESSAGE_FINAL_OFFSET` (MessageV1Codec.sol:512).
     let env = Env::default();
     let msg = make_ccip_message_v1(&env);
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let mut padded = encoded.clone();
     padded.append(&Bytes::from_array(&env, &[0xFF]));
     let err = CcipMessageV1::from_bytes(&env, &padded);
@@ -429,7 +467,7 @@ fn test_message_v1_empty_variable_fields() {
         data: Bytes::new(&env),
     };
 
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     // 69 (fixed) + 4*(1+0) + 3*(2+0) = 69 + 4 + 6 = 79
     assert_eq!(encoded.len(), 79);
 }
@@ -438,9 +476,9 @@ fn test_message_v1_empty_variable_fields() {
 fn test_message_v1_compute_message_id() {
     let env = Env::default();
     let msg = make_ccip_message_v1(&env);
-    let id = msg.compute_message_id(&env);
+    let id = msg.compute_message_id(&env).unwrap();
 
-    let expected: BytesN<32> = env.crypto().keccak256(&msg.to_bytes(&env)).into();
+    let expected: BytesN<32> = env.crypto().keccak256(&msg.to_bytes(&env).unwrap()).into();
     assert_eq!(id, expected);
 }
 
@@ -452,7 +490,46 @@ fn test_message_v1_different_fields_different_id() {
     let mut msg2 = make_ccip_message_v1(&env);
     msg2.sequence_number = 999;
 
-    assert_ne!(msg1.compute_message_id(&env), msg2.compute_message_id(&env));
+    assert_ne!(
+        msg1.compute_message_id(&env).unwrap(),
+        msg2.compute_message_id(&env).unwrap()
+    );
+}
+
+// ---- M-4: checked length casts for CcipMessageV1 (INV-ENC-11) ----
+
+#[test]
+fn test_message_v1_to_bytes_oversized_u8_field_rejected() {
+    // INV-ENC-11: a 1-byte length-prefixed address field exceeding 255 bytes
+    // must be rejected with `MessageTooLarge` instead of silently wrapping.
+    let env = Env::default();
+    let mut msg = make_ccip_message_v1(&env);
+    msg.receiver = Bytes::from_array(&env, &[0u8; 256]);
+    let err = msg.to_bytes(&env);
+    assert!(matches!(err, Err(CCIPError::MessageTooLarge)));
+}
+
+#[test]
+fn test_message_v1_to_bytes_oversized_u16_field_rejected() {
+    // INV-ENC-11: a 2-byte length-prefixed `data` field exceeding 65535 bytes
+    // (FeeQuoter `max_data_bytes` is operator-configurable above this width)
+    // must be rejected with `MessageTooLarge` instead of silently wrapping.
+    let env = Env::default();
+    let mut msg = make_ccip_message_v1(&env);
+    msg.data = Bytes::from_array(&env, &[0u8; 65536]);
+    let err = msg.to_bytes(&env);
+    assert!(matches!(err, Err(CCIPError::MessageTooLarge)));
+}
+
+#[test]
+fn test_message_v1_compute_message_id_propagates_oversize_error() {
+    // INV-ENC-11: an un-encodable message must surface `MessageTooLarge` from
+    // `compute_message_id` rather than hashing a silently-truncated encoding.
+    let env = Env::default();
+    let mut msg = make_ccip_message_v1(&env);
+    msg.data = Bytes::from_array(&env, &[0u8; 65536]);
+    let err = msg.compute_message_id(&env);
+    assert!(matches!(err, Err(CCIPError::MessageTooLarge)));
 }
 
 // ============================================================

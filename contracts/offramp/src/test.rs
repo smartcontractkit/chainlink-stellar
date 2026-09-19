@@ -575,7 +575,10 @@ fn test_bytes32_to_i128_sign_bit_rejected() {
     assert_eq!(
         OffRampContract::bytes32_to_i128(&env, &bytes),
         Err(CCIPError::TokenHandlingError)
-=======
+    );
+}
+
+// ============================================================
 // H-2 / INV-TR-3 inbound fixtures — mock registry, pool, VVR, verifier
 // ============================================================
 
@@ -759,10 +762,10 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         sender: Bytes::from_array(&env, &[2u8; 20]),
         receiver: receiver_field,
         dest_blob: Bytes::new(&env),
-        token_transfer: token_transfer.to_bytes(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
         data: Bytes::new(&env),
     };
-    let encoded = msg.to_bytes(&env);
+    let encoded = msg.to_bytes(&env).unwrap();
     let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
 
     let ccvs = vec![&env, vvr_id.clone()];
