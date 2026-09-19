@@ -383,6 +383,7 @@ name = "common-pool"
 version = "0.0.0"
 dependencies = [
  "common-error",
+ "common-helpers",
  "common-interfaces",
  "soroban-sdk",
 ]
@@ -1200,6 +1201,9 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 
@@ -1213,6 +1217,9 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 
@@ -1227,6 +1234,9 @@ dependencies = [
  "common-interfaces",
  "common-pool",
  "pools-token-lock-box",
+ "rmn_proxy",
+ "rmn_remote",
+ "router",
  "soroban-sdk",
 ]
 

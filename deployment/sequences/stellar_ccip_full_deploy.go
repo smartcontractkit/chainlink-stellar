@@ -187,6 +187,9 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy RMN Proxy: %w", err)
 	}
 	rmnProxyContractID = rmnProxyOut.ContractID
+	if err := stellarccip.RecordRMNProxy(ds, selector, rmnProxyContractID); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
 	if _, err := execStellarCCIPOp(b, deps, rmnproxyops.Initialize, rmnproxyops.InitializeInput{
 		ContractID: rmnProxyContractID,
 		Owner:      h.DeployerKeypair().Address(),
@@ -195,6 +198,10 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("initialize RMN Proxy: %w", err)
 	}
 	h.Logger().Info().Str("rmnProxyContractID", rmnProxyContractID).Msg("RMN Proxy initialized")
+	// Record the RMN proxy on the host so post-deploy pool initialization can pass it
+	// into each pool's initialize (EVM `immutable i_rmnProxy` parity — pools store it once
+	// and consult it directly for curse checks, not via the Router).
+	h.SetRmnProxy(rmnProxyContractID)
 
 	feeQuoterWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "fee_quoter.wasm")
 	if err := statReleaseWasm(feeQuoterWasmPath, "FeeQuoter"); err != nil {

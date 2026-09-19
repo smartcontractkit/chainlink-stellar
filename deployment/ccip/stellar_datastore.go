@@ -70,6 +70,13 @@ func RecordRMNRemote(ds *datastore.MemoryDataStore, chainSelector uint64, contra
 	return RMNRemoteDatastoreRef().UpsertDeployedStrKey(ds, chainSelector, contractStrkey)
 }
 
+// RecordRMNProxy records an RMN Proxy deployment in the datastore. Pools store the RMN
+// proxy immutably at initialize (EVM `immutable i_rmnProxy` parity), so post-deploy pool
+// initialization rehydrates it from the datastore via GetRMNProxyStrkey.
+func RecordRMNProxy(ds *datastore.MemoryDataStore, chainSelector uint64, contractStrkey string) error {
+	return RMNProxyDatastoreRef().UpsertDeployedStrKey(ds, chainSelector, contractStrkey)
+}
+
 // RecordTokenAdminRegistry records TokenAdminRegistry in the datastore.
 func RecordTokenAdminRegistry(ds *datastore.MemoryDataStore, chainSelector uint64, contractStrkey string) error {
 	return TokenAdminRegistryDatastoreRef().UpsertDeployedStrKey(ds, chainSelector, contractStrkey)

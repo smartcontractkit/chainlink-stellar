@@ -13,12 +13,10 @@
 //!   `0x00000000` = WAIT_FOR_FINALITY (safest, default)
 //!   `0x00010000` = WAIT_FOR_SAFE (bit 16 set, no depth)
 //!
-//! TODO: On Stellar, this module is only relevant for the **inbound** path
-//! (`release_or_mint`), where messages from EVM sources carry finality flags.
-//! For the **outbound** path (`lock_or_burn`), Stellar's deterministic ~5s
-//! finality means senders will never specify non-default finality, so the
-//! FTF outbound rate limit branching can be removed. Consider gating or
-//! documenting that FTF validation/allowed-config only applies inbound.
+//! This module lives in `common-helpers` (rather than `common-pool`) so that the
+//! ramps (`onramp`/`offramp`) can validate requested finality without taking a hard
+//! dependency on the pool *implementation* crate — they depend only on the pool
+//! *interface* (`common-interfaces`). `common-pool` re-exports it for back-compat.
 
 use common_error::CCIPError;
 

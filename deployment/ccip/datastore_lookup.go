@@ -48,3 +48,10 @@ func GetRampRegistryStrkey(ds datastore.DataStore, chainSelector uint64) (string
 func GetRMNRemoteStrkey(ds datastore.DataStore, chainSelector uint64) (string, error) {
 	return RMNRemoteDatastoreRef().LookupStrkey(ds, chainSelector)
 }
+
+// GetRMNProxyStrkey resolves the RMN Proxy strkey for a chain from the datastore.
+// Pools store the RMN proxy immutably at initialize (EVM `immutable i_rmnProxy` parity),
+// so post-deploy pool initialization must rehydrate it from the datastore.
+func GetRMNProxyStrkey(ds datastore.DataStore, chainSelector uint64) (string, error) {
+	return RMNProxyDatastoreRef().LookupStrkey(ds, chainSelector)
+}

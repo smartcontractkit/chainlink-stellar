@@ -1147,6 +1147,21 @@ func (c *Chain) hydrateDevenvClientsFromDataStore(ds datastore.DataStore, select
 			c.rampRegistryContractID = id
 		}
 	}
+	// RMN proxy: pools store it immutably at initialize (EVM `immutable i_rmnProxy` parity),
+	// so the post-deploy token-pool initialization must rehydrate it from the datastore
+	// (the shared DeployChainContracts changeset deployed + recorded it; this Chain did not
+	// hold it in memory). Without this, DeployLockReleaseTestTokenPool's required non-empty
+	// RMN-proxy guard reverts.
+	if c.rmnProxyContractID == "" {
+		if id, err := stellarccip.GetRMNProxyStrkey(ds, selector); err == nil && id != "" {
+			c.rmnProxyContractID = id
+			if c.rmnProxyClient == nil {
+				c.rmnProxyClient = rmnproxybindings.NewRmnProxyClient(c.deployer, id)
+			}
+		}
+	} else if c.rmnProxyClient == nil {
+		c.rmnProxyClient = rmnproxybindings.NewRmnProxyClient(c.deployer, c.rmnProxyContractID)
+	}
 }
 
 // remotePoolContractTypes lists pool contract types to probe when looking up

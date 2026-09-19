@@ -1,6 +1,8 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Bytes, Env, Vec};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger, token, Address, Bytes, BytesN, Env, Vec,
+};
 
 use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
 use ccip_ramp_registry::{
@@ -15,6 +17,9 @@ use common_pool::{
     encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
     ReleaseOrMintIn,
 };
+use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
+use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
+use router::{RouterContract, RouterContractClient};
 
 /// Minimal hook contracts for pool integration tests (must match `PoolHooksInterface` ABI).
 mod mock_hooks {
@@ -187,6 +192,29 @@ mod inbound_release_stub {
 
 const DEFAULT_REMOTE_CHAIN: u64 = 5009297550715157269;
 
+/// Register real Router + RMN proxy + RMN remote contracts and wire them, returning
+/// the Router address (to pass to the pool's `initialize`) and the RMN remote client
+/// (so tests can curse a subject). Mirrors the onramp test wiring. The RMN starts
+/// uncursed, so happy-path pool operations are unaffected.
+fn setup_router_with_rmn(
+    env: &Env,
+    owner: &Address,
+) -> (Address, Address, RmnRemoteContractClient<'static>) {
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(env, &rmn_remote_id);
+    rmn_remote_client.initialize(owner, &Vec::new(env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(env, &router_id);
+    router_client.initialize(owner, &rmn_proxy_id);
+
+    (router_id, rmn_proxy_id, rmn_remote_client)
+}
+
 fn setup_env() -> (
     Env,
     BurnMintTokenPoolContractClient<'static>,
@@ -224,13 +252,14 @@ fn setup_env() -> (
     // Set the pool contract as the token admin so it can mint
     token_admin_client.set_admin(&pool_id);
 
-    let router = Address::generate(&env);
+    let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
         &token_address,
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 
     (
@@ -451,6 +480,200 @@ fn chain_update_with_limits(
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_apply_chain_updates_rejects_empty_remote_pool_address() {
+    // M-14 / INV-POOL-ENC-2/4, INV-PCFG-1: a chain update with an empty remote pool
+    // address must be rejected at config time. Mirrors EVM `TokenPool
+    // ._validateTokenPoolConfig`, which requires a non-empty `remoteTokenAddress` and a
+    // remote pool that is only ever set (never emptied) via `setRemotePool`. An empty
+    // pool address would create a degenerate lane whose source-pool validation (C-3) and
+    // release/mint destination could never match.
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+
+    let update = ChainUpdate {
+        remote_chain_selector: remote_chain,
+        remote_pool_addresses: Bytes::new(&env), // empty ⇒ rejected
+        remote_token_address: Bytes::from_slice(&env, &[2u8; 20]),
+        outbound_rate_limiter_config: RateLimitConfig::disabled(),
+        inbound_rate_limiter_config: RateLimitConfig::disabled(),
+    };
+    pool_client.apply_chain_updates(&Vec::from_array(&env, [update]), &Vec::new(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_apply_chain_updates_rejects_empty_remote_token_address() {
+    // M-14 / INV-POOL-ENC-2/4, INV-PCFG-1: companion to the empty-pool test — an empty
+    // remote token address is likewise rejected at config time, before the lane is
+    // materialized into storage.
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+
+    let update = ChainUpdate {
+        remote_chain_selector: remote_chain,
+        remote_pool_addresses: Bytes::from_slice(&env, &[1u8; 20]),
+        remote_token_address: Bytes::new(&env), // empty ⇒ rejected
+        outbound_rate_limiter_config: RateLimitConfig::disabled(),
+        inbound_rate_limiter_config: RateLimitConfig::disabled(),
+    };
+    pool_client.apply_chain_updates(&Vec::from_array(&env, [update]), &Vec::new(&env));
+}
+
+/// Like `setup_env` but also returns the RMN remote client (last element), so curse
+/// tests can curse the remote chain's subject before invoking the pool. The pool is
+/// wired to a real Router + RMN (uncursed initially); happy-path behavior is unchanged.
+#[allow(clippy::type_complexity)]
+fn setup_env_with_rmn() -> (
+    Env,
+    BurnMintTokenPoolContractClient<'static>,
+    Address,
+    Address,
+    RampRegistryContractClient<'static>,
+    inbound_release_stub::PoolInboundReleaseStubClient<'static>,
+    Address,
+    RmnRemoteContractClient<'static>,
+) {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let registry_id = env.register(RampRegistryContract, ());
+    let registry_client = RampRegistryContractClient::new(&env, &registry_id);
+    registry_client.initialize(&owner);
+
+    let auth_onramp = Address::generate(&env);
+    register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
+
+    let stub_id = env.register(inbound_release_stub::PoolInboundReleaseStub, ());
+    let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
+
+    let (router, rmn_proxy, rmn_remote_client) = setup_router_with_rmn(&env, &owner);
+
+    let pool_id = env.register(BurnMintTokenPoolContract, ());
+    let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_address = token_contract.address();
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
+    token_admin_client.set_admin(&pool_id);
+
+    pool_client.initialize(
+        &owner,
+        &token_address,
+        &7u32,
+        &router,
+        &registry_client.address,
+        &rmn_proxy,
+    );
+
+    (
+        env,
+        pool_client,
+        owner,
+        token_address,
+        registry_client,
+        stub_client,
+        auth_onramp,
+        rmn_remote_client,
+    )
+}
+
+/// Build the 16-byte RMN subject for a chain selector (selector in the low 8 bytes),
+/// exactly as `BaseTokenPool::require_remote_chain_not_cursed` constructs it (and as
+/// `CurseCheckable::require_chain_not_cursed` does for the ramps).
+fn rmn_subject(env: &Env, chain_selector: u64) -> BytesN<16> {
+    let mut subject = [0u8; 16];
+    subject[8..16].copy_from_slice(&chain_selector.to_be_bytes());
+    BytesN::from_array(env, &subject)
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #47)")] // CursedByRMN
+fn test_lock_or_burn_reverts_when_remote_chain_cursed() {
+    // M-6 / INV-POOL-RMN-1: `lock_or_burn` reverts `CursedByRMN` when the RMN has
+    // cursed the remote chain's subject, mirroring EVM `TokenPool._validateLockOrBurn`
+    // (TokenPool.sol:422). The curse check runs after the chain-support + onramp-auth
+    // checks and before any rate-limit consume / token burn.
+    let (
+        env,
+        pool_client,
+        owner,
+        token_address,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+        rmn_remote_client,
+    ) = setup_env_with_rmn();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Curse the remote chain's subject.
+    let _ = rmn_remote_client.curse(
+        &owner,
+        &Vec::from_array(&env, [rmn_subject(&env, DEFAULT_REMOTE_CHAIN)]),
+    );
+
+    let sender = Address::generate(&env);
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender,
+        amount: 100,
+        local_token: token_address,
+    };
+
+    let _ = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #47)")] // CursedByRMN
+fn test_release_or_mint_reverts_when_remote_chain_cursed() {
+    // M-6 / INV-POOL-RMN-1: `release_or_mint` reverts `CursedByRMN` when the RMN has
+    // cursed the remote chain's subject, mirroring EVM `TokenPool._validateReleaseOrMint`
+    // (TokenPool.sol:479). The curse check runs before the source-pool membership check.
+    let (
+        env,
+        pool_client,
+        owner,
+        token_address,
+        registry_client,
+        stub_client,
+        _auth_onramp,
+        rmn_remote_client,
+    ) = setup_env_with_rmn();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Curse the remote chain's subject.
+    let _ = rmn_remote_client.curse(
+        &owner,
+        &Vec::from_array(&env, [rmn_subject(&env, DEFAULT_REMOTE_CHAIN)]),
+    );
+
+    let receiver = Address::generate(&env);
+    let release_input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        receiver: receiver.clone(),
+        amount: 0,
+        local_token: token_address,
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+
+    register_offramp_for_chain(&env, &registry_client, &stub_client, DEFAULT_REMOTE_CHAIN);
+    let _ = stub_client.release(&pool_client.address, &release_input, &0u32);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
 fn test_initialize_twice_rejected() {
     let (
@@ -465,12 +688,14 @@ fn test_initialize_twice_rejected() {
         _auth_onramp,
     ) = setup_env();
     let router = Address::generate(&_env);
+    let rmn_proxy = Address::generate(&_env);
     pool_client.initialize(
         &owner,
         &token_address,
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 }
 
@@ -764,13 +989,14 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     token_admin_client.set_admin(&pool_id);
 
     let local_decimals: u32 = 6;
-    let router = Address::generate(&env);
+    let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
         &token_address,
         &local_decimals,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 
     let remote_chain: u64 = DEFAULT_REMOTE_CHAIN;
@@ -825,13 +1051,14 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
     token_admin_client.set_admin(&pool_id);
 
     let local_decimals: u32 = 9;
-    let router = Address::generate(&env);
+    let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
         &token_address,
         &local_decimals,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 
     let remote_chain: u64 = DEFAULT_REMOTE_CHAIN;
@@ -958,8 +1185,16 @@ fn test_initialize_rejects_decimals_above_uint8() {
 
     let router = Address::generate(&env);
     let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
 
-    let r = pool_client.try_initialize(&owner, &token_address, &256u32, &router, &ramp_registry);
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
     assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
 

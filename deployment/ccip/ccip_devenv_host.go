@@ -42,6 +42,8 @@ type CCIPDevenvHost interface {
 	RouterContractID() string
 	SetRampRegistry(contractID string)
 	RampRegistryContractID() string
+	SetRmnProxy(contractID string)
+	RmnProxyContractID() string
 	SetVVR(contractID string)
 	SetCV(contractID string)
 	SetReceiver(contractID string)

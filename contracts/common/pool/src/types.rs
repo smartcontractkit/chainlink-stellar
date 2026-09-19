@@ -188,4 +188,9 @@ pub enum PoolDataKey {
     /// CCIP Router address (EVM `s_router`). Stored separately from the ramp registry;
     /// ramp authorization uses [`PoolDataKey::RampRegistry`].
     Router,
+    /// RMN proxy address (EVM `i_rmnProxy`). Stored on the pool — NOT resolved via
+    /// `Router.get_config()` — so curse checks during `ccip_send` never re-enter the
+    /// Router (Soroban forbids ancestor re-entry; the pool is called via
+    /// Router → OnRamp → Pool). Owner-set via `set_rmn_proxy` (M-6).
+    RmnProxy,
 }
