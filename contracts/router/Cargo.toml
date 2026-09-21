@@ -24,3 +24,4 @@ fee-quoter = { workspace = true }
 onramp = { workspace = true }
 rmn_proxy = { workspace = true }
 rmn_remote = { workspace = true }
+executor = { path = "../executor" }

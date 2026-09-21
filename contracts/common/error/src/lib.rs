@@ -220,4 +220,10 @@ pub enum CCIPError {
     InvalidFeeTokenConversion = 802,
     /// Fee aggregator must be set for withdrawal (mirrors EVM `FeeTokenHandler.ZeroAddressNotAllowed`).
     ZeroFeeAggregatorNotAllowed = 803,
+    /// A message carries more CCVs than the executor's per-message cap allows
+    /// (EVM `Executor.MaxCCVsExceeded`).
+    ExceedsMaxCCVs = 804,
+    /// A CCV supplied to the executor's fee quote is not on its allowlist while
+    /// the allowlist is enabled (EVM `Executor.CCVNotAllowed`).
+    CCVNotAllowed = 805,
 }

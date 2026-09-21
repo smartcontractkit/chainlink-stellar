@@ -4,6 +4,13 @@ use super::*;
 use ccip_receiver_example::{ExampleCcipReceiver, ExampleCcipReceiverClient};
 use common_error::CCIPError;
 use common_message::AnyToStellarMessage;
+use executor::{
+    types::{
+        DynamicConfig as ExecDynamicConfig, RemoteChainConfig as ExecRemoteChainConfig,
+        RemoteChainConfigArgs as ExecRemoteChainConfigArgs,
+    },
+    ExecutorContract, ExecutorContractClient,
+};
 use fee_quoter::{
     types::{DestChainConfig, GasPriceUpdate, PriceUpdates, StaticConfig, TokenPriceUpdate},
     FeeQuoterContract, FeeQuoterContractClient,
@@ -79,6 +86,43 @@ fn deploy_default_ccv_resolver(env: &Env, owner: &Address, dest_chain_selector: 
         },
     ]);
     vvr_id
+}
+
+/// Deploy a real Executor contract for OnRamp integration tests.
+///
+/// The OnRamp's `compute_outbound_fee_breakdown` makes a cross-contract
+/// `Executor::get_fee` call on `dest_config.default_executor` for every
+/// non-no-execution send, so the integration fixtures must register a real
+/// Executor (a bare `Address::generate` has no contract instance and panics
+/// with `Storage::MissingValue`). `usd_cents_fee` mirrors the legacy
+/// `execution_fee_usd_cents` value so fee-magnitude expectations are stable.
+fn setup_executor(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    usd_cents_fee: u32,
+) -> Address {
+    let executor_id = env.register(ExecutorContract, ());
+    let client = ExecutorContractClient::new(env, &executor_id);
+    let dynamic_config = ExecDynamicConfig {
+        fee_aggregator: Some(Address::generate(env)),
+        // 0 = WAIT_FOR_FINALITY only (executor layer of the 5-layer FTF matrix).
+        allowed_finality_config: 0,
+        ccv_allowlist_enabled: false,
+    };
+    client.initialize(owner, &2, &dynamic_config);
+    let to_add = vec![
+        env,
+        ExecRemoteChainConfigArgs {
+            dest_chain_selector,
+            config: ExecRemoteChainConfig {
+                usd_cents_fee,
+                enabled: true,
+            },
+        },
+    ];
+    client.apply_dest_chain_updates(&Vec::new(env), &to_add);
+    executor_id
 }
 
 /// Deploy and configure FeeQuoter for use in OnRamp integration tests.
@@ -530,6 +574,9 @@ fn test_ccip_send_full_flow() {
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
 
+    // ---- Deploy a real Executor; OnRamp cross-calls Executor::get_fee ----
+    let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25);
+
     // ---- Configure OnRamp's dest chain config with Router as the authorized caller ----
     let dest_chain_config = DestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
@@ -540,7 +587,7 @@ fn test_ccip_send_full_flow() {
         token_network_fee_usd_cents: 100,
         base_execution_gas_cost: 200_000,
         execution_fee_usd_cents: 25,
-        default_executor: Address::generate(&env),
+        default_executor,
         lane_mandated_ccvs: Vec::new(&env),
         default_ccvs: vec![&env, default_ccv],
         off_ramp: Bytes::from_array(&env, &[0u8; 20]),
@@ -655,6 +702,9 @@ fn test_get_fee_via_onramp() {
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, dest_chain);
 
+    // Deploy a real Executor; OnRamp cross-calls Executor::get_fee on it.
+    let default_executor = setup_executor(&env, &owner, dest_chain, 25);
+
     onramp_client.apply_dest_chain_config_updates(&vec![
         &env,
         DestChainConfigArgs {
@@ -666,7 +716,7 @@ fn test_get_fee_via_onramp() {
             token_network_fee_usd_cents: 100,
             base_execution_gas_cost: 200_000,
             execution_fee_usd_cents: 25,
-            default_executor: Address::generate(&env),
+            default_executor,
             lane_mandated_ccvs: Vec::new(&env),
             default_ccvs: vec![&env, default_ccv],
             off_ramp: Bytes::from_array(&env, &[0u8; 20]),

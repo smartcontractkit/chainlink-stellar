@@ -4,6 +4,7 @@ members = [
   "contracts/mcms",
   "contracts/timelock",
   "contracts/ccvs/*",
+  "contracts/executor",
   "contracts/examples/ccip_receiver",
   "contracts/fee-quoter",
   "contracts/onramp",

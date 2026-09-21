@@ -757,6 +757,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40404c3f5f511ec4da6fe866ddf6a717c309fdbb69fbbad7b0f3edab8f2e835f"
 
 [[package]]
+name = "executor"
+version = "0.0.0"
+dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
+ "common-helpers",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "fee-quoter"
 version = "0.0.0"
 dependencies = [
@@ -1154,6 +1165,7 @@ dependencies = [
  "common-interfaces",
  "common-message",
  "common-pool",
+ "executor",
  "fee-quoter",
  "pools-lock-release-pool",
  "rmn_proxy",
@@ -1423,6 +1435,7 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-message",
+ "executor",
  "fee-quoter",
  "onramp",
  "rmn_proxy",

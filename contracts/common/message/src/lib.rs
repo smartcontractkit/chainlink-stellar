@@ -124,7 +124,107 @@ impl GenericExtraArgsV3 {
             token_args: Bytes::new(env),
         }
     }
+
+    // ============================================================
+    // Executor sentinels (EVM parity for the `executor` field)
+    // ============================================================
+    //
+    // EVM carries two sentinel values in the extraArgs executor address field:
+    //
+    //   `address(0)`                  → "use the lane's defaultExecutor" (auto exec)
+    //   `NO_EXECUTION_ADDRESS`         → "no auto-execution; manual"
+    //     = address(bytes20(0xeba517d2))   (a non-zero, recognizable 20-byte tag)
+    //
+    // Soroban `Address` has no zero value, so BOTH EVM sentinels become
+    // recognizable non-zero 32-byte *contract* Addresses that live in the
+    // existing `executor` field (no schema change). Each is a 4-byte tag,
+    // left-aligned, zero-padded to 32 bytes — the contract id. Real executor
+    // contracts have hashed 32-byte ids, so collision with a fixed tag is
+    // astronomically infeasible. Byte-level parity with EVM's 20-byte addresses
+    // is impossible (Stellar addresses are 32 bytes); we preserve wire-FIELD-
+    // shape parity instead — the sentinel occupies the executor ADDRESS field on
+    // every chain (INV-NOEXEC-1), and `compute_ccv_and_executor_hash` is
+    // unaffected (it hashes whatever 32 bytes the field holds).
+
+    /// The 4-byte tag prefix of the no-execution sentinel, left-aligned in the
+    /// 32-byte executor address. Mirrors EVM
+    /// `NO_EXECUTION_ADDRESS = address(bytes20(0xeba517d2))`.
+    pub const NO_EXECUTION_TAG: [u8; 4] = [0xeb, 0xa5, 0x17, 0xd2];
+
+    /// The 4-byte tag prefix of the "use default executor" sentinel. Derived as
+    /// `keccak256("USE_DEFAULT_EXECUTOR_TAG")[0..4]`. Mirrors EVM `address(0)`
+    /// in the executor field of non-empty extraArgs — "resolve to the lane's
+    /// `defaultExecutor`" without naming it.
+    pub const USE_DEFAULT_TAG: [u8; 4] = [0x72, 0x06, 0x8b, 0x37];
+
+    /// The full 32-byte contract id of the no-execution sentinel (tag ‖ 28 zero
+    /// bytes). Compared against `CcipMessageV1::address_raw_bytes` to recognize
+    /// the sentinel without constructing an `Address`.
+    const NO_EXECUTION_ID32: [u8; 32] = [
+        0xeb, 0xa5, 0x17, 0xd2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
+
+    /// The full 32-byte contract id of the "use default executor" sentinel.
+    const USE_DEFAULT_ID32: [u8; 32] = [
+        0x72, 0x06, 0x8b, 0x37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
+
+    /// Stellar contract strkey (`C…`) encoding of [`Self::NO_EXECUTION_ID32`].
+    /// Precomputed so the sentinel can be materialized via `Address::from_str`
+    /// with no runtime strkey dependency in the wasm.
+    pub const NO_EXECUTION_STRKEY: &'static str =
+        "CDV2KF6SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEJ6";
+
+    /// Stellar contract strkey (`C…`) encoding of [`Self::USE_DEFAULT_ID32`].
+    pub const USE_DEFAULT_EXECUTOR_STRKEY: &'static str =
+        "CBZANCZXAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVP2";
+
+    // Compile-time guarantee that the two sentinel tags never collide is
+    // enforced at module scope (anonymous `const _: ()` below) — such a const
+    // is not permitted inside an `impl` block.
+
+    /// The no-execution sentinel `Address`. Place in the `executor` field of
+    /// [`GenericExtraArgsV3`] to request manual (non-auto) execution: the OnRamp
+    /// leaves it in place, zeroes the executor flat fee and execution-gas cost,
+    /// and still emits the executor receipt for accounting (M-7 / INV-NOEXEC-1/2).
+    pub fn no_execution_address(env: &Env) -> Address {
+        Address::from_str(env, Self::NO_EXECUTION_STRKEY)
+    }
+
+    /// The "use default executor" sentinel `Address`. Place in the `executor`
+    /// field of non-empty extraArgs to request the lane's `defaultExecutor`
+    /// without naming it — the OnRamp resolves it to `dest_config.default_executor`
+    /// before hashing and before `Executor::get_fee` (EVM `address(0)→default`
+    /// parity; M-5 / INV-ENC-5).
+    pub fn use_default_executor_address(env: &Env) -> Address {
+        Address::from_str(env, Self::USE_DEFAULT_EXECUTOR_STRKEY)
+    }
+
+    /// True iff `addr` is the no-execution sentinel. Comparison is on the raw
+    /// 32-byte address key (via [`CcipMessageV1::address_raw_bytes`]), so it
+    /// recognizes the sentinel regardless of whether the caller materialized it
+    /// via [`Self::no_execution_address`] or off-chain strkey construction.
+    pub fn is_no_execution_address(env: &Env, addr: &Address) -> bool {
+        CcipMessageV1::address_raw_bytes(env, addr.clone())
+            == Bytes::from_array(env, &Self::NO_EXECUTION_ID32)
+    }
+
+    /// True iff `addr` is the "use default executor" sentinel.
+    pub fn is_use_default_executor_address(env: &Env, addr: &Address) -> bool {
+        CcipMessageV1::address_raw_bytes(env, addr.clone())
+            == Bytes::from_array(env, &Self::USE_DEFAULT_ID32)
+    }
 }
+
+// Compile-time guarantee that the two executor sentinel tags never collide.
+const _: () = assert!(
+    GenericExtraArgsV3::USE_DEFAULT_TAG[0] != GenericExtraArgsV3::NO_EXECUTION_TAG[0]
+        && GenericExtraArgsV3::USE_DEFAULT_TAG[1] != GenericExtraArgsV3::NO_EXECUTION_TAG[1]
+        && GenericExtraArgsV3::USE_DEFAULT_TAG[2] != GenericExtraArgsV3::NO_EXECUTION_TAG[2]
+        && GenericExtraArgsV3::USE_DEFAULT_TAG[3] != GenericExtraArgsV3::NO_EXECUTION_TAG[3]
+);
 
 // ============================================================
 // StellarToAnyMessage
