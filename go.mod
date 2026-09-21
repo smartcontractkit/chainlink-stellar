@@ -33,7 +33,6 @@ require (
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/smartcontractkit/chain-selectors v1.0.109 // indirect
-  github.com/smartcontractkit/chainlink-canton/contracts/v2 v2.0.0 // indirect
 	github.com/smartcontractkit/chainlink-ccip/chains/evm v0.0.0-20260918135944-fa1a268dac47 // indirect
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260910195529-801eb99e80b2 // indirect
 	github.com/smartcontractkit/chainlink-deployments-framework v0.120.1-0.20260828145648-3e1bcd2ac1da // indirect
