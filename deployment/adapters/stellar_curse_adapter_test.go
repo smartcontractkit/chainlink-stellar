@@ -23,6 +23,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
 func TestStellarCurseAdapter_InterfaceCompliance(t *testing.T) {
@@ -160,7 +161,7 @@ func adapterTestEnv(t *testing.T, sel uint64, seedHexRMN bool, quals ...string) 
 	}
 }
 
-func TestStellarCurseAdapter_InitializeCachesRoutingFacts(t *testing.T) {
+func TestStellarCurseAdapter_InitializeResolvesRoutingFacts(t *testing.T) {
 	sel := uint64(424242420101)
 	// adapterTestEnv seeds qualifiers in call order: CLL(0), RMNMCMS(1), UFC(2).
 	cclTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-0")
@@ -189,10 +190,72 @@ func TestStellarCurseAdapter_InitializeCachesRoutingFacts(t *testing.T) {
 	require.Equal(t, fastTL, a.timelocks[sel][utils.UltraFastCurseMCMSQualifier])
 	require.Equal(t, cclTL, a.timelocks[sel][utils.CLLQualifier])
 
-	// The advisory admin read never ran (the owner read failed first) and stays
-	// uncached so a later Initialize retries both.
+	// Neither governance fact was stored: the owner read failed first, and the
+	// admin read never runs after it.
 	require.Empty(t, a.owners[sel])
 	require.Empty(t, a.curseAdmins[sel])
+}
+
+func TestStellarCurseAdapter_InitializeRefreshesGovernanceFacts(t *testing.T) {
+	sel := uint64(424242420104)
+	env1 := adapterTestEnv(t, sel, true, utils.RMNTimelockQualifier)
+	env2 := adapterTestEnv(t, sel, true, utils.UltraFastCurseMCMSQualifier)
+
+	deployerOwner := stellarutil.MustGenerateMockContractID("deployer", "owner-0")
+	govTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-0")
+	fastTL := stellarutil.MustGenerateMockContractID("deployer", "timelock-1")
+
+	// Activation moves the RMN Remote from the deployer to the governance
+	// timelock between the two Initialize calls; an admin is granted in between.
+	owners := []string{deployerOwner, govTL}
+	admins := [][]string{nil, {fastTL}}
+	calls := 0
+	a := NewStellarCurseAdapter()
+	a.readOwner = func(context.Context, stellardeps.StellarDeps, datastore.AddressRef) (string, error) {
+		owner := owners[calls]
+		return owner, nil
+	}
+	a.readAdmins = func(context.Context, stellardeps.StellarDeps, datastore.AddressRef) ([]string, error) {
+		return admins[calls], nil
+	}
+
+	require.NoError(t, a.Initialize(env1, sel))
+	require.Equal(t, deployerOwner, a.owners[sel], "before activation the deployer owns")
+	require.Empty(t, a.curseAdmins[sel])
+	require.Contains(t, a.timelocks[sel], utils.RMNTimelockQualifier)
+	require.NotContains(t, a.timelocks[sel], utils.UltraFastCurseMCMSQualifier)
+
+	calls++
+	require.NoError(t, a.Initialize(env2, sel))
+	require.Equal(t, govTL, a.owners[sel], "a cached owner would still route as the deployer post-activation")
+	require.Equal(t, []string{fastTL}, a.curseAdmins[sel], "a newly granted admin must be visible")
+	require.Contains(t, a.timelocks[sel], utils.UltraFastCurseMCMSQualifier, "a stack deployed since the last run must be visible")
+	require.NotContains(t, a.timelocks[sel], utils.RMNTimelockQualifier)
+}
+
+func TestStellarCurseAdapter_InitializeDropsStaleAdminsOnFailedRead(t *testing.T) {
+	sel := uint64(424242420105)
+	env := adapterTestEnv(t, sel, true, utils.RMNTimelockQualifier)
+	fastTL := stellarutil.MustGenerateMockContractID("deployer", "admin-0")
+
+	calls := 0
+	a := NewStellarCurseAdapter()
+	a.readOwner = func(context.Context, stellardeps.StellarDeps, datastore.AddressRef) (string, error) {
+		return fastTL, nil
+	}
+	a.readAdmins = func(context.Context, stellardeps.StellarDeps, datastore.AddressRef) ([]string, error) {
+		if calls == 0 {
+			return []string{fastTL}, nil
+		}
+		return nil, fmt.Errorf("read failure")
+	}
+
+	require.NoError(t, a.Initialize(env, sel))
+	require.Equal(t, []string{fastTL}, a.curseAdmins[sel])
+
+	calls++
+	require.NoError(t, a.Initialize(env, sel), "the advisory admin read degrades, never errors")
+	require.Empty(t, a.curseAdmins[sel], "a failed re-read must drop the stale list so this run never routes on it")
 }
 
 func TestStellarCurseAdapter_InitializeAbsentTimelocksDegrade(t *testing.T) {

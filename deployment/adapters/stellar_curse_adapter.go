@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -36,9 +37,13 @@ var (
 )
 
 // StellarCurseAdapter implements both CurseAdapter and CurseSubjectAdapter for Stellar.
-// Initialize caches the on-chain facts the curse sequences need to route proposals:
-// the RMN Remote / Router contract IDs (strkeys), the RMN owner and curse-admin
-// list, and the RBACTimelock of every deployed MCMS stack keyed by qualifier.
+// Initialize gathers the on-chain facts the curse sequences need to route proposals:
+// the RMN Remote / Router contract IDs (strkeys, cached per selector — they identify
+// the deployment and do not change mid-run), and the RMN owner, curse-admin list and
+// the RBACTimelock of every deployed MCMS stack keyed by qualifier. The governance
+// facts are re-read on every Initialize: activation transfers RMN Remote ownership
+// during a deployment lifecycle and apply_curse_admin_updates changes the admin list,
+// so caching them across runs would route later runs on stale facts.
 // The owner read is mandatory and fatal: routing (and the owner-only uncurse arm)
 // is fail-closed on it, so an RPC failure surfaces from Initialize instead of
 // degrading to an empty value. Direct-only deployments (no MCMS stacks) remain
@@ -50,10 +55,17 @@ type StellarCurseAdapter struct {
 	owners           map[uint64]string
 	curseAdmins      map[uint64][]string
 	timelocks        map[uint64]map[string]string
+	// readOwner and readAdmins are seams over the ownership reads so tests can
+	// vary the on-chain facts between Initialize calls.
+	readOwner  func(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) (string, error)
+	readAdmins func(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) ([]string, error)
 }
 
 func NewStellarCurseAdapter() *StellarCurseAdapter {
-	return &StellarCurseAdapter{}
+	return &StellarCurseAdapter{
+		readOwner:  ownership.ContractOwner,
+		readAdmins: ownership.CurseAdmins,
+	}
 }
 
 func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) error {
@@ -93,62 +105,59 @@ func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) er
 	if a.timelocks == nil {
 		a.timelocks = make(map[uint64]map[string]string)
 	}
-	if _, exists := a.timelocks[selector]; !exists {
-		tls := make(map[string]string)
-		// All three governance stacks are resolved: CLLCCIP is cached for
-		// diagnostics only — it holds no RMN role, but naming its timelock in
-		// build-time errors makes the likeliest operator mistake actionable.
-		for _, qual := range []string{cciputils.CLLQualifier, cciputils.RMNTimelockQualifier, cciputils.UltraFastCurseMCMSQualifier} {
-			if tl, ok := mcmsutil.FindExistingStellarTimelock(datastoreRefs(e), selector, qual); ok {
-				tls[qual] = tl
-			} else {
-				e.Logger.Debugw("no RBACTimelock deployed for qualifier; it will be unavailable for curse routing",
-					"chainSelector", selector, "qualifier", qual)
-			}
+	// Timelocks are resolved from the environment datastore on every call: a
+	// stack deployed by an earlier changeset in the same run must be visible to
+	// the next one. All three governance stacks are resolved: CLLCCIP is kept
+	// for diagnostics only — it holds no RMN role, but naming its timelock in
+	// build-time errors makes the likeliest operator mistake actionable.
+	tls := make(map[string]string)
+	for _, qual := range []string{cciputils.CLLQualifier, cciputils.RMNTimelockQualifier, cciputils.UltraFastCurseMCMSQualifier} {
+		if tl, ok := mcmsutil.FindExistingStellarTimelock(datastoreRefs(e), selector, qual); ok {
+			tls[qual] = tl
+		} else {
+			e.Logger.Debugw("no RBACTimelock deployed for qualifier; it will be unavailable for curse routing",
+				"chainSelector", selector, "qualifier", qual)
 		}
-		a.timelocks[selector] = tls
 	}
+	a.timelocks[selector] = tls
 
-	_, ownerCached := a.owners[selector]
-	_, adminsCached := a.curseAdmins[selector]
-	if !ownerCached || !adminsCached {
-		rmnID := a.rmnContractID[selector]
-		// Canonical datastore type "RMNRemote"; the ownership helpers match the
-		// stellar-local "RmnRemote" constant, so remap the in-memory ref type.
-		rmnRef := stellarccip.RMNRemoteDatastoreRef().FullAddressRef(selector, rmnID)
-		rmnRef.Type = datastore.ContractType(rmnremoteops.ContractType)
-		ch, ok := e.BlockChains.StellarChains()[selector]
-		if !ok {
-			return fmt.Errorf("stellar chain %d not found in environment", selector)
-		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
-		if err != nil {
-			return fmt.Errorf("build deployer on chain %d: %w", selector, err)
-		}
-		deps := stellardeps.FromDeployer(dep)
+	// The owner and curse-admin facts are always re-read: ownership moves at
+	// activation and admin grants move at apply_curse_admin_updates, and one
+	// adapter instance serves every changeset application in the process.
+	rmnID := a.rmnContractID[selector]
+	// Canonical datastore type "RMNRemote"; the ownership helpers match the
+	// stellar-local "RmnRemote" constant, so remap the in-memory ref type.
+	rmnRef := stellarccip.RMNRemoteDatastoreRef().FullAddressRef(selector, rmnID)
+	rmnRef.Type = datastore.ContractType(rmnremoteops.ContractType)
+	ch, ok := e.BlockChains.StellarChains()[selector]
+	if !ok {
+		return fmt.Errorf("stellar chain %d not found in environment", selector)
+	}
+	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	if err != nil {
+		return fmt.Errorf("build deployer on chain %d: %w", selector, err)
+	}
+	deps := stellardeps.FromDeployer(dep)
 
-		if !ownerCached {
-			// The owner read is mandatory: fail-closed curse routing (and the
-			// owner-only uncurse arm) cannot work without it, and a silent
-			// degrade to an empty Owner produces misleading proposal-build
-			// errors far from the actual RPC failure. Surface it here.
-			owner, err := ownership.ContractOwner(e.GetContext(), deps, rmnRef)
-			if err != nil {
-				return fmt.Errorf("read RMN Remote owner on chain %d: %w", selector, err)
-			}
-			a.owners[selector] = owner
-		}
-		if !adminsCached {
-			// The admin list is advisory — owner-based routing still works
-			// without it — so a failed read only disables admin routing for
-			// this run; the key stays absent so a later Initialize retries it.
-			if admins, err := ownership.CurseAdmins(e.GetContext(), deps, rmnRef); err != nil {
-				e.Logger.Debugw("RMN Remote curse admins unavailable; only owner-based routing will be available",
-					"chainSelector", selector, "error", err.Error())
-			} else {
-				a.curseAdmins[selector] = admins
-			}
-		}
+	// The owner read is mandatory: fail-closed curse routing (and the owner-only
+	// uncurse arm) cannot work without it, and a silent degrade to an empty
+	// Owner produces misleading proposal-build errors far from the actual RPC
+	// failure. Surface it here.
+	owner, err := a.readOwner(e.GetContext(), deps, rmnRef)
+	if err != nil {
+		return fmt.Errorf("read RMN Remote owner on chain %d: %w", selector, err)
+	}
+	a.owners[selector] = owner
+
+	// The admin list is advisory — owner-based routing still works without it —
+	// so a failed read only disables admin routing for this run; any value from
+	// an earlier Initialize is dropped so this run never routes on stale admins.
+	if admins, err := a.readAdmins(e.GetContext(), deps, rmnRef); err != nil {
+		delete(a.curseAdmins, selector)
+		e.Logger.Debugw("RMN Remote curse admins unavailable; only owner-based routing will be available",
+			"chainSelector", selector, "error", err.Error())
+	} else {
+		a.curseAdmins[selector] = admins
 	}
 	return nil
 }
