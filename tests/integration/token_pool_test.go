@@ -355,8 +355,17 @@ func TestTokenPool(t *testing.T) {
 			if !parsed.ExecutorReceipt.Issuer.Equal(execRaw) {
 				t.Fatalf("ParseReceiptStructure executor issuer want %s, got %x", defaultExecutor, parsed.ExecutorReceipt.Issuer)
 			}
-			if parsed.TokenReceipts[0].DestGasLimit != 0 || parsed.TokenReceipts[0].DestBytesOverhead != 0 {
-				t.Fatalf("ParseReceiptStructure token receipt dest gas/overhead want 0, got gas=%d overhead=%d",
+			// The token receipt's dest gas/bytes overhead comes from the pool's
+			// TokenTransferFeeConfig when enabled, else the OnRamp falls back to the
+			// FeeQuoter's per-token TokenTransferFeeConfig (onramp L277-282). No pool
+			// fee config is applied here, so the receipt must carry the FeeQuoter
+			// values configured in deployOutboundSendWire (DestGasOverhead=90_000,
+			// DestBytesOverhead=32) — not zero.
+			const wantDestGasLimit uint64 = 90_000
+			const wantDestBytesOverhead uint32 = 32
+			if parsed.TokenReceipts[0].DestGasLimit != wantDestGasLimit || parsed.TokenReceipts[0].DestBytesOverhead != wantDestBytesOverhead {
+				t.Fatalf("ParseReceiptStructure token receipt dest gas/overhead want gas=%d overhead=%d (FeeQuoter fallback), got gas=%d overhead=%d",
+					wantDestGasLimit, wantDestBytesOverhead,
 					parsed.TokenReceipts[0].DestGasLimit, parsed.TokenReceipts[0].DestBytesOverhead)
 			}
 		})
