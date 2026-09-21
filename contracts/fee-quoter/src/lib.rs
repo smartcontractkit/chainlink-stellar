@@ -537,10 +537,13 @@ impl FeeQuoterContract {
         })
     }
 
-    /// Get the fee for sending a CCIP message.
+    /// Get the fee for sending a CCIP message (gas + network only, × premium).
     ///
-    /// This validates the message and calculates the fee based on gas costs,
-    /// token transfer fees, and network fees.
+    /// This validates the message and calculates the fee based on gas costs and
+    /// network fees. The token-transfer fee is NOT included: EVM `FeeQuoter` has
+    /// no bundled message-fee view, and the OnRamp assembles the token fee from
+    /// either the pool's `get_fee` (enabled) or `get_token_transfer_fee`
+    /// (disabled) — exactly once. Including it here caused a double-count.
     ///
     /// # Arguments
     /// * `dest_chain_selector` - Destination chain selector
@@ -589,15 +592,13 @@ impl FeeQuoterContract {
         // Add network fee
         total_usd_cents += dest_config.network_fee_usd_cents as u128;
 
-        // Add token transfer fees if tokens are being sent
-        for token_amount in message.token_amounts.iter() {
-            let token_fee = Self::get_token_transfer_fee(
-                env.clone(),
-                dest_chain_selector,
-                token_amount.token.clone(),
-            )?;
-            total_usd_cents += token_fee.fee_usd_cents as u128;
-        }
+        // NOTE: the token-transfer fee is intentionally NOT bundled here. EVM
+        // `FeeQuoter` has no bundled message-fee view; `OnRamp._getReceipts`
+        // builds the token receipt from either `IPoolV2.getFee` (when the pool's
+        // config is enabled) or `FeeQuoter.getTokenTransferFee` (when not) —
+        // never both. Bundling the token fee here caused the OnRamp to double-
+        // count it (FQ token fee + pool fee). The OnRamp now assembles the token
+        // fee exactly once via `compute_outbound_fee_breakdown`.
 
         // Apply premium multiplier (percentage)
         total_usd_cents = total_usd_cents * gas_quote.premium_multiplier as u128 / 100;

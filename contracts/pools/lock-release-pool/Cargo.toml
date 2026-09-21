@@ -14,10 +14,11 @@ common-error = { workspace = true }
 common-guard = { workspace = true }
 common-authorization = { workspace = true }
 common-pool = { workspace = true }
+common-interfaces = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-common-interfaces = { workspace = true }
+pools-token-lock-box = { path = "../token-lock-box" }
 ccip-ramp-registry = { workspace = true }
 router = { workspace = true }
 rmn_proxy = { workspace = true }

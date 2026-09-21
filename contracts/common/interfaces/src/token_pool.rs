@@ -24,6 +24,7 @@ pub trait TokenPoolInterface {
         caller: soroban_sdk::Address,
         input: LockOrBurnIn,
         requested_finality: u32,
+        token_args: soroban_sdk::Bytes,
     ) -> Result<LockOrBurnOut, CCIPError>;
 
     fn release_or_mint(
@@ -33,13 +34,61 @@ pub trait TokenPoolInterface {
         requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError>;
 
-    /// Returns the pool's fee in USD cents for a cross-chain token transfer to
-    /// `remote_chain_selector`. Allows token issuers to charge additional fees
-    /// on top of the protocol fee (FeeQuoter + CCV + executor).
+    /// Returns the pool fee parameters that will apply to a transfer
+    /// (EVM `IPoolV2.getFee`). EVM's `localToken`/`feeToken` args are omitted
+    /// because the base body ignores them. `is_enabled == false` signals the
+    /// OnRamp to fall back to the FeeQuoter's `get_token_transfer_fee` for the
+    /// flat fee + overheads (EVM `OnRamp._getReceipts` L1047-1053 parity).
     fn get_fee(
         env: soroban_sdk::Env,
-        remote_chain_selector: u64,
+        dest_chain_selector: u64,
+        amount: i128,
+        requested_finality: u32,
+        token_args: soroban_sdk::Bytes,
     ) -> Result<PoolFeeResult, CCIPError>;
+
+    /// Returns the token-transfer fee override for a destination chain
+    /// (EVM `TokenPool.getTokenTransferFeeConfig`). EVM's `localToken`/
+    /// `requestedFinalityConfig`/`tokenArgs` args are omitted because the base
+    /// body ignores them (lookup is by destination chain selector only).
+    /// Returns a disabled config when none is stored.
+    fn get_token_transfer_fee_config(
+        env: soroban_sdk::Env,
+        dest_chain_selector: u64,
+    ) -> Result<TokenTransferFeeConfig, CCIPError>;
+
+    /// Applies a batch of token-transfer fee config additions and disables
+    /// (EVM `TokenPool.applyTokenTransferFeeConfigUpdates`). Owner-only.
+    /// Adds reject `is_enabled == false` (use the disable list), bps >=
+    /// `BPS_DIVIDER`, and `dest_gas_overhead == 0`; the chain must be supported.
+    /// Disables delete the stored entry.
+    fn apply_token_fee_config_updates(
+        env: soroban_sdk::Env,
+        adds: soroban_sdk::Vec<TokenTransferFeeConfigArgs>,
+        disables: soroban_sdk::Vec<u64>,
+    ) -> Result<(), CCIPError>;
+
+    /// Withdraws accrued fee-token balances to `recipient`
+    /// (EVM `TokenPool.withdrawFeeTokens`). Callable by the owner or the fee
+    /// admin. Sweeps the pool's full token balance, which equals accrued fees
+    /// because user liquidity is escrowed in a lockbox (lock-release pools) or
+    /// burned (burn-mint pools), never held on the pool address.
+    fn withdraw_fee_tokens(
+        env: soroban_sdk::Env,
+        fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
+        recipient: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
+
+    /// Sets the fee-admin address authorized to call `withdraw_fee_tokens`
+    /// alongside the owner (EVM parity for the `feeAdmin` field of
+    /// `setDynamicConfig`). EVM folds this into `setDynamicConfig` alongside
+    /// router/rateLimitAdmin; only `feeAdmin` is needed for withdrawal gating,
+    /// so this is a surgical slice rather than full dynamic-config parity.
+    /// Owner-only.
+    fn set_fee_admin(
+        env: soroban_sdk::Env,
+        fee_admin: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
 
     fn is_supported_token(
         env: soroban_sdk::Env,
@@ -164,8 +213,41 @@ pub struct PoolRequiredCCVs {
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PoolFeeResult {
-    /// Fee in USD cents charged by this pool for the transfer.
+    /// Flat fee in USD cents for the requested finality (EVM `feeUSDCents`).
     pub fee_usd_cents: u32,
+    /// Destination gas overhead charged for accounting (EVM `destGasOverhead`).
+    pub dest_gas_overhead: u32,
+    /// Destination data-availability bytes overhead (EVM `destBytesOverhead`).
+    pub dest_bytes_overhead: u32,
+    /// Bps charged in token units for the requested finality (EVM `tokenFeeBps`).
+    /// Zero implies no in-token fee. EVM models this as `uint16`; Soroban's `Val`
+    /// has no `u16` conversions, so it is `u32` (values stay `< BPS_DIVIDER`).
+    pub token_fee_bps: u32,
+    /// Whether the pool's fee config is enabled. If false, the OnRamp should use
+    /// FeeQuoter defaults (EVM `isEnabled`).
+    pub is_enabled: bool,
+}
+
+/// Per-chain token-transfer fee configuration (EVM `IPoolV2.TokenTransferFeeConfig`).
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenTransferFeeConfig {
+    pub dest_gas_overhead: u32,
+    pub dest_bytes_overhead: u32,
+    pub finality_fee_usd_cents: u32,
+    pub fast_finality_fee_usd_cents: u32,
+    pub finality_transfer_fee_bps: u32,
+    pub fast_finality_transfer_fee_bps: u32,
+    pub is_enabled: bool,
+}
+
+/// One entry of an `apply_token_fee_config_updates` batch
+/// (EVM `TokenPool.TokenTransferFeeConfigArgs`).
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenTransferFeeConfigArgs {
+    pub dest_chain_selector: u64,
+    pub config: TokenTransferFeeConfig,
 }
 
 #[soroban_sdk::contracttype(export = false)]
@@ -182,6 +264,10 @@ pub struct LockOrBurnIn {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockOrBurnOut {
     pub dest_token_address: soroban_sdk::Bytes,
+    /// Amount actually bridged (post-fee), written onto the wire as
+    /// `CcipTokenTransferV1.amount` (EVM `lockOrBurn`'s second return value
+    /// `destTokenAmount`).
+    pub dest_token_amount: i128,
     pub dest_pool_data: soroban_sdk::Bytes,
 }
 
@@ -362,6 +448,11 @@ pub enum CCIPError {
     RequestedFinalityCanOnlyHaveOneMode = 316,
     RouterNotConfigured = 318,
     InvalidSourcePoolAddress = 319,
+    /// A token-transfer fee config add is invalid: `is_enabled == false` or
+    /// `dest_gas_overhead == 0` (EVM `TokenPool.InvalidTokenTransferFeeConfig`).
+    InvalidTokenTransferFeeConfig = 321,
+    /// A token-transfer fee config bps is >= `BPS_DIVIDER` (EVM `TokenPool.InvalidTransferFeeBps`).
+    InvalidTransferFeeBps = 322,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
 }

@@ -15,7 +15,7 @@ use common_interfaces::token_pool::{
 };
 use common_pool::{
     encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
-    ReleaseOrMintIn,
+    ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
@@ -370,7 +370,7 @@ fn test_burn_and_mint() {
         local_token: token_address.clone(),
     };
 
-    let burn_result = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let burn_result = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(burn_result.dest_token_address, remote_token);
     assert_eq!(token_client.balance(&sender), 0);
 
@@ -417,7 +417,7 @@ fn test_unsupported_chain_rejected() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -448,7 +448,7 @@ fn test_wrong_token_rejected() {
         local_token: wrong_token,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -627,7 +627,7 @@ fn test_lock_or_burn_reverts_when_remote_chain_cursed() {
         local_token: token_address,
     };
 
-    let _ = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let _ = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 }
 
 #[test]
@@ -728,7 +728,7 @@ fn test_lock_or_burn_zero_amount_succeeds_when_chain_configured() {
         local_token: token_address.clone(),
     };
 
-    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(out.dest_token_address, Bytes::from_slice(&env, &[2u8; 20]));
     assert_eq!(token_client.balance(&sender), 0);
 }
@@ -801,7 +801,7 @@ fn test_lock_or_burn_amount_exceeds_sender_balance_fails() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -836,7 +836,7 @@ fn test_lock_or_burn_negative_amount_fails() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -872,7 +872,7 @@ fn test_apply_chain_updates_remove_unlists_chain() {
         amount: 1,
         local_token: token_address.clone(),
     };
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(result, Err(Ok(CCIPError::ChainNotSupported)));
 
     pool_client.apply_chain_updates(
@@ -925,7 +925,7 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         local_token: token_address,
     };
     assert!(pool_client
-        .try_lock_or_burn(&auth_onramp, &lock_input, &0u32)
+        .try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env))
         .is_ok());
 }
 
@@ -958,7 +958,7 @@ fn test_lock_or_burn_dest_pool_data_encodes_local_decimals() {
         amount: 100,
         local_token: token_address,
     };
-    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     let expected = encode_local_decimals(&env, 7).unwrap();
     assert_eq!(out.dest_pool_data, expected);
     assert_eq!(token_client.balance(&sender), 0);
@@ -1232,7 +1232,7 @@ fn test_lock_or_burn_disabled_rate_limit_passes() {
         amount: 1_000_000,
         local_token: token_address,
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(token_client.balance(&sender), 0);
 }
 
@@ -1281,7 +1281,7 @@ fn test_lock_or_burn_within_outbound_rate_limit() {
         amount: 500,
         local_token: token_address,
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(token_client.balance(&sender), 1500);
 }
 
@@ -1330,7 +1330,7 @@ fn test_lock_or_burn_exceeds_outbound_capacity_rejected() {
         amount: 501,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
 }
 
@@ -1380,7 +1380,7 @@ fn test_lock_or_burn_exceeds_available_tokens_rejected() {
         amount: 800,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     // 200 tokens left, try to burn 201
     let lock_input2 = LockOrBurnIn {
@@ -1390,7 +1390,7 @@ fn test_lock_or_burn_exceeds_available_tokens_rejected() {
         amount: 201,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input2, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input2, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
 }
 
@@ -1440,7 +1440,7 @@ fn test_lock_or_burn_refills_over_time() {
         amount: 1000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     // Advance 50 seconds => refill 500
     env.ledger().with_mut(|li| li.timestamp = 150);
@@ -1451,7 +1451,7 @@ fn test_lock_or_burn_refills_over_time() {
         amount: 500,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input2, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input2, &0u32, &Bytes::new(&env));
 
     // Try to burn 1 more — should fail (0 tokens remaining)
     let lock_input3 = LockOrBurnIn {
@@ -1461,7 +1461,7 @@ fn test_lock_or_burn_refills_over_time() {
         amount: 1,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input3, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input3, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
 }
 
@@ -1689,7 +1689,7 @@ fn test_get_current_rate_limiter_state() {
         amount: 500,
         local_token: token_address,
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     let state2 = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
     assert_eq!(state2.outbound.tokens, 500);
@@ -1749,7 +1749,7 @@ fn test_set_rate_limit_config_updates_limits() {
         amount: 501,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
 }
 
@@ -1891,7 +1891,7 @@ fn test_both_outbound_and_inbound_limits_enforced() {
         amount: 400,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     // Inbound: mint 300 (exactly capacity)
     let receiver = Address::generate(&env);
@@ -2119,7 +2119,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 300,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE, &Bytes::new(&env));
 
     // FTF outbound: 1 more should fail (FTF bucket exhausted)
     env.ledger().with_mut(|li| li.timestamp = 101);
@@ -2130,7 +2130,12 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 4,
         local_token: token_address.clone(),
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input2, &WAIT_FOR_SAFE);
+    let r = pool_client.try_lock_or_burn(
+        &auth_onramp,
+        &lock_input2,
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
 
     // Default outbound should still be unaffected (disabled = no limit)
@@ -2141,7 +2146,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 1000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_default, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_default, &0u32, &Bytes::new(&env));
 }
 
 #[test]
@@ -2176,7 +2181,8 @@ fn test_ftf_outbound_rejected_when_finality_not_allowed() {
         amount: 100,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE);
+    let r =
+        pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
 }
 
@@ -2342,7 +2348,7 @@ fn test_preflight_hook_rejects_lock_or_burn() {
         local_token: token_address.clone(),
     };
 
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::SenderNotAllowed);
     assert_eq!(token_client.balance(&sender), 1_000_000_000);
 }
@@ -2379,7 +2385,7 @@ fn test_postflight_hook_rejects_release_or_mint() {
         amount: 1_000_000_000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(token_client.balance(&sender), 0);
 
     let receiver = Address::generate(&env);
@@ -2459,4 +2465,323 @@ fn test_get_required_ccvs_delegates_to_hooks() {
     assert_eq!(v.ccvs.len(), 1);
     assert_eq!(v.ccvs.get(0).unwrap(), expected_ccv);
     assert!(!v.include_defaults);
+}
+
+// ================================================================
+// Source-side bps fee (H-13, EVM `TokenPool._getFee` / `applyFee` parity)
+//
+// `fee = amount * bps / BPS_DIVIDER` is deducted inside `lock_or_burn`:
+// only `dest_token_amount = amount - fee` is burned / crosses the wire;
+// `fee` accrues on the pool balance for `withdraw_fee_tokens` to sweep
+// (EVM `TokenPool.lockOrBurn` L288-311). `get_fee` is the view that
+// resolves the finality-paired bps (EVM `getFee`); it does NOT return the
+// computed fee amount — the amount is realized on-chain by `lock_or_burn`.
+// These mirror EVM `TokenPool.applyFee.t.sol`
+// (`test_applyFee_CustomFinality`, `test_applyFee_DefaultFinality`,
+// `test_applyFee_RoundsFeeDownToZeroOnDustAmounts`) and
+// `LockReleaseTokenPool.lockOrBurn.t.sol` (1000e18 @ 100 bps → 10e18 fee).
+// ================================================================
+
+const E18: i128 = 1_000_000_000_000_000_000;
+
+/// Apply a `TokenTransferFeeConfig` for `chain` (owner-gated; auth mocked).
+fn apply_fee_config(
+    env: &Env,
+    pool_client: &BurnMintTokenPoolContractClient<'_>,
+    chain: u64,
+    finality_bps: u32,
+    fast_bps: u32,
+) {
+    // `dest_gas_overhead` must be non-zero — the pool's config validation
+    // rejects a zero gas overhead (#321 InvalidTokenTransferFeeConfig).
+    let config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 0,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: finality_bps,
+        fast_finality_transfer_fee_bps: fast_bps,
+        is_enabled: true,
+    };
+    let adds = Vec::from_array(
+        env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: chain,
+            config,
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(env));
+}
+
+#[test]
+fn test_get_fee_default_finality_nonzero_bps() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 250, 0);
+
+    // Default finality (0 == WAIT_FOR_FINALITY) resolves finality_transfer_fee_bps.
+    let result = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &0u32,
+        &Bytes::new(&env),
+    );
+    assert_eq!(result.token_fee_bps, 250);
+    assert!(result.is_enabled);
+    assert_eq!(result.fee_usd_cents, 0);
+}
+
+#[test]
+fn test_get_fee_fast_finality_selects_fast_bps() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Permit WAIT_FOR_SAFE so the view's `ensure_requested_finality_allowed` passes.
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 500);
+
+    // Fast finality → fast_finality_transfer_fee_bps (mirrors test_applyFee_CustomFinality).
+    let fast = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
+    assert_eq!(fast.token_fee_bps, 500);
+    assert!(fast.is_enabled);
+
+    // Default finality → finality_transfer_fee_bps (mirrors test_applyFee_DefaultFinality).
+    let default = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &0u32,
+        &Bytes::new(&env),
+    );
+    assert_eq!(default.token_fee_bps, 100);
+    assert!(default.is_enabled);
+}
+
+#[test]
+fn test_lock_or_burn_deducts_bps_fee_and_accrues() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
+
+    let sender = Address::generate(&env);
+    let amount: i128 = 1_000 * E18; // 1000e18 (EVM parity)
+    token_admin_client.mint(&sender, &amount);
+    assert_eq!(token_client.balance(&sender), amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+
+    // fee = 1000e18 * 100 / 10000 = 10e18; dest = 990e18.
+    let fee: i128 = 10 * E18;
+    let dest: i128 = 990 * E18;
+    assert_eq!(out.dest_token_amount, dest);
+    let pool_address = pool_client.address.clone();
+    // dest is burned; fee accrues on the pool balance; sender is fully debited.
+    assert_eq!(token_client.balance(&pool_address), fee);
+    assert_eq!(token_client.balance(&sender), 0);
+}
+
+#[test]
+fn test_lock_or_burn_dust_amount_rounds_fee_to_zero() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 250, 0);
+
+    let sender = Address::generate(&env);
+    let amount: i128 = 39; // 39 * 250 / 10000 = 0 (floor) — mirrors test_applyFee_RoundsFeeDownToZeroOnDustAmounts
+    token_admin_client.mint(&sender, &amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(out.dest_token_amount, 39);
+    let pool_address = pool_client.address.clone();
+    // No fee accrues; the full dust amount is burned.
+    assert_eq!(token_client.balance(&pool_address), 0);
+    assert_eq!(token_client.balance(&sender), 0);
+}
+
+#[test]
+fn test_get_fee_disabled_config_returns_zero() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // No fee config added → `get_token_transfer_fee_config` returns disabled.
+    let result = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &0u32,
+        &Bytes::new(&env),
+    );
+    assert_eq!(result.token_fee_bps, 0);
+    assert!(!result.is_enabled);
+}
+
+#[test]
+fn test_lock_or_burn_no_config_burns_full_amount() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // No fee config → fee 0, full amount burned.
+    let sender = Address::generate(&env);
+    let amount: i128 = 500 * E18;
+    token_admin_client.mint(&sender, &amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(out.dest_token_amount, amount);
+    let pool_address = pool_client.address.clone();
+    assert_eq!(token_client.balance(&pool_address), 0);
+    assert_eq!(token_client.balance(&sender), 0);
+}
+
+#[test]
+fn test_withdraw_fee_tokens_sweeps_accrued() {
+    let (
+        env,
+        pool_client,
+        owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
+
+    let sender = Address::generate(&env);
+    let amount: i128 = 1_000 * E18;
+    token_admin_client.mint(&sender, &amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+
+    let fee: i128 = 10 * E18;
+    let pool_address = pool_client.address.clone();
+    assert_eq!(token_client.balance(&pool_address), fee);
+
+    // Owner sweeps the accrued fee to a recipient.
+    let recipient = Address::generate(&env);
+    pool_client.withdraw_fee_tokens(&Vec::from_array(&env, [token_address.clone()]), &recipient);
+    assert_eq!(token_client.balance(&recipient), fee);
+    assert_eq!(token_client.balance(&pool_address), 0);
+
+    let _ = owner; // owner-gated call; auth mocked in setup_env
 }

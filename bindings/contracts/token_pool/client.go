@@ -67,11 +67,12 @@ func (c *TokenPoolClient) TypeAndVersion(ctx context.Context) (string, error) {
 }
 
 // LockOrBurn calls the lock_or_burn function on the contract.
-func (c *TokenPoolClient) LockOrBurn(ctx context.Context, caller string, input LockOrBurnIn, requestedFinality uint32) (*LockOrBurnOut, error) {
+func (c *TokenPoolClient) LockOrBurn(ctx context.Context, caller string, input LockOrBurnIn, requestedFinality uint32, tokenArgs []byte) (*LockOrBurnOut, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.MustToScVal(input.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
+		scval.BytesToScVal(tokenArgs),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "lock_or_burn", args)
@@ -107,9 +108,12 @@ func (c *TokenPoolClient) ReleaseOrMint(ctx context.Context, caller string, inpu
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *TokenPoolClient) GetFee(ctx context.Context, remoteChainSelector uint64) (*PoolFeeResult, error) {
+func (c *TokenPoolClient) GetFee(ctx context.Context, destChainSelector uint64, amount *big.Int, requestedFinality uint32, tokenArgs []byte) (*PoolFeeResult, error) {
 	args := []xdr.ScVal{
-		scval.Uint64ToScVal(remoteChainSelector),
+		scval.Uint64ToScVal(destChainSelector),
+		scval.I128ToScVal(amount),
+		scval.Uint32ToScVal(requestedFinality),
+		scval.BytesToScVal(tokenArgs),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
@@ -122,6 +126,71 @@ func (c *TokenPoolClient) GetFee(ctx context.Context, remoteChainSelector uint64
 	}
 
 	return PoolFeeResultFromScVal(*result)
+}
+
+// GetTokenTransferFeeConfig calls the get_token_transfer_fee_config function on the contract.
+func (c *TokenPoolClient) GetTokenTransferFeeConfig(ctx context.Context, destChainSelector uint64) (*TokenTransferFeeConfig, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(destChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_token_transfer_fee_config", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_token_transfer_fee_config: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_token_transfer_fee_config")
+	}
+
+	return TokenTransferFeeConfigFromScVal(*result)
+}
+
+// ApplyTokenFeeConfigUpdates calls the apply_token_fee_config_updates function on the contract.
+func (c *TokenPoolClient) ApplyTokenFeeConfigUpdates(ctx context.Context, adds []TokenTransferFeeConfigArgs, disables []uint64) error {
+	args := []xdr.ScVal{
+		scval.StructSliceToScVal(adds),
+		scval.Uint64SliceToScVal(disables),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_token_fee_config_updates", args)
+	if err != nil {
+		return fmt.Errorf("failed to call apply_token_fee_config_updates: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
+func (c *TokenPoolClient) WithdrawFeeTokens(ctx context.Context, feeTokens []string, recipient string) error {
+	args := []xdr.ScVal{
+		scval.AddressSliceToScVal(feeTokens),
+		scval.AddressToScVal(recipient),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "withdraw_fee_tokens", args)
+	if err != nil {
+		return fmt.Errorf("failed to call withdraw_fee_tokens: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// SetFeeAdmin calls the set_fee_admin function on the contract.
+func (c *TokenPoolClient) SetFeeAdmin(ctx context.Context, feeAdmin string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(feeAdmin),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_fee_admin", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_fee_admin: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // IsSupportedToken calls the is_supported_token function on the contract.

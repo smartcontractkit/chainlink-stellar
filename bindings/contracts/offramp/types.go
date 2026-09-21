@@ -374,6 +374,8 @@ const (
 	CCIPErrorRouterNotConfigured                 = 318
 	CCIPErrorInvalidSourcePoolAddress            = 319
 	CCIPErrorDuplicateCCVNotAllowed              = 320
+	CCIPErrorInvalidTokenTransferFeeConfig       = 321
+	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -500,6 +502,8 @@ var CCIPErrorMessage = map[int]string{
 	318: "router not configured",
 	319: "invalid source pool address",
 	320: "duplicate c c v not allowed",
+	321: "invalid token transfer fee config",
+	322: "invalid transfer fee bps",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",

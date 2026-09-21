@@ -27,5 +27,6 @@ ccvs-versioned-verifier-resolver = { workspace = true }
 ccip-ramp-registry = { workspace = true }
 token-admin-registry = { path = "../token-admin-registry" }
 pools-lock-release-pool = { path = "../pools/lock-release-pool" }
+pools-token-lock-box = { path = "../pools/token-lock-box" }
 common-pool = { workspace = true }
 executor = { path = "../executor" }

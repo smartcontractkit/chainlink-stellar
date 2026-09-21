@@ -53,9 +53,12 @@ func (c *SiloedLockReleasePoolClient) Owner(ctx context.Context) (*string, error
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *SiloedLockReleasePoolClient) GetFee(ctx context.Context, remoteChainSelector uint64) (*PoolFeeResult, error) {
+func (c *SiloedLockReleasePoolClient) GetFee(ctx context.Context, destChainSelector uint64, amount *big.Int, requestedFinality uint32, tokenArgs []byte) (*PoolFeeResult, error) {
 	args := []xdr.ScVal{
-		scval.Uint64ToScVal(remoteChainSelector),
+		scval.Uint64ToScVal(destChainSelector),
+		scval.I128ToScVal(amount),
+		scval.Uint32ToScVal(requestedFinality),
+		scval.BytesToScVal(tokenArgs),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
@@ -205,11 +208,12 @@ func (c *SiloedLockReleasePoolClient) GetLockBox(ctx context.Context, remoteChai
 }
 
 // LockOrBurn calls the lock_or_burn function on the contract.
-func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, caller string, input LockOrBurnIn, requestedFinality uint32) (*LockOrBurnOut, error) {
+func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, caller string, input LockOrBurnIn, requestedFinality uint32, tokenArgs []byte) (*LockOrBurnOut, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.MustToScVal(input.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
+		scval.BytesToScVal(tokenArgs),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "lock_or_burn", args)
@@ -222,6 +226,26 @@ func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, caller str
 	}
 
 	return LockOrBurnOutFromScVal(*result)
+}
+
+// GetFeeAdmin calls the get_fee_admin function on the contract.
+func (c *SiloedLockReleasePoolClient) GetFeeAdmin(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee_admin", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_fee_admin: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_fee_admin")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // GetRmnProxy calls the get_rmn_proxy function on the contract.
@@ -262,6 +286,21 @@ func (c *SiloedLockReleasePoolClient) RequireOwner(ctx context.Context) (string,
 		return "", err
 	}
 	return v, nil
+}
+
+// SetFeeAdmin calls the set_fee_admin function on the contract.
+func (c *SiloedLockReleasePoolClient) SetFeeAdmin(ctx context.Context, feeAdmin string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(feeAdmin),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_fee_admin", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_fee_admin: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetRemotePool calls the get_remote_pool function on the contract.
@@ -530,16 +569,16 @@ func (c *SiloedLockReleasePoolClient) ApplyChainUpdates(ctx context.Context, add
 	return nil
 }
 
-// SetPoolFeeConfig calls the set_pool_fee_config function on the contract.
-func (c *SiloedLockReleasePoolClient) SetPoolFeeConfig(ctx context.Context, remoteChainSelector uint64, config PoolFeeConfig) error {
+// WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
+func (c *SiloedLockReleasePoolClient) WithdrawFeeTokens(ctx context.Context, feeTokens []string, recipient string) error {
 	args := []xdr.ScVal{
-		scval.Uint64ToScVal(remoteChainSelector),
-		scval.MustToScVal(config.ToScVal()),
+		scval.AddressSliceToScVal(feeTokens),
+		scval.AddressToScVal(recipient),
 	}
 
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_pool_fee_config", args)
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "withdraw_fee_tokens", args)
 	if err != nil {
-		return fmt.Errorf("failed to call set_pool_fee_config: %w", err)
+		return fmt.Errorf("failed to call withdraw_fee_tokens: %w", err)
 	}
 
 	_ = result // void return
@@ -732,6 +771,40 @@ func (c *SiloedLockReleasePoolClient) SetAllowedFinalityConfig(ctx context.Conte
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_allowed_finality_config", args)
 	if err != nil {
 		return fmt.Errorf("failed to call set_allowed_finality_config: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetTokenTransferFeeConfig calls the get_token_transfer_fee_config function on the contract.
+func (c *SiloedLockReleasePoolClient) GetTokenTransferFeeConfig(ctx context.Context, destChainSelector uint64) (*TokenTransferFeeConfig, error) {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(destChainSelector),
+	}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_token_transfer_fee_config", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_token_transfer_fee_config: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_token_transfer_fee_config")
+	}
+
+	return TokenTransferFeeConfigFromScVal(*result)
+}
+
+// ApplyTokenFeeConfigUpdates calls the apply_token_fee_config_updates function on the contract.
+func (c *SiloedLockReleasePoolClient) ApplyTokenFeeConfigUpdates(ctx context.Context, adds []TokenTransferFeeConfigArgs, disables []uint64) error {
+	args := []xdr.ScVal{
+		scval.StructSliceToScVal(adds),
+		scval.Uint64SliceToScVal(disables),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_token_fee_config_updates", args)
+	if err != nil {
+		return fmt.Errorf("failed to call apply_token_fee_config_updates: %w", err)
 	}
 
 	_ = result // void return
@@ -1636,6 +1709,78 @@ func ParseFinalityConfigSetEvent(e protocolrpc.EventInfo) (*FinalityConfigSetEve
 	return result, nil
 }
 
+// WaitForLockBoxConfiguredEvent waits for a LockBoxConfiguredEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForLockBoxConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockBoxConfiguredEvent) bool) (*LockBoxConfiguredEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockBoxConfiguredEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseLockBoxConfiguredEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseLockBoxConfiguredEvent(e protocolrpc.EventInfo) (*LockBoxConfiguredEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &LockBoxConfiguredEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "lock_box":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.LockBox = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // WaitForFtfInboundConsumedEvent waits for a FtfInboundConsumedEvent event.
 func (c *SiloedLockReleasePoolClient) WaitForFtfInboundConsumedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FtfInboundConsumedEvent) bool) (*FtfInboundConsumedEvent, error) {
 	startTime := time.Now()
@@ -1701,6 +1846,145 @@ func ParseFtfInboundConsumedEvent(e protocolrpc.EventInfo) (*FtfInboundConsumedE
 			v, err := scval.I128FromScVal(entry.Val)
 			if err == nil {
 				result.Amount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForTokenFeeCfgDeletedEvent waits for a TokenFeeCfgDeletedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgDeletedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgDeletedEvent) bool) (*TokenFeeCfgDeletedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgDeletedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseTokenFeeCfgDeletedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseTokenFeeCfgDeletedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgDeletedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &TokenFeeCfgDeletedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForTokenFeeCfgUpdatedEvent waits for a TokenFeeCfgUpdatedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgUpdatedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgUpdatedEvent) bool) (*TokenFeeCfgUpdatedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgUpdatedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseTokenFeeCfgUpdatedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseTokenFeeCfgUpdatedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgUpdatedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &TokenFeeCfgUpdatedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "config":
+			v, err := TokenTransferFeeConfigFromScVal(entry.Val)
+			if err == nil {
+				result.Config = *v
 			}
 		}
 	}
@@ -2071,78 +2355,6 @@ func ParseOutboundRateLimitConsumedEvent(e protocolrpc.EventInfo) (*OutboundRate
 			v, err := scval.I128FromScVal(entry.Val)
 			if err == nil {
 				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForLockBoxConfiguredEvent waits for a LockBoxConfiguredEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForLockBoxConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockBoxConfiguredEvent) bool) (*LockBoxConfiguredEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockBoxConfiguredEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseLockBoxConfiguredEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseLockBoxConfiguredEvent(e protocolrpc.EventInfo) (*LockBoxConfiguredEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &LockBoxConfiguredEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		case "lock_box":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.LockBox = v
 			}
 		}
 	}

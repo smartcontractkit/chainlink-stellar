@@ -212,6 +212,13 @@ pub enum CCIPError {
     /// User-supplied CCV list (from `ExtraArgsV3`) contains a duplicate address
     /// (EVM `CCVConfigValidation.DuplicateCCVNotAllowed`).
     DuplicateCCVNotAllowed = 320,
+    /// A token-transfer fee config add is invalid: `is_enabled == false` (use the
+    /// disable list instead) or `dest_gas_overhead == 0`
+    /// (EVM `TokenPool.InvalidTokenTransferFeeConfig`).
+    InvalidTokenTransferFeeConfig = 321,
+    /// A token-transfer fee config bps is >= `BPS_DIVIDER` (10_000)
+    /// (EVM `TokenPool.InvalidTransferFeeBps`).
+    InvalidTransferFeeBps = 322,
 
     // ============================================================
     // Calculation errors

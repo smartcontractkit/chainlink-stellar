@@ -21,7 +21,7 @@ use common_message::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
     TokenAmount,
 };
-use common_pool::{ChainUpdate, RateLimitConfig};
+use common_pool::{ChainUpdate, LockBoxEntry, RateLimitConfig};
 use executor::{
     types::{
         DynamicConfig as ExecDynamicConfig, RemoteChainConfig as ExecRemoteChainConfig,
@@ -38,6 +38,7 @@ use fee_quoter::{
     FeeQuoterContract, FeeQuoterContractClient,
 };
 use pools_lock_release_pool::{LockReleaseTokenPoolContract, LockReleaseTokenPoolContractClient};
+use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use router::{RouterContract, RouterContractClient};
@@ -1028,6 +1029,22 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         &Vec::new(&env),
     );
 
+    // L-4: the canonical lock-release pool escrows locked tokens in a TokenLockBox
+    // (parity with its siloed sibling). `lock_or_burn` resolves the lockbox for the
+    // destination chain via `configure_lock_boxes`; without it, `resolve_lock_box`
+    // reverts InvalidConfig (#52). The lockbox holds the transfer token.
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &transfer_token);
+    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
+    pool_client.configure_lock_boxes(&vec![
+        &env,
+        LockBoxEntry {
+            remote_chain_selector: evm_chain_selector,
+            lock_box: lockbox_client.address.clone(),
+        },
+    ]);
+
     ramp_registry_client.apply_onramp_updates(&vec![
         &env,
         OnRampUpdate {
@@ -1129,8 +1146,12 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
     assert_eq!(receipts.get(0).unwrap().issuer, default_ccv);
     assert_eq!(receipts.get(1).unwrap().issuer, pool_id);
-    assert_eq!(receipts.get(1).unwrap().dest_gas_limit, 0);
-    assert_eq!(receipts.get(1).unwrap().dest_bytes_overhead, 0);
+    // H-5 / INV-SRC-5: the pool receipt no longer hardcodes dest_gas_limit /
+    // dest_bytes_overhead to 0. The pool's own `get_fee` is disabled here, so the
+    // OnRamp falls back to the FeeQuoter's per-token `TokenTransferFeeConfig`
+    // (set in `setup_fee_quoter`: dest_gas_overhead=75_000, dest_bytes_overhead=64).
+    assert_eq!(receipts.get(1).unwrap().dest_gas_limit, 75_000);
+    assert_eq!(receipts.get(1).unwrap().dest_bytes_overhead, 64);
 
     assert_eq!(receipts.get(2).unwrap().issuer, default_executor);
     assert_eq!(receipts.get(3).unwrap().issuer, router_id);
