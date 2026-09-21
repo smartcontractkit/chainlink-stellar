@@ -111,4 +111,4 @@ all: build-contracts
     just fmt-contracts
     just lint-contracts
     just test-all
-    just update_cre_artifacts
+    just update-cre-artifacts

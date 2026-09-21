@@ -12,23 +12,19 @@ import (
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-// Executor sentinel tags — must match common/message/src/lib.rs
-// (NO_EXECUTION_TAG / USE_DEFAULT_TAG). Each is a 4-byte tag left-aligned in a
-// 32-byte Soroban contract Address; the OnRamp recognises these instead of the
-// EVM address(0)/NO_EXECUTION_ADDRESS sentinels (Soroban Address has no zero).
+// Executor sentinel raw bytes — alias the single source of truth in
+// chainlink-stellar/ccv/common, which matches common/message/src/lib.rs
+// (NO_EXECUTION_TAG / USE_DEFAULT_TAG): a 4-byte tag left-aligned in a 32-byte
+// Soroban contract Address. The OnRamp recognises these instead of the EVM
+// address(0)/NO_EXECUTION_ADDRESS sentinels (Soroban Address has no zero).
 var (
-	noExecutionSentinelRaw = append(
-		[]byte{0xeb, 0xa5, 0x17, 0xd2}, // NO_EXECUTION_TAG
-		make([]byte, 28)...,
-	)
-	useDefaultSentinelRaw = append(
-		[]byte{0x72, 0x06, 0x8b, 0x37}, // USE_DEFAULT_TAG
-		make([]byte, 28)...,
-	)
+	noExecutionSentinelRaw = common.NoExecutionAddressRaw
+	useDefaultSentinelRaw  = common.UseDefaultExecutorAddressRaw
 )
 
 // sentinelContractStrkey returns the strkey (VersionByteContract) form of a

@@ -314,7 +314,7 @@ func TestRouterCcipSendUnhappyPaths(t *testing.T) {
 	_ = deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
 		localChain, remoteDestChain, mockFeeToken, nil)
 
-	userExecutor := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-executor")
+	userExecutor := stack.ExecutorID
 	validExtra, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
 		Ccvs:               []string{stack.VvrID},
 		CcvArgs:            [][]byte{{}},

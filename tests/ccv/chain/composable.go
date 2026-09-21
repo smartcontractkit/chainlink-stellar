@@ -50,7 +50,6 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 	// emits sensible defaults. Callers that need richer per-send overrides
 	// should construct the Soroban extraArgs externally.
 	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
-		c.deployerKeypair.Address(),
 		c.vvrContractID,
 		cciptestinterfaces.MessageOptions{OutOfOrderExecution: true},
 	)
@@ -65,7 +64,8 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 // caller-supplied [cciptestinterfaces.MessageOptions] (notably a custom
 // Executor), for e2e tests that must drive the OnRamp's executor-sentinel
 // resolution (M-5 use-default / M-7 no-execution). Unlike BuildChainMessage,
-// which hard-codes a default mock executor, this honors opts.Executor (a 32-byte
+// which defaults the executor to the use-default sentinel, this honors
+// opts.Executor (a 32-byte
 // Soroban address or sentinel), opts.ExecutionGasLimit, opts.CCVs, etc. The
 // caller should set opts.OutOfOrderExecution = true to match devenv policy.
 func (c *Chain) BuildStellarMessageWithExecutor(
@@ -74,7 +74,6 @@ func (c *Chain) BuildStellarMessageWithExecutor(
 	opts cciptestinterfaces.MessageOptions,
 ) (routerbindings.StellarToAnyMessage, error) {
 	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
-		c.deployerKeypair.Address(),
 		c.vvrContractID,
 		opts,
 	)
