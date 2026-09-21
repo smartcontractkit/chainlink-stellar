@@ -113,3 +113,49 @@ var Uncurse = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// ApplyCurseAdminUpdatesInput holds admins to add and remove (owner-only on chain).
+type ApplyCurseAdminUpdatesInput struct {
+	ContractID    string   `json:"contract_id"`
+	AddedAdmins   []string `json:"added_admins,omitempty"`
+	RemovedAdmins []string `json:"removed_admins,omitempty"`
+}
+
+// ApplyCurseAdminUpdates calls `apply_curse_admin_updates` on RMN Remote.
+var ApplyCurseAdminUpdates = cldfops.NewOperation(
+	"rmn-remote:apply-curse-admin-updates",
+	stellarops.ContractDeploymentVersion,
+	"Adds and removes curse admins on Stellar RMN Remote",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyCurseAdminUpdatesInput) (stellarops.Void, error) {
+		c := rmnremotebindings.NewRmnRemoteClient(d.Invoker, in.ContractID)
+		if err := c.ApplyCurseAdminUpdates(b.GetContext(), in.AddedAdmins, in.RemovedAdmins); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// GetCurseAdminsInput holds the contract ID to read curse admins from.
+type GetCurseAdminsInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetCurseAdminsOutput holds the stored curse-admin list (simulation read).
+type GetCurseAdminsOutput struct {
+	Admins []string `json:"admins"`
+}
+
+// GetCurseAdmins reads `get_curse_admins` on RMN Remote (simulation).
+var GetCurseAdmins = cldfops.NewOperation(
+	"rmn-remote:get-curse-admins",
+	stellarops.ContractDeploymentVersion,
+	"Reads the stored curse-admin list on Stellar RMN Remote",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetCurseAdminsInput) (GetCurseAdminsOutput, error) {
+		c := rmnremotebindings.NewRmnRemoteClient(d.Invoker, in.ContractID)
+		admins, err := c.GetCurseAdmins(b.GetContext())
+		if err != nil {
+			return GetCurseAdminsOutput{}, err
+		}
+		return GetCurseAdminsOutput{Admins: admins}, nil
+	},
+)

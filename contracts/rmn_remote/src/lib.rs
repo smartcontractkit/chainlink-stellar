@@ -183,7 +183,9 @@ impl RmnRemoteContract {
         Ok(())
     }
 
-    /// Returns addresses allowed to call `curse` (excluding the owner, who may always curse).
+    /// Returns the stored curse-admin list. The owner is implicitly curse-authorized but is
+    /// never inserted into — and is not filtered out of — this list; treat the owner as
+    /// authorized independently of it.
     pub fn get_curse_admins(env: Env) -> Result<Vec<Address>, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         Ok(Self::load_curse_admins(&env))
