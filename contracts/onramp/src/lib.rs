@@ -30,6 +30,61 @@ use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
 
 // ============================================================
+// Fee breakdown (shared by get_fee and forward_from_router)
+// ============================================================
+
+/// Result of [`OnRampContract::compute_outbound_fee_breakdown`]. Carries the
+/// total required fee plus the executor slice (flat fee from `Executor::get_fee`
+/// + priced execution gas) so `forward_from_router` can build the executor
+/// receipt and distribute the executor fee to the executor contract (H-3),
+/// without recomputing anything.
+struct FeeBreakdown {
+    /// Total required fee in fee-token smallest units (message fee + additional).
+    total_fee: i128,
+    /// FeeQuoter message-fee result (carries `fee_token_price` for conversions).
+    message_fee: MessageFeeResult,
+    /// Per-CCV fee responses (used for receipts + execution-gas-limit sum).
+    ccv_fee_responses: Vec<FeeResponse>,
+    /// Executor flat fee in USD cents (from `Executor::get_fee`; 0 for no-exec).
+    executor_flat_usd_cents: u128,
+    /// Priced execution-gas cost in USD cents (via `quote_gas_for_exec`; 0 for no-exec).
+    exec_cost_usd_cents: u128,
+    /// Executor flat fee + exec cost, converted to fee-token units, for H-3
+    /// distribution transfer to the executor contract (0 for no-exec).
+    executor_fee_tokens: i128,
+    /// True iff the executor field is the no-execution sentinel (zero executor
+    /// fees, no distribution, receipt still emitted with the sentinel issuer).
+    is_no_exec: bool,
+    /// Total destination execution gas (Σ CCV `dest_gas_limit` + base + user
+    /// `gas_limit`). A message property — computed always, priced only when
+    /// auto-executing (H-5 / INV-FEE-10).
+    execution_gas_limit: u32,
+}
+
+/// True iff `addr` is the zero Stellar account (EVM `address(0)` parity).
+fn is_zero_account(env: &Env, addr: &Address) -> bool {
+    addr == &Address::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    )
+}
+
+/// Reject a lane `default_executor` that is either executor sentinel or the
+/// zero account — the default executor must be a real, auto-executing contract.
+/// Mirrors EVM `OnRamp.sol:653-656`. (Lives here, not in
+/// `DestChainConfigArgs::validate`, because sentinel/zero recognition requires
+/// `Env`, which the env-less `validate(&self)` does not have.)
+fn validate_default_executor(env: &Env, default_executor: &Address) -> Result<(), CCIPError> {
+    if GenericExtraArgsV3::is_no_execution_address(env, default_executor)
+        || GenericExtraArgsV3::is_use_default_executor_address(env, default_executor)
+        || is_zero_account(env, default_executor)
+    {
+        return Err(CCIPError::InvalidAddress);
+    }
+    Ok(())
+}
+
+// ============================================================
 // Storage Keys
 // ============================================================
 
@@ -149,7 +204,7 @@ impl OnRampContract {
         extra_args: &GenericExtraArgsV3,
         merged_ccvs: &Vec<Address>,
         merged_ccv_args: &Vec<Bytes>,
-    ) -> Result<(i128, MessageFeeResult, Vec<FeeResponse>), CCIPError> {
+    ) -> Result<FeeBreakdown, CCIPError> {
         if merged_ccvs.len() != merged_ccv_args.len() {
             return Err(CCIPError::CCVLengthMismatch);
         }
@@ -196,9 +251,76 @@ impl OnRampContract {
                 .ok_or(CCIPError::InvalidFeeCalculation)?;
         }
 
+        // H-5 / INV-FEE-10: execution_gas_limit = Σ CCV dest_gas_limit + base
+        // execution gas + user gas_limit. This is a *message property* (it goes
+        // into MessageV1), so it is always computed. It is *priced* only when
+        // auto-executing (executor ≠ no-exec sentinel); see below.
+        let mut execution_gas_limit: u32 = 0;
+        for i in 0..ccv_fee_responses.len() {
+            if let Some(r) = ccv_fee_responses.get(i) {
+                execution_gas_limit = execution_gas_limit.saturating_add(r.dest_gas_limit);
+            }
+        }
+        let executor_dest_gas = dest_config
+            .base_execution_gas_cost
+            .saturating_add(extra_args.gas_limit);
+        execution_gas_limit = execution_gas_limit.saturating_add(executor_dest_gas);
+
+        // Executor slice. The "use default" sentinel is resolved to the lane's
+        // concrete `default_executor` by the caller before reaching here, so
+        // `extra_args.executor` is either a concrete contract or the no-execution
+        // sentinel (M-7 / INV-NOEXEC-1/2).
+        let is_no_exec = GenericExtraArgsV3::is_no_execution_address(env, &extra_args.executor);
+
+        // H-8 / INV-FIN-EXEC-1/2 + INV-FEE-8: the executor flat USD-cent fee comes
+        // from `Executor::get_fee` (a view cross-contract call). That call also
+        // enforces the executor layer of the 5-layer FTF opt-in matrix — it
+        // reverts (`InvalidRequestedFinality`) on a disallowed requested finality,
+        // so the OnRamp needs no separate executor-layer finality check.
+        //
+        // H-5 / INV-FEE-10: the execution-gas *cost* is priced via the fee
+        // quoter with NO premium (mirror EVM `OnRamp.sol:1095-1097`: exec cost is
+        // not multiplied by `percentMultiplier`; the message-fee portion already
+        // carries `get_message_fee`'s internal premium). `calldata_size = 0`
+        // because payload bytes are already priced inside `get_message_fee`.
+        let (executor_flat_usd_cents, exec_cost_usd_cents) = if is_no_exec {
+            // No-execution sentinel: zero executor fee, zero exec-gas cost. The
+            // sentinel is left in place (EVM leaves `NO_EXECUTION_ADDRESS`).
+            (0u128, 0u128)
+        } else {
+            let executor_flat = Self::get_executor_fee_internal(
+                env,
+                &extra_args.executor,
+                dest_chain_selector,
+                extra_args.block_confirmations,
+                merged_ccvs,
+                &extra_args.executor_args,
+                &message.fee_token,
+            )? as u128;
+            let calldata_size: u32 = 0;
+            let gas_quote = fee_quoter.quote_gas_for_exec(
+                &dest_chain_selector,
+                &execution_gas_limit,
+                &calldata_size,
+                &message.fee_token,
+            );
+            (executor_flat, gas_quote.gas_cost_usd_cents)
+        };
+
         additional_usd_cents = additional_usd_cents
-            .checked_add(dest_config.execution_fee_usd_cents as u128)
+            .checked_add(executor_flat_usd_cents)
+            .ok_or(CCIPError::InvalidFeeCalculation)?
+            .checked_add(exec_cost_usd_cents)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
+
+        // H-3 / INV-FEE-19: executor fee (flat + exec cost) in fee-token units,
+        // for the receipt and the distribution transfer to the executor contract.
+        let executor_fee_tokens = fee_math::usd_cents_to_fee_token(
+            executor_flat_usd_cents
+                .checked_add(exec_cost_usd_cents)
+                .ok_or(CCIPError::InvalidFeeCalculation)?,
+            message_fee.fee_token_price,
+        )?;
 
         // Convert additional (pool + executor) USD-cents to fee-token units with
         // the EVM 1e34 convention. See `common_helpers::fee_math` for why the
@@ -231,7 +353,16 @@ impl OnRampContract {
             return Err(CCIPError::FeeExceedsMaxAllowed);
         }
 
-        Ok((total_fee, message_fee, ccv_fee_responses))
+        Ok(FeeBreakdown {
+            total_fee,
+            message_fee,
+            ccv_fee_responses,
+            executor_flat_usd_cents,
+            exec_cost_usd_cents,
+            executor_fee_tokens,
+            is_no_exec,
+            execution_gas_limit,
+        })
     }
 
     /// Enforces EVM parity for `destChainConfig.tokenReceiverAllowed`
@@ -378,12 +509,24 @@ impl OnRampContract {
         Self::validate_dest_address(&dest_config, &message.receiver)?;
 
         // Parse extra args with defaults
-        let extra_args = if message.extra_args.len() == 0 {
+        let mut extra_args = if message.extra_args.len() == 0 {
             GenericExtraArgsV3::new(&env, dest_config.default_executor.clone())
         } else {
             GenericExtraArgsV3::from_xdr(&env, &message.extra_args.clone())
                 .map_err(|_| CCIPError::InvalidExtraArgsData)?
         };
+
+        // Resolve the "use default" executor sentinel (M-5 / INV-ENC-5) to the lane's
+        // concrete `default_executor` before hashing and before `Executor::get_fee`.
+        // Mirrors EVM `_parseExtraArgsWithDefaults` `address(0)→default`. The
+        // empty-extra-args branch above already substitutes the concrete default, so this
+        // is a no-op there; it only matters for the non-empty branch where a sender sets
+        // the executor field to the use-default sentinel to customize gas/CCVs while
+        // still requesting the default executor. The no-execution sentinel (M-7) is left
+        // in place and handled in `compute_outbound_fee_breakdown`.
+        if GenericExtraArgsV3::is_use_default_executor_address(&env, &extra_args.executor) {
+            extra_args.executor = dest_config.default_executor.clone();
+        }
 
         // M-8 / INV-FIN-SRC-1/3: reject malformed requested finality (a flag combined with
         // a block depth, or multiple flags) before it is committed verbatim into the
@@ -405,7 +548,7 @@ impl OnRampContract {
             &extra_args,
         )?;
 
-        let (total_fee, _, _) = Self::compute_outbound_fee_breakdown(
+        let breakdown = Self::compute_outbound_fee_breakdown(
             &env,
             dest_chain_selector,
             &message,
@@ -417,7 +560,7 @@ impl OnRampContract {
             &merged_ccv_args,
         )?;
 
-        Ok(total_fee)
+        Ok(breakdown.total_fee)
     }
 
     /// Forward a message from the Router to be sent cross-chain.
@@ -486,12 +629,20 @@ impl OnRampContract {
         original_sender.require_auth_for_args(auth_args);
 
         // Parse extra args; use default when empty (common for simple messages)
-        let extra_args = if message.extra_args.len() == 0 {
+        let mut extra_args = if message.extra_args.len() == 0 {
             GenericExtraArgsV3::new(&env, dest_config.default_executor.clone())
         } else {
             GenericExtraArgsV3::from_xdr(&env, &message.extra_args.clone())
                 .map_err(|_| CCIPError::InvalidExtraArgsData)?
         };
+
+        // Resolve the "use default" executor sentinel (M-5 / INV-ENC-5) to the lane's
+        // concrete `default_executor` before hashing and before `Executor::get_fee`
+        // (EVM `_parseExtraArgsWithDefaults` `address(0)→default`). The no-execution
+        // sentinel (M-7) is left in place and handled in `compute_outbound_fee_breakdown`.
+        if GenericExtraArgsV3::is_use_default_executor_address(&env, &extra_args.executor) {
+            extra_args.executor = dest_config.default_executor.clone();
+        }
 
         // M-8 / INV-FIN-SRC-1/3: reject malformed requested finality (a flag combined with
         // a block depth, or multiple flags) before it is committed verbatim into the
@@ -518,7 +669,7 @@ impl OnRampContract {
 
         // Track A: single fee breakdown for this send (Router no longer calls `get_fee` first).
         // Validate fee before any token lock or sequence bump.
-        let (required_fee, message_fee, ccv_fee_responses) = Self::compute_outbound_fee_breakdown(
+        let breakdown = Self::compute_outbound_fee_breakdown(
             &env,
             dest_chain_selector,
             &message,
@@ -529,9 +680,12 @@ impl OnRampContract {
             &merged_ccvs,
             &merged_ccv_args,
         )?;
-        if fee_token_amount < required_fee {
+        if fee_token_amount < breakdown.total_fee {
             return Err(CCIPError::InsufficientFeeTokenAmount);
         }
+
+        let message_fee = breakdown.message_fee.clone();
+        let ccv_fee_responses = breakdown.ccv_fee_responses.clone();
 
         // Lock or burn tokens via the pool (if token transfer). When tokens are present,
         // also record pool fee for the token receipt emitted after CCV receipts (EVM
@@ -597,19 +751,11 @@ impl OnRampContract {
         let sequence_number = dest_config.message_number;
 
         // EVM parity (OnRamp.sol): `ccipReceiveGasLimit` is the user callback gas, and
-        // `executionGasLimit` is the total destination-chain execution gas (sum of each
-        // receipt's `destGasLimit`). Stellar's `TokenPool::get_fee` does not report a pool
-        // `dest_gas_limit`, so only CCV verifier gas + executor gas contribute here.
-        let mut execution_gas_limit: u32 = 0;
-        for i in 0..ccv_fee_responses.len() {
-            if let Some(r) = ccv_fee_responses.get(i) {
-                execution_gas_limit = execution_gas_limit.saturating_add(r.dest_gas_limit);
-            }
-        }
-        let executor_dest_gas = dest_config
-            .base_execution_gas_cost
-            .saturating_add(extra_args.gas_limit);
-        execution_gas_limit = execution_gas_limit.saturating_add(executor_dest_gas);
+        // `executionGasLimit` is the total destination-chain execution gas (Σ each
+        // receipt's `destGasLimit` + base + user `gasLimit`). Computed once in the shared
+        // `compute_outbound_fee_breakdown` (H-5 / INV-FEE-10) and reused here so the
+        // priced gas and the on-wire `execution_gas_limit` can never diverge.
+        let execution_gas_limit = breakdown.execution_gas_limit;
 
         // Build canonical MessageV1 for message ID computation and event encoding
         let ccip_msg = CcipMessageV1 {
@@ -660,14 +806,22 @@ impl OnRampContract {
             receipts.push_back(r);
         }
 
-        // Executor receipt (always before the network fee receipt)
+        // Executor receipt (always before the network fee receipt). The issuer is
+        // the (possibly sentinel) executor address — the no-execution sentinel is
+        // left in place (M-7 / INV-NOEXEC-2). `fee_token_amount` stores USD cents
+        // (the receipt convention used by every receipt); the executor slice is
+        // the flat `Executor::get_fee` fee + the priced execution-gas cost (both 0
+        // for the no-execution sentinel).
         receipts.push_back(Receipt {
             issuer: extra_args.executor.clone(),
             dest_gas_limit: dest_config
                 .base_execution_gas_cost
                 .saturating_add(extra_args.gas_limit),
             dest_bytes_overhead: 0,
-            fee_token_amount: dest_config.execution_fee_usd_cents as i128,
+            fee_token_amount: (breakdown
+                .executor_flat_usd_cents
+                .checked_add(breakdown.exec_cost_usd_cents)
+                .ok_or(CCIPError::InvalidFeeCalculation)?) as i128,
             extra_args: extra_args.executor_args.clone(),
         });
 
@@ -692,29 +846,24 @@ impl OnRampContract {
         // Persist updated sequence number
         Self::set_dest_chain_config(&env, dest_chain_selector, &dest_config);
 
-        // Sum all USD-cent-denominated receipt fees (CCVs + optional token pool + executor) and convert
-        // to fee token units. The network fee receipt is not summed here because the
-        // FeeQuoter already includes it in message_fee.fee_token_amount.
+        // Sum every USD-cent-denominated receipt fee EXCEPT the trailing network
+        // fee receipt (the FeeQuoter already includes the network fee in
+        // `message_fee.fee_token_amount`). This stays in lockstep with
+        // `compute_outbound_fee_breakdown`, which prices the executor flat fee
+        // (`Executor::get_fee`) + execution-gas cost and folds both into the same
+        // `additional_usd_cents` the total fee is built from — so summing the
+        // receipts reproduces that amount without re-reading the now-deprecated
+        // `execution_fee_usd_cents` lane field (the live executor fee now comes
+        // from the Executor contract).
+        let network_receipt_index = receipts.len().saturating_sub(1);
         let mut additional_usd_cents: u128 = 0;
-        let ccv_receipt_count = merged_ccvs.len();
-        for i in 0..ccv_receipt_count {
+        for i in 0..network_receipt_index {
             if let Some(r) = receipts.get(i) {
                 additional_usd_cents = additional_usd_cents
                     .checked_add(r.fee_token_amount as u128)
                     .ok_or(CCIPError::InvalidFeeCalculation)?;
             }
         }
-        if !message.token_amounts.is_empty() {
-            if let Some(r) = receipts.get(ccv_receipt_count) {
-                additional_usd_cents = additional_usd_cents
-                    .checked_add(r.fee_token_amount as u128)
-                    .ok_or(CCIPError::InvalidFeeCalculation)?;
-            }
-        }
-        // Executor fee (matches receipt at index after CCVs and optional pool row)
-        additional_usd_cents = additional_usd_cents
-            .checked_add(dest_config.execution_fee_usd_cents as u128)
-            .ok_or(CCIPError::InvalidFeeCalculation)?;
 
         // Convert additional (CCV + executor) USD-cents to fee-token units with
         // the EVM 1e34 convention (see `common_helpers::fee_math`).
@@ -730,11 +879,13 @@ impl OnRampContract {
             return Err(CCIPError::InsufficientFeeTokenAmount);
         }
 
-        // Distribute accumulated fee tokens to the fee aggregator.
-        // CCV and executor fees stay in the OnRamp balance for later
-        // withdrawal via `withdraw_fee_tokens`; the network fee portion is
-        // transferred to fee_aggregator immediately so protocol revenue is
-        // not delayed.
+        // Distribute fee tokens at send time. CCV fees stay in the OnRamp balance
+        // for later sweep via `withdraw_fee_tokens` (CCV/pool distribution is out
+        // of scope). Two portions are transferred immediately:
+        //   * the network fee → fee_aggregator (protocol revenue, not delayed); and
+        //   * the executor fee (H-3 / INV-FEE-19) → the executor contract, which
+        //     custody/sweeps it via `Executor::withdraw_fee_tokens`. Skipped for the
+        //     no-execution sentinel (M-7) and when the priced amount rounds to 0.
         if fee_token_amount > 0 {
             let fee_token_client = token::Client::new(&env, &message.fee_token);
             let onramp_address = env.current_contract_address();
@@ -751,6 +902,14 @@ impl OnRampContract {
                         &network_fee_tokens,
                     );
                 }
+            }
+            // H-3: executor fee transfer to the executor contract.
+            if !breakdown.is_no_exec && breakdown.executor_fee_tokens > 0 {
+                fee_token_client.transfer(
+                    &onramp_address,
+                    &extra_args.executor,
+                    &breakdown.executor_fee_tokens,
+                );
             }
         }
 
@@ -931,6 +1090,12 @@ impl OnRampContract {
         for args in dest_chain_config_args.iter() {
             // Basic validation for non-zero configs and offramp address
             args.validate()?;
+
+            // Env-aware executor-sentinel/zero check (EVM `OnRamp.sol:653-656`):
+            // a lane's `default_executor` must be a real, auto-executing contract.
+            // This cannot live in the env-less `DestChainConfigArgs::validate`
+            // because recognizing the sentinel/zero `Address` requires `Env`.
+            validate_default_executor(&env, &args.default_executor)?;
 
             // Validate that the message is not to self
             if args.dest_chain_selector == static_config.chain_selector {
@@ -1278,6 +1443,36 @@ impl OnRampContract {
 
         env.invoke_contract::<Result<FeeResponse, CCIPError>>(
             ccv_address,
+            &Symbol::new(env, "get_fee"),
+            fee_args,
+        )
+    }
+
+    /// Cross-contract call to `Executor::get_fee` (H-8 / INV-FEE-8). Uses a raw
+    /// `invoke_contract` (not `ExecutorClient`) so the `Result<u32, CCIPError>`
+    /// return propagates through `?` — the interface crate redeclares `CCIPError`
+    /// as a separate type, so a typed client would raise a type mismatch. Mirrors
+    /// [`Self::get_ccv_fee_internal`]. The executor view enforces the executor
+    /// layer of the 5-layer FTF opt-in matrix (reverting on disallowed finality),
+    /// so the OnRamp needs no separate executor-layer finality check.
+    fn get_executor_fee_internal(
+        env: &Env,
+        executor_address: &Address,
+        dest_chain_selector: u64,
+        requested_finality_config: u32,
+        ccv_addresses: &Vec<Address>,
+        executor_args: &Bytes,
+        fee_token: &Address,
+    ) -> Result<u32, CCIPError> {
+        let mut fee_args = Vec::new(env);
+        fee_args.push_back(dest_chain_selector.into_val(env));
+        fee_args.push_back(requested_finality_config.into_val(env));
+        fee_args.push_back(ccv_addresses.clone().into_val(env));
+        fee_args.push_back(executor_args.clone().into_val(env));
+        fee_args.push_back(fee_token.clone().into_val(env));
+
+        env.invoke_contract::<Result<u32, CCIPError>>(
+            executor_address,
             &Symbol::new(env, "get_fee"),
             fee_args,
         )

@@ -8,7 +8,6 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 )
 
 // EncodeStellarSourceExtraArgsForOnRamp maps cciptest MessageOptions into the Soroban
@@ -20,7 +19,7 @@ import (
 // We do not register this as cciptestinterfaces.ExtraArgsSerializer(FamilyStellar)
 // because:
 //  1. ExtraArgsSerializer is func(MessageOptions) []byte with no chain context, but
-//     sensible defaults require the deployer account (mock executor) and VVR contract.
+//     the default CCV (the lane's VVR) must be supplied, which needs chain context.
 //  2. That registry is keyed by destination family for EVM-style sends where the
 //     wire format follows the *destination* executor; Stellar OnRamp always consumes
 //     Soroban GenericExtraArgsV3 XDR regardless of destination, so dest-family lookup
@@ -34,7 +33,7 @@ import (
 // so it lives in the tests module rather than the root production module — keeping the
 // root module free of the devenv (and transitively chainlink-testing-framework)
 // dependency.
-func EncodeStellarSourceExtraArgsForOnRamp(deployerGAddr, vvrContractID string, opts cciptestinterfaces.MessageOptions) ([]byte, error) {
+func EncodeStellarSourceExtraArgsForOnRamp(vvrContractID string, opts cciptestinterfaces.MessageOptions) ([]byte, error) {
 	var ccvAddrs []string
 	var ccvArgs [][]byte
 	if len(opts.CCVs) > 0 {
@@ -57,11 +56,20 @@ func EncodeStellarSourceExtraArgsForOnRamp(deployerGAddr, vvrContractID string, 
 		ccvArgs = [][]byte{{}}
 	}
 
-	executor := stellarutil.MustGenerateMockContractID(deployerGAddr, "executor")
+	// Default to the "use default executor" sentinel (EVM address(0) parity): the
+	// OnRamp resolves it to the lane's configured default_executor before
+	// Executor::get_fee, so normal sends target the deployed Executor contract
+	// instead of a mock address with no contract instance (which would trap with
+	// Error(Storage, MissingValue) on the cross-contract get_fee call). A
+	// caller-supplied opts.Executor (concrete address or sentinel) overrides it.
+	executor, err := common.ExecutorSentinelStrkey(common.UseDefaultExecutorAddressRaw)
+	if err != nil {
+		return nil, fmt.Errorf("encode use-default executor sentinel: %w", err)
+	}
 	if len(opts.Executor) > 0 {
-		ex, err := strkey.Encode(strkey.VersionByteContract, []byte(opts.Executor))
-		if err != nil {
-			return nil, fmt.Errorf("encode executor address: %w", err)
+		ex, encErr := strkey.Encode(strkey.VersionByteContract, []byte(opts.Executor))
+		if encErr != nil {
+			return nil, fmt.Errorf("encode executor address: %w", encErr)
 		}
 		executor = ex
 	}

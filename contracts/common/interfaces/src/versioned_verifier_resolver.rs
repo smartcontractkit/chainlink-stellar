@@ -198,6 +198,8 @@ pub enum CCIPError {
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
+    ExceedsMaxCCVs = 804,
+    CCVNotAllowed = 805,
 }
 #[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

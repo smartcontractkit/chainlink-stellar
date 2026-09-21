@@ -26,10 +26,6 @@ pub trait BurnMintPoolInterface {
         input: LockOrBurnIn,
         requested_finality: u32,
     ) -> Result<LockOrBurnOut, CCIPError>;
-    /// RMN proxy set once at `initialize` and immutable thereafter (mirrors EVM
-    /// `TokenPool`'s `immutable i_rmnProxy` constructor arg — there is NO
-    /// `set_rmn_proxy` entrypoint). Consulted by `lock_or_burn` / `release_or_mint`
-    /// for remote-chain curse checks.
     fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_remote_pool(
@@ -324,6 +320,8 @@ pub enum CCIPError {
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
+    ExceedsMaxCCVs = 804,
+    CCVNotAllowed = 805,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

@@ -22,6 +22,13 @@ use common_message::{
     TokenAmount,
 };
 use common_pool::{ChainUpdate, RateLimitConfig};
+use executor::{
+    types::{
+        DynamicConfig as ExecDynamicConfig, RemoteChainConfig as ExecRemoteChainConfig,
+        RemoteChainConfigArgs as ExecRemoteChainConfigArgs,
+    },
+    ExecutorContract, ExecutorContractClient,
+};
 use fee_quoter::{
     types::{
         DestChainConfig, DestChainConfigArgs as FqDestChainConfigArgs, GasPriceUpdate,
@@ -866,6 +873,43 @@ fn setup_fee_quoter(
     fee_quoter_id
 }
 
+/// Deploys a real `ExecutorContract`, initializes it (CCV allowlist off, with
+/// the given `allowed_finality_config`), and enables `dest_chain_selector` with
+/// `usd_cents_fee`. Returns the executor contract address, to use as a lane's
+/// `default_executor`. Mirrors EVM `Executor` wiring: the OnRamp cross-contract
+/// `get_fee` call hits this real contract, so the test exercises the actual
+/// executor interface.
+fn setup_executor(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    usd_cents_fee: u32,
+    allowed_finality_config: u32,
+) -> Address {
+    let executor_id = env.register(ExecutorContract, ());
+    let client = ExecutorContractClient::new(env, &executor_id);
+    let dynamic_config = ExecDynamicConfig {
+        fee_aggregator: Some(Address::generate(env)),
+        // `allowed_finality_config` is the executor layer of the 5-layer FTF
+        // opt-in matrix (H-8). 0 = WAIT_FOR_FINALITY only.
+        allowed_finality_config,
+        ccv_allowlist_enabled: false,
+    };
+    client.initialize(owner, &2, &dynamic_config);
+    let to_add = vec![
+        env,
+        ExecRemoteChainConfigArgs {
+            dest_chain_selector,
+            config: ExecRemoteChainConfig {
+                usd_cents_fee,
+                enabled: true,
+            },
+        },
+    ];
+    client.apply_dest_chain_updates(&Vec::new(env), &to_add);
+    executor_id
+}
+
 fn receipts_from_last_onramp_ccip_event(env: &Env, onramp: &Address) -> Vec<Receipt> {
     let evs = env.events().all().filter_by_contract(onramp);
     for e in evs.events().iter().rev() {
@@ -1025,7 +1069,10 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     onramp_client.initialize(&owner, &static_config, &dynamic_config);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
-    let default_executor = Address::generate(&env);
+    // Real Executor contract (EVM parity): the OnRamp cross-contract `get_fee`
+    // call hits this contract. Configured with a 25-cent flat fee, matching the
+    // legacy `execution_fee_usd_cents` so existing fee-magnitude expectations hold.
+    let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
 
     let dest_chain_config = OnrampDestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
@@ -1088,8 +1135,20 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     assert_eq!(receipts.get(2).unwrap().issuer, default_executor);
     assert_eq!(receipts.get(3).unwrap().issuer, router_id);
 
+    // H-3 / INV-FEE-19: the executor fee (flat 25 cents + priced exec gas) is
+    // transferred to the Executor contract at send time. The executor receipt
+    // carries the same amount (USD cents) and must be positive.
+    let executor_receipt_fee = receipts.get(2).unwrap().fee_token_amount;
+    assert!(
+        executor_receipt_fee > 0,
+        "executor receipt fee must be positive"
+    );
+
     // H-2 / INV-TR-3: with empty `extra_args` (no `token_receiver`), the encoded token
     // transfer's `token_receiver` must default to `message.receiver` (EVM `OnRamp.sol:311`).
+    // NOTE: this event extraction MUST run before any further contract invocation below —
+    // `env.events()` in the test env only reflects events from the most-recent contract
+    // call, so a `token::Client::balance` query would clear the CCIPMessageSent event.
     let encoded = encoded_message_from_last_onramp_event(&env, &onramp_id);
     let decoded = CcipMessageV1::from_bytes(&env, &encoded).expect("decode encoded message");
     let token_transfer = CcipTokenTransferV1::from_bytes(&env, &decoded.token_transfer)
@@ -1097,6 +1156,14 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     assert_eq!(
         token_transfer.token_receiver, message.receiver,
         "empty tokenReceiver must default to the message receiver"
+    );
+
+    // H-3 balance check (contract invocation) — deliberately last, after all event
+    // extraction, for the reason noted above.
+    let fee_token_client = token::Client::new(&env, &fee_token);
+    assert!(
+        fee_token_client.balance(&default_executor) > 0,
+        "executor fee must be transferred to the executor contract (H-3)"
     );
 }
 
@@ -1159,6 +1226,10 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
     onramp_client.initialize(&owner, &static_config, &dynamic_config);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+    // Real Executor (25-cent flat fee) so the OnRamp `get_fee` cross-contract call
+    // succeeds; the cap then trips on the total (network 50 cents alone already
+    // exceeds the 1-cent cap).
+    let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
 
     let dest_chain_config = OnrampDestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
@@ -1169,7 +1240,7 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
         token_network_fee_usd_cents: 100,
         base_execution_gas_cost: 200_000,
         execution_fee_usd_cents: 25,
-        default_executor: Address::generate(&env),
+        default_executor: default_executor.clone(),
         lane_mandated_ccvs: Vec::new(&env),
         default_ccvs: vec![&env, default_ccv.clone()],
         off_ramp: Bytes::from_array(&env, &[0u8; 20]),
@@ -1361,4 +1432,395 @@ fn test_get_fee_reverts_when_requested_finality_malformed() {
     };
 
     onramp_client.get_fee(&evm_chain_selector, &message);
+}
+
+// ============================================================
+// Executor sentinel + executor-layer finality tests (H-3/H-5/H-8/M-5/M-7)
+// ============================================================
+
+// WAIT_FOR_SAFE flag (single mode, valid shape) — requesting this against an
+// executor that only allows WAIT_FOR_FINALITY must trip the executor-layer FTF
+// opt-in check (#315).
+const EXEC_TEST_WAIT_FOR_SAFE: u32 = 1 << 16;
+
+/// A data-only (no token transfer) Stellar→EVM lane with a real `Executor`
+/// contract wired as `default_executor`. Avoids the pool / ramp-registry /
+/// token-admin-registry setup so the executor slice can be exercised in
+/// isolation. Fields are held by value (soroban clients own their `Env`).
+struct DataOnlyLane {
+    env: Env,
+    sender: Address,
+    evm_chain_selector: u64,
+    onramp_id: Address,
+    onramp_client: OnRampContractClient<'static>,
+    router_client: RouterContractClient<'static>,
+    fee_token: Address,
+    fee_token_sac: token::StellarAssetClient<'static>,
+    default_executor: Address,
+}
+
+impl DataOnlyLane {
+    /// Send a data-only message with the given extra args; return the receipts
+    /// emitted in the `CCIPMessageSent` event. Receipt extraction MUST run
+    /// immediately after `ccip_send` — `env.events()` reflects only the most
+    /// recent top-level contract invocation, so any intervening contract call
+    /// (e.g. a `balance` query) would wipe the event view.
+    fn send_data_only(&self, extra_args: GenericExtraArgsV3) -> Vec<Receipt> {
+        self.send_data_only_full(extra_args).0
+    }
+
+    /// Like `send_data_only` but also returns the `encoded_message` (canonical
+    /// `CcipMessageV1` bytes) from the same `CCIPMessageSent` event, so callers
+    /// can inspect fields committed to the message ID (e.g. the
+    /// `ccv_and_executor_hash`) without a second event extraction that would
+    /// race the event view. Both extractions run back-to-back right after
+    /// `ccip_send`, before any other contract call.
+    fn send_data_only_full(&self, extra_args: GenericExtraArgsV3) -> (Vec<Receipt>, Bytes) {
+        let env = &self.env;
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data: Bytes::from_slice(env, b"data-only send"),
+            token_amounts: Vec::new(env),
+            fee_token: self.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
+        let encoded = encoded_message_from_last_onramp_event(env, &self.onramp_id);
+        (receipts, encoded)
+    }
+}
+
+fn setup_data_only_lane(
+    executor_usd_cents_fee: u32,
+    executor_allowed_finality: u32,
+) -> DataOnlyLane {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(&env, &router_id);
+    router_client.initialize(&owner, &rmn_proxy_id);
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let fee_token_admin = Address::generate(&env);
+    let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
+    let fee_token = fee_token_contract.address();
+    let fee_token_sac = token::StellarAssetClient::new(&env, &fee_token);
+
+    // `transfer_token` is unused for a data-only send, but `setup_fee_quoter`
+    // registers a price for it.
+    let transfer_token = Address::generate(&env);
+    let fee_quoter_id = setup_fee_quoter(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+    );
+
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: Address::generate(&env),
+        rmn_proxy: rmn_proxy_id.clone(),
+        max_usd_cents_per_message: 100_000, // $1000 cap
+    };
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: Address::generate(&env),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+    let default_executor = setup_executor(
+        &env,
+        &owner,
+        evm_chain_selector,
+        executor_usd_cents_fee,
+        executor_allowed_finality,
+    );
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: router_id.clone(),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: default_executor.clone(),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, default_ccv.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+    router_client.set_onramp(&evm_chain_selector, &onramp_id);
+
+    DataOnlyLane {
+        env,
+        sender,
+        evm_chain_selector,
+        onramp_id,
+        onramp_client,
+        router_client,
+        fee_token,
+        fee_token_sac,
+        default_executor,
+    }
+}
+
+/// M-7 / INV-NOEXEC-1/2, INV-FEE-9: a message whose `executor` field is the
+/// no-execution sentinel must (a) leave the sentinel in place as the executor
+/// receipt issuer, (b) zero the executor flat fee AND the execution-gas cost,
+/// and (c) NOT transfer any fee token to the sentinel (no auto-execution). The
+/// OnRamp must not call `Executor::get_fee` on the sentinel.
+#[test]
+fn test_no_execution_sentinel_zero_executor_fee_and_no_transfer() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    let no_exec = GenericExtraArgsV3::no_execution_address(env);
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: no_exec.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let receipts = lane.send_data_only(extra_args);
+    // Data-only: [CCV, Executor, NetworkFee] (no pool row).
+    assert_eq!(receipts.len(), 3, "expected 1 CCV + executor + network");
+    assert_eq!(
+        receipts.get(1).unwrap().issuer,
+        no_exec,
+        "executor receipt issuer must be the no-execution sentinel"
+    );
+    assert_eq!(
+        receipts.get(1).unwrap().fee_token_amount,
+        0,
+        "no-execution sentinel must yield zero executor fee (flat + exec gas)"
+    );
+
+    // No H-3 transfer to the sentinel. (Contract call — run last, after event
+    // extraction, since it clears the event view.)
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&no_exec),
+        0,
+        "no-execution sentinel must receive no fee token transfer (M-7)"
+    );
+}
+
+/// M-5 / INV-ENC-5: a non-empty `extra_args` whose `executor` field is the
+/// "use default" sentinel must resolve to the lane's concrete `default_executor`
+/// BEFORE hashing and before `Executor::get_fee`. Proved by the send succeeding
+/// (the sentinel address itself has no `get_fee` contract, so an unresolved
+/// sentinel would panic) and the executor receipt issuer being the real
+/// default executor with a positive fee.
+#[test]
+fn test_use_default_sentinel_resolves_to_default_executor() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    let use_default = GenericExtraArgsV3::use_default_executor_address(env);
+    // Non-empty extra_args customizing gas_limit while requesting the default
+    // executor via the sentinel (the ergonomic gap closed by M-5).
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 100_000,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: use_default,
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let receipts = lane.send_data_only(extra_args);
+    assert_eq!(receipts.len(), 3, "expected 1 CCV + executor + network");
+    assert_eq!(
+        receipts.get(1).unwrap().issuer,
+        lane.default_executor,
+        "use-default sentinel must resolve to the lane default_executor before receipt"
+    );
+    assert!(
+        receipts.get(1).unwrap().fee_token_amount > 0,
+        "resolved default executor must charge a positive fee (flat + exec gas)"
+    );
+
+    // H-3: the executor fee is transferred to the resolved (concrete) executor.
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert!(
+        fee_token_client.balance(&lane.default_executor) > 0,
+        "resolved default executor must receive the fee transfer (H-3)"
+    );
+}
+
+/// M-5 / INV-ENC-5 (hash-stability half): the OnRamp must resolve the
+/// "use default" sentinel to `default_executor` BEFORE computing
+/// `ccv_and_executor_hash`, so a message sent with the sentinel commits the
+/// SAME hash as a message sent with the concrete `default_executor` directly
+/// (identical CCVs, identical gas). The companion test above proves the
+/// resolution (receipt issuer + fee); this one proves the hash consequence —
+/// the part that keeps the message ID stable across the `address(0)→default`
+/// parity. `ccv_and_executor_hash` excludes the sequence number, so the two
+/// sends (which increment the sequence) still produce comparable hashes,
+/// isolating the executor-resolution effect.
+#[test]
+fn test_use_default_sentinel_hash_matches_concrete_default() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    // Send with the use-default sentinel.
+    let use_default = GenericExtraArgsV3::use_default_executor_address(env);
+    let sentinel_args = GenericExtraArgsV3 {
+        gas_limit: 100_000,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: use_default,
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (_, encoded_sentinel) = lane.send_data_only_full(sentinel_args);
+    let hash_sentinel = CcipMessageV1::from_bytes(env, &encoded_sentinel)
+        .expect("decode sentinel send")
+        .ccv_and_executor_hash;
+
+    // Send the same message with the concrete default_executor directly.
+    let concrete_args = GenericExtraArgsV3 {
+        gas_limit: 100_000,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (_, encoded_concrete) = lane.send_data_only_full(concrete_args);
+    let hash_concrete = CcipMessageV1::from_bytes(env, &encoded_concrete)
+        .expect("decode concrete send")
+        .ccv_and_executor_hash;
+
+    assert_eq!(
+        hash_sentinel, hash_concrete,
+        "use-default sentinel must hash identically to the concrete default_executor \
+         (resolution before hashing — M-5 message-ID-stability parity)"
+    );
+}
+
+/// H-8 / INV-FIN-EXEC-1/2, INV-FEE-8: the executor layer of the 5-layer FTF
+/// opt-in matrix is enforced end-to-end through the cross-contract
+/// `Executor::get_fee` call. The executor allows only WAIT_FOR_FINALITY (0);
+/// requesting WAIT_FOR_SAFE (a valid single mode, so the OnRamp's own
+/// malformed-finality check passes) must make the executor revert with
+/// InvalidRequestedFinality (#315).
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")] // InvalidRequestedFinality
+fn test_disallowed_finality_reverts_end_to_end_via_executor() {
+    let lane = setup_data_only_lane(25, 0); // executor allows WAIT_FOR_FINALITY only
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: EXEC_TEST_WAIT_FOR_SAFE, // valid shape, but disallowed by executor
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::from_slice(env, b"disallowed finality"),
+        token_amounts: Vec::new(env),
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    lane.onramp_client
+        .get_fee(&lane.evm_chain_selector, &message);
+}
+
+/// A lane's `default_executor` may not be the no-execution sentinel — the
+/// default must be a real, auto-executing contract (EVM `OnRamp.sol:653-656`).
+/// `apply_dest_chain_config_updates` must reject it with InvalidAddress (#56).
+#[test]
+#[should_panic(expected = "Error(Contract, #56)")] // InvalidAddress
+fn test_apply_dest_chain_updates_rejects_no_exec_sentinel_default_executor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.default_executor = GenericExtraArgsV3::no_execution_address(&env);
+    client.apply_dest_chain_config_updates(&vec![&env, args]);
+}
+
+/// A lane's `default_executor` may not be the zero account (EVM `address(0)`
+/// parity). `apply_dest_chain_config_updates` must reject it with
+/// InvalidAddress (#56).
+#[test]
+#[should_panic(expected = "Error(Contract, #56)")] // InvalidAddress
+fn test_apply_dest_chain_updates_rejects_zero_account_default_executor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.default_executor = Address::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
+    client.apply_dest_chain_config_updates(&vec![&env, args]);
 }

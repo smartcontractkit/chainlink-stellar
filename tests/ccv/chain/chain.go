@@ -738,6 +738,61 @@ func (c *Chain) ConfirmSendOnSource(ctx context.Context, to uint64, key cciptest
 	}, nil
 }
 
+// WaitForCCIPMessageSentEvent is an exported wrapper around the internal
+// OnRamp event waiter, returning the full [CCIPMessageSentEvent] (including
+// the per-receiver Receipts) rather than the trimmed MessageSentEvent. It is
+// used by e2e tests that need to inspect executor receipts — e.g. asserting
+// that an executor-sentinel message produced a zero-fee receipt with the
+// sentinel as issuer (M-7 no-execution) or a concrete executor receipt (M-5
+// use-default resolved to the lane default_executor).
+//
+// `key` must set either MessageID or SeqNum. `startLedger` is taken from the
+// latest ledger at call time.
+func (c *Chain) WaitForCCIPMessageSentEvent(ctx context.Context, to uint64, key cciptestinterfaces.MessageEventKey, timeout time.Duration) (*CCIPMessageSentEvent, error) {
+	if key.MessageID == (protocol.Bytes32{}) && key.SeqNum == 0 {
+		return nil, fmt.Errorf("MessageEventKey must set MessageID or SeqNum")
+	}
+	if c.onRampClient == nil {
+		return nil, fmt.Errorf("OnRamp client not initialized")
+	}
+
+	latestLedger, err := c.rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest ledger: %w", err)
+	}
+
+	var filter func(*CCIPMessageSentEvent) bool
+	if key.MessageID != (protocol.Bytes32{}) {
+		want := [32]byte(key.MessageID)
+		filter = func(e *CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == to && e.MessageId == want
+		}
+	} else {
+		seq := key.SeqNum
+		filter = func(e *CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == to && e.SequenceNumber == seq
+		}
+	}
+
+	return c.waitForCCIPMessageSentEvent(ctx, latestLedger.Sequence, timeout, filter)
+}
+
+// GetDefaultExecutor returns the OnRamp's configured `default_executor` for the
+// given destination chain selector — i.e. the concrete Executor contract that
+// the "use default" executor sentinel resolves to (M-5). Used by e2e tests to
+// assert that a use-default-sentinel message produced an executor receipt
+// issued by the lane default, not by the sentinel strkey itself.
+func (c *Chain) GetDefaultExecutor(ctx context.Context, destChainSelector uint64) (string, error) {
+	if c.onRampClient == nil {
+		return "", fmt.Errorf("OnRamp client not initialized")
+	}
+	cfg, err := c.onRampClient.GetDestChainConfig(ctx, destChainSelector)
+	if err != nil {
+		return "", fmt.Errorf("get dest chain config: %w", err)
+	}
+	return cfg.DefaultExecutor, nil
+}
+
 // ConfirmExecOnDest implements cciptestinterfaces.Chain.
 // TxID is left empty: the OffRamp event waiter does not expose the enclosing transaction hash.
 func (c *Chain) ConfirmExecOnDest(ctx context.Context, from uint64, key cciptestinterfaces.MessageEventKey, timeout time.Duration) (cciptestinterfaces.ExecEnvelope, error) {

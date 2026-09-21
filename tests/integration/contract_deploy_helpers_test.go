@@ -17,6 +17,7 @@ import (
 
 	cciprecv "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	ccvsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
@@ -68,6 +69,12 @@ type fullStack struct {
 	TokenAdminRegistryID string
 	TokenPoolID          string
 	RampRegistryID       string
+
+	// ExecutorID is the real CCIP 2.0 Executor deployed by deployOutboundSendWire.
+	// The OnRamp's fee path cross-calls Executor::get_fee on the default executor
+	// and on any concrete executor supplied in extra_args, so it must be a live
+	// contract instance — a bare generated Address traps with Error(Storage, MissingValue).
+	ExecutorID string
 
 	TokenAdminRegistryClient *tarbindings.TokenAdminRegistryClient
 	TokenPoolClient          *tokenpoolbindings.TokenPoolClient
@@ -661,7 +668,33 @@ func deployOutboundSendWire(
 		t.Fatalf("CommitteeVerifier ApplyRemoteChainCfgUpdates: %v", err)
 	}
 
-	defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-default-executor")
+	// The OnRamp fee path cross-calls Executor::get_fee on the default executor
+	// (and on any concrete executor a sender puts in extra_args). A bare generated
+	// Address has no contract instance, so that cross-call traps with
+	// Error(Storage, MissingValue). Deploy and initialize a real Executor here,
+	// mirroring the Rust setup_executor helper and the devenv deploy sequence, and
+	// expose it on the stack so tests can use it as their concrete executor.
+	executorID := deploy("executor", "executor.wasm")
+	executorClient := executorbindings.NewExecutorClient(deployer, executorID)
+	executorFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-executor-fee-agg")
+	if err := executorClient.Initialize(ctx, deployerAddr, 2, executorbindings.DynamicConfig{
+		AllowedFinalityConfig: 0, // executor layer of the FTF opt-in matrix: WAIT_FOR_FINALITY only
+		CcvAllowlistEnabled:   false,
+		FeeAggregator:         &executorFeeAgg,
+	}); err != nil {
+		t.Fatalf("Executor Initialize: %v", err)
+	}
+	if err := executorClient.ApplyDestChainUpdates(ctx, nil, []executorbindings.RemoteChainConfigArgs{{
+		DestChainSelector: remoteDestChainSelector,
+		Config: executorbindings.RemoteChainConfig{
+			Enabled:     true,
+			UsdCentsFee: 0,
+		},
+	}}); err != nil {
+		t.Fatalf("Executor ApplyDestChainUpdates: %v", err)
+	}
+	stack.ExecutorID = executorID
+	defaultExecutor := executorID
 
 	if err := wire.OnRampClient.Initialize(ctx, deployerAddr, onrampbindings.StaticConfig{
 		ChainSelector:         localSourceChainSelector,

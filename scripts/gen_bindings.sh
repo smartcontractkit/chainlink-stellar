@@ -31,6 +31,7 @@ CONTRACTS_DIR="$BINDINGS_DIR/contracts"
 # type) get generated methods, unlisted ones are omitted
 CONTRACTS=(
   "committee_verifier|CommitteeVerifier|committee_verifier|0|"
+  "executor|Executor|executor|0|"
   "fee_quoter|FeeQuoter|fee_quoter|1|"
   "versioned_verifier_resolver|VersionedVerifierResolver|versioned_verifier_resolver|0|"
   "onramp|OnRamp|onramp|1|"

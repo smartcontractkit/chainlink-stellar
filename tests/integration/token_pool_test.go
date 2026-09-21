@@ -168,7 +168,7 @@ func TestTokenPool(t *testing.T) {
 			wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt, stack,
 				destChain, remoteDestChain, feeToken, []string{sacToken})
 
-			defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, outboundSalt+"-executor")
+			defaultExecutor := stack.ExecutorID
 			extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
 				Ccvs:               []string{stack.VvrID},
 				CcvArgs:            [][]byte{{}},

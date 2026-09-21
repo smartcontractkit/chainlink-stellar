@@ -14,7 +14,6 @@ import (
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	slrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/siloed_lock_release_pool"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
-	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 )
@@ -72,7 +71,7 @@ func testTokenPoolSiloedMigration(
 		wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
 			localChain, remoteDestChain, feeToken, []string{sacToken})
 
-		defaultExecutor := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-executor")
+		defaultExecutor := stack.ExecutorID
 		extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
 			Ccvs:               []string{stack.VvrID},
 			CcvArgs:            [][]byte{{}},

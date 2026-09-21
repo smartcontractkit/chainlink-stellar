@@ -648,6 +648,8 @@ const (
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
+	CCIPErrorExceedsMaxCCVs                      = 804
+	CCIPErrorCCVNotAllowed                       = 805
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
@@ -772,6 +774,8 @@ var CCIPErrorMessage = map[int]string{
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
+	804: "exceeds max c c vs",
+	805: "c c v not allowed",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.

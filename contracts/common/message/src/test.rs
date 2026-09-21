@@ -609,3 +609,55 @@ fn test_extra_args_v3_new_defaults() {
     assert_eq!(args.token_receiver.len(), 0);
     assert_eq!(args.token_args.len(), 0);
 }
+
+// ============================================================
+// Executor sentinel tests
+// ============================================================
+
+#[test]
+fn test_no_execution_sentinel_round_trip() {
+    let env = Env::default();
+    let sentinel = GenericExtraArgsV3::no_execution_address(&env);
+    // Recognized via the raw 32-byte key comparison.
+    assert!(GenericExtraArgsV3::is_no_execution_address(&env, &sentinel));
+    // Not mistaken for the "use default" sentinel.
+    assert!(!GenericExtraArgsV3::is_use_default_executor_address(
+        &env, &sentinel
+    ));
+    // The leading 4 bytes of the raw key are the EVM NO_EXECUTION tag.
+    let raw = CcipMessageV1::address_raw_bytes(&env, sentinel.clone());
+    let mut tag = [0u8; 4];
+    for i in 0..4 {
+        tag[i as usize] = raw.get(i).unwrap();
+    }
+    assert_eq!(tag, GenericExtraArgsV3::NO_EXECUTION_TAG);
+}
+
+#[test]
+fn test_use_default_sentinel_round_trip() {
+    let env = Env::default();
+    let sentinel = GenericExtraArgsV3::use_default_executor_address(&env);
+    assert!(GenericExtraArgsV3::is_use_default_executor_address(
+        &env, &sentinel
+    ));
+    assert!(!GenericExtraArgsV3::is_no_execution_address(
+        &env, &sentinel
+    ));
+    let raw = CcipMessageV1::address_raw_bytes(&env, sentinel.clone());
+    let mut tag = [0u8; 4];
+    for i in 0..4 {
+        tag[i as usize] = raw.get(i).unwrap();
+    }
+    assert_eq!(tag, GenericExtraArgsV3::USE_DEFAULT_TAG);
+}
+
+#[test]
+fn test_sentinels_distinct_from_real_addresses() {
+    let env = Env::default();
+    // A generated contract/account address is neither sentinel.
+    let real = Address::generate(&env);
+    assert!(!GenericExtraArgsV3::is_no_execution_address(&env, &real));
+    assert!(!GenericExtraArgsV3::is_use_default_executor_address(
+        &env, &real
+    ));
+}

@@ -56,6 +56,7 @@ INTERFACES_DIR="$REPO_ROOT/contracts/common/interfaces/src"
 CONTRACTS=(
   "fee_quoter|fee_quoter|FeeQuoter|1|auth_,fq_"
   "ccvs_committee_verifier|committee_verifier|CommitteeVerifier|0|auth_,ccv_"
+  "executor|executor|Executor|0|auth_,exec_"
   "ccvs_versioned_verifier_resolver|versioned_verifier_resolver|VersionedVerifierResolver|0|auth_,vvr_"
   "onramp|onramp|OnRamp|1|auth_,onramp_"
   "rmn_proxy|rmn_proxy|RmnProxy|0|auth_,rmn_proxy_"

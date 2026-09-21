@@ -28,3 +28,4 @@ ccip-ramp-registry = { workspace = true }
 token-admin-registry = { path = "../token-admin-registry" }
 pools-lock-release-pool = { path = "../pools/lock-release-pool" }
 common-pool = { workspace = true }
+executor = { path = "../executor" }

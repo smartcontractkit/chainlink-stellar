@@ -111,3 +111,4 @@ all: build-contracts
     just fmt-contracts
     just lint-contracts
     just test-all
+    just update-cre-artifacts

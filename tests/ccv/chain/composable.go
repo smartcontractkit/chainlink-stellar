@@ -50,7 +50,6 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 	// emits sensible defaults. Callers that need richer per-send overrides
 	// should construct the Soroban extraArgs externally.
 	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
-		c.deployerKeypair.Address(),
 		c.vvrContractID,
 		cciptestinterfaces.MessageOptions{OutOfOrderExecution: true},
 	)
@@ -58,14 +57,47 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 		return nil, fmt.Errorf("encode extra args for Stellar OnRamp: %w", err)
 	}
 
+	return c.buildStellarMessageBody(fields, encodedExtraArgs)
+}
+
+// BuildStellarMessageWithExecutor builds a StellarToAnyMessage with a
+// caller-supplied [cciptestinterfaces.MessageOptions] (notably a custom
+// Executor), for e2e tests that must drive the OnRamp's executor-sentinel
+// resolution (M-5 use-default / M-7 no-execution). Unlike BuildChainMessage,
+// which defaults the executor to the use-default sentinel, this honors
+// opts.Executor (a 32-byte
+// Soroban address or sentinel), opts.ExecutionGasLimit, opts.CCVs, etc. The
+// caller should set opts.OutOfOrderExecution = true to match devenv policy.
+func (c *Chain) BuildStellarMessageWithExecutor(
+	_ context.Context,
+	fields cciptestinterfaces.MessageFields,
+	opts cciptestinterfaces.MessageOptions,
+) (routerbindings.StellarToAnyMessage, error) {
+	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
+		c.vvrContractID,
+		opts,
+	)
+	if err != nil {
+		return routerbindings.StellarToAnyMessage{}, fmt.Errorf("encode extra args for Stellar OnRamp: %w", err)
+	}
+	return c.buildStellarMessageBody(fields, encodedExtraArgs)
+}
+
+// buildStellarMessageBody is the shared StellarToAnyMessage construction
+// (fee-token resolution + token-amount i128 guard) used by both
+// BuildChainMessage and BuildStellarMessageWithExecutor.
+func (c *Chain) buildStellarMessageBody(
+	fields cciptestinterfaces.MessageFields,
+	encodedExtraArgs []byte,
+) (routerbindings.StellarToAnyMessage, error) {
 	if c.feeTokenContractID == "" {
-		return nil, fmt.Errorf("fee token not deployed; run DeployContractsForSelector first")
+		return routerbindings.StellarToAnyMessage{}, fmt.Errorf("fee token not deployed; run DeployContractsForSelector first")
 	}
 	feeToken := c.feeTokenContractID
 	if len(fields.FeeToken) > 0 {
 		ft, encErr := strkey.Encode(strkey.VersionByteContract, []byte(fields.FeeToken))
 		if encErr != nil {
-			return nil, fmt.Errorf("encode fee token address: %w", encErr)
+			return routerbindings.StellarToAnyMessage{}, fmt.Errorf("encode fee token address: %w", encErr)
 		}
 		feeToken = ft
 	}
@@ -82,11 +114,11 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 		i128Max := new(big.Int).Lsh(big.NewInt(1), 127)
 		i128Min := new(big.Int).Neg(new(big.Int).Sub(i128Max, big.NewInt(1)))
 		if fields.TokenAmount.Amount.Cmp(i128Min) < 0 || fields.TokenAmount.Amount.Cmp(i128Max) > 0 {
-			return nil, fmt.Errorf("token amount out of i128 range: %s", fields.TokenAmount.Amount.String())
+			return routerbindings.StellarToAnyMessage{}, fmt.Errorf("token amount out of i128 range: %s", fields.TokenAmount.Amount.String())
 		}
 		tokenAddr, encErr := strkey.Encode(strkey.VersionByteContract, []byte(fields.TokenAmount.TokenAddress))
 		if encErr != nil {
-			return nil, fmt.Errorf("encode token address for send: %w", encErr)
+			return routerbindings.StellarToAnyMessage{}, fmt.Errorf("encode token address for send: %w", encErr)
 		}
 		tokenAmounts = []routerbindings.TokenAmount{{
 			Token:  tokenAddr,
@@ -94,14 +126,13 @@ func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces
 		}}
 	}
 
-	msg := routerbindings.StellarToAnyMessage{
+	return routerbindings.StellarToAnyMessage{
 		Receiver:     fields.Receiver,
 		Data:         fields.Data,
 		TokenAmounts: tokenAmounts,
 		FeeToken:     feeToken,
 		ExtraArgs:    encodedExtraArgs,
-	}
-	return msg, nil
+	}, nil
 }
 
 // SendChainMessage implements cciptestinterfaces.ChainAsSource.
