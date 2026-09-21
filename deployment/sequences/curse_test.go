@@ -48,17 +48,19 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.Owner = deployer
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, deployer, caller)
+		require.Empty(t, qual, "direct execution has no governing qualifier")
 	})
 	t.Run("deployer is curse admin", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.CurseAdmins = []string{deployer}
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, deployer, caller)
+		require.Empty(t, qual)
 	})
 	t.Run("explicit qualifier wins over the deployer-direct arm", func(t *testing.T) {
 		t.Parallel()
@@ -66,25 +68,27 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		in.Owner = deployer // the deployer could curse directly…
 		in.CurseInput = curseAPIInput(subjects, utils.UltraFastCurseMCMSQualifier)
 		in.CurseAdmins = []string{fastTL}
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, fastTL, caller, "an explicit qualifier must produce a governed proposal, not a direct sign-and-submit")
+		require.Equal(t, utils.UltraFastCurseMCMSQualifier, qual)
 	})
 	t.Run("explicit qualifier wins when the deployer is a curse admin", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.CurseAdmins = []string{deployer, govTL}
 		in.CurseInput = curseAPIInput(subjects, utils.RMNTimelockQualifier)
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, govTL, caller)
+		require.Equal(t, utils.RMNTimelockQualifier, qual)
 	})
 	t.Run("explicit unauthorized qualifier errors even when the deployer is owner", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.Owner = deployer
 		in.CurseInput = curseAPIInput(subjects, utils.CLLQualifier)
-		_, err := authorizeCurseCaller(in, deployer)
+		_, _, err := authorizeCurseCaller(in, deployer)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not authorized")
 		require.Contains(t, err.Error(), "CLLCCIP")
@@ -94,24 +98,26 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		in := baseInput()
 		in.CurseInput = curseAPIInput(subjects, utils.UltraFastCurseMCMSQualifier)
 		in.CurseAdmins = []string{fastTL}
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, fastTL, caller)
+		require.Equal(t, utils.UltraFastCurseMCMSQualifier, qual)
 	})
 	t.Run("RMNMCMS qualifier resolves the owner timelock", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.CurseInput = curseAPIInput(subjects, utils.RMNTimelockQualifier)
 		in.Owner = govTL
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, govTL, caller)
+		require.Equal(t, utils.RMNTimelockQualifier, qual)
 	})
 	t.Run("CLLCCIP qualifier is unauthorized", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.CurseInput = curseAPIInput(subjects, utils.CLLQualifier)
-		_, err := authorizeCurseCaller(in, deployer)
+		_, _, err := authorizeCurseCaller(in, deployer)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "CLLCCIP")
 		require.Contains(t, err.Error(), cclTL, "error must name the unauthorized timelock")
@@ -121,34 +127,36 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.CurseInput = curseAPIInput(subjects, "NoSuchStack")
-		_, err := authorizeCurseCaller(in, deployer)
+		_, _, err := authorizeCurseCaller(in, deployer)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no RBACTimelock deployed")
 		require.Contains(t, err.Error(), "NoSuchStack")
 	})
-	t.Run("empty qualifier falls back to governance first", func(t *testing.T) {
+	t.Run("empty qualifier with unauthorized deployer suggests governance first", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.Owner = govTL
 		in.CurseAdmins = []string{fastTL}
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, govTL, caller)
+		require.Equal(t, utils.RMNTimelockQualifier, qual, "the pick names the qualifier the fail-closed error should tell the operator to set")
 	})
-	t.Run("empty qualifier falls back to fast curse when governance absent", func(t *testing.T) {
+	t.Run("empty qualifier with unauthorized deployer suggests fast curse when governance absent", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		delete(in.Timelocks, utils.RMNTimelockQualifier)
 		in.CurseAdmins = []string{fastTL}
-		caller, err := authorizeCurseCaller(in, deployer)
+		caller, qual, err := authorizeCurseCaller(in, deployer)
 		require.NoError(t, err)
 		require.Equal(t, fastTL, caller)
+		require.Equal(t, utils.UltraFastCurseMCMSQualifier, qual)
 	})
 	t.Run("stranger owner fails closed with actionable error", func(t *testing.T) {
 		t.Parallel()
 		in := baseInput()
 		in.Owner = strangerTL // a contract address owned by someone else entirely
-		_, err := authorizeCurseCaller(in, deployer)
+		_, _, err := authorizeCurseCaller(in, deployer)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no authorized curse caller")
 		require.Contains(t, err.Error(), deployer)
@@ -260,6 +268,42 @@ func TestStellarCurse_ProposesViaQualifierTimelock(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no authorized curse caller")
 	})
+
+	t.Run("empty qualifier with an unauthorized deployer fails closed naming the stack to set", func(t *testing.T) {
+		in := StellarCurseInput{
+			CurseInput: curseAPIInput(subjects, ""),
+			Owner:      govTL, // the RMNMCMS timelock is the owner, so it is the auto-pick
+			Timelocks: map[string]string{
+				utils.RMNTimelockQualifier:        govTL,
+				utils.UltraFastCurseMCMSQualifier: fastTL,
+			},
+		}
+		in.RMNContractID = rmn
+		in.CurseInput.ChainSelector = sel
+		_, err := cldf_ops.ExecuteSequence(b, StellarCurse, chains, in)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no MCMS qualifier was supplied")
+		require.Contains(t, err.Error(), utils.RMNTimelockQualifier, "the error must name the qualifier to set")
+		require.Contains(t, err.Error(), govTL, "the error must name the timelock that would execute it")
+	})
+
+	t.Run("empty qualifier fallback to fast curse also fails closed naming it", func(t *testing.T) {
+		in := StellarCurseInput{
+			CurseInput:  curseAPIInput(subjects, ""),
+			Owner:       contractStrkey(t, 6), // not any deployed timelock
+			CurseAdmins: []string{fastTL},
+			Timelocks: map[string]string{
+				utils.UltraFastCurseMCMSQualifier: fastTL,
+			},
+		}
+		in.RMNContractID = rmn
+		in.CurseInput.ChainSelector = sel
+		_, err := cldf_ops.ExecuteSequence(b, StellarCurse, chains, in)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no MCMS qualifier was supplied")
+		require.Contains(t, err.Error(), utils.UltraFastCurseMCMSQualifier)
+		require.Contains(t, err.Error(), fastTL)
+	})
 }
 
 func TestStellarUncurse_OwnerOnlyRouting(t *testing.T) {
@@ -334,6 +378,23 @@ func TestStellarUncurse_OwnerOnlyRouting(t *testing.T) {
 		_, err := cldf_ops.ExecuteSequence(b, StellarUncurse, chains, in)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "owner is unknown")
+	})
+
+	t.Run("empty qualifier with a non-owner deployer fails closed naming RMNMCMS", func(t *testing.T) {
+		in := StellarCurseInput{
+			CurseInput: curseAPIInput(subjects, ""),
+			Owner:      govTL, // the RMNMCMS timelock owns the RMN Remote; the deployer does not
+			Timelocks: map[string]string{
+				utils.RMNTimelockQualifier:        govTL,
+				utils.UltraFastCurseMCMSQualifier: fastTL,
+			},
+		}
+		in.RMNContractID = rmn
+		in.CurseInput.ChainSelector = sel
+		_, err := cldf_ops.ExecuteSequence(b, StellarUncurse, chains, in)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "set the MCMS qualifier")
+		require.Contains(t, err.Error(), utils.RMNTimelockQualifier, "the error must name the owner stack's qualifier")
 	})
 }
 

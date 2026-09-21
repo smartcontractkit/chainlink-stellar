@@ -40,8 +40,10 @@ type StellarCurseInput struct {
 }
 
 // authorizeCurseCaller picks the caller that may execute the curse on chain and
-// returns it already verified. The caller argument of rmn_remote.curse must equal
-// the invoking address, so on MCMS runs it is the executing timelock's contract ID.
+// returns it already verified, together with the MCMS qualifier of the stack that
+// would execute it ("" when the deployer signs directly). The caller argument of
+// rmn_remote.curse must equal the invoking address, so on MCMS runs it is the
+// executing timelock's contract ID.
 //
 // Order:
 //  1. MCMSQualifier set → that qualifier's timelock, verified to be owner-or-admin;
@@ -52,41 +54,43 @@ type StellarCurseInput struct {
 //     signing with the deployer key;
 //  2. MCMSQualifier empty and the deployer is the owner or a curse admin → direct
 //     execution, no proposal;
-//  3. MCMSQualifier empty and the deployer is not authorized → documented fallback:
-//     the RMNMCMS timelock when authorized, else the UltraFastCurse timelock, with a
-//     warning naming the assumption;
+//  3. MCMSQualifier empty and the deployer is not authorized → the caller cannot be
+//     the deployer, and a proposal cannot be routed without a qualifier: the
+//     authorized stack is still picked (RMNMCMS when it is the owner, else
+//     UltraFastCurse when it is a curse admin) so the fail-closed error in the
+//     sequences can name exactly which qualifier to set;
 //  4. nothing authorized → fail closed with an actionable error.
-func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, error) {
+func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, string, error) {
 	if in.MCMSQualifier != "" {
 		tl, ok := in.Timelocks[in.MCMSQualifier]
 		if !ok {
-			return "", fmt.Errorf(
+			return "", "", fmt.Errorf(
 				"no RBACTimelock deployed for qualifier %q on chain %d; deploy the stack first",
 				in.MCMSQualifier, in.ChainSelector,
 			)
 		}
 		if tl != in.Owner && !slices.Contains(in.CurseAdmins, tl) {
-			return "", fmt.Errorf(
+			return "", "", fmt.Errorf(
 				"curse via qualifier %q is not authorized: its timelock %s is neither the owner %s of RMN Remote %s nor in its curse admins %v; grant it with apply_curse_admin_updates",
 				in.MCMSQualifier, tl, in.Owner, in.RMNContractID, in.CurseAdmins,
 			)
 		}
-		return tl, nil
+		return tl, in.MCMSQualifier, nil
 	}
 
 	if in.Owner == deployerAddr || slices.Contains(in.CurseAdmins, deployerAddr) {
-		return deployerAddr, nil
+		return deployerAddr, "", nil
 	}
 
 	// Fallback order: RMNMCMS (owner) first, then UltraFastCurse (curse-admin).
 	if tl, ok := in.Timelocks[cciputils.RMNTimelockQualifier]; ok && tl == in.Owner {
-		return tl, nil
+		return tl, cciputils.RMNTimelockQualifier, nil
 	}
 	if tl, ok := in.Timelocks[cciputils.UltraFastCurseMCMSQualifier]; ok && slices.Contains(in.CurseAdmins, tl) {
-		return tl, nil
+		return tl, cciputils.UltraFastCurseMCMSQualifier, nil
 	}
 
-	return "", fmt.Errorf(
+	return "", "", fmt.Errorf(
 		"no authorized curse caller on chain %d: deployer %s is neither the owner %s of RMN Remote %s nor a curse admin (%v), and no authorized timelock was found in %v; grant curse-admin access with apply_curse_admin_updates",
 		in.ChainSelector, deployerAddr, in.Owner, in.RMNContractID, in.CurseAdmins, in.Timelocks,
 	)
@@ -111,13 +115,9 @@ var StellarCurse = cldfops.NewSequence(
 		deps := stellardeps.FromDeployer(dep)
 		deployerAddr := dep.SignerAddress()
 
-		caller, err := authorizeCurseCaller(in, deployerAddr)
+		caller, effectiveQualifier, err := authorizeCurseCaller(in, deployerAddr)
 		if err != nil {
 			return seqcore.OnChainOutput{}, fmt.Errorf("curse on chain %d: %w", in.ChainSelector, err)
-		}
-		if in.MCMSQualifier == "" && caller != deployerAddr {
-			b.Logger.Warnw("MCMS qualifier not supplied; assuming the curse executes via an auto-selected timelock",
-				"assumedTimelock", caller, "chainSelector", in.ChainSelector)
 		}
 
 		if caller == deployerAddr {
@@ -129,6 +129,17 @@ var StellarCurse = cldfops.NewSequence(
 				return seqcore.OnChainOutput{}, fmt.Errorf("curse on chain %d: %w", in.ChainSelector, err)
 			}
 			return directExecOutput(b, in.ChainSelector, in.RMNContractID, "stellar-direct-curse")
+		}
+
+		// The shared changeset resolves the executing timelock from the MCMS
+		// qualifier, so a proposal cannot be routed without one: fail closed here,
+		// naming the stack that would run it, instead of emitting a proposal the
+		// builder cannot target.
+		if in.MCMSQualifier == "" {
+			return seqcore.OnChainOutput{}, fmt.Errorf(
+				"curse on chain %d cannot run directly (deployer %s is neither the owner %s nor a curse admin of RMN Remote %s) and no MCMS qualifier was supplied to route a proposal; set the qualifier %q in the MCMS config to propose via its timelock %s",
+				in.ChainSelector, deployerAddr, in.Owner, in.RMNContractID, effectiveQualifier, caller,
+			)
 		}
 
 		data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("curse", []xdr.ScVal{
@@ -191,7 +202,7 @@ var StellarUncurse = cldfops.NewSequence(
 		}
 
 		// Resolve the executing timelock and require it to be the RMN owner.
-		caller, err := authorizeCurseCaller(in, deployerAddr)
+		caller, effectiveQualifier, err := authorizeCurseCaller(in, deployerAddr)
 		if err != nil {
 			return seqcore.OnChainOutput{}, fmt.Errorf("uncurse on chain %d: %w", in.ChainSelector, err)
 		}
@@ -199,6 +210,14 @@ var StellarUncurse = cldfops.NewSequence(
 			return seqcore.OnChainOutput{}, fmt.Errorf(
 				"uncurse on chain %d via qualifier %q is not possible: uncurse is owner-only and fast-uncurse is not supported; route it through the owner timelock %s",
 				in.ChainSelector, in.MCMSQualifier, in.Owner)
+		}
+		// Same guard as the curse arm: the shared builder targets the proposal by
+		// qualifier, so an empty one cannot route the owner-timelock proposal.
+		if in.MCMSQualifier == "" {
+			return seqcore.OnChainOutput{}, fmt.Errorf(
+				"uncurse on chain %d is owner-only and the deployer %s is not the owner %s, so it must run as a proposal via the owner timelock %s; set the MCMS qualifier %q in the MCMS config",
+				in.ChainSelector, deployerAddr, in.Owner, caller, effectiveQualifier,
+			)
 		}
 
 		data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("uncurse", []xdr.ScVal{
