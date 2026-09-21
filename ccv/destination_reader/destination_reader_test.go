@@ -14,7 +14,7 @@ import (
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
-	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/strkey"

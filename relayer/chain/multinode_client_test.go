@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/chain"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 )
 
 const testnetPassphrase = "Test SDF Network ; September 2015"

@@ -19,8 +19,8 @@ import (
 
 	stellartypes "github.com/smartcontractkit/chainlink-common/pkg/types/chains/stellar"
 
-	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/chain"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/txm"
 )
 

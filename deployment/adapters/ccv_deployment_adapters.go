@@ -13,7 +13,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 
-	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
+	"github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
 
@@ -174,7 +174,7 @@ func (a *StellarCCVDeploymentExecutorConfigAdapter) BuildChainConfig(
 			RmnAddress:     rmnRemoteAddr,
 			// Make the Stellar Ed25519 transmitter key explicit in the generated job spec
 			// rather than relying on the accessor's default-key fallback.
-			TransmitterKeyName: stellarcommon.StellarTransmitterKeyName,
+			TransmitterKeyName: deployment.StellarTransmitterKeyName,
 		},
 		DefaultExecutorAddress: executorAddr,
 	}, nil

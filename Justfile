@@ -87,19 +87,32 @@ test-go-deployment:
     cd deployment && go test -v -race -fullpath -shuffle on -coverprofile=coverage-deployment.out ./...
     cd deployment && go tool cover -func=coverage-deployment.out
 
+# Run Go unit tests (relayer module) with coverage
+test-go-relayer:
+    cd relayer && go test -v -race -fullpath -shuffle on -coverprofile=coverage-relayer.out ./...
+    cd relayer && go tool cover -func=coverage-relayer.out
+
+# Run Go unit tests (ccv module) with coverage
+# ccv/ is its own Go module (github.com/smartcontractkit/chainlink-stellar/ccv): the
+# Stellar CCV adapter (accessors, source/destination readers, contract transmitter).
+# Its tests reach relayer/mocks via a local replace on the relayer submodule.
+test-go-ccv:
+    cd ccv && go test -v -race -fullpath -shuffle on -coverprofile=coverage-ccv.out ./...
+    cd ccv && go tool cover -func=coverage-ccv.out
+
 # Run all Go unit tests
-test-go-all: test-go test-go-tests test-go-bindings test-go-deployment
+test-go-all: test-go test-go-tests test-go-bindings test-go-deployment test-go-relayer test-go-ccv
 
 # Run Go integration tests (requires running Stellar localnet)
 test-go-integration:
     cd tests && go test -tags integration -v -timeout 20m ./integration/...
 
-# Generate mocks using mockery
+# Generate mocks using mockery (mocks live in the relayer module under ./mocks)
 mock:
     @echo "Cleaning existing mocks..."
-    find ./internal/mocks -type f -name 'mock_*.go' -delete 2>/dev/null || true
+    cd relayer && find ./mocks -type f -name 'mock_*.go' -delete 2>/dev/null || true
     @echo "Generating mocks with mockery..."
-    mockery
+    cd relayer && mockery
 
 # Run all tests (contracts + Go)
 test-all: test-contracts test-go-all
