@@ -163,10 +163,10 @@ require (
 	github.com/sigurn/crc16 v0.0.0-20211026045750-20ab5afb07e3 // indirect
 	github.com/smartcontractkit/chainlink-aptos v0.0.0-20260428085939-5c70de12dbfc // indirect
 	github.com/smartcontractkit/chainlink-canton/contracts/v2 v2.0.0 // indirect
-	github.com/smartcontractkit/chainlink-ccip/chains/evm v0.0.0-20260821001950-7520b255725e // indirect
+	github.com/smartcontractkit/chainlink-ccip/chains/evm v0.0.0-20260918135944-fa1a268dac47 // indirect
 	github.com/smartcontractkit/chainlink-ccip/chains/solana v0.0.0-20260129103204-4c8453dd8139 // indirect
 	github.com/smartcontractkit/chainlink-ccip/chains/solana/gobindings v0.0.0-20260129103204-4c8453dd8139 // indirect
-	github.com/smartcontractkit/chainlink-ccip/deployment v0.0.0-20260821001950-7520b255725e // indirect
+	github.com/smartcontractkit/chainlink-ccip/deployment v0.0.0-20260918135944-fa1a268dac47 // indirect
 	github.com/smartcontractkit/chainlink-ccv/deployment v0.1.1-0.20260901122814-abf56d76c31b // indirect
 	github.com/smartcontractkit/chainlink-common/pkg/chipingress v0.0.11-0.20260724142814-45996a1bcb72 // indirect
 	github.com/smartcontractkit/chainlink-framework/multinode v0.0.0-20260521164805-26d78d5e1243 // indirect
