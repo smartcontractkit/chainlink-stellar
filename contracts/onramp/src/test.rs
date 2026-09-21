@@ -1466,6 +1466,16 @@ impl DataOnlyLane {
     /// recent top-level contract invocation, so any intervening contract call
     /// (e.g. a `balance` query) would wipe the event view.
     fn send_data_only(&self, extra_args: GenericExtraArgsV3) -> Vec<Receipt> {
+        self.send_data_only_full(extra_args).0
+    }
+
+    /// Like `send_data_only` but also returns the `encoded_message` (canonical
+    /// `CcipMessageV1` bytes) from the same `CCIPMessageSent` event, so callers
+    /// can inspect fields committed to the message ID (e.g. the
+    /// `ccv_and_executor_hash`) without a second event extraction that would
+    /// race the event view. Both extractions run back-to-back right after
+    /// `ccip_send`, before any other contract call.
+    fn send_data_only_full(&self, extra_args: GenericExtraArgsV3) -> (Vec<Receipt>, Bytes) {
         let env = &self.env;
         let message = StellarToAnyMessage {
             receiver: Bytes::from_array(env, &[0x33u8; 20]),
@@ -1485,7 +1495,9 @@ impl DataOnlyLane {
             &message,
             &required_fee,
         );
-        receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
+        let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
+        let encoded = encoded_message_from_last_onramp_event(env, &self.onramp_id);
+        (receipts, encoded)
     }
 }
 
@@ -1671,6 +1683,61 @@ fn test_use_default_sentinel_resolves_to_default_executor() {
     assert!(
         fee_token_client.balance(&lane.default_executor) > 0,
         "resolved default executor must receive the fee transfer (H-3)"
+    );
+}
+
+/// M-5 / INV-ENC-5 (hash-stability half): the OnRamp must resolve the
+/// "use default" sentinel to `default_executor` BEFORE computing
+/// `ccv_and_executor_hash`, so a message sent with the sentinel commits the
+/// SAME hash as a message sent with the concrete `default_executor` directly
+/// (identical CCVs, identical gas). The companion test above proves the
+/// resolution (receipt issuer + fee); this one proves the hash consequence —
+/// the part that keeps the message ID stable across the `address(0)→default`
+/// parity. `ccv_and_executor_hash` excludes the sequence number, so the two
+/// sends (which increment the sequence) still produce comparable hashes,
+/// isolating the executor-resolution effect.
+#[test]
+fn test_use_default_sentinel_hash_matches_concrete_default() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    // Send with the use-default sentinel.
+    let use_default = GenericExtraArgsV3::use_default_executor_address(env);
+    let sentinel_args = GenericExtraArgsV3 {
+        gas_limit: 100_000,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: use_default,
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (_, encoded_sentinel) = lane.send_data_only_full(sentinel_args);
+    let hash_sentinel = CcipMessageV1::from_bytes(env, &encoded_sentinel)
+        .expect("decode sentinel send")
+        .ccv_and_executor_hash;
+
+    // Send the same message with the concrete default_executor directly.
+    let concrete_args = GenericExtraArgsV3 {
+        gas_limit: 100_000,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (_, encoded_concrete) = lane.send_data_only_full(concrete_args);
+    let hash_concrete = CcipMessageV1::from_bytes(env, &encoded_concrete)
+        .expect("decode concrete send")
+        .ccv_and_executor_hash;
+
+    assert_eq!(
+        hash_sentinel, hash_concrete,
+        "use-default sentinel must hash identically to the concrete default_executor \
+         (resolution before hashing — M-5 message-ID-stability parity)"
     );
 }
 

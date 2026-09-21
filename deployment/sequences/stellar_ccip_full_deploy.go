@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
@@ -23,6 +22,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
@@ -37,6 +37,7 @@ import (
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	recvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
+	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	offrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/offramp"
 	onrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/onramp"
@@ -359,6 +360,55 @@ func RunStellarCCIPFullDeploy(
 	h.SetCV(cvContractID)
 	h.Logger().Info().Str("cvContractID", cvContractID).Msg("Committee Verifier client initialized")
 
+	execWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "executor.wasm")
+	if err := statReleaseWasm(execWasmPath, "Executor"); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+	h.Logger().Info().Str("wasmPath", execWasmPath).Msg("Deploying Executor contract...")
+	execSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "executor")
+	execOut, err := execStellarCCIPOp(b, deps, execops.Deploy, stellarops.DeployInput{WasmPath: execWasmPath, Salt: execSalt})
+	if err != nil {
+		return seq_core.OnChainOutput{}, fmt.Errorf("deploy Executor: %w", err)
+	}
+	executorContractID := execOut.ContractID
+	h.Logger().Info().Str("contractID", executorContractID).Msg("Executor contract deployed")
+
+	// Initialize the source-side fee/policy Executor (EVM Executor.sol parity). The
+	// OnRamp's get_fee path cross-calls Executor::get_fee on default_executor, so the
+	// contract must be deployed+initialized with the dest chain enabled and an
+	// allowed_finality_config that permits the requested finality devenv sends (0).
+	execFeeAgg := feeAggregatorAddr
+	if _, err := execStellarCCIPOp(b, deps, execops.Initialize, execops.InitializeInput{
+		ContractID:    executorContractID,
+		Owner:         h.DeployerKeypair().Address(),
+		MaxCCVsPerMsg: 2,
+		DynamicConfig: executorbindings.DynamicConfig{
+			AllowedFinalityConfig: 0,
+			CcvAllowlistEnabled:   false,
+			FeeAggregator:         &execFeeAgg,
+		},
+	}); err != nil {
+		return seq_core.OnChainOutput{}, fmt.Errorf("initialize Executor: %w", err)
+	}
+
+	execDestChainAdds := make([]executorbindings.RemoteChainConfigArgs, 0, len(remoteSelectors))
+	for _, rs := range remoteSelectors {
+		execDestChainAdds = append(execDestChainAdds, executorbindings.RemoteChainConfigArgs{
+			DestChainSelector: rs,
+			Config: executorbindings.RemoteChainConfig{
+				Enabled:     true,
+				UsdCentsFee: 0,
+			},
+		})
+	}
+	if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
+		ContractID: executorContractID,
+		ToAdd:      execDestChainAdds,
+	}); err != nil {
+		return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor dest chain updates: %w", err)
+	}
+	h.Logger().Info().Str("contractID", executorContractID).Msg("Executor initialized and dest chains enabled")
+
 	outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
 	for _, remoteSelector := range allSelectors {
 		outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
@@ -563,14 +613,6 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
 	}
 
-	contractHexAddr := func(name string) string {
-		return hexutil.Encode(stellarutil.GenerateContractAddress(name, h.NetworkPassphrase()))
-	}
-	executorProxyHex := contractHexAddr("stellar-executor-proxy")
-	executorContractID, err := scval.HexToContractStrkey(executorProxyHex)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert executor proxy placeholder address: %w", err)
-	}
 	onRampDestConfigs, err := stellarccip.BuildOnRampDestConfigs(ds.Seal(), remoteSelectors, executorContractID, false, vvrContractID, routerContractID)
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("build provisional onramp dest configs: %w", err)
@@ -799,8 +841,15 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, err
 	}
 
+	executorHex, err := stellarutil.StrkeyToHex(executorContractID)
+	if err != nil {
+		return seq_core.OnChainOutput{}, fmt.Errorf("convert Executor address: %w", err)
+	}
+	// Soroban has no EVM-style delegate proxy, so both the executor and executor-proxy
+	// address-book rows point at the same deployed Executor contract. The OnRamp resolves
+	// default_executor from the proxy row and invokes get_fee on it directly.
 	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       contractHexAddr("stellar-executor"),
+		Address:       executorHex,
 		Type:          datastore.ContractType(executor.ContractType),
 		Version:       executor.Version,
 		Qualifier:     stellarccip.DefaultExecutorQualifier,
@@ -809,7 +858,7 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, err
 	}
 	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       contractHexAddr("stellar-executor-proxy"),
+		Address:       executorHex,
 		Type:          datastore.ContractType(proxy.ContractType),
 		Version:       proxy.Version,
 		Qualifier:     stellarccip.DefaultExecutorQualifier,
