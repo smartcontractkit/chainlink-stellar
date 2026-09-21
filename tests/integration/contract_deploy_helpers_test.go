@@ -19,6 +19,7 @@ import (
 	ccvsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
+	lockreleasepoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	rampregistrybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ramp_registry"
@@ -26,6 +27,7 @@ import (
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
+	tokenlockboxbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_lock_box"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -70,6 +72,12 @@ type fullStack struct {
 	TokenPoolID          string
 	RampRegistryID       string
 
+	// LockBoxID is the per-chain TokenLockBox holding the lock-release pool's
+	// escrowed liquidity (L-4 / EVM LockReleaseTokenPool parity). The pool's own
+	// SAC balance is fees only; lock_or_burn deposits into the lockbox and
+	// release_or_mint withdraws from it.
+	LockBoxID string
+
 	// ExecutorID is the real CCIP 2.0 Executor deployed by deployOutboundSendWire.
 	// The OnRamp's fee path cross-calls Executor::get_fee on the default executor
 	// and on any concrete executor supplied in extra_args, so it must be a live
@@ -79,6 +87,11 @@ type fullStack struct {
 	TokenAdminRegistryClient *tarbindings.TokenAdminRegistryClient
 	TokenPoolClient          *tokenpoolbindings.TokenPoolClient
 	RampRegistryClient       *rampregistrybindings.RampRegistryClient
+
+	// LockReleasePoolClient exposes lock-release-specific entrypoints
+	// (ConfigureLockBoxes) that the generic TokenPoolClient interface omits.
+	LockReleasePoolClient *lockreleasepoolbindings.LockReleasePoolClient
+	LockBoxClient         *tokenlockboxbindings.TokenLockBoxClient
 
 	signerKey     *ecdsa.PrivateKey
 	signerAddrPad [32]byte // left-padded 20-byte Ethereum address
@@ -340,7 +353,10 @@ func (s *fullStack) buildValidMessage(t *testing.T, destChainSelector uint64, se
 
 // deployTokenPool deploys a TokenAdminRegistry and a LockRelease pool contract,
 // registers the pool for the given token, and wires everything into the fullStack.
-// This is additive — call after deployFullStack.
+// It also deploys + initializes a per-chain TokenLockBox and maps it to
+// remoteChainSelector on the pool, so lock_or_burn / release_or_mint resolve a
+// lockbox instead of reverting InvalidConfig (#52). This is additive — call after
+// deployFullStack.
 func (s *fullStack) deployTokenPool(
 	ctx context.Context,
 	t *testing.T,
@@ -349,6 +365,7 @@ func (s *fullStack) deployTokenPool(
 	deployerAddr string,
 	saltPrefix string,
 	tokenID string,
+	remoteChainSelector uint64,
 ) {
 	t.Helper()
 
@@ -416,6 +433,32 @@ func (s *fullStack) deployTokenPool(
 	}
 	if err := s.TokenAdminRegistryClient.SetPool(ctx, tokenID, &s.TokenPoolID); err != nil {
 		t.Fatalf("TokenAdminRegistry SetPool: %v", err)
+	}
+
+	// L-4 lockbox-escrow parity (EVM LockReleaseTokenPool): the pool escrows
+	// bridged liquidity in a per-chain TokenLockBox rather than its own balance.
+	// lock_or_burn deposits dest_token_amount into the lockbox; release_or_mint
+	// withdraws from it. The pool's own SAC balance is accrued fees only, so
+	// resolve_lock_box must find a configured lockbox or both paths revert
+	// InvalidConfig (#52).
+	s.LockBoxID = deploy("token-lock-box", "pools_token_lock_box.wasm")
+	s.LockBoxClient = tokenlockboxbindings.NewTokenLockBoxClient(deployer, s.LockBoxID)
+	if err := s.LockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
+		t.Fatalf("TokenLockBox Initialize: %v", err)
+	}
+	// Only the pool may deposit / withdraw from the lockbox.
+	if err := s.LockBoxClient.AddAllowedCallers(ctx, []string{s.TokenPoolID}); err != nil {
+		t.Fatalf("TokenLockBox AddAllowedCallers: %v", err)
+	}
+	// Map the lockbox to the remote chain. configure_lock_boxes does not require
+	// the chain to be supported (it only checks the lockbox token matches the
+	// pool token), so this is safe before ApplyChainUpdates.
+	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
+	if err := s.LockReleasePoolClient.ConfigureLockBoxes(ctx, []lockreleasepoolbindings.LockBoxEntry{{
+		LockBox:             s.LockBoxID,
+		RemoteChainSelector: remoteChainSelector,
+	}}); err != nil {
+		t.Fatalf("LockReleasePool ConfigureLockBoxes: %v", err)
 	}
 }
 

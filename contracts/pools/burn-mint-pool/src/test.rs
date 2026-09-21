@@ -2565,9 +2565,21 @@ fn test_get_fee_fast_finality_selects_fast_bps() {
     );
     // Permit WAIT_FOR_SAFE so the view's `ensure_requested_finality_allowed` passes.
     pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
-    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 500);
+    // Distinct USD-cent AND bps values per finality mode, so both fields'
+    // selection can be asserted (the `apply_fee_config` helper sets USD cents
+    // to 0, so build the config inline via `fee_config_args`).
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.finality_transfer_fee_bps = 100;
+            c.fast_finality_transfer_fee_bps = 500;
+            c.finality_fee_usd_cents = 40;
+            c.fast_finality_fee_usd_cents = 80;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
 
-    // Fast finality → fast_finality_transfer_fee_bps (mirrors test_applyFee_CustomFinality).
+    // Fast finality → fast_finality_* fields (mirrors test_applyFee_CustomFinality).
     let fast = pool_client.get_fee(
         &DEFAULT_REMOTE_CHAIN,
         &(1_000 * E18),
@@ -2575,9 +2587,10 @@ fn test_get_fee_fast_finality_selects_fast_bps() {
         &Bytes::new(&env),
     );
     assert_eq!(fast.token_fee_bps, 500);
+    assert_eq!(fast.fee_usd_cents, 80);
     assert!(fast.is_enabled);
 
-    // Default finality → finality_transfer_fee_bps (mirrors test_applyFee_DefaultFinality).
+    // Default finality → finality_* fields (mirrors test_applyFee_DefaultFinality).
     let default = pool_client.get_fee(
         &DEFAULT_REMOTE_CHAIN,
         &(1_000 * E18),
@@ -2585,6 +2598,7 @@ fn test_get_fee_fast_finality_selects_fast_bps() {
         &Bytes::new(&env),
     );
     assert_eq!(default.token_fee_bps, 100);
+    assert_eq!(default.fee_usd_cents, 40);
     assert!(default.is_enabled);
 }
 
@@ -2784,4 +2798,223 @@ fn test_withdraw_fee_tokens_sweeps_accrued() {
     assert_eq!(token_client.balance(&pool_address), 0);
 
     let _ = owner; // owner-gated call; auth mocked in setup_env
+}
+
+// ================================================================
+// H-13 config-validation & read-path coverage.
+// `apply_token_fee_config_updates` rejects `is_enabled == false`,
+// `*_transfer_fee_bps >= BPS_DIVIDER` (10000), and
+// `dest_gas_overhead == 0` (common/pool/src/lib.rs:283-295); the
+// dedicated `get_token_transfer_fee_config` read entrypoint had no
+// direct test. These close those gaps (EVM `TokenPool.applyFee` /
+// `getTokenTransferFeeConfig` parity).
+// ================================================================
+
+/// Build a `TokenTransferFeeConfigArgs` for `chain` from an override closure,
+/// starting from a valid baseline (mirrors `apply_fee_config`'s config).
+fn fee_config_args(
+    env: &Env,
+    chain: u64,
+    override_cfg: impl FnOnce(&mut TokenTransferFeeConfig),
+) -> TokenTransferFeeConfigArgs {
+    let mut config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 0,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 250,
+        fast_finality_transfer_fee_bps: 500,
+        is_enabled: true,
+    };
+    override_cfg(&mut config);
+    TokenTransferFeeConfigArgs {
+        dest_chain_selector: chain,
+        config,
+    }
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #321)")] // InvalidTokenTransferFeeConfig
+fn test_apply_token_fee_config_rejects_disabled() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Adds must be enabled — use the disable list to turn a config off.
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.is_enabled = false;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #322)")] // InvalidTransferFeeBps
+fn test_apply_token_fee_config_rejects_finality_bps_at_divider() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // bps >= BPS_DIVIDER (10000) is rejected.
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.finality_transfer_fee_bps = 10_000;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #322)")] // InvalidTransferFeeBps
+fn test_apply_token_fee_config_rejects_fast_bps_above_divider() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.fast_finality_transfer_fee_bps = 10_001;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #321)")] // InvalidTokenTransferFeeConfig
+fn test_apply_token_fee_config_rejects_zero_dest_gas_overhead() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.dest_gas_overhead = 0;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+#[test]
+fn test_get_token_transfer_fee_config_roundtrip() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // With no config stored, the entrypoint returns the disabled default.
+    let none = pool_client.get_token_transfer_fee_config(&DEFAULT_REMOTE_CHAIN);
+    assert_eq!(none, TokenTransferFeeConfig::disabled());
+
+    // Set a known config and read it back via the dedicated entrypoint — every
+    // field must round-trip (this is the path `get_fee` consults internally).
+    let adds = Vec::from_array(
+        &env,
+        [fee_config_args(&env, DEFAULT_REMOTE_CHAIN, |c| {
+            c.dest_gas_overhead = 777;
+            c.dest_bytes_overhead = 64;
+            c.finality_fee_usd_cents = 150;
+            c.fast_finality_fee_usd_cents = 300;
+            c.finality_transfer_fee_bps = 100;
+            c.fast_finality_transfer_fee_bps = 200;
+        })],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+
+    let cfg = pool_client.get_token_transfer_fee_config(&DEFAULT_REMOTE_CHAIN);
+    assert_eq!(cfg.dest_gas_overhead, 777);
+    assert_eq!(cfg.dest_bytes_overhead, 64);
+    assert_eq!(cfg.finality_fee_usd_cents, 150);
+    assert_eq!(cfg.fast_finality_fee_usd_cents, 300);
+    assert_eq!(cfg.finality_transfer_fee_bps, 100);
+    assert_eq!(cfg.fast_finality_transfer_fee_bps, 200);
+    assert!(cfg.is_enabled);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #302)")] // ChainNotSupported
+fn test_set_pool_fee_unsupported_chain_rejected() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    // 99999 is not a configured chain, so the chain-support check (which runs
+    // before config validation) yields ChainNotSupported (#302). Mirrors
+    // lock-release test_set_pool_fee_unsupported_chain_rejected and siloed
+    // set_pool_fee_unsupported_chain_rejected — closes the burn-mint parity gap.
+    let unsupported_chain: u64 = 99999;
+    let adds = Vec::from_array(&env, [fee_config_args(&env, unsupported_chain, |_| {})]);
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
 }

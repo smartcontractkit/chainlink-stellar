@@ -1969,9 +1969,26 @@ fn test_get_fee_fast_vs_default_bps_selection() {
 
     add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
     pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
-    apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 250, 500);
+    // Distinct USD-cent AND bps values per finality mode, so both fields'
+    // selection can be asserted (`apply_bps_fee_config` sets USD cents to 0).
+    let adds = Vec::from_array(
+        &env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: DEFAULT_REMOTE_CHAIN,
+            config: TokenTransferFeeConfig {
+                dest_gas_overhead: 100,
+                dest_bytes_overhead: 32,
+                finality_fee_usd_cents: 40,
+                fast_finality_fee_usd_cents: 80,
+                finality_transfer_fee_bps: 250,
+                fast_finality_transfer_fee_bps: 500,
+                is_enabled: true,
+            },
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
 
-    // Default finality → finality_transfer_fee_bps (mirrors test_applyFee_DefaultFinality).
+    // Default finality → finality_* fields (mirrors test_applyFee_DefaultFinality).
     let default = pool_client.get_fee(
         &DEFAULT_REMOTE_CHAIN,
         &(1_000 * E18),
@@ -1979,9 +1996,10 @@ fn test_get_fee_fast_vs_default_bps_selection() {
         &Bytes::new(&env),
     );
     assert_eq!(default.token_fee_bps, 250);
+    assert_eq!(default.fee_usd_cents, 40);
     assert!(default.is_enabled);
 
-    // Fast finality → fast_finality_transfer_fee_bps (mirrors test_applyFee_CustomFinality).
+    // Fast finality → fast_finality_* fields (mirrors test_applyFee_CustomFinality).
     let fast = pool_client.get_fee(
         &DEFAULT_REMOTE_CHAIN,
         &(1_000 * E18),
@@ -1989,6 +2007,7 @@ fn test_get_fee_fast_vs_default_bps_selection() {
         &Bytes::new(&env),
     );
     assert_eq!(fast.token_fee_bps, 500);
+    assert_eq!(fast.fee_usd_cents, 80);
     assert!(fast.is_enabled);
 }
 
