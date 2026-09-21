@@ -9,8 +9,14 @@ import (
 	"testing"
 	"time"
 
+	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
+
 	rmnbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 	"github.com/stellar/go-stellar-sdk/keypair"
 )
@@ -228,6 +234,13 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 
 	projectRoot, deployerKP, ownerDep, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
 
+	b := cldfops.NewBundle(
+		func() context.Context { return ctx },
+		cldflogger.Test(t),
+		cldfops.NewMemoryReporter(),
+	)
+	ownerDeps := stellardeps.FromDeployer(ownerDep)
+
 	initialAdmin1 := keypair.MustRandom()
 	initialAdmin2 := keypair.MustRandom()
 	newAdmin := keypair.MustRandom()
@@ -236,38 +249,64 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 			t.Fatalf("Friendbot fund %s: %v", kp.Address(), err)
 		}
 	}
-	admin1Dep := deployment.NewDeployer(rpcClient, passphrase, initialAdmin1)
-	admin2Dep := deployment.NewDeployer(rpcClient, passphrase, initialAdmin2)
-	newAdminDep := deployment.NewDeployer(rpcClient, passphrase, newAdmin)
+	admin1Deps := stellardeps.FromDeployer(deployment.NewDeployer(rpcClient, passphrase, initialAdmin1))
+	admin2Deps := stellardeps.FromDeployer(deployment.NewDeployer(rpcClient, passphrase, initialAdmin2))
+	newAdminDeps := stellardeps.FromDeployer(deployment.NewDeployer(rpcClient, passphrase, newAdmin))
 
 	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-remote-curse-admins")
 	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-	contractID, err := ownerDep.DeployContract(ctx, wasmPath, salt)
+
+	deployReport, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, ownerDeps, stellarops.DeployInput{
+		WasmPath: wasmPath,
+		Salt:     salt,
+	})
 	if err != nil {
 		t.Fatalf("deploy RmnRemote: %v", err)
 	}
+	contractID := deployReport.Output.ContractID
 
-	ownerClient := rmnbindings.NewRmnRemoteClient(ownerDep, contractID)
-	if err := ownerClient.Initialize(ctx, deployerKP.Address(), []string{
-		initialAdmin1.Address(),
-		initialAdmin2.Address(),
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Initialize, ownerDeps, rmnremoteops.InitializeInput{
+		ContractID:  contractID,
+		Owner:       deployerKP.Address(),
+		CurseAdmins: []string{initialAdmin1.Address(), initialAdmin2.Address()},
 	}); err != nil {
 		t.Fatalf("initialize with curse admins: %v", err)
 	}
 
-	admins, err := ownerClient.GetCurseAdmins(ctx)
-	if err != nil {
-		t.Fatalf("GetCurseAdmins after init: %v", err)
-	}
+	admins := getCurseAdmins(t, b, ownerDeps, contractID)
 	if !curseAdminsEqual(admins, initialAdmin1.Address(), initialAdmin2.Address()) {
 		t.Fatalf("unexpected curse admins after init: %v", admins)
+	}
+
+	// get_curse_admins returns the raw stored list: explicitly adding the owner
+	// as a curse admin succeeds and is then listed (nothing filters the owner out).
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.ApplyCurseAdminUpdates, ownerDeps, rmnremoteops.ApplyCurseAdminUpdatesInput{
+		ContractID:  contractID,
+		AddedAdmins: []string{deployerKP.Address()},
+	}); err != nil {
+		t.Fatalf("apply_curse_admin_updates adding owner as admin: %v", err)
+	}
+	admins = getCurseAdmins(t, b, ownerDeps, contractID)
+	if !curseAdminsEqual(admins, initialAdmin1.Address(), initialAdmin2.Address(), deployerKP.Address()) {
+		t.Fatalf("owner must be listed after being added as a curse admin: %v", admins)
+	}
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.ApplyCurseAdminUpdates, ownerDeps, rmnremoteops.ApplyCurseAdminUpdatesInput{
+		ContractID:    contractID,
+		RemovedAdmins: []string{deployerKP.Address()},
+	}); err != nil {
+		t.Fatalf("apply_curse_admin_updates removing owner from admins: %v", err)
 	}
 
 	subjectByAdmin2 := [16]byte{0xA1}
 	subjectByNewAdmin := [16]byte{0xA2}
 
-	admin2Client := rmnbindings.NewRmnRemoteClient(admin2Dep, contractID)
-	if err := admin2Client.Curse(ctx, initialAdmin2.Address(), [][16]byte{subjectByAdmin2}); err != nil {
+	ownerClient := rmnbindings.NewRmnRemoteClient(ownerDep, contractID)
+
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Curse, admin2Deps, rmnremoteops.CurseInput{
+		ContractID: contractID,
+		Caller:     initialAdmin2.Address(),
+		Subjects:   [][16]byte{subjectByAdmin2},
+	}); err != nil {
 		t.Fatalf("curse as initial curse admin (not owner): %v", err)
 	}
 	cursed, err := ownerClient.IsCursedBySubject(ctx, subjectByAdmin2)
@@ -275,21 +314,22 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 		t.Fatalf("subject should be cursed after admin curse: cursed=%v err=%v", cursed, err)
 	}
 
-	if err := admin2Client.Uncurse(ctx, [][16]byte{subjectByAdmin2}); err == nil {
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Uncurse, admin2Deps, rmnremoteops.UncurseInput{
+		ContractID: contractID,
+		Subjects:   [][16]byte{subjectByAdmin2},
+	}); err == nil {
 		t.Fatal("uncurse as curse admin should fail (owner-only)")
 	}
 
-	if err := ownerClient.ApplyCurseAdminUpdates(ctx,
-		[]string{newAdmin.Address()},
-		[]string{initialAdmin1.Address()},
-	); err != nil {
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.ApplyCurseAdminUpdates, ownerDeps, rmnremoteops.ApplyCurseAdminUpdatesInput{
+		ContractID:    contractID,
+		AddedAdmins:   []string{newAdmin.Address()},
+		RemovedAdmins: []string{initialAdmin1.Address()},
+	}); err != nil {
 		t.Fatalf("apply_curse_admin_updates: %v", err)
 	}
 
-	admins, err = ownerClient.GetCurseAdmins(ctx)
-	if err != nil {
-		t.Fatalf("GetCurseAdmins after update: %v", err)
-	}
+	admins = getCurseAdmins(t, b, ownerDeps, contractID)
 	if !curseAdminsEqual(admins, initialAdmin2.Address(), newAdmin.Address()) {
 		t.Fatalf("unexpected curse admins after update: %v", admins)
 	}
@@ -297,13 +337,19 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 		t.Fatalf("removed curse admin still listed: %v", admins)
 	}
 
-	removedAdminClient := rmnbindings.NewRmnRemoteClient(admin1Dep, contractID)
-	if err := removedAdminClient.Curse(ctx, initialAdmin1.Address(), [][16]byte{subjectByNewAdmin}); err == nil {
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Curse, admin1Deps, rmnremoteops.CurseInput{
+		ContractID: contractID,
+		Caller:     initialAdmin1.Address(),
+		Subjects:   [][16]byte{subjectByNewAdmin},
+	}); err == nil {
 		t.Fatal("curse as removed curse admin should fail")
 	}
 
-	newAdminClient := rmnbindings.NewRmnRemoteClient(newAdminDep, contractID)
-	if err := newAdminClient.Curse(ctx, newAdmin.Address(), [][16]byte{subjectByNewAdmin}); err != nil {
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Curse, newAdminDeps, rmnremoteops.CurseInput{
+		ContractID: contractID,
+		Caller:     newAdmin.Address(),
+		Subjects:   [][16]byte{subjectByNewAdmin},
+	}); err != nil {
 		t.Fatalf("curse as new curse admin: %v", err)
 	}
 	cursed, err = ownerClient.IsCursedBySubject(ctx, subjectByNewAdmin)
@@ -311,7 +357,10 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 		t.Fatalf("subject should be cursed after new admin curse: cursed=%v err=%v", cursed, err)
 	}
 
-	if err := ownerClient.Uncurse(ctx, [][16]byte{subjectByAdmin2, subjectByNewAdmin}); err != nil {
+	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Uncurse, ownerDeps, rmnremoteops.UncurseInput{
+		ContractID: contractID,
+		Subjects:   [][16]byte{subjectByAdmin2, subjectByNewAdmin},
+	}); err != nil {
 		t.Fatalf("uncurse as owner: %v", err)
 	}
 	for _, subject := range [][16]byte{subjectByAdmin2, subjectByNewAdmin} {
@@ -325,6 +374,19 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 	}
 
 	t.Log("RmnRemote curse admin integration test passed!")
+}
+
+func getCurseAdmins(t *testing.T, b cldfops.Bundle, deps stellardeps.StellarDeps, contractID string) []string {
+	t.Helper()
+	// Force execution: the operations framework caches by (op, input) pair, so a
+	// repeat read with the same input would otherwise return the stale cached list.
+	report, err := cldfops.ExecuteOperation(b, rmnremoteops.GetCurseAdmins, deps, rmnremoteops.GetCurseAdminsInput{
+		ContractID: contractID,
+	}, cldfops.WithForceExecute[rmnremoteops.GetCurseAdminsInput, stellardeps.StellarDeps]())
+	if err != nil {
+		t.Fatalf("get curse admins: %v", err)
+	}
+	return report.Output.Admins
 }
 
 func curseAdminsEqual(admins []string, want ...string) bool {
