@@ -107,6 +107,14 @@ func (h *stellarCCIPDeployHost) SetRampRegistry(contractID string) {
 }
 func (h *stellarCCIPDeployHost) RampRegistryContractID() string { return h.c.rampRegistryContractID }
 
+// SetRmnProxy/RmnProxyContractID: pools store the RMN proxy immutably at initialize
+// (EVM `immutable i_rmnProxy` parity — no set_rmn_proxy entrypoint) and consult it directly
+// for curse checks, so post-deploy pool initialization must pass it through. Backed by
+// Chain.rmnProxyContractID, which RunStellarCCIPFullDeploy populates via SetRmnProxy after
+// deploying the RMN proxy.
+func (h *stellarCCIPDeployHost) SetRmnProxy(contractID string) { h.c.rmnProxyContractID = contractID }
+func (h *stellarCCIPDeployHost) RmnProxyContractID() string    { return h.c.rmnProxyContractID }
+
 func (h *stellarCCIPDeployHost) SetVVR(contractID string) { h.c.vvrContractID = contractID }
 func (h *stellarCCIPDeployHost) SetCV(contractID string)  { h.c.cvContractID = contractID }
 

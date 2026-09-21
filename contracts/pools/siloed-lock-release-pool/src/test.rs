@@ -19,6 +19,9 @@ use common_pool::{
     ChainUpdate, LockOrBurnIn, MessageDirection, PoolFeeConfig, RateLimitConfig, ReleaseOrMintIn,
 };
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
+use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
+use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
+use router::{RouterContract, RouterContractClient};
 
 /// Invokes `release_or_mint` with `caller = self` so `caller.require_auth()` succeeds.
 mod inbound_release_stub {
@@ -178,6 +181,28 @@ struct TestEnv<'a> {
     auth_onramp: Address,
 }
 
+/// Register real Router + RMN proxy + RMN remote contracts and wire them, returning
+/// the Router address (to pass to the pool's `initialize`). Mirrors the onramp test
+/// wiring; the RMN starts uncursed so happy-path pool operations are unaffected.
+/// (M-6: the pool resolves the RMN via `Router.get_config()` at lock_or_burn /
+/// release_or_mint time, so tests must stand up a real Router + RMN behind the
+/// address passed to `initialize`.)
+fn setup_router_with_rmn(env: &Env, owner: &Address) -> (Address, Address) {
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(env, &rmn_remote_id);
+    rmn_remote_client.initialize(owner, &Vec::new(env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(env, &router_id);
+    router_client.initialize(owner, &rmn_proxy_id);
+
+    (router_id, rmn_proxy_id)
+}
+
 fn setup() -> TestEnv<'static> {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
@@ -204,8 +229,15 @@ fn setup() -> TestEnv<'static> {
 
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    let router = Address::generate(&env);
-    pool_client.initialize(&owner, &token_addr, &7, &router, &registry_client.address);
+    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
+    pool_client.initialize(
+        &owner,
+        &token_addr,
+        &7,
+        &router,
+        &registry_client.address,
+        &rmn_proxy,
+    );
 
     lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
     add_chain(&env, &pool_client, REMOTE_CHAIN);
@@ -277,8 +309,15 @@ fn setup_multi_lockbox() -> MultiLockboxEnv<'static> {
 
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    let router = Address::generate(&env);
-    pool_client.initialize(&owner, &token_addr, &7, &router, &registry_client.address);
+    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
+    pool_client.initialize(
+        &owner,
+        &token_addr,
+        &7,
+        &router,
+        &registry_client.address,
+        &rmn_proxy,
+    );
 
     shared_lockbox.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
     siloed_lockbox.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
@@ -419,8 +458,15 @@ fn unconfigured_lockbox_rejects_lock() {
 
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    let router = Address::generate(&env);
-    pool_client.initialize(&owner, &token_addr, &7, &router, &registry_client.address);
+    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
+    pool_client.initialize(
+        &owner,
+        &token_addr,
+        &7,
+        &router,
+        &registry_client.address,
+        &rmn_proxy,
+    );
 
     let remote_pool = Bytes::from_slice(&env, &[0xaa; 32]);
     let remote_token = Bytes::from_slice(&env, &[0xbb; 32]);
@@ -531,9 +577,10 @@ fn configure_lockboxes_rejects_wrong_token() {
 
     let router = Address::generate(&env);
     let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
     let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    pool_client.initialize(&owner, &pool_token, &7, &router, &ramp_registry);
+    pool_client.initialize(&owner, &pool_token, &7, &router, &ramp_registry, &rmn_proxy);
     add_chain(&env, &pool_client, REMOTE_CHAIN);
 
     let r = pool_client.try_configure_lock_boxes(&vec![

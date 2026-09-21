@@ -18,7 +18,8 @@ use ccvs_versioned_verifier_resolver::{
 use common_error::CCIPError;
 use common_interfaces::committee_verifier::FeeResponse;
 use common_message::{
-    CcipMessageV1, CcipTokenTransferV1, FromBytes, StellarToAnyMessage, TokenAmount,
+    CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
+    TokenAmount,
 };
 use common_pool::{ChainUpdate, RateLimitConfig};
 use fee_quoter::{
@@ -583,6 +584,28 @@ fn test_merge_ccv_lists_lane_only_no_fallback() {
     assert_eq!(merged.get(0), Some(lane_ccv));
 }
 
+#[test]
+fn test_merge_ccv_lists_rejects_duplicate_user_ccvs() {
+    // M-16 / INV-SRC-1/17: user-supplied CCVs (from ExtraArgsV3) must not contain
+    // duplicates, mirroring EVM `CCVConfigValidation._assertNoDuplicates(userCCVs)`
+    // (OnRamp.sol:812). A duplicate would emit duplicate fee receipts and produce a
+    // `ccv_and_executor_hash` that won't match offchain expectations. Lane-mandated and
+    // pool-required CCVs are deduped against the running list inside the merge; only the
+    // user list (cloned verbatim) needs this explicit rejection.
+    let env = Env::default();
+    let dup = Address::generate(&env);
+
+    let user = vec![&env, dup.clone(), dup.clone()];
+    let user_args = vec![&env, Bytes::new(&env), Bytes::new(&env)];
+    let lane: Vec<Address> = Vec::new(&env);
+    let defaults = vec![&env, Address::generate(&env)];
+
+    let err =
+        OnRampContract::merge_ccv_lists_with_ccv_args(&env, &user, &user_args, &lane, &defaults)
+            .unwrap_err();
+    assert_eq!(err, CCIPError::DuplicateCCVNotAllowed);
+}
+
 // ============================================================
 // Withdraw Fee Tokens Tests
 // ============================================================
@@ -938,7 +961,12 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         &7u32,
         &router_id,
         &ramp_registry_client.address,
+        &rmn_proxy_id,
     );
+    // M-6: the pool's `lock_or_burn` curse check reads the RMN proxy from pool
+    // storage (set at `initialize`, mirroring EVM's immutable constructor arg), not
+    // via `Router.get_config()` (which would re-enter the Router mid-`ccip_send`).
+    // `rmn_proxy_id` is the same RMN proxy the Router was initialized with above.
 
     let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
     let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);
@@ -1236,6 +1264,100 @@ fn test_get_fee_reverts_when_receiver_length_mismatch() {
         token_amounts: Vec::new(&env),
         fee_token: fee_token.clone(),
         extra_args: Bytes::new(&env),
+    };
+
+    onramp_client.get_fee(&evm_chain_selector, &message);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")] // RequestedFinalityCanOnlyHaveOneMode
+fn test_get_fee_reverts_when_requested_finality_malformed() {
+    // M-8 / INV-FIN-SRC-1/3: a requested finality combining a flag with a block depth
+    // (here WAIT_FOR_SAFE_FLAG | 5 = 0x1_0005) must be rejected before it is committed
+    // verbatim into the message ID for data-only messages. Mirrors EVM
+    // `FinalityCodec._validateRequestedFinality`, invoked on the parsed extraArgs. The
+    // receiver is a valid 20-byte address and the per-message fee cap is high, so the
+    // finality-shape check is the sole revert reason.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let fee_token = Address::generate(&env);
+    let transfer_token = Address::generate(&env);
+
+    let fee_quoter_id = setup_fee_quoter(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+    );
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let default_executor = Address::generate(&env);
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: Address::generate(&env),
+        rmn_proxy: rmn_proxy_id.clone(),
+        // High cap so the finality-shape check is the sole revert reason.
+        max_usd_cents_per_message: 100_000,
+    };
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: Address::generate(&env),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: Address::generate(&env),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: default_executor.clone(),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, default_ccv.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+
+    // WAIT_FOR_SAFE_FLAG (1 << 16) | 5 ⇒ a flag combined with a block depth ⇒ malformed.
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0x1_0005,
+        ccvs: Vec::new(&env),
+        ccv_args: Vec::new(&env),
+        executor: default_executor.clone(),
+        executor_args: Bytes::new(&env),
+        token_receiver: Bytes::new(&env),
+        token_args: Bytes::new(&env),
+    };
+
+    let message = StellarToAnyMessage {
+        // Valid 20-byte receiver (== address_bytes_length) so validate_dest_address passes.
+        receiver: Bytes::from_array(&env, &[0x33u8; 20]),
+        data: Bytes::from_slice(&env, b"malformed requested finality"),
+        token_amounts: Vec::new(&env),
+        fee_token: fee_token.clone(),
+        extra_args: extra_args.to_xdr(&env),
     };
 
     onramp_client.get_fee(&evm_chain_selector, &message);

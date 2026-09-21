@@ -148,13 +148,14 @@ func (c *SiloedLockReleasePoolClient) InitOwner(ctx context.Context, owner strin
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *SiloedLockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string) error {
+func (c *SiloedLockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string, rmnProxy string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressToScVal(token),
 		scval.Uint32ToScVal(tokenDecimals),
 		scval.AddressToScVal(router),
 		scval.AddressToScVal(rampRegistry),
+		scval.AddressToScVal(rmnProxy),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -221,6 +222,26 @@ func (c *SiloedLockReleasePoolClient) LockOrBurn(ctx context.Context, caller str
 	}
 
 	return LockOrBurnOutFromScVal(*result)
+}
+
+// GetRmnProxy calls the get_rmn_proxy function on the contract.
+func (c *SiloedLockReleasePoolClient) GetRmnProxy(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_rmn_proxy", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_rmn_proxy: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_rmn_proxy")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // RequireOwner calls the require_owner function on the contract.

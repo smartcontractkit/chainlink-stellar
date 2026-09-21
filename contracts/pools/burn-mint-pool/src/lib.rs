@@ -50,6 +50,7 @@ impl BurnMintTokenPoolContract {
         token_decimals: u32,
         router: Address,
         ramp_registry: Address,
+        rmn_proxy: Address,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
@@ -57,6 +58,15 @@ impl BurnMintTokenPoolContract {
         <Self as BaseTokenPool>::init_pool(&env, &token, token_decimals)?;
         <Self as BaseTokenPool>::set_router(&env, &router);
         <Self as BaseTokenPool>::set_ramp_registry(&env, &ramp_registry);
+        // RMN proxy is set once at initialization and never mutated afterwards —
+        // mirrors EVM `TokenPool`'s `immutable i_rmnProxy` (constructor arg, no
+        // setter). The pool consults it directly for curse checks in
+        // `lock_or_burn` / `release_or_mint` (NOT via `Router.get_config()`, which
+        // would re-enter the Router during `ccip_send`). Soroban has no
+        // `immutable` keyword, so immutability is enforced by `initialize` being
+        // one-shot (`require_not_initialized`) and there being no `set_rmn_proxy`
+        // entrypoint.
+        <Self as BaseTokenPool>::set_rmn_proxy(&env, &rmn_proxy);
         Ok(())
     }
 
@@ -95,6 +105,15 @@ impl BurnMintTokenPoolContract {
         if !<Self as BaseTokenPool>::is_supported_chain(&env, input.remote_chain_selector)? {
             return Err(CCIPError::ChainNotSupported);
         }
+
+        // M-6 / INV-POOL-RMN-1: reject the operation if the RMN has cursed the
+        // network globally or the remote chain specifically. Mirrors EVM
+        // `TokenPool._validateLockOrBurn` (TokenPool.sol:422,
+        // `IRMN(i_rmnProxy).isCursed(bytes16(uint128(remoteChainSelector)))`).
+        <Self as BaseTokenPool>::require_remote_chain_not_cursed(
+            &env,
+            input.remote_chain_selector,
+        )?;
 
         // TODO: Remove FTF outbound rate limiting from lock_or_burn. Stellar has
         // deterministic ~5s finality with no reorg risk, so there is no meaningful
@@ -180,6 +199,16 @@ impl BurnMintTokenPoolContract {
         if !<Self as BaseTokenPool>::is_supported_chain(&env, input.remote_chain_selector)? {
             return Err(CCIPError::ChainNotSupported);
         }
+
+        // M-6 / INV-POOL-RMN-1: reject the operation if the RMN has cursed the
+        // network globally or the remote chain specifically. Mirrors EVM
+        // `TokenPool._validateReleaseOrMint` (TokenPool.sol:479,
+        // `IRMN(i_rmnProxy).isCursed(bytes16(uint128(remoteChainSelector)))`),
+        // which runs before the source-pool membership check.
+        <Self as BaseTokenPool>::require_remote_chain_not_cursed(
+            &env,
+            input.remote_chain_selector,
+        )?;
 
         // Validate the inbound source pool is configured for this remote chain.
         // Mirrors EVM `TokenPool._validateReleaseOrMint` (TokenPool.sol:480):
@@ -378,6 +407,13 @@ impl BurnMintTokenPoolContract {
 
     pub fn get_ramp_registry(env: Env) -> Option<Address> {
         <Self as BaseTokenPool>::get_ramp_registry(&env)
+    }
+
+    /// Get the RMN proxy address the pool consults for curse checks (EVM
+    /// `TokenPool.getRmnProxy`). Set once at `initialize` and immutable thereafter
+    /// (mirrors EVM `immutable i_rmnProxy`).
+    pub fn get_rmn_proxy(env: Env) -> Option<Address> {
+        <Self as BaseTokenPool>::get_rmn_proxy(&env)
     }
 
     /// Set the advanced pool hooks contract (EVM `updateAdvancedPoolHooks`). Owner-only.

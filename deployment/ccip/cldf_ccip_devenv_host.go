@@ -47,6 +47,7 @@ type CLDFStellarCCIPDevenvHost struct {
 	routerContractID        string
 	routerClient            *routerbindings.RouterClient
 	rampRegistryContractID  string
+	rmnProxyContractID      string
 	vvrContractID           string
 	cvContractID            string
 	receiverContractID      string
@@ -151,6 +152,18 @@ func (h *CLDFStellarCCIPDevenvHost) SetRampRegistry(contractID string) {
 }
 func (h *CLDFStellarCCIPDevenvHost) RampRegistryContractID() string {
 	return h.rampRegistryContractID
+}
+
+// SetRmnProxy records the RMN proxy contract ID on the host (deploy-time bookkeeping).
+// Pools store it immutably at initialize (EVM `immutable i_rmnProxy` parity — no
+// set_rmn_proxy entrypoint) and consult it for curse checks in lock_or_burn/release_or_mint,
+// so post-deploy pool initialization must pass it through (same proxy the Router was
+// initialized with).
+func (h *CLDFStellarCCIPDevenvHost) SetRmnProxy(contractID string) {
+	h.rmnProxyContractID = contractID
+}
+func (h *CLDFStellarCCIPDevenvHost) RmnProxyContractID() string {
+	return h.rmnProxyContractID
 }
 
 func (h *CLDFStellarCCIPDevenvHost) SetVVR(contractID string) { h.vvrContractID = contractID }

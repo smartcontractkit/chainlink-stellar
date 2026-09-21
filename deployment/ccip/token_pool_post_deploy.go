@@ -89,6 +89,10 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 	if rampRegistryContractID == "" {
 		return fmt.Errorf("ramp registry contract ID is empty; token pool initialize requires ramp registry (deploy core CCIP first)")
 	}
+	rmnProxyContractID := host.RmnProxyContractID()
+	if rmnProxyContractID == "" {
+		return fmt.Errorf("rmn proxy contract ID is empty; token pool curse checks require it (deploy core CCIP first)")
+	}
 	if _, err := cldfops.ExecuteOperation(opBundle, poolops.Initialize, deps, poolops.InitializeInput{
 		ContractID:    poolContractID,
 		Owner:         host.DeployerKeypair().Address(),
@@ -96,6 +100,7 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 		TokenDecimals: testTokenPoolDecimals,
 		Router:        routerContractID,
 		RampRegistry:  rampRegistryContractID,
+		RmnProxy:      rmnProxyContractID,
 	}); err != nil {
 		return fmt.Errorf("failed to initialize legacy pool with token: %w", err)
 	}
@@ -164,6 +169,10 @@ func deploySiloedLockReleaseTestTokenPool(
 
 	routerContractID := host.RouterContractID()
 	rampRegistryContractID := host.RampRegistryContractID()
+	rmnProxyContractID := host.RmnProxyContractID()
+	if rmnProxyContractID == "" {
+		return fmt.Errorf("rmn proxy contract ID is empty; token pool curse checks require it (deploy core CCIP first)")
+	}
 	if _, err := cldfops.ExecuteOperation(opBundle, slrpops.Initialize, deps, slrpops.InitializeInput{
 		ContractID:    siloedPoolID,
 		Owner:         deployerAddr,
@@ -171,6 +180,7 @@ func deploySiloedLockReleaseTestTokenPool(
 		TokenDecimals: testTokenPoolDecimals,
 		Router:        routerContractID,
 		RampRegistry:  rampRegistryContractID,
+		RmnProxy:      rmnProxyContractID,
 	}); err != nil {
 		return fmt.Errorf("initialize siloed pool: %w", err)
 	}

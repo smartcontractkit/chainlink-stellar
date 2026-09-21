@@ -15,6 +15,9 @@ use common_pool::{
     encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, PoolFeeConfig,
     RateLimitConfig, ReleaseOrMintIn,
 };
+use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
+use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
+use router::{RouterContract, RouterContractClient};
 
 /// Minimal hook contracts for pool integration tests (must match `PoolHooksInterface` ABI).
 mod mock_hooks {
@@ -189,6 +192,28 @@ mod inbound_release_stub {
 
 const DEFAULT_REMOTE_CHAIN: u64 = 5009297550715157269;
 
+/// Register real Router + RMN proxy + RMN remote contracts and wire them, returning
+/// the Router address (to pass to the pool's `initialize`). Mirrors the onramp test
+/// wiring; the RMN starts uncursed so happy-path pool operations are unaffected.
+/// (M-6: the pool resolves the RMN via `Router.get_config()` at lock_or_burn /
+/// release_or_mint time, so tests must stand up a real Router + RMN behind the
+/// address passed to `initialize`.)
+fn setup_router_with_rmn(env: &Env, owner: &Address) -> (Address, Address) {
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(env, &rmn_remote_id);
+    rmn_remote_client.initialize(owner, &Vec::new(env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(env, &router_id);
+    router_client.initialize(owner, &rmn_proxy_id);
+
+    (router_id, rmn_proxy_id)
+}
+
 fn setup_env() -> (
     Env,
     LockReleaseTokenPoolContractClient<'static>,
@@ -223,13 +248,14 @@ fn setup_env() -> (
     let token_client = token::Client::new(&env, &token_address);
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
-    let router = Address::generate(&env);
+    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
         &token_address,
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 
     (
@@ -465,12 +491,14 @@ fn test_initialize_twice_rejected() {
         _auth_onramp,
     ) = setup_env();
     let router = Address::generate(&_env);
+    let rmn_proxy = Address::generate(&_env);
     pool_client.initialize(
         &owner,
         &token_address,
         &7u32,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 }
 
@@ -862,13 +890,14 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
 
     let local_decimals: u32 = 6;
-    let router = Address::generate(&env);
+    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
         &token_address,
         &local_decimals,
         &router,
         &registry_client.address,
+        &rmn_proxy,
     );
 
     let remote_chain: u64 = DEFAULT_REMOTE_CHAIN;
@@ -912,8 +941,16 @@ fn test_initialize_rejects_decimals_above_uint8() {
     let token_address = token_contract.address();
     let router = Address::generate(&env);
     let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
 
-    let r = pool_client.try_initialize(&owner, &token_address, &256u32, &router, &ramp_registry);
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
     assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
 

@@ -1,6 +1,8 @@
 package burn_mint_pool
 
 import (
+	"fmt"
+
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	bmpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
@@ -21,16 +23,27 @@ type InitializeInput struct {
 	TokenDecimals uint32 `json:"token_decimals"`
 	Router        string `json:"router"`
 	RampRegistry  string `json:"ramp_registry"`
+	// RmnProxy is the RMN proxy stored immutably on the pool at initialize (mirrors EVM
+	// TokenPool's `immutable i_rmnProxy` constructor arg — there is NO set_rmn_proxy
+	// entrypoint). The pool consults it directly for curse checks in
+	// lock_or_burn/release_or_mint. Must match the Router's RMN proxy and be non-empty
+	// (EVM parity: the constructor reverts on the zero address; Soroban has no zero
+	// address, so the op enforces non-empty here).
+	RmnProxy string `json:"rmn_proxy"`
 }
 
-// Initialize calls burn-mint pool `initialize`.
+// Initialize calls burn-mint pool `initialize` with owner, token, router, ramp registry,
+// and the immutable RMN proxy (EVM `immutable i_rmnProxy` parity — set once, no setter).
 var Initialize = cldfops.NewOperation(
 	"burn-mint-pool:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes burn-mint pool with owner, token, router, and ramp registry",
+	"Initializes burn-mint pool with owner, token, router, ramp registry, and RMN proxy",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
+		if in.RmnProxy == "" {
+			return stellarops.Void{}, fmt.Errorf("burn-mint pool initialize: rmn_proxy is required (EVM i_rmnProxy parity, no zero address)")
+		}
 		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Token, in.TokenDecimals, in.Router, in.RampRegistry); err != nil {
+		if err := c.Initialize(b.GetContext(), in.Owner, in.Token, in.TokenDecimals, in.Router, in.RampRegistry, in.RmnProxy); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

@@ -209,6 +209,9 @@ pub enum CCIPError {
     /// Inbound `source_pool_address` is not a configured remote pool for the remote chain
     /// (EVM `TokenPool._validateReleaseOrMint` / `InvalidSourcePoolAddress`).
     InvalidSourcePoolAddress = 319,
+    /// User-supplied CCV list (from `ExtraArgsV3`) contains a duplicate address
+    /// (EVM `CCVConfigValidation.DuplicateCCVNotAllowed`).
+    DuplicateCCVNotAllowed = 320,
 
     // ============================================================
     // Calculation errors
