@@ -1,7 +1,6 @@
 package e2e_tests
 
 import (
-	"context"
 	"encoding/hex"
 	"testing"
 
