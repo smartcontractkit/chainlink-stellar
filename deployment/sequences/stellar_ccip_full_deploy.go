@@ -18,6 +18,7 @@ import (
 	onrampoperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/onramp"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/proxy"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
+	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -34,6 +35,7 @@ import (
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	recvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
@@ -167,10 +169,25 @@ func RunStellarCCIPFullDeploy(
 	if err := stellarccip.RecordRMNRemote(ds, selector, rmnRemoteContractID); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
+	curseAdmins := in.CurseAdmins
+	if in.EnableFastCurse {
+		fastQual := in.FastCurseQualifier
+		if fastQual == "" {
+			fastQual = cciputils.UltraFastCurseMCMSQualifier
+		}
+		fastTL, ok := mcmsutil.FindExistingStellarTimelock(in.ExistingAddresses, selector, fastQual)
+		if !ok {
+			return seq_core.OnChainOutput{}, fmt.Errorf("enable fast curse: no RBACTimelock deployed for qualifier %q on chain %d; deploy the fast-curse MCMS stack first", fastQual, selector)
+		}
+		// The Ultra Fast Curse timelock is the curse admin on a newly deployed RMN
+		// (EVM precedent); the RMNMCMS timelock's curse authority comes from
+		// ownership at activation time.
+		curseAdmins = append([]string{fastTL}, curseAdmins...)
+	}
 	if _, err := execStellarCCIPOp(b, deps, rmnremoteops.Initialize, rmnremoteops.InitializeInput{
 		ContractID:  rmnRemoteContractID,
 		Owner:       h.DeployerKeypair().Address(),
-		CurseAdmins: nil,
+		CurseAdmins: curseAdmins,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("initialize RMN Remote: %w", err)
 	}
