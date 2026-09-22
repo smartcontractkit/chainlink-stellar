@@ -16,6 +16,7 @@ use ccvs_versioned_verifier_resolver::{
     VersionedVerifierResolverContractClient,
 };
 use common_error::CCIPError;
+use common_helpers::fee_math;
 use common_interfaces::committee_verifier::FeeResponse;
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
@@ -783,12 +784,119 @@ fn deploy_default_ccv_resolver(env: &Env, owner: &Address, dest_chain_selector: 
     vvr_id
 }
 
+/// Generalized `deploy_default_ccv_resolver`: deploy a VVR wired to the given
+/// verifier implementation (e.g. a fee-charging mock) for `dest_chain_selector`.
+/// The VVR address is what the OnRamp pays CCV fees to (the receipt `issuer`).
+fn deploy_ccv_resolver_with_verifier(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    verifier_id: &Address,
+) -> Address {
+    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr = VersionedVerifierResolverContractClient::new(env, &vvr_id);
+    vvr.initialize(owner, &Address::generate(env));
+    vvr.apply_outbound_impl_updates(&vec![
+        env,
+        OutboundImplementationUpdate {
+            dest_chain_selector,
+            verifier: Some(verifier_id.clone()),
+        },
+    ]);
+    vvr_id
+}
+
+/// Mock outbound CCV verifier that charges a configurable non-zero fee (stored
+/// in instance storage via `set_fee`), so H-3 CCV-fee-distribution tests can
+/// observe non-trivial CCV fee slices. `MockOutboundCcvVerifier` above always
+/// returns `fee: 0`.
+#[contract]
+pub struct MockOutboundCcvVerifierFee;
+
+#[contractimpl]
+impl MockOutboundCcvVerifierFee {
+    pub fn set_fee(env: Env, fee: u32) {
+        env.storage().instance().set(&symbol_short!("fee"), &fee);
+    }
+    pub fn get_fee(
+        env: Env,
+        _dest_chain_selector: u64,
+        _message: Bytes,
+        _extra_args: Bytes,
+        _block_confirmations: u32,
+    ) -> Result<FeeResponse, CCIPError> {
+        let fee: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("fee"))
+            .unwrap_or(0);
+        Ok(FeeResponse {
+            dest_bytes_overhead: 0,
+            dest_gas_limit: 0,
+            fee,
+        })
+    }
+    pub fn forward_to_verifier(
+        env: Env,
+        _dest_chain_selector: u64,
+        _sender: Address,
+        _message_id: BytesN<32>,
+        _fee_token: Address,
+        _fee_token_amount: i128,
+        _verifier_args: Bytes,
+    ) -> Result<Bytes, CCIPError> {
+        Ok(Bytes::new(&env))
+    }
+}
+
+/// Deploy a fee-charging CCV (VVR → `MockOutboundCcvVerifierFee` with `fee`
+/// cents). Returns the VVR address (the CCV fee recipient / receipt issuer).
+fn deploy_fee_charging_ccv(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    fee_usd_cents: u32,
+) -> Address {
+    let verifier_id = env.register(MockOutboundCcvVerifierFee, ());
+    let verifier = MockOutboundCcvVerifierFeeClient::new(env, &verifier_id);
+    verifier.set_fee(&fee_usd_cents);
+    deploy_ccv_resolver_with_verifier(env, owner, dest_chain_selector, &verifier_id)
+}
+
+/// Default fee-quoter setup for the non-LINK lanes: the fee token is a generic
+/// SAC asset (not LINK), so a throwaway `link_token` is registered and
+/// `link_premium_percent` is irrelevant (`premium_multiplier` is 100 whenever
+/// `fee_token != link_token`). All existing H-3/non-LINK tests use this.
 fn setup_fee_quoter(
     env: &Env,
     owner: &Address,
     dest_chain_selector: u64,
     fee_token: &Address,
     transfer_token: &Address,
+) -> Address {
+    let throwaway_link = Address::generate(env);
+    setup_fee_quoter_with_link_premium(
+        env,
+        owner,
+        dest_chain_selector,
+        fee_token,
+        transfer_token,
+        &throwaway_link,
+        90,
+    )
+}
+
+/// Fee-quoter setup that lets the caller bind `link_token` (so the fee token CAN
+/// be LINK) and set `link_premium_percent`. Used by the INV-FEE-13 LINK-fee-token
+/// lane to exercise the premium/discount on CCV/pool/executor-flat fees.
+fn setup_fee_quoter_with_link_premium(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    fee_token: &Address,
+    transfer_token: &Address,
+    link_token: &Address,
+    link_premium_percent: u32,
 ) -> Address {
     env.ledger().with_mut(|li| {
         li.timestamp = 1000;
@@ -797,7 +905,6 @@ fn setup_fee_quoter(
     let fee_quoter_id = env.register(FeeQuoterContract, ());
     let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
 
-    let link_token = Address::generate(env);
     let static_config = FqStaticConfig {
         max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
         link_token: link_token.clone(),
@@ -818,7 +925,7 @@ fn setup_fee_quoter(
         default_token_dest_gas: 50_000,
         default_tx_gas_limit: 200_000,
         network_fee_usd_cents: 100,
-        link_premium_percent: 90,
+        link_premium_percent,
     };
 
     let mut config_args: Vec<FqDestChainConfigArgs> = Vec::new(env);
@@ -1860,6 +1967,609 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     assert!(
         fee_token_client.balance(&default_executor) > 0,
         "executor fee must be transferred to the executor contract (H-3)"
+    );
+}
+
+// ============================================================
+// H-3: send-time fee distribution (EVM `OnRamp._distributeFees` parity)
+// ============================================================
+//
+// `forward_from_router` must, at send time, transfer each CCV fee → that CCV's
+// VVR (the receipt `issuer`), the pool fee → the token pool, and the executor
+// fee → the executor — and LEAVE the network fee on the OnRamp for the
+// permissionless `withdraw_fee_tokens` sweep (INV-FEE-18/19/20/21). The three
+// tests below share a full lane (`FeeDistLane`) wired with TWO fee-charging
+// CCVs (30 & 70 USD-cent fees), a real lock-release pool (5000-cent pool fee
+// via the FeeQuoter per-token config), and a real Executor (25-cent flat fee),
+// so each fee slice is non-trivial and independently checkable.
+
+struct FeeDistLane {
+    env: Env,
+    sender: Address,
+    evm_chain_selector: u64,
+    router_client: RouterContractClient<'static>,
+    onramp_client: OnRampContractClient<'static>,
+    onramp_id: Address,
+    fee_token: Address,
+    fee_token_sac: token::StellarAssetClient<'static>,
+    transfer_token: Address,
+    transfer_token_sac: token::StellarAssetClient<'static>,
+    fee_quoter_client: FeeQuoterContractClient<'static>,
+    fee_aggregator: Address,
+    pool_id: Address,
+    default_executor: Address,
+    /// CCV VVR addresses (the CCV fee recipients / receipt issuers), configured
+    /// as the lane's `default_ccvs` in this order: ccv_a charges 30, ccv_b 70.
+    ccv_a: Address,
+    ccv_b: Address,
+}
+
+impl FeeDistLane {
+    /// Quote, fund, and `ccip_send` `message`; return `(receipts, message,
+    /// required_fee)`. Receipt extraction runs immediately after the send,
+    /// before any later contract call clears the test-env event view.
+    fn send(&self, message: StellarToAnyMessage) -> (Vec<Receipt>, StellarToAnyMessage, i128) {
+        let env = &self.env;
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        if !message.token_amounts.is_empty() {
+            self.transfer_token_sac.mint(&self.sender, &1_000_000);
+        }
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
+        (receipts, message, required_fee)
+    }
+
+    /// 1-token transfer with default extra_args (use-default executor sentinel →
+    /// lane default; empty CCVs → lane defaults ccv_a/ccv_b).
+    fn send_token_transfer(&self) -> (Vec<Receipt>, StellarToAnyMessage, i128) {
+        let env = &self.env;
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: self.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data: Bytes::from_slice(env, b"h3 token send"),
+            token_amounts,
+            fee_token: self.fee_token.clone(),
+            extra_args: Bytes::new(env),
+        };
+        self.send(message)
+    }
+
+    /// Data-only message (no tokens → no pool receipt).
+    fn send_data_only(&self) -> (Vec<Receipt>, StellarToAnyMessage, i128) {
+        let env = &self.env;
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data: Bytes::from_slice(env, b"h3 data only"),
+            token_amounts: Vec::new(env),
+            fee_token: self.fee_token.clone(),
+            extra_args: Bytes::new(env),
+        };
+        self.send(message)
+    }
+
+    /// `message_fee.fee_token_price` for `message` — the exact price the OnRamp
+    /// uses to convert USD-cent fee slices to fee-token units, so tests compute
+    /// expected transferred amounts with the same `fee_math` helper the contract
+    /// uses (no hand-rolled scaling). Must be called after receipt extraction.
+    fn fee_token_price(&self, message: &StellarToAnyMessage) -> u128 {
+        self.fee_quoter_client
+            .get_message_fee(&self.evm_chain_selector, message)
+            .fee_token_price
+    }
+}
+
+fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) -> FeeDistLane {
+    let env = Env::default();
+    env.mock_all_auths();
+    // This lane wires two fee-charging CCVs (extra cross-contract get_fee /
+    // forward_to_verifier calls) on top of the full token-transfer path, which
+    // exceeds the default Soroban test budget. Lift the budget for the H-3
+    // distribution tests only (the rest of the suite keeps `Env::default()`).
+    env.budget().reset_unlimited();
+
+    let owner = Address::generate(&env);
+    let sender = Address::generate(&env);
+
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(&env, &router_id);
+    router_client.initialize(&owner, &rmn_proxy_id);
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let fee_token_admin = Address::generate(&env);
+    let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
+    let fee_token = fee_token_contract.address();
+    let fee_token_sac = token::StellarAssetClient::new(&env, &fee_token);
+
+    // EVM parity: when the fee token IS LINK, the fee-quoter's LINK premium
+    // (`link_premium_percent`) applies to CCV/pool/executor-flat fees too
+    // (INV-FEE-13). `link_token` is immutable post-init in FqStaticConfig, so
+    // it must be passed in at setup; for the non-LINK lane it is a throwaway.
+    let link_token = if fee_token_is_link {
+        fee_token.clone()
+    } else {
+        Address::generate(&env)
+    };
+
+    let transfer_token_admin = Address::generate(&env);
+    let transfer_token_contract =
+        env.register_stellar_asset_contract_v2(transfer_token_admin.clone());
+    let transfer_token = transfer_token_contract.address();
+    let transfer_token_sac = token::StellarAssetClient::new(&env, &transfer_token);
+
+    let ramp_registry_id = env.register(RampRegistryContract, ());
+    let ramp_registry_client = RampRegistryContractClient::new(&env, &ramp_registry_id);
+    ramp_registry_client.initialize(&owner);
+
+    let pool_id = env.register(LockReleaseTokenPoolContract, ());
+    let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+    pool_client.initialize(
+        &owner,
+        &transfer_token,
+        &7u32,
+        &router_id,
+        &ramp_registry_client.address,
+        &rmn_proxy_id,
+    );
+
+    let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
+    let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);
+    pool_client.apply_chain_updates(
+        &vec![
+            &env,
+            ChainUpdate {
+                remote_chain_selector: evm_chain_selector,
+                remote_pool_addresses: remote_pool,
+                remote_token_address: remote_token,
+                outbound_rate_limiter_config: RateLimitConfig::disabled(),
+                inbound_rate_limiter_config: RateLimitConfig::disabled(),
+            },
+        ],
+        &Vec::new(&env),
+    );
+
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &transfer_token);
+    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
+    pool_client.configure_lock_boxes(&vec![
+        &env,
+        LockBoxEntry {
+            remote_chain_selector: evm_chain_selector,
+            lock_box: lockbox_client.address.clone(),
+        },
+    ]);
+
+    ramp_registry_client.apply_onramp_updates(&vec![
+        &env,
+        OnRampUpdate {
+            dest_chain_selector: evm_chain_selector,
+            onramp: Some(onramp_id.clone()),
+        },
+    ]);
+
+    let tar_id = env.register(TokenAdminRegistryContract, ());
+    let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
+    tar_client.initialize(&owner);
+    let token_registry_admin = Address::generate(&env);
+    tar_client.propose_administrator(&owner, &transfer_token, &token_registry_admin);
+    tar_client.accept_admin_role(&transfer_token);
+    tar_client.set_pool(&transfer_token, &Some(pool_id.clone()));
+
+    let fee_quoter_id = setup_fee_quoter_with_link_premium(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+        &link_token,
+        link_premium_percent,
+    );
+    let fee_quoter_client = FeeQuoterContractClient::new(&env, &fee_quoter_id);
+
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: tar_id.clone(),
+        rmn_proxy: rmn_proxy_id.clone(),
+        max_usd_cents_per_message: 100_000,
+    };
+    let fee_aggregator = Address::generate(&env);
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: fee_aggregator.clone(),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    // Two fee-charging CCVs (30 & 70 USD-cent fees) as the lane defaults.
+    let ccv_a = deploy_fee_charging_ccv(&env, &owner, evm_chain_selector, 30);
+    let ccv_b = deploy_fee_charging_ccv(&env, &owner, evm_chain_selector, 70);
+    let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: router_id.clone(),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: default_executor.clone(),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, ccv_a.clone(), ccv_b.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+    router_client.set_onramp(&evm_chain_selector, &onramp_id);
+
+    FeeDistLane {
+        env,
+        sender,
+        evm_chain_selector,
+        router_client,
+        onramp_client,
+        onramp_id,
+        fee_token,
+        fee_token_sac,
+        transfer_token,
+        transfer_token_sac,
+        fee_quoter_client,
+        fee_aggregator,
+        pool_id,
+        default_executor,
+        ccv_a,
+        ccv_b,
+    }
+}
+
+/// Non-LINK lane (the H-3 default): a generic SAC fee token, `premium_multiplier`
+/// is 100, so the premium helper is bit-identical to the bare conversion. All H-3
+/// distribution tests build on this and stay unchanged.
+fn setup_fee_dist_lane() -> FeeDistLane {
+    setup_fee_dist_lane_impl(false, 90)
+}
+
+/// H-3 / INV-FEE-18: each CCV fee is transferred at send time to that CCV's VVR
+/// (the receipt `issuer`), in the per-receipt fee-token amount. Two distinct
+/// CCV fees (30 & 70 cents) prove per-recipient distribution — each VVR receives
+/// exactly its own individually-converted slice, not a pooled share. Data-only
+/// message isolates the CCV slice (no pool receipt).
+#[test]
+fn test_send_distributes_ccv_fees_to_resolvers() {
+    let lane = setup_fee_dist_lane();
+    let env = &lane.env;
+
+    let (receipts, message, _required_fee) = lane.send_data_only();
+    // Data-only: [CCV_a, CCV_b, Executor, NetworkFee] (no pool row).
+    assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
+    assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
+    assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
+    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
+
+    let price = lane.fee_token_price(&message);
+    let expected_a = fee_math::usd_cents_to_fee_token(30_u128, price).expect("convert ccv_a fee");
+    let expected_b = fee_math::usd_cents_to_fee_token(70_u128, price).expect("convert ccv_b fee");
+
+    // Balance checks are contract calls — run after all event extraction.
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_a),
+        expected_a,
+        "ccv_a fee must be transferred to its VVR at send time (H-3)"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_b),
+        expected_b,
+        "ccv_b fee must be transferred to its VVR at send time (H-3)"
+    );
+}
+
+/// H-3 / INV-FEE-20: the token-pool fee is transferred at send time to the pool
+/// (the pool receipt `issuer`). Stellar pools are all V2 post-H-13, so the fee
+/// is always moved (EVM's V1 leave-it-for-sweep branch is N/A). The pool fee
+/// here is the FeeQuoter per-token config (5000 cents, `is_enabled` fallback
+/// since the real pool's `get_fee` is disabled). Token transfer exercises the
+/// full receipt row [CCV_a, CCV_b, Pool, Executor, NetworkFee].
+#[test]
+fn test_send_distributes_pool_fee_to_pool() {
+    let lane = setup_fee_dist_lane();
+    let env = &lane.env;
+
+    let (receipts, message, _required_fee) = lane.send_token_transfer();
+    assert_eq!(
+        receipts.len(),
+        5,
+        "expected 2 CCV + pool + executor + network"
+    );
+    assert_eq!(receipts.get(2).unwrap().issuer, lane.pool_id);
+    assert_eq!(receipts.get(2).unwrap().fee_token_amount, 5000);
+
+    let price = lane.fee_token_price(&message);
+    let expected_pool =
+        fee_math::usd_cents_to_fee_token(5000_u128, price).expect("convert pool fee");
+
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&lane.pool_id),
+        expected_pool,
+        "pool fee must be transferred to the token pool at send time (H-3)"
+    );
+}
+
+/// H-3 / INV-FEE-21: the network fee is LEFT on the OnRamp at send time (EVM:
+/// "network fee receipt which must remain in the onRamp") and the
+/// permissionless `withdraw_fee_tokens` later sweeps exactly that residual to
+/// `fee_aggregator`. After distribution the OnRamp holds `required_fee` minus
+/// the sum of the CCV/pool/executor slices transferred — i.e. the network-fee
+/// slice + floor-division rounding dust, all of which belongs to
+/// `fee_aggregator`. End-to-end leave-and-sweep proof.
+#[test]
+fn test_withdraw_fee_tokens_sweeps_network_fee_residual() {
+    let lane = setup_fee_dist_lane();
+    let env = &lane.env;
+
+    let (_receipts, _message, required_fee) = lane.send_token_transfer();
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+
+    // The four slices transferred at send time.
+    let ccv_a_bal = fee_token_client.balance(&lane.ccv_a);
+    let ccv_b_bal = fee_token_client.balance(&lane.ccv_b);
+    let pool_bal = fee_token_client.balance(&lane.pool_id);
+    let exec_bal = fee_token_client.balance(&lane.default_executor);
+
+    // Conservation: the OnRamp received `required_fee`; after distribution it
+    // holds only the network-fee slice + rounding dust.
+    let residual = required_fee - ccv_a_bal - ccv_b_bal - pool_bal - exec_bal;
+    assert!(
+        residual > 0,
+        "network fee residual must remain on the OnRamp"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.onramp_id),
+        residual,
+        "OnRamp must hold only the network-fee residual after distribution"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.fee_aggregator),
+        0,
+        "fee aggregator must have received nothing yet (network fee is left, not eagerly sent)"
+    );
+
+    // Permissionless sweep moves exactly the residual to the fee aggregator.
+    lane.onramp_client
+        .withdraw_fee_tokens(&vec![env, lane.fee_token.clone()]);
+    assert_eq!(
+        fee_token_client.balance(&lane.onramp_id),
+        0,
+        "withdraw_fee_tokens must sweep the full residual off the OnRamp"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.fee_aggregator),
+        residual,
+        "the network-fee residual must reach the fee aggregator via the sweep"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// INV-FEE-13 / M-10: LINK premium must apply to CCV / pool / executor-flat fees
+// ---------------------------------------------------------------------------
+// EVM `OnRamp._getReceipts` applies `feeMultiplier = percentMultiplier * 1e32 /
+// feeTokenPrice` to EVERY receipt (OnRamp.sol:1090), then adds exec cost WITHOUT
+// the multiplier (:1096). Stellar previously applied the LINK premium only to the
+// message fee (gas + network) via the fee-quoter, converting the additional
+// (CCV/pool/executor-flat) slices with the BARE helper — over-charging and
+// over-distributing them for a LINK fee token. The fix routes those slices
+// through `usd_cents_to_fee_token_with_premium`. These tests build a LINK lane
+// (`fee_token == link_token`, `link_premium_percent = 90` ⇒ 10% discount) and
+// assert the discounted, premium-aware amounts land on-chain. The non-LINK
+// regression guard is the existing H-3 suite above (`setup_fee_dist_lane()` ⇒
+// `premium_multiplier = 100` ⇒ the premium helper is bit-identical to the bare
+// one, so those tests still assert the bare amounts and stay green).
+
+/// INV-FEE-13: with a LINK fee token (premium 90), each CCV fee is transferred to
+/// its VVR in the DISCOUNTED fee-token amount `usd_cents_to_fee_token_with_premium(
+/// fee, 90, price)`, not the bare conversion. The receipt still carries USD cents
+/// (30/70) — only the converted/distributed amount changes. Data-only isolates the
+/// CCV slice (no pool row).
+#[test]
+fn test_send_distributes_ccv_fees_with_link_premium() {
+    let lane = setup_fee_dist_lane_impl(true, 90);
+    let env = &lane.env;
+
+    let (receipts, message, _required_fee) = lane.send_data_only();
+    assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
+    // Receipts still carry USD cents (off-chain parsing is unchanged).
+    assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
+    assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
+    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
+
+    let price = lane.fee_token_price(&message);
+    // Discounted (premium 90) — strictly less than the bare conversion.
+    let expected_a =
+        fee_math::usd_cents_to_fee_token_with_premium(30_u128, 90, price).expect("convert ccv_a");
+    let expected_b =
+        fee_math::usd_cents_to_fee_token_with_premium(70_u128, 90, price).expect("convert ccv_b");
+    let bare_a = fee_math::usd_cents_to_fee_token(30_u128, price).expect("bare ccv_a");
+    assert!(
+        expected_a < bare_a,
+        "LINK premium must discount the CCV fee vs the bare conversion"
+    );
+
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_a),
+        expected_a,
+        "ccv_a fee must be the premium-discounted amount (INV-FEE-13)"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_b),
+        expected_b,
+        "ccv_b fee must be the premium-discounted amount (INV-FEE-13)"
+    );
+}
+
+/// INV-FEE-13: with a LINK fee token (premium 90), the pool fee is transferred to
+/// the token pool in the DISCOUNTED amount. Token transfer exercises the full
+/// receipt row [CCV_a, CCV_b, Pool, Executor, NetworkFee].
+#[test]
+fn test_send_distributes_pool_fee_with_link_premium() {
+    let lane = setup_fee_dist_lane_impl(true, 90);
+    let env = &lane.env;
+
+    let (receipts, message, _required_fee) = lane.send_token_transfer();
+    assert_eq!(
+        receipts.len(),
+        5,
+        "expected 2 CCV + pool + executor + network"
+    );
+    assert_eq!(receipts.get(2).unwrap().issuer, lane.pool_id);
+    assert_eq!(receipts.get(2).unwrap().fee_token_amount, 5000);
+
+    let price = lane.fee_token_price(&message);
+    let expected_pool =
+        fee_math::usd_cents_to_fee_token_with_premium(5000_u128, 90, price).expect("convert pool");
+    let bare_pool = fee_math::usd_cents_to_fee_token(5000_u128, price).expect("bare pool");
+    assert!(
+        expected_pool < bare_pool,
+        "LINK premium must discount the pool fee vs the bare conversion"
+    );
+
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&lane.pool_id),
+        expected_pool,
+        "pool fee must be the premium-discounted amount (INV-FEE-13)"
+    );
+}
+
+/// INV-FEE-13 (quote path): `get_fee` must quote the premium-aware (discounted)
+/// total for a LINK fee token. Two lanes with identical USD fee configs — one
+/// non-LINK (`premium_multiplier = 100`), one LINK (premium 90) — quote the same
+/// data-only message; the LINK total must be strictly lower. This proves the
+/// discount reaches the quoted total (not only the distribution), without
+/// coupling the assertion to gas-pricing internals.
+#[test]
+fn test_get_fee_link_total_is_discounted_vs_non_link() {
+    let non_link_lane = setup_fee_dist_lane_impl(false, 90);
+    let link_lane = setup_fee_dist_lane_impl(true, 90);
+
+    // Each message must be built from its OWN lane's env — Soroban objects
+    // (Bytes/Vec/Address) cannot cross `Env` instances ("unknown object
+    // reference"). Both lanes use identical USD fee configs; only the fee token
+    // differs (non-LINK ⇒ `premium_multiplier = 100`, LINK ⇒ 90).
+    let nl_env = &non_link_lane.env;
+    let non_link_message = StellarToAnyMessage {
+        receiver: Bytes::from_array(nl_env, &[0x33u8; 20]),
+        data: Bytes::from_slice(nl_env, b"inv-fee-13 quote"),
+        token_amounts: Vec::new(nl_env),
+        fee_token: non_link_lane.fee_token.clone(),
+        extra_args: Bytes::new(nl_env),
+    };
+    let non_link_fee = non_link_lane
+        .router_client
+        .get_fee(&non_link_lane.evm_chain_selector, &non_link_message);
+
+    let lk_env = &link_lane.env;
+    let link_message = StellarToAnyMessage {
+        receiver: Bytes::from_array(lk_env, &[0x33u8; 20]),
+        data: Bytes::from_slice(lk_env, b"inv-fee-13 quote"),
+        token_amounts: Vec::new(lk_env),
+        fee_token: link_lane.fee_token.clone(),
+        extra_args: Bytes::new(lk_env),
+    };
+    let link_fee = link_lane
+        .router_client
+        .get_fee(&link_lane.evm_chain_selector, &link_message);
+
+    assert!(
+        link_fee < non_link_fee,
+        "LINK fee-token quote must be discounted vs the non-LINK quote (INV-FEE-13): \
+         link={link_fee} non_link={non_link_fee}"
+    );
+    assert!(
+        non_link_fee > 0 && link_fee > 0,
+        "both quotes must be positive"
+    );
+}
+
+/// INV-FEE-13 × H-3 overdraw coupling: with a LINK fee token the charged
+/// `additional_in_fee_token` is the DISCOUNTED sum, and the per-receipt
+/// distribution is also discounted. The floor-division invariant
+/// `Σ premium_convert(each) ≤ premium_convert(Σ)` keeps the distributed sum ≤ the
+/// funded additional, so the OnRamp is never over-drawn — the residual left on it
+/// is exactly the network-fee slice + rounding dust, swept by
+/// `withdraw_fee_tokens`. This is the LINK-fee-token analogue of
+/// `test_withdraw_fee_tokens_sweeps_network_fee_residual`.
+#[test]
+fn test_link_lane_no_overdraw_conservation() {
+    let lane = setup_fee_dist_lane_impl(true, 90);
+    let env = &lane.env;
+
+    let (_receipts, _message, required_fee) = lane.send_token_transfer();
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+
+    let ccv_a_bal = fee_token_client.balance(&lane.ccv_a);
+    let ccv_b_bal = fee_token_client.balance(&lane.ccv_b);
+    let pool_bal = fee_token_client.balance(&lane.pool_id);
+    let exec_bal = fee_token_client.balance(&lane.default_executor);
+
+    // No overdraw: the four distributed slices never exceed the funded fee, and
+    // the OnRamp holds the (positive) network-fee residual + dust.
+    let residual = required_fee - ccv_a_bal - ccv_b_bal - pool_bal - exec_bal;
+    assert!(
+        residual > 0,
+        "network fee residual must remain on the OnRamp under the LINK discount (no overdraw)"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.onramp_id),
+        residual,
+        "OnRamp must hold only the network-fee residual after LINK-premium distribution"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.fee_aggregator),
+        0,
+        "fee aggregator must have received nothing yet (network fee is left, not eagerly sent)"
+    );
+
+    // Permissionless sweep moves exactly the residual to the fee aggregator.
+    lane.onramp_client
+        .withdraw_fee_tokens(&vec![env, lane.fee_token.clone()]);
+    assert_eq!(
+        fee_token_client.balance(&lane.onramp_id),
+        0,
+        "withdraw_fee_tokens must sweep the full residual off the OnRamp"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.fee_aggregator),
+        residual,
+        "the network-fee residual must reach the fee aggregator via the sweep"
     );
 }
 
