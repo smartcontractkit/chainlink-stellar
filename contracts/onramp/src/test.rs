@@ -1040,6 +1040,72 @@ mod mock_pool {
             }
         }
     }
+
+    /// A minimal `TokenPoolInterface` mock whose `get_required_ccvs` returns an
+    /// EMPTY CCV list with `include_defaults = false`. Combined with a token-only
+    /// message (which skips the user-fallback defaults path in
+    /// `build_merged_outbound_ccv_lists`) and a lane with no lane-mandated CCVs,
+    /// this yields a zero-length merged CCV list — the exact H-1 / INV-CC-1
+    /// scenario the OnRamp must reject. `get_fee` returns a *disabled*
+    /// `PoolFeeResult` so the OnRamp falls back to the FeeQuoter; the H-1 guard
+    /// fires inside `build_merged_outbound_ccv_lists` before `lock_or_burn` is
+    /// ever reached, but a valid stub is included for completeness.
+    #[contract]
+    pub struct MockPoolEmptyRequiredNoDefaults;
+
+    #[contractimpl]
+    impl MockPoolEmptyRequiredNoDefaults {
+        pub fn get_fee(
+            _env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        /// Minimal valid return for any `lock_or_burn` the send path may make
+        /// (unreached once H-1 lands, but kept for a complete interface stub).
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: Bytes::new(&env),
+            })
+        }
+
+        /// No pool-mandated CCVs AND do NOT fold in lane defaults — the
+        /// discriminator for H-1. With a token-only message (user-fallback
+        /// defaults skipped) and no lane-mandated CCVs, the merged CCV list is
+        /// empty, which the OnRamp must reject rather than emit unverified.
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> PoolRequiredCCVs {
+            PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: false,
+            }
+        }
+    }
 }
 
 // ============================================================
@@ -1441,6 +1507,103 @@ fn test_get_fee_threads_token_args_to_pool() {
         token_args,
         "pool.get_fee must receive the sender's extra_args.token_args unchanged (EVM IPoolV2.getFee parity)"
     );
+}
+
+/// H-1 / INV-CC-1: an outbound message must carry at least one CCV. A token-only
+/// transfer skips the user-fallback defaults path in `build_merged_outbound_ccv_lists`,
+/// so when the pool returns `{ccvs:[], include_defaults:false}` and the lane has no
+/// lane-mandated CCVs, the merged CCV list is empty. `get_fee` routes through that
+/// same merge point and must reject with `CCVQuorumNotMet` (#108) instead of quoting
+/// a fee for an unverified message.
+#[test]
+#[should_panic(expected = "Error(Contract, #108)")] // CCVQuorumNotMet
+fn test_get_fee_rejects_zero_ccv() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    // Rebind the transfer token's pool to a mock that returns no required CCVs
+    // and asks the OnRamp NOT to fold in lane defaults. The lane itself still
+    // carries a non-empty `default_ccvs` (so `DestChainConfigArgs::validate`
+    // accepts it), but `include_defaults = false` means those defaults are never
+    // appended for this pool — the precise H-1 gap.
+    let mock_pool_id = lane
+        .env
+        .register(mock_pool::MockPoolEmptyRequiredNoDefaults, ());
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    let env = &lane.env;
+    // Token-only: empty data, one token amount, gas_limit 0, empty user CCVs.
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    lane.router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+}
+
+/// H-1 / INV-CC-1: the send path shares the same merge point as `get_fee`, so the
+/// same zero-CCV token-only scenario must be rejected at send time with
+/// `CCVQuorumNotMet` (#108). The guard fires inside `build_merged_outbound_ccv_lists`,
+/// which `forward_from_router` calls before fee validation and `lock_or_burn`, so no
+/// fee tokens need minting and a zero fee suffices. Invoked directly (the lane's
+/// `mock_all_auths` satisfies the router + sender auth checks) to target
+/// `forward_from_router` precisely.
+#[test]
+#[should_panic(expected = "Error(Contract, #108)")] // CCVQuorumNotMet
+fn test_forward_from_router_rejects_zero_ccv_token_only() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    let mock_pool_id = lane
+        .env
+        .register(mock_pool::MockPoolEmptyRequiredNoDefaults, ());
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    let env = &lane.env;
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    let onramp_client = OnRampContractClient::new(&lane.env, &lane.onramp_id);
+    onramp_client.forward_from_router(&lane.evm_chain_selector, &message, &0_i128, &lane.sender);
 }
 
 /// Re-register the lane's transfer-token pool binding to point at `mock_pool`.
