@@ -223,6 +223,14 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 
 	// ⑦ Role separation: the proposer cannot bypass, the bypasser cannot schedule,
 	// and the fast timelock cannot uncurse (owner-only).
+	//
+	// Deliberately runs AFTER ⑧ despite the numbering: every negative below drives
+	// a SetRoot whose execute is then rejected, and a rejected execute after a
+	// successful SetRoot leaves an active unexecuted root on that MCMS instance —
+	// the next SetRoot on it (override_previous_root: false, as all helpers here
+	// use) is rejected too. ⑧'s uncurse still needs a clean SetRoot on the
+	// governance stack, so it must run first; nothing below this block reuses
+	// these instances, so the negatives can safely leave the roots dirty.
 	proposerAsBypasser := *govStack
 	proposerAsBypasser.BypasserMCMSID = govStack.ProposerMCMSID
 	proposerAsBypasser.BypasserClient = govStack.MCMSClient
