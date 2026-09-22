@@ -14,10 +14,3 @@ pub struct ReleasedEvent {
     pub recipient: Address,
     pub amount: i128,
 }
-
-#[contractevent(topics = ["pool_LockBoxConfigured"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LockBoxConfiguredEvent {
-    pub remote_chain_selector: u64,
-    pub lock_box: Address,
-}

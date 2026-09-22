@@ -7,18 +7,30 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, E
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
+use common_interfaces::token_lock_box::TokenLockBoxClient;
 use common_pool::{
-    calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
+    _get_fee, calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
     rate_limit, BaseTokenPool, ChainUpdate, FtfInboundConsumedEvent, FtfOutboundConsumedEvent,
-    InboundRateLimitConsumedEvent, LockOrBurnIn, LockOrBurnOut, MessageDirection,
-    OutboundRateLimitConsumedEvent, PoolFeeConfig, PoolFeeResult, PoolRequiredCCVs,
-    RateLimitConfig, RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut,
+    InboundRateLimitConsumedEvent, LockBoxConfiguredEvent, LockBoxEntry, LockOrBurnIn,
+    LockOrBurnOut, MessageDirection, OutboundRateLimitConsumedEvent, PoolFeeResult,
+    PoolRequiredCCVs, RateLimitConfig, RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut,
+    TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use events::{LockedEvent, ReleasedEvent};
 
 const INITIALIZED: Symbol = symbol_short!("INIT");
 const OWNER: Symbol = symbol_short!("OWNER");
 const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+/// Persistent: `(LOCKBOX, remote_chain_selector) → Address` of the lockbox for that chain.
+const LOCKBOX: Symbol = symbol_short!("LOCKBOX");
+/// `approve` expiry ledger for pool→lockbox allowance: `ledger.sequence() + this`.
+///
+/// In the intended CCIP path (`Router::ccip_send` → `OnRamp::forward_from_router` →
+/// pool `lock_or_burn`), the whole graph runs in one Stellar transaction / ledger
+/// close. This buffer only caps worst-case residual allowance exposure if the
+/// `approve(0)` cleanup fails; `1` is enough for SAC. See
+/// `SiloedLockReleaseTokenPool` for the full rationale.
+const LOCKBOX_ALLOWANCE_EXPIRY_BUFFER: u32 = 1;
 
 #[contract]
 pub struct LockReleaseTokenPoolContract;
@@ -75,10 +87,69 @@ impl LockReleaseTokenPoolContract {
     }
 
     // ------------------------------------------------------------------
+    // Lock box configuration (owner-only)
+    // ------------------------------------------------------------------
+
+    /// Map remote chain selectors to lockbox addresses (EVM
+    /// `LockReleaseTokenPool.configureLockBoxes` parity — the canonical pool
+    /// now escrows in a lockbox like its siloed sibling, so the pool's own token
+    /// balance equals only accrued fees and `withdraw_fee_tokens` can safely
+    /// sweep the full balance). Many selectors may point to the same lockbox
+    /// (shared liquidity). Each lockbox must support this pool's token.
+    pub fn configure_lock_boxes(env: Env, configs: Vec<LockBoxEntry>) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
+        for i in 0..configs.len() {
+            let entry = configs.get(i).ok_or(CCIPError::InvalidConfig)?;
+            let lb_client = TokenLockBoxClient::new(&env, &entry.lock_box);
+            if !lb_client.is_token_supported(&pool_token) {
+                return Err(CCIPError::InvalidConfig);
+            }
+            let key = (LOCKBOX, entry.remote_chain_selector);
+            env.storage().persistent().set(&key, &entry.lock_box);
+            LockBoxConfiguredEvent {
+                remote_chain_selector: entry.remote_chain_selector,
+                lock_box: entry.lock_box,
+            }
+            .publish(&env);
+        }
+        Ok(())
+    }
+
+    pub fn get_lock_box(env: Env, remote_chain_selector: u64) -> Result<Address, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        resolve_lock_box(&env, remote_chain_selector)
+    }
+
+    pub fn get_all_lock_box_configs(env: Env) -> Result<Vec<LockBoxEntry>, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        let chains = load_supported_chains(&env);
+        let mut out: Vec<LockBoxEntry> = Vec::new(&env);
+        for sel in chains.iter() {
+            let key = (LOCKBOX, sel);
+            if let Some(addr) = env
+                .storage()
+                .persistent()
+                .get::<(Symbol, u64), Address>(&key)
+            {
+                out.push_back(LockBoxEntry {
+                    remote_chain_selector: sel,
+                    lock_box: addr,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    // ------------------------------------------------------------------
     // Pool Operations
     // ------------------------------------------------------------------
 
-    /// Locks tokens in the pool. Called by the OnRamp during a cross-chain send.
+    /// Locks tokens by transferring the source-side fee to the pool and depositing
+    /// the post-fee `dest_token_amount` into the lockbox configured for
+    /// `remote_chain_selector` (EVM `TokenPool.lockOrBurn` parity). Called by the
+    /// OnRamp during a cross-chain send.
     ///
     /// The caller (OnRamp/Router) must have arranged for the tokens to be
     /// transferred into this contract before calling `lock_or_burn`.
@@ -89,6 +160,7 @@ impl LockReleaseTokenPoolContract {
         caller: Address,
         input: LockOrBurnIn,
         requested_finality: u32,
+        _token_args: Bytes,
     ) -> Result<LockOrBurnOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         <Self as BaseTokenPool>::require_authorized_onramp(
@@ -115,6 +187,21 @@ impl LockReleaseTokenPoolContract {
             input.remote_chain_selector,
         )?;
 
+        // Compute the source-side in-token fee BEFORE rate limiting (EVM
+        // `TokenPool.lockOrBurn` L288-311). The fee accrues on the pool's own
+        // balance; only `dest_token_amount` crosses to the lockbox / wire.
+        // `token_args` is accepted for EVM `IPoolV2.lockOrBurn` ABI parity; the
+        // base fee model keys on the destination chain only, so it is unused here.
+        let fee_config = <Self as BaseTokenPool>::get_token_transfer_fee_config(
+            &env,
+            input.remote_chain_selector,
+        )?;
+        let fee_amount = _get_fee(&env, input.amount, requested_finality, &fee_config)?;
+        let dest_token_amount = input
+            .amount
+            .checked_sub(fee_amount)
+            .ok_or(CCIPError::InvalidTokenAmount)?;
+
         // TODO: Remove FTF outbound rate limiting from lock_or_burn. Stellar has
         // deterministic ~5s finality with no reorg risk, so there is no meaningful
         // "fast finality" concept when Stellar is the source chain. Senders on
@@ -122,43 +209,85 @@ impl LockReleaseTokenPoolContract {
         // always 0). FTF rate limits should only apply inbound (release_or_mint),
         // where messages arriving from EVM with fast finality carry higher source-
         // chain reorg risk. This block should be simplified to always use the
-        // default outbound bucket, ignoring `requested_finality`.
+        // default outbound bucket, ignoring `requested_finality`. EVM rate-limits
+        // the post-fee `destTokenAmount`, so the consume + event use it here.
         if finality_codec::is_fast_finality(requested_finality) {
             let allowed = <Self as BaseTokenPool>::get_allowed_finality_config(&env);
             finality_codec::ensure_requested_finality_allowed(requested_finality, allowed)?;
-            let used_ftf =
-                rate_limit::consume_ftf_outbound(&env, input.remote_chain_selector, input.amount)?;
+            let used_ftf = rate_limit::consume_ftf_outbound(
+                &env,
+                input.remote_chain_selector,
+                dest_token_amount,
+            )?;
             if used_ftf {
                 FtfOutboundConsumedEvent {
                     remote_chain_selector: input.remote_chain_selector,
-                    amount: input.amount,
+                    amount: dest_token_amount,
                 }
                 .publish(&env);
             } else {
                 OutboundRateLimitConsumedEvent {
                     remote_chain_selector: input.remote_chain_selector,
-                    amount: input.amount,
+                    amount: dest_token_amount,
                 }
                 .publish(&env);
             }
         } else {
-            rate_limit::consume_outbound(&env, input.remote_chain_selector, input.amount)?;
+            rate_limit::consume_outbound(&env, input.remote_chain_selector, dest_token_amount)?;
             OutboundRateLimitConsumedEvent {
                 remote_chain_selector: input.remote_chain_selector,
-                amount: input.amount,
+                amount: dest_token_amount,
             }
             .publish(&env);
         }
 
-        <Self as BaseTokenPool>::preflight_check(&env, &input, requested_finality, input.amount)?;
+        <Self as BaseTokenPool>::preflight_check(
+            &env,
+            &input,
+            requested_finality,
+            dest_token_amount,
+        )?;
 
+        // Move the full amount from the sender onto the pool, then deposit only
+        // `dest_token_amount` into the lockbox. `fee_amount` stays on the pool
+        // balance == accrued fees, so `withdraw_fee_tokens` can sweep the full
+        // pool balance without touching user liquidity (EVM
+        // `LockReleaseTokenPool` lockbox parity).
         let pool_address = env.current_contract_address();
         let token_client = token::Client::new(&env, &pool_token);
         token_client.transfer(&input.original_sender, &pool_address, &input.amount);
 
+        let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
+        // A zero-amount lock transfers no value, so skip the lockbox deposit
+        // entirely — the lockbox `deposit` rejects `amount <= 0`. The lockbox
+        // must still be configured for the chain (`resolve_lock_box` above
+        // enforces that), but no token movement occurs. Mirrors EVM, where a
+        // zero-amount `lockOrBurn` is a valid no-op transfer (L-1).
+        if dest_token_amount > 0 {
+            let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
+            let allowance_exp = env
+                .ledger()
+                .sequence()
+                .saturating_add(LOCKBOX_ALLOWANCE_EXPIRY_BUFFER);
+            token_client.approve(
+                &pool_address,
+                &lock_box_addr,
+                &dest_token_amount,
+                &allowance_exp,
+            );
+            if lb_client
+                .try_deposit(&pool_address, &dest_token_amount)
+                .is_err()
+            {
+                revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
+                return Err(CCIPError::TokenHandlingError);
+            }
+            revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
+        }
+
         LockedEvent {
             sender: input.original_sender.clone(),
-            amount: input.amount,
+            amount: dest_token_amount,
         }
         .publish(&env);
 
@@ -170,6 +299,7 @@ impl LockReleaseTokenPoolContract {
 
         Ok(LockOrBurnOut {
             dest_token_address: remote_token,
+            dest_token_amount,
             dest_pool_data,
         })
     }
@@ -255,15 +385,21 @@ impl LockReleaseTokenPoolContract {
 
         <Self as BaseTokenPool>::postflight_check(&env, &input, local_amount, requested_finality)?;
 
+        // Release from the lockbox, which holds the bridged liquidity (EVM
+        // `LockReleaseTokenPool._releaseOrMint` calls `i_lockBox.withdraw`). The
+        // lockbox performs its own balance check, so the pool no longer guards
+        // `InsufficientPoolLiquidity` here — the pool's own balance is fees only.
+        let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
         let pool_address = env.current_contract_address();
-        let token_client = token::Client::new(&env, &pool_token);
-
-        let pool_balance = token_client.balance(&pool_address);
-        if pool_balance < local_amount {
-            return Err(CCIPError::InsufficientPoolLiquidity);
+        // A zero-amount release transfers no value, so skip the lockbox
+        // withdrawal — the lockbox `withdraw` rejects `amount <= 0`. The lockbox
+        // must still be configured for the chain (`resolve_lock_box` above
+        // enforces that). Mirrors EVM, where a zero-amount `releaseOrMint` is a
+        // valid no-op transfer.
+        if local_amount > 0 {
+            let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
+            lb_client.withdraw(&pool_address, &local_amount, &input.receiver);
         }
-
-        token_client.transfer(&pool_address, &input.receiver, &local_amount);
 
         ReleasedEvent {
             sender: pool_address,
@@ -368,19 +504,64 @@ impl LockReleaseTokenPoolContract {
         <Self as BaseTokenPool>::get_allowed_finality_config(&env)
     }
 
-    pub fn get_fee(env: Env, remote_chain_selector: u64) -> Result<PoolFeeResult, CCIPError> {
+    pub fn get_fee(
+        env: Env,
+        dest_chain_selector: u64,
+        amount: i128,
+        requested_finality: u32,
+        token_args: Bytes,
+    ) -> Result<PoolFeeResult, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as BaseTokenPool>::get_fee(&env, remote_chain_selector)
+        <Self as BaseTokenPool>::get_fee(
+            &env,
+            dest_chain_selector,
+            amount,
+            requested_finality,
+            &token_args,
+        )
     }
 
-    pub fn set_pool_fee_config(
+    pub fn get_token_transfer_fee_config(
         env: Env,
-        remote_chain_selector: u64,
-        config: PoolFeeConfig,
+        dest_chain_selector: u64,
+    ) -> Result<TokenTransferFeeConfig, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as BaseTokenPool>::get_token_transfer_fee_config(&env, dest_chain_selector)
+    }
+
+    pub fn apply_token_fee_config_updates(
+        env: Env,
+        adds: Vec<TokenTransferFeeConfigArgs>,
+        disables: Vec<u64>,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         <Self as Ownable>::require_owner(&env)?;
-        <Self as BaseTokenPool>::set_pool_fee_config(&env, remote_chain_selector, &config)
+        <Self as BaseTokenPool>::apply_token_fee_config_updates(&env, &adds, &disables)
+    }
+
+    /// Withdraws accrued fee-token balances to `recipient` (EVM
+    /// `TokenPool.withdrawFeeTokens`). Callable by the owner or the fee admin.
+    pub fn withdraw_fee_tokens(
+        env: Env,
+        fee_tokens: Vec<Address>,
+        recipient: Address,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        Self::require_owner_or_fee_admin(&env)?;
+        <Self as BaseTokenPool>::withdraw_fee_tokens(&env, &fee_tokens, &recipient)
+    }
+
+    /// Sets the fee-admin address (EVM parity for the `feeAdmin` field of
+    /// `setDynamicConfig`). Owner-only.
+    pub fn set_fee_admin(env: Env, fee_admin: Address) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::set_fee_admin(&env, &fee_admin);
+        Ok(())
+    }
+
+    pub fn get_fee_admin(env: Env) -> Option<Address> {
+        <Self as BaseTokenPool>::get_fee_admin(&env)
     }
 
     /// Set the allowed finality configuration. Owner-only.
@@ -477,6 +658,52 @@ impl LockReleaseTokenPoolContract {
         }
         Err(CCIPError::Unauthorized)
     }
+
+    /// EVM `TokenPool.withdrawFeeTokens` caller gate: owner OR fee admin.
+    /// `require_owner` already calls `require_auth` on the owner; if the invoker
+    /// is not the owner, fall back to the fee admin (which must authorize).
+    fn require_owner_or_fee_admin(env: &Env) -> Result<(), CCIPError> {
+        if <Self as Ownable>::require_owner(env).is_ok() {
+            return Ok(());
+        }
+        if let Some(admin) = <Self as BaseTokenPool>::get_fee_admin(env) {
+            admin.require_auth();
+            return Ok(());
+        }
+        Err(CCIPError::Unauthorized)
+    }
+}
+
+// ============================================================
+// Internal helpers
+// ============================================================
+
+/// Clears pool→lockbox token allowance (best-effort hygiene after `deposit` or on error).
+fn revoke_pool_allowance_to_lockbox(
+    env: &Env,
+    pool_token: &Address,
+    pool_address: &Address,
+    lock_box_addr: &Address,
+) {
+    let token_client = token::Client::new(env, pool_token);
+    let seq = env.ledger().sequence();
+    token_client.approve(pool_address, lock_box_addr, &0i128, &seq);
+}
+
+fn resolve_lock_box(env: &Env, remote_chain_selector: u64) -> Result<Address, CCIPError> {
+    let key = (LOCKBOX, remote_chain_selector);
+    env.storage()
+        .persistent()
+        .get::<(Symbol, u64), Address>(&key)
+        .ok_or(CCIPError::InvalidConfig)
+}
+
+fn load_supported_chains(env: &Env) -> Vec<u64> {
+    use common_pool::PoolDataKey;
+    env.storage()
+        .instance()
+        .get(&PoolDataKey::SupportedChains)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 #[cfg(test)]

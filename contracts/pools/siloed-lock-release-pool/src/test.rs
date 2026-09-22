@@ -16,7 +16,8 @@ use common_interfaces::token_pool::{
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
 use common_pool::{
-    ChainUpdate, LockOrBurnIn, MessageDirection, PoolFeeConfig, RateLimitConfig, ReleaseOrMintIn,
+    ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig, ReleaseOrMintIn,
+    TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
@@ -366,7 +367,9 @@ fn lock_deposits_into_lockbox() {
         amount: 500,
         local_token: t.token_addr.clone(),
     };
-    let out = t.pool_client.lock_or_burn(&t.auth_onramp, &input, &0);
+    let out = t
+        .pool_client
+        .lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
 
     assert_eq!(t.tc.balance(&sender), 500);
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 500);
@@ -387,7 +390,8 @@ fn lock_or_burn_leaves_no_token_allowance_on_lockbox() {
         amount: 500,
         local_token: t.token_addr.clone(),
     };
-    t.pool_client.lock_or_burn(&t.auth_onramp, &input, &0);
+    t.pool_client
+        .lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
 
     let pool_addr = t.pool_client.address.clone();
     let remaining = t.tc.allowance(&pool_addr, &t.lockbox_client.address);
@@ -495,7 +499,7 @@ fn unconfigured_lockbox_rejects_lock() {
         amount: 100,
         local_token: token_addr,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &input, &0);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &input, &0, &Bytes::new(&env));
     assert!(r.is_err());
 }
 
@@ -524,7 +528,8 @@ fn many_to_one_lockbox_shared_liquidity() {
         amount: 300,
         local_token: t.token_addr.clone(),
     };
-    t.pool_client.lock_or_burn(&t.auth_onramp, &input_a, &0);
+    t.pool_client
+        .lock_or_burn(&t.auth_onramp, &input_a, &0, &Bytes::new(&t.env));
 
     let input_b = LockOrBurnIn {
         receiver: Bytes::from_slice(&t.env, &[0x02; 20]),
@@ -533,7 +538,8 @@ fn many_to_one_lockbox_shared_liquidity() {
         amount: 200,
         local_token: t.token_addr.clone(),
     };
-    t.pool_client.lock_or_burn(&t.auth_onramp, &input_b, &0);
+    t.pool_client
+        .lock_or_burn(&t.auth_onramp, &input_b, &0, &Bytes::new(&t.env));
 
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 500);
 }
@@ -674,7 +680,8 @@ fn siloed_and_shared_lockbox_isolation() {
         amount: 600,
         local_token: m.token_addr.clone(),
     };
-    m.pool_client.lock_or_burn(&m.auth_onramp, &lock_shared, &0);
+    m.pool_client
+        .lock_or_burn(&m.auth_onramp, &lock_shared, &0, &Bytes::new(&m.env));
 
     let lock_siloed = LockOrBurnIn {
         receiver: Bytes::from_slice(&m.env, &[0x02; 20]),
@@ -683,7 +690,8 @@ fn siloed_and_shared_lockbox_isolation() {
         amount: 400,
         local_token: m.token_addr.clone(),
     };
-    m.pool_client.lock_or_burn(&m.auth_onramp, &lock_siloed, &0);
+    m.pool_client
+        .lock_or_burn(&m.auth_onramp, &lock_siloed, &0, &Bytes::new(&m.env));
 
     assert_eq!(m.tc.balance(&m.shared_lockbox.address), 600);
     assert_eq!(m.tc.balance(&m.siloed_lockbox.address), 400);
@@ -712,6 +720,7 @@ fn release_drains_siloed_lockbox() {
             local_token: m.token_addr.clone(),
         },
         &0,
+        &Bytes::new(&m.env),
     );
     assert_eq!(m.tc.balance(&m.siloed_lockbox.address), 1_000);
     assert_eq!(m.tc.balance(&m.shared_lockbox.address), 0);
@@ -753,6 +762,7 @@ fn release_drains_shared_lockbox() {
             local_token: m.token_addr.clone(),
         },
         &0,
+        &Bytes::new(&m.env),
     );
     assert_eq!(m.tc.balance(&m.shared_lockbox.address), 500);
     assert_eq!(m.tc.balance(&m.siloed_lockbox.address), 0);
@@ -799,6 +809,7 @@ fn lock_rejects_wrong_token() {
             local_token: wrong_token,
         },
         &0,
+        &Bytes::new(&t.env),
     );
     assert!(r.is_err());
 }
@@ -820,6 +831,7 @@ fn lock_rejects_unsupported_chain() {
             local_token: t.token_addr.clone(),
         },
         &0,
+        &Bytes::new(&t.env),
     );
     assert!(r.is_err());
 }
@@ -844,6 +856,7 @@ fn release_rejects_insufficient_liquidity() {
             local_token: m.token_addr.clone(),
         },
         &0,
+        &Bytes::new(&m.env),
     );
 
     let receiver = Address::generate(&m.env);
@@ -947,33 +960,71 @@ fn release_rejects_wrong_source_pool() {
 #[test]
 fn get_fee_returns_zero_when_not_configured() {
     let t = setup();
-    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+    let result = t
+        .pool_client
+        .get_fee(&REMOTE_CHAIN, &0i128, &0u32, &Bytes::new(&t.env));
     assert_eq!(result.fee_usd_cents, 0);
 }
 
 #[test]
 fn set_and_get_pool_fee_config() {
     let t = setup();
-    let fee_config = PoolFeeConfig {
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 150,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
         is_enabled: true,
-        fee_usd_cents: 150,
     };
+    let adds = Vec::from_array(
+        &t.env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: REMOTE_CHAIN,
+            config: fee_config,
+        }],
+    );
     t.pool_client
-        .set_pool_fee_config(&REMOTE_CHAIN, &fee_config);
-    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+        .apply_token_fee_config_updates(&adds, &Vec::new(&t.env));
+    // Requested finality 0 == WAIT_FOR_FINALITY → resolves finality_fee_usd_cents.
+    let result = t
+        .pool_client
+        .get_fee(&REMOTE_CHAIN, &0i128, &0u32, &Bytes::new(&t.env));
     assert_eq!(result.fee_usd_cents, 150);
 }
 
 #[test]
 fn pool_fee_disabled_returns_zero() {
     let t = setup();
-    let fee_config = PoolFeeConfig {
-        is_enabled: false,
-        fee_usd_cents: 200,
+    // An enabled config first, so we can observe the disable actually zeroes it.
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 200,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
+        is_enabled: true,
     };
+    let adds = Vec::from_array(
+        &t.env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: REMOTE_CHAIN,
+            config: fee_config,
+        }],
+    );
     t.pool_client
-        .set_pool_fee_config(&REMOTE_CHAIN, &fee_config);
-    let result = t.pool_client.get_fee(&REMOTE_CHAIN);
+        .apply_token_fee_config_updates(&adds, &Vec::new(&t.env));
+    // Disabling removes the stored entry; `get_fee` then returns a disabled
+    // (all-zero) result. Adds reject `is_enabled == false`, so the disable list
+    // is the only way to disable (EVM `TokenPool.applyTokenTransferFeeConfigUpdates`).
+    let disables = Vec::from_array(&t.env, [REMOTE_CHAIN]);
+    t.pool_client
+        .apply_token_fee_config_updates(&Vec::new(&t.env), &disables);
+    let result = t
+        .pool_client
+        .get_fee(&REMOTE_CHAIN, &0i128, &0u32, &Bytes::new(&t.env));
     assert_eq!(result.fee_usd_cents, 0);
 }
 
@@ -983,12 +1034,165 @@ fn set_pool_fee_unsupported_chain_rejected() {
     let t = setup();
     // Must differ from `REMOTE_CHAIN` (99_999 == 99999 in Rust).
     let unsupported_chain: u64 = 12_345;
-    let fee_config = PoolFeeConfig {
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 50,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
         is_enabled: true,
-        fee_usd_cents: 50,
     };
+    let adds = Vec::from_array(
+        &t.env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: unsupported_chain,
+            config: fee_config,
+        }],
+    );
+    // The chain-support check runs before config validation, so an unsupported
+    // chain yields ChainNotSupported (#302).
     t.pool_client
-        .set_pool_fee_config(&unsupported_chain, &fee_config);
+        .apply_token_fee_config_updates(&adds, &Vec::new(&t.env));
+}
+
+// ----------------------------------------------------------------
+// Non-zero bps fee coverage (H-13, EVM `TokenPool._getFee` / `applyFee`
+// parity). The fee tests above all set `*_transfer_fee_bps: 0` and assert
+// only `fee_usd_cents`; these exercise the in-token bps deduction path.
+// `dest_gas_overhead` must be non-zero (config validation rejects 0 → #321).
+// ----------------------------------------------------------------
+const SILOED_E18: i128 = 1_000_000_000_000_000_000;
+const SILOED_WAIT_FOR_SAFE: u32 = 1 << 16; // 0x00010000
+
+fn apply_siloed_bps_fee_config(t: &TestEnv, finality_bps: u32, fast_bps: u32) {
+    let config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 0,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: finality_bps,
+        fast_finality_transfer_fee_bps: fast_bps,
+        is_enabled: true,
+    };
+    let adds = Vec::from_array(
+        &t.env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: REMOTE_CHAIN,
+            config,
+        }],
+    );
+    t.pool_client
+        .apply_token_fee_config_updates(&adds, &Vec::new(&t.env));
+}
+
+#[test]
+fn get_fee_siloed_fast_finality_bps_selection() {
+    let t = setup();
+    t.pool_client
+        .set_allowed_finality_config(&SILOED_WAIT_FOR_SAFE);
+    // Distinct USD-cent AND bps values per finality mode, so both fields'
+    // selection can be asserted (`apply_siloed_bps_fee_config` sets USD cents to 0).
+    let adds = Vec::from_array(
+        &t.env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: REMOTE_CHAIN,
+            config: TokenTransferFeeConfig {
+                dest_gas_overhead: 100,
+                dest_bytes_overhead: 32,
+                finality_fee_usd_cents: 40,
+                fast_finality_fee_usd_cents: 80,
+                finality_transfer_fee_bps: 250,
+                fast_finality_transfer_fee_bps: 500,
+                is_enabled: true,
+            },
+        }],
+    );
+    t.pool_client
+        .apply_token_fee_config_updates(&adds, &Vec::new(&t.env));
+
+    // Default finality → finality_* fields (mirrors test_applyFee_DefaultFinality).
+    let default = t.pool_client.get_fee(
+        &REMOTE_CHAIN,
+        &(1_000 * SILOED_E18),
+        &0u32,
+        &Bytes::new(&t.env),
+    );
+    assert_eq!(default.token_fee_bps, 250);
+    assert_eq!(default.fee_usd_cents, 40);
+    assert!(default.is_enabled);
+
+    // Fast finality → fast_finality_* fields (mirrors test_applyFee_CustomFinality).
+    let fast = t.pool_client.get_fee(
+        &REMOTE_CHAIN,
+        &(1_000 * SILOED_E18),
+        &SILOED_WAIT_FOR_SAFE,
+        &Bytes::new(&t.env),
+    );
+    assert_eq!(fast.token_fee_bps, 500);
+    assert_eq!(fast.fee_usd_cents, 80);
+    assert!(fast.is_enabled);
+}
+
+#[test]
+fn lock_or_burn_siloed_nonzero_bps_fee() {
+    let t = setup();
+    apply_siloed_bps_fee_config(&t, 100, 0);
+
+    let sender = Address::generate(&t.env);
+    let amount: i128 = 1_000 * SILOED_E18; // 1000e18 (EVM parity)
+    t.sac.mint(&sender, &amount);
+
+    let input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: t.token_addr.clone(),
+    };
+    let out = t
+        .pool_client
+        .lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
+
+    // fee = 1000e18 * 100 / 10000 = 10e18; dest = 990e18.
+    let fee: i128 = 10 * SILOED_E18;
+    let dest: i128 = 990 * SILOED_E18;
+    assert_eq!(out.dest_token_amount, dest);
+
+    let pool_addr = t.pool_client.address.clone();
+    // The full amount is pulled to the pool; dest is escrowed in the siloed
+    // lockbox, leaving only the fee on the pool's own balance.
+    assert_eq!(t.tc.balance(&t.lockbox_client.address), dest);
+    assert_eq!(t.tc.balance(&pool_addr), fee);
+    assert_eq!(t.tc.balance(&sender), 0);
+}
+
+#[test]
+fn lock_or_burn_siloed_dust_amount_zero_fee() {
+    let t = setup();
+    apply_siloed_bps_fee_config(&t, 250, 0);
+
+    let sender = Address::generate(&t.env);
+    let amount: i128 = 39; // 39 * 250 / 10000 = 0 (floor) — mirrors test_applyFee_RoundsFeeDownToZeroOnDustAmounts
+    t.sac.mint(&sender, &amount);
+
+    let input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: t.token_addr.clone(),
+    };
+    let out = t
+        .pool_client
+        .lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
+    assert_eq!(out.dest_token_amount, 39);
+
+    let pool_addr = t.pool_client.address.clone();
+    // No fee accrues; the full dust amount is escrowed in the lockbox.
+    assert_eq!(t.tc.balance(&t.lockbox_client.address), 39);
+    assert_eq!(t.tc.balance(&pool_addr), 0);
+    assert_eq!(t.tc.balance(&sender), 0);
 }
 
 // ================================================================

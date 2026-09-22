@@ -151,6 +151,53 @@ func TokenBucketFromScVal(val xdr.ScVal) (*TokenBucket, error) {
 	return result, nil
 }
 
+// LockBoxEntry represents the LockBoxEntry struct from the contract.
+type LockBoxEntry struct {
+	LockBox             string
+	RemoteChainSelector uint64
+}
+
+// ToScVal converts LockBoxEntry to an xdr.ScVal for contract calls.
+func (s LockBoxEntry) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"lock_box":              scval.AddressToScVal(s.LockBox),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+	})
+}
+
+// LockBoxEntryFromScVal parses an xdr.ScVal into LockBoxEntry.
+func LockBoxEntryFromScVal(val xdr.ScVal) (*LockBoxEntry, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &LockBoxEntry{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "lock_box":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("lock_box: %w", err)
+			}
+			result.LockBox = v
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
+		}
+	}
+
+	return result, nil
+}
+
 // LockOrBurnIn represents the LockOrBurnIn struct from the contract.
 type LockOrBurnIn struct {
 	Amount              *big.Int
@@ -226,6 +273,7 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 type LockOrBurnOut struct {
 	DestPoolData     []byte
 	DestTokenAddress []byte
+	DestTokenAmount  *big.Int
 }
 
 // ToScVal converts LockOrBurnOut to an xdr.ScVal for contract calls.
@@ -233,6 +281,7 @@ func (s LockOrBurnOut) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"dest_pool_data":     scval.BytesToScVal(s.DestPoolData),
 		"dest_token_address": scval.BytesToScVal(s.DestTokenAddress),
+		"dest_token_amount":  scval.I128ToScVal(s.DestTokenAmount),
 	})
 }
 
@@ -263,53 +312,12 @@ func LockOrBurnOutFromScVal(val xdr.ScVal) (*LockOrBurnOut, error) {
 				return nil, fmt.Errorf("dest_token_address is not bytes")
 			}
 			result.DestTokenAddress = []byte(v)
-		}
-	}
-
-	return result, nil
-}
-
-// PoolFeeConfig represents the PoolFeeConfig struct from the contract.
-type PoolFeeConfig struct {
-	FeeUsdCents uint32
-	IsEnabled   bool
-}
-
-// ToScVal converts PoolFeeConfig to an xdr.ScVal for contract calls.
-func (s PoolFeeConfig) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"fee_usd_cents": scval.Uint32ToScVal(s.FeeUsdCents),
-		"is_enabled":    scval.BoolToScVal(s.IsEnabled),
-	})
-}
-
-// PoolFeeConfigFromScVal parses an xdr.ScVal into PoolFeeConfig.
-func PoolFeeConfigFromScVal(val xdr.ScVal) (*PoolFeeConfig, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &PoolFeeConfig{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "fee_usd_cents":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("fee_usd_cents is not u32")
+		case "dest_token_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("dest_token_amount: %w", err)
 			}
-			result.FeeUsdCents = uint32(v)
-		case "is_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("is_enabled is not bool")
-			}
-			result.IsEnabled = v
+			result.DestTokenAmount = v
 		}
 	}
 
@@ -318,13 +326,21 @@ func PoolFeeConfigFromScVal(val xdr.ScVal) (*PoolFeeConfig, error) {
 
 // PoolFeeResult represents the PoolFeeResult struct from the contract.
 type PoolFeeResult struct {
-	FeeUsdCents uint32
+	DestBytesOverhead uint32
+	DestGasOverhead   uint32
+	FeeUsdCents       uint32
+	IsEnabled         bool
+	TokenFeeBps       uint32
 }
 
 // ToScVal converts PoolFeeResult to an xdr.ScVal for contract calls.
 func (s PoolFeeResult) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"fee_usd_cents": scval.Uint32ToScVal(s.FeeUsdCents),
+		"dest_bytes_overhead": scval.Uint32ToScVal(s.DestBytesOverhead),
+		"dest_gas_overhead":   scval.Uint32ToScVal(s.DestGasOverhead),
+		"fee_usd_cents":       scval.Uint32ToScVal(s.FeeUsdCents),
+		"is_enabled":          scval.BoolToScVal(s.IsEnabled),
+		"token_fee_bps":       scval.Uint32ToScVal(s.TokenFeeBps),
 	})
 }
 
@@ -343,12 +359,36 @@ func PoolFeeResultFromScVal(val xdr.ScVal) (*PoolFeeResult, error) {
 		}
 
 		switch string(key) {
+		case "dest_bytes_overhead":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_bytes_overhead is not u32")
+			}
+			result.DestBytesOverhead = uint32(v)
+		case "dest_gas_overhead":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_gas_overhead is not u32")
+			}
+			result.DestGasOverhead = uint32(v)
 		case "fee_usd_cents":
 			v, ok := entry.Val.GetU32()
 			if !ok {
 				return nil, fmt.Errorf("fee_usd_cents is not u32")
 			}
 			result.FeeUsdCents = uint32(v)
+		case "is_enabled":
+			v, ok := entry.Val.GetB()
+			if !ok {
+				return nil, fmt.Errorf("is_enabled is not bool")
+			}
+			result.IsEnabled = v
+		case "token_fee_bps":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("token_fee_bps is not u32")
+			}
+			result.TokenFeeBps = uint32(v)
 		}
 	}
 
@@ -637,28 +677,38 @@ func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
 	return result, nil
 }
 
-// LockBoxEntry represents the LockBoxEntry struct from the contract.
-type LockBoxEntry struct {
-	LockBox             string
-	RemoteChainSelector uint64
+// TokenTransferFeeConfig represents the TokenTransferFeeConfig struct from the contract.
+type TokenTransferFeeConfig struct {
+	DestBytesOverhead          uint32
+	DestGasOverhead            uint32
+	FastFinalityFeeUsdCents    uint32
+	FastFinalityTransferFeeBps uint32
+	FinalityFeeUsdCents        uint32
+	FinalityTransferFeeBps     uint32
+	IsEnabled                  bool
 }
 
-// ToScVal converts LockBoxEntry to an xdr.ScVal for contract calls.
-func (s LockBoxEntry) ToScVal() (xdr.ScVal, error) {
+// ToScVal converts TokenTransferFeeConfig to an xdr.ScVal for contract calls.
+func (s TokenTransferFeeConfig) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"lock_box":              scval.AddressToScVal(s.LockBox),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+		"dest_bytes_overhead":            scval.Uint32ToScVal(s.DestBytesOverhead),
+		"dest_gas_overhead":              scval.Uint32ToScVal(s.DestGasOverhead),
+		"fast_finality_fee_usd_cents":    scval.Uint32ToScVal(s.FastFinalityFeeUsdCents),
+		"fast_finality_transfer_fee_bps": scval.Uint32ToScVal(s.FastFinalityTransferFeeBps),
+		"finality_fee_usd_cents":         scval.Uint32ToScVal(s.FinalityFeeUsdCents),
+		"finality_transfer_fee_bps":      scval.Uint32ToScVal(s.FinalityTransferFeeBps),
+		"is_enabled":                     scval.BoolToScVal(s.IsEnabled),
 	})
 }
 
-// LockBoxEntryFromScVal parses an xdr.ScVal into LockBoxEntry.
-func LockBoxEntryFromScVal(val xdr.ScVal) (*LockBoxEntry, error) {
+// TokenTransferFeeConfigFromScVal parses an xdr.ScVal into TokenTransferFeeConfig.
+func TokenTransferFeeConfigFromScVal(val xdr.ScVal) (*TokenTransferFeeConfig, error) {
 	scMap, ok := val.GetMap()
 	if !ok || scMap == nil {
 		return nil, fmt.Errorf("not a map type")
 	}
 
-	result := &LockBoxEntry{}
+	result := &TokenTransferFeeConfig{}
 	for _, entry := range *scMap {
 		key, ok := entry.Key.GetSym()
 		if !ok {
@@ -666,18 +716,95 @@ func LockBoxEntryFromScVal(val xdr.ScVal) (*LockBoxEntry, error) {
 		}
 
 		switch string(key) {
-		case "lock_box":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("lock_box: %w", err)
+		case "dest_bytes_overhead":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_bytes_overhead is not u32")
 			}
-			result.LockBox = v
-		case "remote_chain_selector":
+			result.DestBytesOverhead = uint32(v)
+		case "dest_gas_overhead":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("dest_gas_overhead is not u32")
+			}
+			result.DestGasOverhead = uint32(v)
+		case "fast_finality_fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("fast_finality_fee_usd_cents is not u32")
+			}
+			result.FastFinalityFeeUsdCents = uint32(v)
+		case "fast_finality_transfer_fee_bps":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("fast_finality_transfer_fee_bps is not u32")
+			}
+			result.FastFinalityTransferFeeBps = uint32(v)
+		case "finality_fee_usd_cents":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("finality_fee_usd_cents is not u32")
+			}
+			result.FinalityFeeUsdCents = uint32(v)
+		case "finality_transfer_fee_bps":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("finality_transfer_fee_bps is not u32")
+			}
+			result.FinalityTransferFeeBps = uint32(v)
+		case "is_enabled":
+			v, ok := entry.Val.GetB()
+			if !ok {
+				return nil, fmt.Errorf("is_enabled is not bool")
+			}
+			result.IsEnabled = v
+		}
+	}
+
+	return result, nil
+}
+
+// TokenTransferFeeConfigArgs represents the TokenTransferFeeConfigArgs struct from the contract.
+type TokenTransferFeeConfigArgs struct {
+	Config            TokenTransferFeeConfig
+	DestChainSelector uint64
+}
+
+// ToScVal converts TokenTransferFeeConfigArgs to an xdr.ScVal for contract calls.
+func (s TokenTransferFeeConfigArgs) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"config":              scval.MustToScVal((s.Config).ToScVal()),
+		"dest_chain_selector": scval.Uint64ToScVal(s.DestChainSelector),
+	})
+}
+
+// TokenTransferFeeConfigArgsFromScVal parses an xdr.ScVal into TokenTransferFeeConfigArgs.
+func TokenTransferFeeConfigArgsFromScVal(val xdr.ScVal) (*TokenTransferFeeConfigArgs, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &TokenTransferFeeConfigArgs{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "config":
+			v, err := TokenTransferFeeConfigFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("config: %w", err)
+			}
+			result.Config = *v
+		case "dest_chain_selector":
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+				return nil, fmt.Errorf("dest_chain_selector: %w", err)
 			}
-			result.RemoteChainSelector = v
+			result.DestChainSelector = v
 		}
 	}
 
@@ -803,6 +930,8 @@ const (
 	CCIPErrorRouterNotConfigured                 = 318
 	CCIPErrorInvalidSourcePoolAddress            = 319
 	CCIPErrorDuplicateCCVNotAllowed              = 320
+	CCIPErrorInvalidTokenTransferFeeConfig       = 321
+	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -929,6 +1058,8 @@ var CCIPErrorMessage = map[int]string{
 	318: "router not configured",
 	319: "invalid source pool address",
 	320: "duplicate c c v not allowed",
+	321: "invalid token transfer fee config",
+	322: "invalid transfer fee bps",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -1095,6 +1226,19 @@ type FinalityConfigSetEvent struct {
 // FinalityConfigSetEventTopic is the event topic identifier.
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
 
+// LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
+// Topics: [pool_LockBoxConfigured]
+type LockBoxConfiguredEvent struct {
+	RemoteChainSelector uint64
+	LockBox             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// LockBoxConfiguredEventTopic is the event topic identifier.
+const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
+
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
 // Topics: [pool_FtfInboundConsumed]
 type FtfInboundConsumedEvent struct {
@@ -1107,6 +1251,31 @@ type FtfInboundConsumedEvent struct {
 
 // FtfInboundConsumedEventTopic is the event topic identifier.
 const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
+
+// TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
+// Topics: [pool_TokenFeeCfgDeleted]
+type TokenFeeCfgDeletedEvent struct {
+	RemoteChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgDeletedEventTopic is the event topic identifier.
+const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
+
+// TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
+// Topics: [pool_TokenFeeCfgUpdated]
+type TokenFeeCfgUpdatedEvent struct {
+	RemoteChainSelector uint64
+	Config              TokenTransferFeeConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgUpdatedEventTopic is the event topic identifier.
+const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
 
 // FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
 // Topics: [pool_FtfOutboundConsumed]
@@ -1174,19 +1343,6 @@ type OutboundRateLimitConsumedEvent struct {
 
 // OutboundRateLimitConsumedEventTopic is the event topic identifier.
 const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
-
-// LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
-// Topics: [pool_LockBoxConfigured]
-type LockBoxConfiguredEvent struct {
-	RemoteChainSelector uint64
-	LockBox             string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// LockBoxConfiguredEventTopic is the event topic identifier.
-const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
 
 // MessageDirection represents the MessageDirection enum (unit-only Soroban contracttype, encoded as ScVal::U32).
 type MessageDirection uint32

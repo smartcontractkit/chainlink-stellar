@@ -1,6 +1,6 @@
 use soroban_sdk::{contractevent, Address, Bytes};
 
-use crate::types::RateLimitConfig;
+use crate::types::{RateLimitConfig, TokenTransferFeeConfig};
 
 #[contractevent(topics = ["pool_Locked"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,4 +98,29 @@ pub struct FinalityConfigSetEvent {
 pub struct AdvancedPoolHooksUpdatedEvent {
     pub old_hooks: Option<Address>,
     pub new_hooks: Option<Address>,
+}
+
+/// EVM `TokenPool.TokenTransferFeeConfigUpdated`. Topic abbreviated to fit
+/// Soroban's 32-char Symbol limit.
+#[contractevent(topics = ["pool_TokenFeeCfgUpdated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenFeeCfgUpdatedEvent {
+    pub remote_chain_selector: u64,
+    pub config: TokenTransferFeeConfig,
+}
+
+/// EVM `TokenPool.TokenTransferFeeConfigDeleted`. Topic abbreviated to fit
+/// Soroban's 32-char Symbol limit.
+#[contractevent(topics = ["pool_TokenFeeCfgDeleted"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenFeeCfgDeletedEvent {
+    pub remote_chain_selector: u64,
+}
+
+/// EVM `LockReleaseTokenPool.LockBoxConfigured` / `SiloedLockReleaseTokenPool.LockBoxConfigured`.
+#[contractevent(topics = ["pool_LockBoxConfigured"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockBoxConfiguredEvent {
+    pub remote_chain_selector: u64,
+    pub lock_box: Address,
 }

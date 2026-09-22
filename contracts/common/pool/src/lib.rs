@@ -29,9 +29,12 @@ use common_interfaces::token_pool::{
     LockOrBurnIn as IfaceLockOrBurnIn, MessageDirection as IfaceMessageDirection,
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
-use soroban_sdk::{contracttrait, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contracttrait, Address, Bytes, BytesN, Env, Vec, U256};
 
-pub use types::{PoolFeeResult, PoolRequiredCCVs};
+pub use types::{
+    LockBoxEntry, PoolFeeResult, PoolRequiredCCVs, TokenTransferFeeConfig,
+    TokenTransferFeeConfigArgs, BPS_DIVIDER,
+};
 
 /// Maps the interface `ramp_registry::CCIPError` to `common_error::CCIPError`.
 ///
@@ -195,38 +198,155 @@ pub trait BaseTokenPool {
     }
 
     // ------------------------------------------------------------------
-    // Pool Fee
+    // Pool Fee (EVM TokenPool fee-model parity)
     // ------------------------------------------------------------------
 
-    /// Returns the pool fee for transfers to the given chain. Returns 0 if no
-    /// per-chain fee is configured.
-    fn get_fee(env: &Env, remote_chain_selector: u64) -> Result<PoolFeeResult, CCIPError> {
-        let config: Option<PoolFeeConfig> = env
-            .storage()
-            .persistent()
-            .get(&PoolDataKey::PoolFeeConfig(remote_chain_selector));
+    /// Returns the pool fee parameters for a transfer to `dest_chain_selector`
+    /// (EVM `TokenPool.getFee`). Resolves the flat USD-cent fee and the bps fee
+    /// for the requested finality (finality vs fast-finality). When no config is
+    /// stored or it is disabled, returns all-zeros with `is_enabled: false` so
+    /// the OnRamp falls back to the FeeQuoter's `get_token_transfer_fee` (EVM
+    /// `OnRamp._getReceipts` L1047-1053 parity). EVM's `localToken`/`feeToken`
+    /// args are omitted because the base body ignores them. Concrete wrappers
+    /// expose this as the `get_fee` entrypoint.
+    fn get_fee(
+        env: &Env,
+        dest_chain_selector: u64,
+        _amount: i128,
+        requested_finality: u32,
+        _token_args: &Bytes,
+    ) -> Result<PoolFeeResult, CCIPError> {
+        finality_codec::ensure_requested_finality_allowed(
+            requested_finality,
+            Self::get_allowed_finality_config(env),
+        )?;
 
-        match config {
-            Some(c) if c.is_enabled => Ok(PoolFeeResult {
-                fee_usd_cents: c.fee_usd_cents,
-            }),
-            _ => Ok(PoolFeeResult { fee_usd_cents: 0 }),
+        let config = Self::get_token_transfer_fee_config(env, dest_chain_selector)?;
+        if !config.is_enabled {
+            return Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            });
+        }
+
+        if finality_codec::is_fast_finality(requested_finality) {
+            Ok(PoolFeeResult {
+                fee_usd_cents: config.fast_finality_fee_usd_cents,
+                dest_gas_overhead: config.dest_gas_overhead,
+                dest_bytes_overhead: config.dest_bytes_overhead,
+                token_fee_bps: config.fast_finality_transfer_fee_bps,
+                is_enabled: true,
+            })
+        } else {
+            Ok(PoolFeeResult {
+                fee_usd_cents: config.finality_fee_usd_cents,
+                dest_gas_overhead: config.dest_gas_overhead,
+                dest_bytes_overhead: config.dest_bytes_overhead,
+                token_fee_bps: config.finality_transfer_fee_bps,
+                is_enabled: true,
+            })
         }
     }
 
-    /// Set the per-chain pool fee config. Caller must enforce owner-only.
-    fn set_pool_fee_config(
+    /// Returns the stored token-transfer fee config for a destination chain, or
+    /// a disabled config when none is set (EVM `TokenPool.getTokenTransferFeeConfig`).
+    fn get_token_transfer_fee_config(
         env: &Env,
-        remote_chain_selector: u64,
-        config: &PoolFeeConfig,
-    ) -> Result<(), CCIPError> {
-        if !Self::is_supported_chain(env, remote_chain_selector)? {
-            return Err(CCIPError::ChainNotSupported);
-        }
-        env.storage()
+        dest_chain_selector: u64,
+    ) -> Result<TokenTransferFeeConfig, CCIPError> {
+        Ok(env
+            .storage()
             .persistent()
-            .set(&PoolDataKey::PoolFeeConfig(remote_chain_selector), config);
+            .get(&PoolDataKey::TokenTransferFeeConfig(dest_chain_selector))
+            .unwrap_or_else(TokenTransferFeeConfig::disabled))
+    }
+
+    /// Applies a batch of token-transfer fee config additions and disables
+    /// (EVM `TokenPool.applyTokenTransferFeeConfigUpdates`). Owner-only — the
+    /// concrete wrapper enforces that. Adds reject `is_enabled == false` (use
+    /// the disable list), bps >= `BPS_DIVIDER`, and `dest_gas_overhead == 0`,
+    /// and require the chain to be supported. Disables delete the stored entry.
+    fn apply_token_fee_config_updates(
+        env: &Env,
+        adds: &Vec<TokenTransferFeeConfigArgs>,
+        disables: &Vec<u64>,
+    ) -> Result<(), CCIPError> {
+        for args in adds.iter() {
+            if !Self::is_supported_chain(env, args.dest_chain_selector)? {
+                return Err(CCIPError::ChainNotSupported);
+            }
+            let c = &args.config;
+            // Reject configs with isEnabled: false - use the disable list instead.
+            if !c.is_enabled {
+                return Err(CCIPError::InvalidTokenTransferFeeConfig);
+            }
+            if c.finality_transfer_fee_bps >= BPS_DIVIDER {
+                return Err(CCIPError::InvalidTransferFeeBps);
+            }
+            if c.fast_finality_transfer_fee_bps >= BPS_DIVIDER {
+                return Err(CCIPError::InvalidTransferFeeBps);
+            }
+            // Gas overhead must be non-zero for proper fee accounting.
+            if c.dest_gas_overhead == 0 {
+                return Err(CCIPError::InvalidTokenTransferFeeConfig);
+            }
+            env.storage().persistent().set(
+                &PoolDataKey::TokenTransferFeeConfig(args.dest_chain_selector),
+                c,
+            );
+            TokenFeeCfgUpdatedEvent {
+                remote_chain_selector: args.dest_chain_selector,
+                config: c.clone(),
+            }
+            .publish(env);
+        }
+        for selector in disables.iter() {
+            env.storage()
+                .persistent()
+                .remove(&PoolDataKey::TokenTransferFeeConfig(selector));
+            TokenFeeCfgDeletedEvent {
+                remote_chain_selector: selector,
+            }
+            .publish(env);
+        }
         Ok(())
+    }
+
+    /// Sweeps the pool's full balance of each `fee_token` to `recipient`
+    /// (EVM `TokenPool.withdrawFeeTokens`). The owner-or-feeAdmin gate is
+    /// enforced by the concrete wrapper. Safe to sweep the full balance because
+    /// user liquidity is escrowed in a lockbox (lock-release) or burned
+    /// (burn-mint), so the pool's own token balance equals only accrued fees.
+    fn withdraw_fee_tokens(
+        env: &Env,
+        fee_tokens: &Vec<Address>,
+        recipient: &Address,
+    ) -> Result<(), CCIPError> {
+        let pool_address = env.current_contract_address();
+        for token in fee_tokens.iter() {
+            let token_client = soroban_sdk::token::Client::new(env, &token);
+            let balance = token_client.balance(&pool_address);
+            if balance > 0 {
+                token_client.transfer(&pool_address, recipient, &balance);
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets the fee-admin address (EVM parity for the `feeAdmin` field of
+    /// `setDynamicConfig`). Owner-only — the concrete wrapper enforces that.
+    fn set_fee_admin(env: &Env, fee_admin: &Address) {
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::FeeAdmin, fee_admin);
+    }
+
+    /// Returns the fee-admin address, if any.
+    fn get_fee_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&PoolDataKey::FeeAdmin)
     }
 
     // ------------------------------------------------------------------
@@ -641,6 +761,41 @@ pub trait BaseTokenPool {
             include_defaults: true,
         }
     }
+}
+
+/// Calculates the source-side in-token fee for a lock/burn
+/// (EVM `TokenPool._getFee`, `internal`). `fee = amount * fee_bps / BPS_DIVIDER`,
+/// computed in `U256` to mirror EVM `uint256` and avoid i128 overflow on large
+/// amounts. The caller passes the already-fetched config so this stays pure and
+/// testable. `amount` must be non-negative; the result fits in u128 (< 2^141).
+pub fn _get_fee(
+    env: &Env,
+    amount: i128,
+    requested_finality: u32,
+    config: &TokenTransferFeeConfig,
+) -> Result<i128, CCIPError> {
+    if !config.is_enabled {
+        return Ok(0);
+    }
+    let bps = if finality_codec::is_fast_finality(requested_finality) {
+        config.fast_finality_transfer_fee_bps
+    } else {
+        config.finality_transfer_fee_bps
+    };
+    if bps == 0 {
+        return Ok(0);
+    }
+    let amount_u: u128 = amount
+        .try_into()
+        .map_err(|_| CCIPError::InvalidTokenAmount)?;
+    let amount_u256 = U256::from_u128(env, amount_u);
+    let fee_u = amount_u256
+        .checked_mul(&U256::from_u32(env, bps))
+        .ok_or(CCIPError::InvalidFeeCalculation)?
+        .checked_div(&U256::from_u32(env, BPS_DIVIDER))
+        .ok_or(CCIPError::InvalidFeeCalculation)?;
+    let fee: u128 = fee_u.to_u128().ok_or(CCIPError::InvalidFeeCalculation)?;
+    Ok(fee as i128)
 }
 
 fn lock_or_burn_in_to_iface(input: &LockOrBurnIn) -> IfaceLockOrBurnIn {

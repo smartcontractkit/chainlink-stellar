@@ -88,3 +88,72 @@ var AcceptOwnership = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// ApplyTokenFeeConfigUpdatesInput applies a batch of per-chain token-transfer fee config
+// additions and disables (EVM `TokenPool.applyTokenTransferFeeConfigUpdates`). Adds reject
+// `is_enabled == false` (use the disable list), bps >= BPS_DIVIDER (10_000), and
+// `dest_gas_overhead == 0`; the chain must be supported. Disables delete the stored entry.
+type ApplyTokenFeeConfigUpdatesInput struct {
+	ContractID string                                   `json:"contract_id"`
+	Adds       []bmpbindings.TokenTransferFeeConfigArgs `json:"adds"`
+	Disables   []uint64                                 `json:"disables"`
+}
+
+// ApplyTokenFeeConfigUpdates calls burn-mint pool `apply_token_fee_config_updates`.
+var ApplyTokenFeeConfigUpdates = cldfops.NewOperation(
+	"burn-mint-pool:apply-token-fee-config-updates",
+	stellarops.ContractDeploymentVersion,
+	"Applies token-transfer fee config adds/disables on the burn-mint pool (EVM applyTokenTransferFeeConfigUpdates parity)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyTokenFeeConfigUpdatesInput) (stellarops.Void, error) {
+		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
+		if err := c.ApplyTokenFeeConfigUpdates(b.GetContext(), in.Adds, in.Disables); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// WithdrawFeeTokensInput sweeps accrued fee-token balances to a recipient (EVM
+// `TokenPool.withdrawFeeTokens`). Callable on-chain by the owner or fee admin; the op uses the
+// deployer/invoker which must be one of those. Safe to sweep the full pool balance because a
+// burn-mint pool holds only accrued fees (user tokens are burned, not held on the pool address).
+type WithdrawFeeTokensInput struct {
+	ContractID string   `json:"contract_id"`
+	FeeTokens  []string `json:"fee_tokens"`
+	Recipient  string   `json:"recipient"`
+}
+
+// WithdrawFeeTokens calls burn-mint pool `withdraw_fee_tokens`.
+var WithdrawFeeTokens = cldfops.NewOperation(
+	"burn-mint-pool:withdraw-fee-tokens",
+	stellarops.ContractDeploymentVersion,
+	"Withdraws accrued fee-token balances to a recipient on the burn-mint pool (EVM withdrawFeeTokens parity)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in WithdrawFeeTokensInput) (stellarops.Void, error) {
+		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
+		if err := c.WithdrawFeeTokens(b.GetContext(), in.FeeTokens, in.Recipient); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// SetFeeAdminInput sets the fee-admin address authorized to call `withdraw_fee_tokens`
+// alongside the owner (EVM parity for the `feeAdmin` field of `setDynamicConfig`). Owner-only.
+type SetFeeAdminInput struct {
+	ContractID string `json:"contract_id"`
+	FeeAdmin   string `json:"fee_admin"`
+}
+
+// SetFeeAdmin calls burn-mint pool `set_fee_admin`.
+var SetFeeAdmin = cldfops.NewOperation(
+	"burn-mint-pool:set-fee-admin",
+	stellarops.ContractDeploymentVersion,
+	"Sets the fee-admin address on the burn-mint pool (EVM setDynamicConfig feeAdmin parity)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetFeeAdminInput) (stellarops.Void, error) {
+		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetFeeAdmin(b.GetContext(), in.FeeAdmin); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

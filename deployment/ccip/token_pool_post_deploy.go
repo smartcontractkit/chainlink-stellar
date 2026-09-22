@@ -70,9 +70,39 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 	if _, statErr := os.Stat(poolWasmPath); os.IsNotExist(statErr) {
 		return fmt.Errorf("LockReleasePool WASM not found at %s. Run 'make build'.", poolWasmPath)
 	}
+	lockBoxWasm := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "pools_token_lock_box.wasm")
+	if _, statErr := os.Stat(lockBoxWasm); os.IsNotExist(statErr) {
+		return fmt.Errorf("TokenLockBox WASM not found at %s. Run 'make build'.", lockBoxWasm)
+	}
+
 	host.Logger().Info().Str("wasmPath", poolWasmPath).Msg("Deploying legacy LockRelease pool (post-deploy, not used for E2E transfers)...")
-	poolSalt := stellardeployment.GenerateDeterministicSalt(host.DeployerKeypair().Address(), "lock-release-pool")
+	deployerAddr := host.DeployerKeypair().Address()
 	deps := stellardeps.FromDeployer(host.Deployer())
+
+	// The canonical lock-release pool now escrows in a lockbox (EVM
+	// `LockReleaseTokenPool.i_lockBox` parity): `release_or_mint` withdraws from the
+	// lockbox and `lock_or_burn` deposits the post-fee amount into it, so the pool's
+	// own token balance equals only accrued fees. Seed liquidity into the lockbox,
+	// not onto the pool address. The legacy pool is a deployed reference artifact
+	// (the siloed pool is the one wired for E2E), so its lockbox is deployed + funded
+	// here but not mapped to any remote chain — a test exercising the legacy pool
+	// must `configure_lock_boxes` for its remote chains first.
+	lockBoxSalt := stellardeployment.GenerateDeterministicSalt(deployerAddr, "legacy-token-lock-box")
+	lockBoxRep, err := cldfops.ExecuteOperation(opBundle, tlbops.Deploy, deps, stellarops.DeployInput{WasmPath: lockBoxWasm, Salt: lockBoxSalt})
+	if err != nil {
+		return fmt.Errorf("deploy legacy pool token lock box: %w", err)
+	}
+	lockBoxID := lockBoxRep.Output.ContractID
+	if _, err := cldfops.ExecuteOperation(opBundle, tlbops.Initialize, deps, tlbops.InitializeInput{
+		ContractID: lockBoxID,
+		Owner:      deployerAddr,
+		Token:      tokenContractID,
+	}); err != nil {
+		return fmt.Errorf("initialize legacy pool token lock box: %w", err)
+	}
+	host.Logger().Info().Str("contractID", lockBoxID).Msg("Legacy pool token lock box deployed")
+
+	poolSalt := stellardeployment.GenerateDeterministicSalt(deployerAddr, "lock-release-pool")
 	poolRep, err := cldfops.ExecuteOperation(opBundle, poolops.Deploy, deps, stellarops.DeployInput{WasmPath: poolWasmPath, Salt: poolSalt})
 	if err != nil {
 		return fmt.Errorf("failed to deploy legacy LockRelease pool: %w", err)
@@ -95,7 +125,7 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 	}
 	if _, err := cldfops.ExecuteOperation(opBundle, poolops.Initialize, deps, poolops.InitializeInput{
 		ContractID:    poolContractID,
-		Owner:         host.DeployerKeypair().Address(),
+		Owner:         deployerAddr,
 		Token:         tokenContractID,
 		TokenDecimals: testTokenPoolDecimals,
 		Router:        routerContractID,
@@ -105,19 +135,41 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 		return fmt.Errorf("failed to initialize legacy pool with token: %w", err)
 	}
 
-	deployerAddr := host.DeployerKeypair().Address()
-	if _, err := cldfops.ExecuteOperation(opBundle, sacops.Transfer, deps, sacops.TransferInput{
-		ContractID: tokenContractID,
-		From:       deployerAddr,
-		To:         poolContractID,
+	if _, err := cldfops.ExecuteOperation(opBundle, tlbops.AddAllowedCallers, deps, tlbops.AddAllowedCallersInput{
+		ContractID: lockBoxID,
+		Callers:    []string{poolContractID, deployerAddr},
+	}); err != nil {
+		return fmt.Errorf("add legacy pool and deployer as lock box callers: %w", err)
+	}
+
+	expirationLedger, err := host.LatestLedgerSequence(ctx)
+	if err != nil {
+		host.Logger().Warn().Err(err).Msg("could not read latest ledger; using far-future SAC approve expiration")
+		expirationLedger = 9_999_999
+	} else {
+		expirationLedger += sacApproveLedgerBuffer
+	}
+	if _, err := cldfops.ExecuteOperation(opBundle, sacops.Approve, deps, sacops.ApproveInput{
+		ContractID:       tokenContractID,
+		From:             deployerAddr,
+		Spender:          lockBoxID,
+		Amount:           initialPoolLiquidity,
+		ExpirationLedger: expirationLedger,
+	}); err != nil {
+		return fmt.Errorf("approve legacy lock box to pull SAC for deposit: %w", err)
+	}
+	if _, err := cldfops.ExecuteOperation(opBundle, tlbops.Deposit, deps, tlbops.DepositInput{
+		ContractID: lockBoxID,
+		Caller:     deployerAddr,
 		Amount:     initialPoolLiquidity,
 	}); err != nil {
-		return fmt.Errorf("fund legacy pool with SAC liquidity: %w", err)
+		return fmt.Errorf("deposit SAC liquidity into legacy lock box: %w", err)
 	}
 	host.Logger().Info().
+		Str("lockBox", lockBoxID).
 		Str("pool", poolContractID).
 		Int64("amount", initialPoolLiquidity).
-		Msg("Funded legacy lock-release pool with SAC liquidity")
+		Msg("Funded legacy pool lock box with SAC liquidity (pool balance is fees-only)")
 	return nil
 }
 

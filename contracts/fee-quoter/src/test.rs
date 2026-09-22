@@ -527,7 +527,7 @@ fn test_get_message_fee() {
 }
 
 #[test]
-fn test_get_message_fee_with_token_transfer() {
+fn test_get_message_fee_excludes_token_transfer() {
     let (env, contract_id, owner, link_token, price_updater) = setup_env();
     let client = FeeQuoterContractClient::new(&env, &contract_id);
 
@@ -615,7 +615,18 @@ fn test_get_message_fee_with_token_transfer() {
     let fee_no_token = client.get_message_fee(&1, &message_no_token);
     let fee_with_token = client.get_message_fee(&1, &message_with_token);
 
-    // Fee with token transfer should be higher than without
-    // (the $50 token fee pushes total over the $15/token resolution threshold)
-    assert!(fee_with_token.fee_token_amount > fee_no_token.fee_token_amount);
+    // `get_message_fee` is gas + network only (× premium) — the token-transfer
+    // fee is NOT bundled. EVM `FeeQuoter` has no bundled message-fee view; the
+    // OnRamp assembles the token fee from the pool's `get_fee` (enabled) or
+    // `get_token_transfer_fee` (disabled) exactly once. Bundling it here caused a
+    // double-count. Both messages share the same gas/network cost, so their
+    // `get_message_fee` results must be equal regardless of the token fee config.
+    assert_eq!(
+        fee_with_token.fee_token_amount, fee_no_token.fee_token_amount,
+        "get_message_fee must not include the token-transfer fee"
+    );
+    assert_eq!(
+        fee_with_token.fee_usd_cents, fee_no_token.fee_usd_cents,
+        "get_message_fee USD-cents must not include the token-transfer fee"
+    );
 }

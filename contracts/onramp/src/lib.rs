@@ -5,7 +5,7 @@ pub mod types;
 
 use common_interfaces::{
     committee_verifier::FeeResponse,
-    fee_quoter::{FeeQuoterClient, MessageFeeResult},
+    fee_quoter::{FeeQuoterClient, MessageFeeResult, TokenTransferFeeResult},
     token_admin_registry::TokenAdminRegistryClient,
     token_pool::{LockOrBurnIn, MessageDirection, PoolRequiredCCVs, TokenPoolClient},
     versioned_verifier_resolver::VersionedVerifierResolverClient,
@@ -59,6 +59,14 @@ struct FeeBreakdown {
     /// `gas_limit`). A message property — computed always, priced only when
     /// auto-executing (H-5 / INV-FEE-10).
     execution_gas_limit: u32,
+    /// Token-pool fee slice for the first token transfer, resolved EVM-style
+    /// (`OnRamp._getReceipts` L1028-1053): from `IPoolV2.getFee` when the pool's
+    /// config is enabled, else from `FeeQuoter.get_token_transfer_fee`. Carried
+    /// so `forward_from_router` builds the pool receipt + wire amount without a
+    /// second `get_fee` call (the fee config is unchanged by `lock_or_burn`).
+    pool_dest_gas_limit: u32,
+    pool_dest_bytes_overhead: u32,
+    pool_fee_usd_cents: u128,
 }
 
 /// True iff `addr` is the zero Stellar account (EVM `address(0)` parity).
@@ -240,14 +248,41 @@ impl OnRampContract {
 
         let mut additional_usd_cents: u128 = ccv_fees_usd_cents;
 
+        // Token-pool fee slice, resolved exactly once EVM-style
+        // (`OnRamp._getReceipts` L1028-1053): `IPoolV2.getFee` when the pool's
+        // config is enabled, else `FeeQuoter.get_token_transfer_fee`. The chosen
+        // USD-cent fee joins `additional` once (no double-count — H-13); the
+        // overheads + fee are carried on the breakdown for `forward_from_router`'s
+        // pool receipt. `get_message_fee` no longer bundles the token fee, so this
+        // is the sole assembly point.
+        let mut pool_dest_gas_limit: u32 = 0;
+        let mut pool_dest_bytes_overhead: u32 = 0;
+        let mut pool_fee_usd_cents: u128 = 0;
+
         if !message.token_amounts.is_empty() {
             let token_amount = message.token_amounts.get(0).unwrap();
             let pool_address =
                 Self::get_pool_by_source_token_internal(env, static_config, &token_amount.token)?;
             let pool_client = TokenPoolClient::new(env, &pool_address);
-            let pool_fee = pool_client.get_fee(&dest_chain_selector);
+            let pool_fee = pool_client.get_fee(
+                &dest_chain_selector,
+                &token_amount.amount,
+                &extra_args.block_confirmations,
+                &extra_args.token_args,
+            );
+            if pool_fee.is_enabled {
+                pool_fee_usd_cents = pool_fee.fee_usd_cents as u128;
+                pool_dest_gas_limit = pool_fee.dest_gas_overhead;
+                pool_dest_bytes_overhead = pool_fee.dest_bytes_overhead;
+            } else {
+                let fq_fee: TokenTransferFeeResult =
+                    fee_quoter.get_token_transfer_fee(&dest_chain_selector, &token_amount.token);
+                pool_fee_usd_cents = fq_fee.fee_usd_cents as u128;
+                pool_dest_gas_limit = fq_fee.dest_gas_overhead;
+                pool_dest_bytes_overhead = fq_fee.dest_bytes_overhead;
+            }
             additional_usd_cents = additional_usd_cents
-                .checked_add(pool_fee.fee_usd_cents as u128)
+                .checked_add(pool_fee_usd_cents)
                 .ok_or(CCIPError::InvalidFeeCalculation)?;
         }
 
@@ -362,6 +397,9 @@ impl OnRampContract {
             executor_fee_tokens,
             is_no_exec,
             execution_gas_limit,
+            pool_dest_gas_limit,
+            pool_dest_bytes_overhead,
+            pool_fee_usd_cents,
         })
     }
 
@@ -712,20 +750,24 @@ impl OnRampContract {
                     local_token: token_amount.token.clone(),
                 },
                 &extra_args.block_confirmations,
+                &extra_args.token_args,
             );
 
-            let pool_fee = pool_client.get_fee(&dest_chain_selector);
+            // H-13: reuse the breakdown's resolved pool-fee slice — no second
+            // `get_fee` call (the fee config is unchanged by `lock_or_burn`).
+            // The wire amount is the post-fee `dest_token_amount` returned by the
+            // pool (INV-POOL-10), not the full `token_amount.amount`.
             token_pool_receipt = Some(Receipt {
                 issuer: pool_address.clone(),
-                dest_gas_limit: 0,
-                dest_bytes_overhead: 0,
-                fee_token_amount: pool_fee.fee_usd_cents as i128,
+                dest_gas_limit: breakdown.pool_dest_gas_limit,
+                dest_bytes_overhead: breakdown.pool_dest_bytes_overhead,
+                fee_token_amount: breakdown.pool_fee_usd_cents as i128,
                 extra_args: extra_args.token_args.clone(),
             });
 
             let token_transfer = CcipTokenTransferV1 {
                 version: MESSAGE_V1_VERSION,
-                amount: Self::i128_to_bytes32(&env, token_amount.amount),
+                amount: Self::i128_to_bytes32(&env, lock_result.dest_token_amount),
                 source_pool_address: pool_address.to_xdr(&env),
                 source_token_address: token_amount.token.clone().to_xdr(&env),
                 dest_token_address: lock_result.dest_token_address,

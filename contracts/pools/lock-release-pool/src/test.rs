@@ -12,9 +12,10 @@ use common_interfaces::token_pool::{
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
 use common_pool::{
-    encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, PoolFeeConfig,
-    RateLimitConfig, ReleaseOrMintIn,
+    encode_local_decimals, ChainUpdate, LockBoxEntry, LockOrBurnIn, MessageDirection,
+    RateLimitConfig, ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
+use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use router::{RouterContract, RouterContractClient};
@@ -271,6 +272,35 @@ fn setup_env() -> (
     )
 }
 
+/// Register + initialize a `TokenLockBox` for `token_address`, authorize the
+/// pool as an allowed caller, and map it to `chain` via `configure_lock_boxes`.
+/// The canonical lock-release pool now escrows in a lockbox (EVM
+/// `LockReleaseTokenPool.i_lockBox` parity), so every `lock_or_burn` /
+/// `release_or_mint` test must wire one for its remote chain. Returns the
+/// lockbox client so tests can fund it (release path) or assert its balance.
+/// The lockbox owner is generated internally — only the pool's owner-gated
+/// `configure_lock_boxes` matters here, and auth is mocked in tests.
+fn wire_lockbox<'a>(
+    env: &'a Env,
+    pool_client: &LockReleaseTokenPoolContractClient<'_>,
+    token_address: &Address,
+    chain: u64,
+) -> TokenLockBoxClient<'a> {
+    let lockbox_owner = Address::generate(env);
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(env, &lockbox_id);
+    lockbox_client.initialize(&lockbox_owner, token_address);
+    lockbox_client.add_allowed_callers(&Vec::from_array(env, [pool_client.address.clone()]));
+    pool_client.configure_lock_boxes(&Vec::from_array(
+        env,
+        [LockBoxEntry {
+            remote_chain_selector: chain,
+            lock_box: lockbox_client.address.clone(),
+        }],
+    ));
+    lockbox_client
+}
+
 fn register_onramp_for_chain(
     env: &Env,
     registry_client: &RampRegistryContractClient,
@@ -352,6 +382,8 @@ fn test_lock_and_release() {
     };
     pool_client.apply_chain_updates(&Vec::from_array(&env, [chain_update]), &Vec::new(&env));
 
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     let lock_amount: i128 = 1_000_000_000;
     token_admin_client.mint(&sender, &lock_amount);
@@ -364,11 +396,14 @@ fn test_lock_and_release() {
         local_token: token_address.clone(),
     };
 
-    let lock_result = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let lock_result = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(lock_result.dest_token_address, remote_token);
 
     let pool_address = pool_client.address.clone();
-    assert_eq!(token_client.balance(&pool_address), lock_amount);
+    // The post-fee amount is escrowed in the lockbox; the pool's own balance is
+    // fees only (zero here, no fee config). Liquidity lives in the lockbox.
+    assert_eq!(token_client.balance(&lockbox_client.address), lock_amount);
+    assert_eq!(token_client.balance(&pool_address), 0);
     assert_eq!(token_client.balance(&sender), 0);
 
     let receiver = Address::generate(&env);
@@ -414,7 +449,7 @@ fn test_unsupported_chain_rejected() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -445,7 +480,7 @@ fn test_wrong_token_rejected() {
         local_token: wrong_token,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -522,6 +557,8 @@ fn test_lock_or_burn_zero_amount_succeeds_when_chain_configured() {
         &Vec::new(&env),
     );
 
+    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     let lock_input = LockOrBurnIn {
         receiver: Bytes::from_slice(&env, &[3u8; 20]),
@@ -531,7 +568,7 @@ fn test_lock_or_burn_zero_amount_succeeds_when_chain_configured() {
         local_token: token_address.clone(),
     };
 
-    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(out.dest_token_address, Bytes::from_slice(&env, &[2u8; 20]));
     assert_eq!(token_client.balance(&pool_client.address), 0);
     assert_eq!(token_client.balance(&sender), 0);
@@ -556,6 +593,8 @@ fn test_release_or_mint_zero_amount_succeeds_without_pool_balance() {
         &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
         &Vec::new(&env),
     );
+
+    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -605,7 +644,7 @@ fn test_lock_or_burn_amount_exceeds_sender_balance_fails() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -640,7 +679,7 @@ fn test_lock_or_burn_negative_amount_fails() {
         local_token: token_address,
     };
 
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
 }
 
@@ -664,6 +703,8 @@ fn test_release_or_mint_insufficient_pool_liquidity() {
         &Vec::new(&env),
     );
 
+    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     let locked: i128 = 50;
     token_admin_client.mint(&sender, &locked);
@@ -675,7 +716,7 @@ fn test_release_or_mint_insufficient_pool_liquidity() {
         amount: locked,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -767,7 +808,7 @@ fn test_apply_chain_updates_remove_unlists_chain() {
         amount: 1,
         local_token: token_address.clone(),
     };
-    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(result, Err(Ok(CCIPError::ChainNotSupported)));
 
     // Owner can re-add the same selector with fresh config
@@ -819,6 +860,8 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         Bytes::from_slice(&env, &[3u8; 20])
     );
 
+    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1);
     let lock_input = LockOrBurnIn {
@@ -828,7 +871,7 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         amount: 1,
         local_token: token_address,
     };
-    let out = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let out = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(out.is_ok());
 }
 
@@ -852,6 +895,8 @@ fn test_lock_or_burn_dest_pool_data_encodes_local_decimals() {
         &Vec::new(&env),
     );
 
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &100);
     let lock_input = LockOrBurnIn {
@@ -861,9 +906,11 @@ fn test_lock_or_burn_dest_pool_data_encodes_local_decimals() {
         amount: 100,
         local_token: token_address,
     };
-    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(out.dest_pool_data, encode_local_decimals(&env, 7).unwrap());
-    assert_eq!(token_client.balance(&pool_client.address), 100);
+    // The 100 is escrowed in the lockbox; the pool balance is fees only (0).
+    assert_eq!(token_client.balance(&lockbox_client.address), 100);
+    assert_eq!(token_client.balance(&pool_client.address), 0);
 }
 
 #[test]
@@ -906,8 +953,11 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
         &Vec::new(&env),
     );
 
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let expected_local: i128 = 1_000_000;
-    token_admin_client.mint(&pool_id, &expected_local);
+    // Release pulls from the lockbox, so fund it (not the pool address).
+    token_admin_client.mint(&lockbox_client.address, &expected_local);
 
     let remote_decimals: u32 = 9;
     let receiver = Address::generate(&env);
@@ -1003,7 +1053,7 @@ fn test_lock_or_burn_exceeds_outbound_capacity_rejected() {
         amount: 501,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
 }
 
@@ -1043,6 +1093,8 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         &Vec::new(&env),
     );
 
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &5000);
 
@@ -1053,8 +1105,8 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         amount: 1000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
-    assert_eq!(token_client.balance(&pool_client.address), 1000);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(token_client.balance(&lockbox_client.address), 1000);
 
     // Advance 50s => 500 tokens refilled
     env.ledger().with_mut(|li| li.timestamp = 150);
@@ -1065,8 +1117,8 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         amount: 500,
         local_token: token_address,
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input2, &0u32);
-    assert_eq!(token_client.balance(&pool_client.address), 1500);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input2, &0u32, &Bytes::new(&env));
+    assert_eq!(token_client.balance(&lockbox_client.address), 1500);
 }
 
 #[test]
@@ -1158,7 +1210,9 @@ fn test_release_or_mint_inbound_refills_over_time() {
         &Vec::new(&env),
     );
 
-    token_admin_client.mint(&pool_client.address, &5000);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    // Release pulls from the lockbox, so fund it (not the pool address).
+    token_admin_client.mint(&lockbox_client.address, &5000);
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -1289,7 +1343,7 @@ fn test_set_rate_limit_config_updates_limits() {
         amount: 501,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenMaxCapacityExceeded);
 }
 
@@ -1345,11 +1399,6 @@ fn test_chain_remove_clears_rate_limits() {
 
 const WAIT_FOR_SAFE: u32 = 1 << 16; // 0x00010000
 
-/// Helper to fund the pool with liquidity (needed for release_or_mint).
-fn fund_pool(token_admin_client: &token::StellarAssetClient, pool_address: &Address, amount: i128) {
-    token_admin_client.mint(pool_address, &amount);
-}
-
 #[test]
 fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
     let (
@@ -1384,8 +1433,9 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         &true,
     );
 
-    let pool_address = pool_client.address.clone();
-    fund_pool(&token_admin_client, &pool_address, 10_000);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    // Release pulls from the lockbox, so fund it (not the pool address).
+    token_admin_client.mint(&lockbox_client.address, &10_000);
 
     let receiver = Address::generate(&env);
 
@@ -1468,8 +1518,9 @@ fn test_ftf_inbound_falls_back_to_default_bucket_when_not_configured() {
     );
     // No FTF buckets configured — FTF requests should fall back to the default inbound bucket.
 
-    let pool_address = pool_client.address.clone();
-    fund_pool(&token_admin_client, &pool_address, 10_000);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    // Release pulls from the lockbox, so fund it (not the pool address).
+    token_admin_client.mint(&lockbox_client.address, &10_000);
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -1537,6 +1588,8 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         &true,
     );
 
+    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &5000);
 
@@ -1548,7 +1601,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 300,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE, &Bytes::new(&env));
 
     // FTF outbound: exceeding refill should fail (FTF bucket exhausted)
     env.ledger().with_mut(|li| li.timestamp = 101);
@@ -1559,7 +1612,12 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 4,
         local_token: token_address.clone(),
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input2, &WAIT_FOR_SAFE);
+    let r = pool_client.try_lock_or_burn(
+        &auth_onramp,
+        &lock_input2,
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::TokenRateLimitReached);
 
     // Default outbound should still be unaffected (disabled = no limit)
@@ -1570,7 +1628,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         amount: 1000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_default, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_default, &0u32, &Bytes::new(&env));
 }
 
 #[test]
@@ -1605,7 +1663,8 @@ fn test_ftf_outbound_rejected_when_finality_not_allowed() {
         amount: 100,
         local_token: token_address,
     };
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE);
+    let r =
+        pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &WAIT_FOR_SAFE, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
 }
 
@@ -1659,8 +1718,9 @@ fn test_ftf_and_default_buckets_are_independent() {
         &true,
     );
 
-    let pool_address = pool_client.address.clone();
-    fund_pool(&token_admin_client, &pool_address, 10_000);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    // Release pulls from the lockbox, so fund it (not the pool address).
+    token_admin_client.mint(&lockbox_client.address, &10_000);
 
     let receiver = Address::generate(&env);
 
@@ -1731,7 +1791,7 @@ fn test_get_fee_returns_zero_when_not_configured() {
     let remote_chain: u64 = 42;
     add_remote_chain(&env, &pool_client, remote_chain);
 
-    let result = pool_client.get_fee(&remote_chain);
+    let result = pool_client.get_fee(&remote_chain, &0i128, &0u32, &Bytes::new(&env));
     assert_eq!(result.fee_usd_cents, 0);
 }
 
@@ -1752,14 +1812,28 @@ fn test_set_and_get_pool_fee_config() {
     let remote_chain: u64 = 42;
     add_remote_chain(&env, &pool_client, remote_chain);
 
-    let fee_config = PoolFeeConfig {
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 150,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
         is_enabled: true,
-        fee_usd_cents: 150,
     };
-    pool_client.set_pool_fee_config(&remote_chain, &fee_config);
+    let adds = Vec::from_array(
+        &env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: remote_chain,
+            config: fee_config,
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
 
-    let result = pool_client.get_fee(&remote_chain);
+    // Requested finality 0 == WAIT_FOR_FINALITY → resolves finality_fee_usd_cents.
+    let result = pool_client.get_fee(&remote_chain, &0i128, &0u32, &Bytes::new(&env));
     assert_eq!(result.fee_usd_cents, 150);
+    assert!(result.is_enabled);
 }
 
 #[test]
@@ -1779,21 +1853,40 @@ fn test_pool_fee_disabled_returns_zero() {
     let remote_chain: u64 = 42;
     add_remote_chain(&env, &pool_client, remote_chain);
 
-    let fee_config = PoolFeeConfig {
-        is_enabled: false,
-        fee_usd_cents: 200,
+    // An enabled config first, so we can observe the disable actually zeroes it.
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 200,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
+        is_enabled: true,
     };
-    pool_client.set_pool_fee_config(&remote_chain, &fee_config);
+    let adds = Vec::from_array(
+        &env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: remote_chain,
+            config: fee_config,
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
 
-    let result = pool_client.get_fee(&remote_chain);
+    // Disabling removes the stored entry; `get_fee` then returns a disabled
+    // (all-zero) result, signalling the OnRamp to fall back to the FeeQuoter.
+    let disables = Vec::from_array(&env, [remote_chain]);
+    pool_client.apply_token_fee_config_updates(&Vec::new(&env), &disables);
+
+    let result = pool_client.get_fee(&remote_chain, &0i128, &0u32, &Bytes::new(&env));
     assert_eq!(result.fee_usd_cents, 0);
+    assert!(!result.is_enabled);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #302)")]
 fn test_set_pool_fee_unsupported_chain_rejected() {
     let (
-        _env,
+        env,
         pool_client,
         _owner,
         _token_address,
@@ -1805,11 +1898,202 @@ fn test_set_pool_fee_unsupported_chain_rejected() {
     ) = setup_env();
 
     let unsupported_chain: u64 = 99999;
-    let fee_config = PoolFeeConfig {
+    let fee_config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 50,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: 0,
+        fast_finality_transfer_fee_bps: 0,
         is_enabled: true,
-        fee_usd_cents: 50,
     };
-    pool_client.set_pool_fee_config(&unsupported_chain, &fee_config);
+    let adds = Vec::from_array(
+        &env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: unsupported_chain,
+            config: fee_config,
+        }],
+    );
+    // The chain-support check runs before config validation, so an unsupported
+    // chain yields ChainNotSupported (#302).
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+// ----------------------------------------------------------------
+// Non-zero bps fee coverage (H-13, EVM `TokenPool._getFee` / `applyFee`
+// parity). The fee tests above all set `*_transfer_fee_bps: 0` and assert
+// only `fee_usd_cents`; these exercise the in-token bps deduction path.
+// `dest_gas_overhead` must be non-zero (config validation rejects 0 → #321).
+// ----------------------------------------------------------------
+const E18: i128 = 1_000_000_000_000_000_000;
+
+fn apply_bps_fee_config(
+    env: &Env,
+    pool_client: &LockReleaseTokenPoolContractClient<'_>,
+    chain: u64,
+    finality_bps: u32,
+    fast_bps: u32,
+) {
+    let config = TokenTransferFeeConfig {
+        dest_gas_overhead: 100,
+        dest_bytes_overhead: 32,
+        finality_fee_usd_cents: 0,
+        fast_finality_fee_usd_cents: 0,
+        finality_transfer_fee_bps: finality_bps,
+        fast_finality_transfer_fee_bps: fast_bps,
+        is_enabled: true,
+    };
+    let adds = Vec::from_array(
+        env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: chain,
+            config,
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(env));
+}
+
+#[test]
+fn test_get_fee_fast_vs_default_bps_selection() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    // Distinct USD-cent AND bps values per finality mode, so both fields'
+    // selection can be asserted (`apply_bps_fee_config` sets USD cents to 0).
+    let adds = Vec::from_array(
+        &env,
+        [TokenTransferFeeConfigArgs {
+            dest_chain_selector: DEFAULT_REMOTE_CHAIN,
+            config: TokenTransferFeeConfig {
+                dest_gas_overhead: 100,
+                dest_bytes_overhead: 32,
+                finality_fee_usd_cents: 40,
+                fast_finality_fee_usd_cents: 80,
+                finality_transfer_fee_bps: 250,
+                fast_finality_transfer_fee_bps: 500,
+                is_enabled: true,
+            },
+        }],
+    );
+    pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+
+    // Default finality → finality_* fields (mirrors test_applyFee_DefaultFinality).
+    let default = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &0u32,
+        &Bytes::new(&env),
+    );
+    assert_eq!(default.token_fee_bps, 250);
+    assert_eq!(default.fee_usd_cents, 40);
+    assert!(default.is_enabled);
+
+    // Fast finality → fast_finality_* fields (mirrors test_applyFee_CustomFinality).
+    let fast = pool_client.get_fee(
+        &DEFAULT_REMOTE_CHAIN,
+        &(1_000 * E18),
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
+    assert_eq!(fast.token_fee_bps, 500);
+    assert_eq!(fast.fee_usd_cents, 80);
+    assert!(fast.is_enabled);
+}
+
+#[test]
+fn test_lock_or_burn_with_nonzero_bps_fee() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, DEFAULT_REMOTE_CHAIN);
+    apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
+
+    let sender = Address::generate(&env);
+    let amount: i128 = 1_000 * E18; // 1000e18 (EVM parity)
+    token_admin_client.mint(&sender, &amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+
+    // fee = 1000e18 * 100 / 10000 = 10e18; dest = 990e18.
+    let fee: i128 = 10 * E18;
+    let dest: i128 = 990 * E18;
+    assert_eq!(out.dest_token_amount, dest);
+
+    let pool_address = pool_client.address.clone();
+    // The full amount is pulled to the pool; dest is escrowed in the lockbox,
+    // leaving only the fee on the pool's own balance (EVM lockOrBurn-with-fee).
+    assert_eq!(token_client.balance(&lockbox_client.address), dest);
+    assert_eq!(token_client.balance(&pool_address), fee);
+    assert_eq!(token_client.balance(&sender), 0);
+}
+
+#[test]
+fn test_lock_or_burn_dust_amount_zero_fee() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, DEFAULT_REMOTE_CHAIN);
+    apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 250, 0);
+
+    let sender = Address::generate(&env);
+    let amount: i128 = 39; // 39 * 250 / 10000 = 0 (floor) — mirrors test_applyFee_RoundsFeeDownToZeroOnDustAmounts
+    token_admin_client.mint(&sender, &amount);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(out.dest_token_amount, 39);
+
+    let pool_address = pool_client.address.clone();
+    // No fee accrues; the full dust amount is escrowed in the lockbox.
+    assert_eq!(token_client.balance(&lockbox_client.address), 39);
+    assert_eq!(token_client.balance(&pool_address), 0);
+    assert_eq!(token_client.balance(&sender), 0);
 }
 
 // ================================================================
@@ -1894,7 +2178,7 @@ fn test_preflight_hook_rejects_lock_or_burn() {
         local_token: token_address.clone(),
     };
 
-    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::SenderNotAllowed);
     assert_eq!(token_client.balance(&sender), 1_000_000_000);
 }
@@ -1922,6 +2206,8 @@ fn test_postflight_hook_rejects_release_or_mint() {
     let hooks_id = env.register(mock_hooks::MockPostflightRejects, ());
     pool_client.set_advanced_pool_hooks(&hooks_id.clone());
 
+    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1_000_000_000);
     let lock_input = LockOrBurnIn {
@@ -1931,10 +2217,12 @@ fn test_postflight_hook_rejects_release_or_mint() {
         amount: 1_000_000_000,
         local_token: token_address.clone(),
     };
-    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32);
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
 
     let pool_address = pool_client.address.clone();
-    assert_eq!(token_client.balance(&pool_address), 1_000_000_000);
+    // The 1e9 is escrowed in the lockbox; the pool balance is fees only (0).
+    assert_eq!(token_client.balance(&lockbox_client.address), 1_000_000_000);
+    assert_eq!(token_client.balance(&pool_address), 0);
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
