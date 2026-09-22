@@ -160,7 +160,7 @@ impl LockReleaseTokenPoolContract {
         caller: Address,
         input: LockOrBurnIn,
         requested_finality: u32,
-        _token_args: Bytes,
+        token_args: Bytes,
     ) -> Result<LockOrBurnOut, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         <Self as BaseTokenPool>::require_authorized_onramp(
@@ -190,8 +190,10 @@ impl LockReleaseTokenPoolContract {
         // Compute the source-side in-token fee BEFORE rate limiting (EVM
         // `TokenPool.lockOrBurn` L288-311). The fee accrues on the pool's own
         // balance; only `dest_token_amount` crosses to the lockbox / wire.
-        // `token_args` is accepted for EVM `IPoolV2.lockOrBurn` ABI parity; the
-        // base fee model keys on the destination chain only, so it is unused here.
+        // `token_args` is the opaque sender-supplied payload threaded from the
+        // CCIP message; the base fee model keys on the destination chain only so
+        // it is unused for pricing, but it is forwarded to the advanced-pool-hooks
+        // preflight check below (EVM `IAdvancedPoolHooks.preflightCheck` parity).
         let fee_config = <Self as BaseTokenPool>::get_token_transfer_fee_config(
             &env,
             input.remote_chain_selector,
@@ -245,6 +247,7 @@ impl LockReleaseTokenPoolContract {
             &env,
             &input,
             requested_finality,
+            &token_args,
             dest_token_amount,
         )?;
 
@@ -431,13 +434,14 @@ impl LockReleaseTokenPoolContract {
     /// When `fast_finality` is true, sets the FTF buckets; otherwise the default buckets.
     pub fn set_rate_limit_config(
         env: Env,
+        caller: Address,
         remote_chain_selector: u64,
         outbound_config: RateLimitConfig,
         inbound_config: RateLimitConfig,
         fast_finality: bool,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        Self::require_owner_or_rate_limit_admin(&env)?;
+        Self::require_owner_or_rate_limit_admin(&env, &caller)?;
         <Self as BaseTokenPool>::set_rate_limit_config(
             &env,
             remote_chain_selector,
@@ -543,11 +547,12 @@ impl LockReleaseTokenPoolContract {
     /// `TokenPool.withdrawFeeTokens`). Callable by the owner or the fee admin.
     pub fn withdraw_fee_tokens(
         env: Env,
+        caller: Address,
         fee_tokens: Vec<Address>,
         recipient: Address,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        Self::require_owner_or_fee_admin(&env)?;
+        Self::require_owner_or_fee_admin(&env, &caller)?;
         <Self as BaseTokenPool>::withdraw_fee_tokens(&env, &fee_tokens, &recipient)
     }
 
@@ -648,29 +653,35 @@ impl LockReleaseTokenPoolContract {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn require_owner_or_rate_limit_admin(env: &Env) -> Result<(), CCIPError> {
-        if <Self as Ownable>::require_owner(env).is_ok() {
-            return Ok(());
+    fn require_owner_or_rate_limit_admin(env: &Env, caller: &Address) -> Result<(), CCIPError> {
+        let is_owner = <Self as Ownable>::is_owner(env, caller);
+        let is_rate_limit_admin =
+            <Self as BaseTokenPool>::get_rate_limit_admin(env).map_or(false, |a| a == *caller);
+        if !(is_owner || is_rate_limit_admin) {
+            return Err(CCIPError::Unauthorized);
         }
-        if let Some(admin) = <Self as BaseTokenPool>::get_rate_limit_admin(env) {
-            admin.require_auth();
-            return Ok(());
-        }
-        Err(CCIPError::Unauthorized)
+        caller.require_auth();
+        Ok(())
     }
 
-    /// EVM `TokenPool.withdrawFeeTokens` caller gate: owner OR fee admin.
-    /// `require_owner` already calls `require_auth` on the owner; if the invoker
-    /// is not the owner, fall back to the fee admin (which must authorize).
-    fn require_owner_or_fee_admin(env: &Env) -> Result<(), CCIPError> {
-        if <Self as Ownable>::require_owner(env).is_ok() {
-            return Ok(());
+    /// EVM `TokenPool.withdrawFeeTokens` caller gate: owner OR fee admin
+    /// (`onlyOwnerOrFeeAdmin`). Soroban has no `msg.sender`, so the authorized
+    /// party is passed explicitly as `caller`: confirm it is the owner or the
+    /// configured fee admin, then call `require_auth` once on that confirmed
+    /// party. This avoids the trap-OR pitfall — `Ownable::require_owner` calls
+    /// `owner.require_auth()` which *traps* if the owner did not authorize, so a
+    /// `require_owner(env).is_ok()` OR-check never reaches the admin fallback
+    /// and the non-owner party could never act. Same pattern as
+    /// `require_owner_or_rate_limit_admin` above.
+    fn require_owner_or_fee_admin(env: &Env, caller: &Address) -> Result<(), CCIPError> {
+        let is_owner = <Self as Ownable>::is_owner(env, caller);
+        let is_fee_admin =
+            <Self as BaseTokenPool>::get_fee_admin(env).map_or(false, |a| a == *caller);
+        if !(is_owner || is_fee_admin) {
+            return Err(CCIPError::Unauthorized);
         }
-        if let Some(admin) = <Self as BaseTokenPool>::get_fee_admin(env) {
-            admin.require_auth();
-            return Ok(());
-        }
-        Err(CCIPError::Unauthorized)
+        caller.require_auth();
+        Ok(())
     }
 }
 

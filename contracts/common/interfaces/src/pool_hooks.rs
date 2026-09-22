@@ -15,11 +15,16 @@ use common_error::CCIPError;
 #[soroban_sdk::contractclient(name = "PoolHooksClient")]
 pub trait PoolHooksInterface {
     /// Called before lock_or_burn. Revert (return Err) to block the transfer.
-    /// Matches EVM `IAdvancedPoolHooks.preflightCheck`.
+    /// Matches EVM `IAdvancedPoolHooks.preflightCheck(lockOrBurnIn, requestedFinalityConfig, tokenArgs, amountPostFee)`.
+    /// `token_args` is the opaque, sender-supplied per-transfer payload threaded from
+    /// the CCIP message (`extra_args.token_args`); hooks may use it as policy-engine
+    /// context (EVM `AdvancedPoolHooks.preflightCheck` passes it as `context` to the
+    /// policy engine, and USDC/CCTP pools use it for destination-domain routing).
     fn preflight_check(
         env: soroban_sdk::Env,
         lock_or_burn_in: LockOrBurnIn,
         requested_finality: u32,
+        token_args: soroban_sdk::Bytes,
         amount: i128,
     ) -> Result<(), CCIPError>;
 

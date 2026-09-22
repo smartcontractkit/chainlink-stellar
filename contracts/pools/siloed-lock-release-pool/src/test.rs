@@ -105,9 +105,10 @@ mod mock_hooks {
             env: Env,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
+            token_args: Bytes,
             amount: i128,
         ) -> Result<(), CCIPError> {
-            let _ = (env, lock_or_burn_in, requested_finality, amount);
+            let _ = (env, lock_or_burn_in, requested_finality, token_args, amount);
             Ok(())
         }
 
@@ -138,6 +139,64 @@ mod mock_hooks {
             IfacePoolRequiredCCVs {
                 ccvs: Vec::from_array(&env, [ccv]),
                 include_defaults: false,
+            }
+        }
+    }
+
+    const CAPTURED_TOKEN_ARGS_KEY: Symbol = symbol_short!("CTA");
+
+    /// Captures the `token_args` received by `preflight_check` into instance
+    /// storage so a test can assert the sender-supplied payload is threaded
+    /// end-to-end from `lock_or_burn` to the advanced-pool-hooks contract
+    /// (EVM `IAdvancedPoolHooks.preflightCheck` parity).
+    #[contract]
+    pub struct MockCapturesTokenArgs;
+
+    #[contractimpl]
+    impl MockCapturesTokenArgs {
+        pub fn get_captured_token_args(env: Env) -> Bytes {
+            env.storage()
+                .instance()
+                .get(&CAPTURED_TOKEN_ARGS_KEY)
+                .unwrap_or_else(|| Bytes::new(&env))
+        }
+
+        pub fn preflight_check(
+            env: Env,
+            lock_or_burn_in: IfaceLockOrBurnIn,
+            requested_finality: u32,
+            token_args: Bytes,
+            amount: i128,
+        ) -> Result<(), CCIPError> {
+            env.storage()
+                .instance()
+                .set(&CAPTURED_TOKEN_ARGS_KEY, &token_args);
+            let _ = (lock_or_burn_in, requested_finality, amount);
+            Ok(())
+        }
+
+        pub fn postflight_check(
+            env: Env,
+            release_or_mint_in: IfaceReleaseOrMintIn,
+            local_amount: i128,
+            requested_finality: u32,
+        ) -> Result<(), CCIPError> {
+            let _ = (env, release_or_mint_in, local_amount, requested_finality);
+            Ok(())
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: IfaceMessageDirection,
+        ) -> IfacePoolRequiredCCVs {
+            IfacePoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
             }
         }
     }
@@ -1238,6 +1297,64 @@ fn get_required_ccvs_delegates_to_hooks() {
     assert_eq!(v.ccvs.len(), 1);
     assert_eq!(v.ccvs.get(0).unwrap(), expected_ccv);
     assert!(!v.include_defaults);
+}
+
+/// Proves the sender-supplied `token_args` (extra args → OnRamp →
+/// `lock_or_burn`) reaches the advanced-pool-hooks `preflight_check`
+/// byte-for-byte (EVM `IAdvancedPoolHooks.preflightCheck` parity). `setup()`
+/// already wires a lockbox for `REMOTE_CHAIN`, so a successful preflight lets
+/// `lock_or_burn` escrow the tokens there.
+#[test]
+fn test_preflight_hook_receives_token_args() {
+    let t = setup();
+
+    let hooks_id = t.env.register(mock_hooks::MockCapturesTokenArgs, ());
+    let hooks_client = mock_hooks::MockCapturesTokenArgsClient::new(&t.env, &hooks_id);
+    t.pool_client.set_advanced_pool_hooks(&hooks_id.clone());
+
+    let sender = Address::generate(&t.env);
+    t.sac.mint(&sender, &1_000_000_000);
+
+    let token_args = Bytes::from_array(&t.env, &[0xde, 0xad, 0xbe, 0xef]);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[3u8; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount: 1_000_000_000,
+        local_token: t.token_addr.clone(),
+    };
+
+    // Empty before the call proves the hook actually ran and captured.
+    assert_eq!(hooks_client.get_captured_token_args(), Bytes::new(&t.env));
+
+    t.pool_client
+        .lock_or_burn(&t.auth_onramp, &lock_input, &0u32, &token_args);
+
+    // The sender-supplied `token_args` reached the hooks preflight unchanged,
+    // and the tokens were escrowed in the lockbox (siloed lock-release parity).
+    assert_eq!(hooks_client.get_captured_token_args(), token_args);
+    assert_eq!(t.tc.balance(&t.lockbox_client.address), 1_000_000_000);
+    assert_eq!(t.tc.balance(&sender), 0);
+}
+
+/// H-13 / auth-fix: a caller that is neither the owner nor the fee admin must be
+/// rejected with `Unauthorized` (typed error, not a host auth trap) — the
+/// identity check runs before `require_auth`. Proves the
+/// `require_owner_or_fee_admin` gate is caller-identity-bound.
+#[test]
+fn test_withdraw_fee_tokens_rejects_unauthorized_caller() {
+    let t = setup();
+
+    let stranger = Address::generate(&t.env);
+    let recipient = Address::generate(&t.env);
+    let r = t.pool_client.try_withdraw_fee_tokens(
+        &stranger,
+        &Vec::from_array(&t.env, [t.token_addr.clone()]),
+        &recipient,
+    );
+    assert!(r.is_err(), "unauthorized caller must be rejected");
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::Unauthorized);
 }
 
 #[test]

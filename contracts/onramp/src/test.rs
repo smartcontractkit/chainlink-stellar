@@ -957,6 +957,505 @@ fn encoded_message_from_last_onramp_event(env: &Env, onramp: &Address) -> Bytes 
     panic!("expected CCIPMessageSent event with encoded_message from onramp");
 }
 
+// ============================================================
+// Mock pool that captures `token_args` from `get_fee` (H-13 / INV-POOL-8)
+// ============================================================
+
+mod mock_pool {
+    use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, Env, Symbol, Vec};
+
+    use common_error::CCIPError;
+    use common_interfaces::token_pool::{
+        LockOrBurnIn, LockOrBurnOut, MessageDirection, PoolFeeResult, PoolRequiredCCVs,
+    };
+
+    const CAPTURED_GET_FEE_TOKEN_ARGS_KEY: Symbol = symbol_short!("GFTA");
+
+    /// A minimal `TokenPoolInterface` mock whose `get_fee` captures the
+    /// `token_args` argument into instance storage, so a test can assert the
+    /// OnRamp threads `extra_args.token_args` end-to-end to the pool's `get_fee`
+    /// (EVM `IPoolV2.getFee(…, tokenArgs)` parity). `get_fee` returns a
+    /// *disabled* `PoolFeeResult` so the OnRamp falls back to the FeeQuoter for
+    /// the actual fee/overhead — the capture still happens because the OnRamp
+    /// calls `pool.get_fee` before inspecting `is_enabled`.
+    #[contract]
+    pub struct MockPoolCapturesGetFeeTokenArgs;
+
+    #[contractimpl]
+    impl MockPoolCapturesGetFeeTokenArgs {
+        pub fn get_captured_get_fee_token_args(env: Env) -> Bytes {
+            env.storage()
+                .instance()
+                .get(&CAPTURED_GET_FEE_TOKEN_ARGS_KEY)
+                .unwrap_or_else(|| Bytes::new(&env))
+        }
+
+        pub fn get_fee(
+            env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            env.storage()
+                .instance()
+                .set(&CAPTURED_GET_FEE_TOKEN_ARGS_KEY, &token_args);
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        /// Minimal valid return for any `lock_or_burn` the send path may make.
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: Bytes::new(&env),
+            })
+        }
+
+        /// No pool-mandated CCVs → the OnRamp uses lane defaults.
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> PoolRequiredCCVs {
+            PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
+            }
+        }
+    }
+}
+
+// ============================================================
+// Token-transfer lane harness (H-5 / INV-SRC-5 fee-pricing tests)
+// ============================================================
+//
+// A reusable one-token outbound lane with a real lock-release pool, real
+// executor (auto-execute), and a FeeQuoter whose per-token
+// `TokenTransferFeeConfig.dest_gas_overhead` is the pool receipt's gas. Used to
+// prove the pool overhead is *priced* into the executor fee, not just
+// advertised in `execution_gas_limit`.
+
+struct TokenTransferLane {
+    env: Env,
+    sender: Address,
+    evm_chain_selector: u64,
+    router_client: RouterContractClient<'static>,
+    onramp_id: Address,
+    fee_token: Address,
+    fee_token_sac: token::StellarAssetClient<'static>,
+    transfer_token: Address,
+    transfer_token_sac: token::StellarAssetClient<'static>,
+    fee_quoter_client: FeeQuoterContractClient<'static>,
+    /// When set, the lane was wired with this mock pool (which captures
+    /// `token_args` from `get_fee`) instead of the real lock-release pool.
+    mock_pool_id: Option<Address>,
+}
+
+impl TokenTransferLane {
+    /// Send a 1-token transfer with auto-execution (empty `extra_args` resolves
+    /// to the lane's concrete `default_executor`) and return the receipts from
+    /// the `CCIPMessageSent` event. Receipt extraction runs immediately after
+    /// `ccip_send`, before any other contract call clears the event view.
+    fn send(&self) -> Vec<Receipt> {
+        let env = &self.env;
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: self.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data: Bytes::from_slice(env, b"token send with data"),
+            token_amounts,
+            fee_token: self.fee_token.clone(),
+            extra_args: Bytes::new(env),
+        };
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        self.transfer_token_sac.mint(&self.sender, &1_000_000);
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
+    }
+
+    /// Send a 1-token transfer with an explicit `extra_args` payload (already
+    /// XDR-encoded, e.g. a `GenericExtraArgsV3::to_xdr`) and return both the
+    /// `CCIPMessageSent` receipts and the encoded on-wire message. Receipt /
+    /// message extraction runs immediately after `ccip_send`, before any other
+    /// contract call clears the event view.
+    fn send_with_extra_args(&self, extra_args: Bytes) -> (Vec<Receipt>, Bytes) {
+        let env = &self.env;
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: self.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data: Bytes::from_slice(env, b"token send with data"),
+            token_amounts,
+            fee_token: self.fee_token.clone(),
+            extra_args,
+        };
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        self.transfer_token_sac.mint(&self.sender, &1_000_000);
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
+        let encoded = encoded_message_from_last_onramp_event(env, &self.onramp_id);
+        (receipts, encoded)
+    }
+
+    /// Reconfigure the FeeQuoter's per-token transfer fee for this lane's
+    /// `(dest, transfer_token)`, overwriting `dest_gas_overhead` (the pool
+    /// receipt's gas). `apply_token_fee_configs` replaces an existing entry in
+    /// place, so no remove is needed. `dest_bytes_overhead` stays at 64 (≥ the
+    // `CCIP_LOCK_OR_BURN_V1_RET_BYTES` minimum enforced by the FeeQuoter).
+    fn set_pool_dest_gas_overhead(&self, dest_gas_overhead: u32) {
+        let env = &self.env;
+        self.fee_quoter_client.apply_token_fee_configs(
+            &vec![
+                env,
+                TokenFeeConfigArgs {
+                    dest_chain_selector: self.evm_chain_selector,
+                    token: self.transfer_token.clone(),
+                    config: TokenTransferFeeConfig {
+                        fee_usd_cents: 5000,
+                        dest_gas_overhead,
+                        dest_bytes_overhead: 64,
+                        is_enabled: true,
+                    },
+                },
+            ],
+            &Vec::new(env),
+        );
+    }
+
+    /// The executor receipt (index 2 = [CCV, Pool, Executor, NetworkFee]).
+    fn executor_receipt(receipts: &Vec<Receipt>) -> Receipt {
+        receipts
+            .get(2)
+            .expect("expected [CCV, Pool, Executor, NetworkFee]")
+            .clone()
+    }
+}
+
+fn setup_token_transfer_lane() -> TokenTransferLane {
+    setup_token_transfer_lane_with_pool(None)
+}
+
+/// Build a one-token outbound lane. When `mock_pool` is `None`, a real
+/// lock-release pool (+ lockbox) is wired via the TAR. When `Some(addr)`, that
+/// mock pool address is registered as the transfer token's pool instead (and no
+/// lockbox is set up) — used by tests that need to observe `get_fee` arguments.
+fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTransferLane {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let sender = Address::generate(&env);
+
+    let stellar_chain_selector: u64 = 12345;
+    let evm_chain_selector: u64 = 67890;
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
+    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
+    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+
+    let router_id = env.register(RouterContract, ());
+    let router_client = RouterContractClient::new(&env, &router_id);
+    router_client.initialize(&owner, &rmn_proxy_id);
+
+    let onramp_id = env.register(OnRampContract, ());
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    let fee_token_admin = Address::generate(&env);
+    let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
+    let fee_token = fee_token_contract.address();
+    let fee_token_sac = token::StellarAssetClient::new(&env, &fee_token);
+
+    let transfer_token_admin = Address::generate(&env);
+    let transfer_token_contract =
+        env.register_stellar_asset_contract_v2(transfer_token_admin.clone());
+    let transfer_token = transfer_token_contract.address();
+    let transfer_token_sac = token::StellarAssetClient::new(&env, &transfer_token);
+
+    let ramp_registry_id = env.register(RampRegistryContract, ());
+    let ramp_registry_client = RampRegistryContractClient::new(&env, &ramp_registry_id);
+    ramp_registry_client.initialize(&owner);
+
+    // Wire the pool: either the real lock-release pool (+ lockbox) or a
+    // caller-supplied mock pool address (no lockbox needed for fee-only tests).
+    let pool_id = if let Some(mp) = mock_pool.clone() {
+        mp
+    } else {
+        let pool_id = env.register(LockReleaseTokenPoolContract, ());
+        let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+        pool_client.initialize(
+            &owner,
+            &transfer_token,
+            &7u32,
+            &router_id,
+            &ramp_registry_client.address,
+            &rmn_proxy_id,
+        );
+
+        let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
+        let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);
+        pool_client.apply_chain_updates(
+            &vec![
+                &env,
+                ChainUpdate {
+                    remote_chain_selector: evm_chain_selector,
+                    remote_pool_addresses: remote_pool,
+                    remote_token_address: remote_token,
+                    outbound_rate_limiter_config: RateLimitConfig::disabled(),
+                    inbound_rate_limiter_config: RateLimitConfig::disabled(),
+                },
+            ],
+            &Vec::new(&env),
+        );
+
+        let lockbox_id = env.register(TokenLockBox, ());
+        let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+        lockbox_client.initialize(&owner, &transfer_token);
+        lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
+        pool_client.configure_lock_boxes(&vec![
+            &env,
+            LockBoxEntry {
+                remote_chain_selector: evm_chain_selector,
+                lock_box: lockbox_client.address.clone(),
+            },
+        ]);
+        pool_id
+    };
+
+    ramp_registry_client.apply_onramp_updates(&vec![
+        &env,
+        OnRampUpdate {
+            dest_chain_selector: evm_chain_selector,
+            onramp: Some(onramp_id.clone()),
+        },
+    ]);
+
+    let tar_id = env.register(TokenAdminRegistryContract, ());
+    let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
+    tar_client.initialize(&owner);
+    let token_registry_admin = Address::generate(&env);
+    tar_client.propose_administrator(&owner, &transfer_token, &token_registry_admin);
+    tar_client.accept_admin_role(&transfer_token);
+    tar_client.set_pool(&transfer_token, &Some(pool_id.clone()));
+
+    let fee_quoter_id = setup_fee_quoter(
+        &env,
+        &owner,
+        evm_chain_selector,
+        &fee_token,
+        &transfer_token,
+    );
+    let fee_quoter_client = FeeQuoterContractClient::new(&env, &fee_quoter_id);
+
+    let static_config = StaticConfig {
+        chain_selector: stellar_chain_selector,
+        token_admin_registry: tar_id.clone(),
+        rmn_proxy: rmn_proxy_id.clone(),
+        max_usd_cents_per_message: 100_000,
+    };
+    let dynamic_config = DynamicConfig {
+        fee_quoter: fee_quoter_id,
+        fee_aggregator: Address::generate(&env),
+    };
+    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+
+    let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
+    let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
+
+    let dest_chain_config = OnrampDestChainConfigArgs {
+        dest_chain_selector: evm_chain_selector,
+        router: router_id.clone(),
+        address_bytes_length: 20,
+        token_receiver_allowed: true,
+        message_network_fee_usd_cents: 50,
+        token_network_fee_usd_cents: 100,
+        base_execution_gas_cost: 200_000,
+        execution_fee_usd_cents: 25,
+        default_executor: default_executor.clone(),
+        lane_mandated_ccvs: Vec::new(&env),
+        default_ccvs: vec![&env, default_ccv.clone()],
+        off_ramp: Bytes::from_array(&env, &[0u8; 20]),
+    };
+    onramp_client.apply_dest_chain_config_updates(&vec![&env, dest_chain_config]);
+    router_client.set_onramp(&evm_chain_selector, &onramp_id);
+
+    TokenTransferLane {
+        env,
+        sender,
+        evm_chain_selector,
+        router_client,
+        onramp_id,
+        fee_token,
+        fee_token_sac,
+        transfer_token,
+        transfer_token_sac,
+        fee_quoter_client,
+        mock_pool_id: mock_pool,
+    }
+}
+
+/// H-5 / INV-FEE-10: the pool's `dest_gas_overhead` must be *priced* into the
+/// executor fee, not merely advertised in `execution_gas_limit`. EVM
+/// `OnRamp._getReceipts` (L1075-1097) calls `quoteGasForExec(gasLimitSum, …)`
+/// where `gasLimitSum` includes the pool receipt's `destGasLimit` (L1055), and
+/// the resulting `execCostInUSDCents` is added to the executor receipt
+/// (L1096). Stellar mirrors this: `execution_gas_limit` (now including
+/// `pool_dest_gas_limit`) is priced via `quote_gas_for_exec`, and the cost joins
+/// the executor receipt's `fee_token_amount` (flat + exec cost). This test
+/// proves the pricing is wired by showing the executor receipt fee strictly
+/// increases with the pool overhead (75_000 → 0), holding everything else fixed.
+#[test]
+fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
+    let lane = setup_token_transfer_lane();
+
+    // Baseline: pool dest_gas_overhead = 75_000 (the `setup_fee_quoter` default).
+    let receipts_high = lane.send();
+    let executor_fee_high = TokenTransferLane::executor_receipt(&receipts_high).fee_token_amount;
+
+    // Drop the pool overhead to 0 (reconfigures the same (dest, token) entry),
+    // then send an identical message. Only `execution_gas_limit`'s pool term
+    // changes (275_000 → 200_000), so only the priced exec-gas cost changes.
+    lane.set_pool_dest_gas_overhead(0);
+    let receipts_low = lane.send();
+    let executor_fee_low = TokenTransferLane::executor_receipt(&receipts_low).fee_token_amount;
+
+    assert!(
+        executor_fee_high > executor_fee_low,
+        "executor receipt fee must include the priced pool dest_gas_overhead \
+         (EVM OnRamp.sol:1096 parity): got high={:?} low={:?}",
+        executor_fee_high,
+        executor_fee_low
+    );
+}
+
+/// H-13 / INV-POOL-8: the sender-supplied `token_args` (carried in
+/// `extra_args.token_args`) must reach the pool's `get_fee` byte-for-byte
+/// (EVM `IPoolV2.getFee(localToken, destChainSelector, amount, feeToken,
+/// requestedFinalityConfig, tokenArgs)` — `OnRamp.sol:1036-1043`). The Stellar
+/// OnRamp resolves the pool via the TAR and calls `pool.get_fee(dest, amount,
+/// requestedFinality, extra_args.token_args)` (`onramp/src/lib.rs:267-272`).
+/// This test wires a mock pool that captures `token_args` from `get_fee` and
+/// asserts, via `router.get_fee`, that the sender's payload arrives unchanged.
+#[test]
+fn test_get_fee_threads_token_args_to_pool() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    // Register the capturing mock pool and rebind the transfer token's pool
+    // binding (in the OnRamp's TAR) to point at it. `rebind_pool_to_mock`
+    // recovers the TAR address from the OnRamp's static config.
+    let mock_pool_id = lane
+        .env
+        .register(mock_pool::MockPoolCapturesGetFeeTokenArgs, ());
+    let mock_client =
+        mock_pool::MockPoolCapturesGetFeeTokenArgsClient::new(&lane.env, &mock_pool_id);
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    // Build a message with a non-empty `token_args` and otherwise-default
+    // extra_args (use-default executor sentinel → resolves to the lane's
+    // concrete default executor; empty CCVs → lane defaults).
+    let env = &lane.env;
+    let token_args = Bytes::from_array(env, &[0xde, 0xad, 0xbe, 0xef]);
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: token_args.clone(),
+    };
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    // Empty before the call proves the hook actually ran and captured.
+    assert_eq!(
+        mock_client.get_captured_get_fee_token_args(),
+        Bytes::new(env),
+        "capture must be empty before get_fee"
+    );
+
+    // `router.get_fee` is a view that drives `compute_outbound_fee_breakdown`,
+    // which calls `pool.get_fee` with `extra_args.token_args`.
+    let _ = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+
+    assert_eq!(
+        mock_client.get_captured_get_fee_token_args(),
+        token_args,
+        "pool.get_fee must receive the sender's extra_args.token_args unchanged (EVM IPoolV2.getFee parity)"
+    );
+}
+
+/// Re-register the lane's transfer-token pool binding to point at `mock_pool`.
+/// The OnRamp resolves the pool via the TAR it was initialized with; that TAR
+/// is not exposed on `TokenTransferLane`, so this helper re-creates a TAR
+/// client at the OnRamp's configured TAR address and rebinds the pool.
+fn rebind_pool_to_mock(lane: &TokenTransferLane, mock_pool: &Address) {
+    // The OnRamp's static_config.token_admin_registry is the TAR it queries.
+    // The harness doesn't expose it, so recover it from the OnRamp's config.
+    let onramp = OnRampContractClient::new(&lane.env, &lane.onramp_id);
+    let tar_address = onramp.get_static_config().token_admin_registry;
+    let tar = TokenAdminRegistryContractClient::new(&lane.env, &tar_address);
+    tar.set_pool(&lane.transfer_token, &Some(mock_pool.clone()));
+}
+
 #[test]
 fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let env = Env::default();
@@ -1172,6 +1671,19 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     // call, so a `token::Client::balance` query would clear the CCIPMessageSent event.
     let encoded = encoded_message_from_last_onramp_event(&env, &onramp_id);
     let decoded = CcipMessageV1::from_bytes(&env, &encoded).expect("decode encoded message");
+
+    // H-5 / INV-SRC-5: the on-wire `execution_gas_limit` must include the pool's
+    // `dest_gas_overhead` (75_000 here) on top of the CCV gas (0, the mock
+    // verifier returns no dest gas) and the lane's `base_execution_gas_cost`
+    // (200_000), mirroring EVM `OnRamp._getReceipts` L1009/1055/1065
+    // (CCV gas → pool gas → executor gas). Without this, an auto-executed token
+    // transfer advertises and is priced for less gas than `release_or_mint`
+    // requires, stranding the destination call with an out-of-gas revert.
+    assert_eq!(
+        decoded.execution_gas_limit, 275_000,
+        "execution_gas_limit must include the pool dest_gas_overhead (75_000) + base_execution_gas_cost (200_000)"
+    );
+
     let token_transfer = CcipTokenTransferV1::from_bytes(&env, &decoded.token_transfer)
         .expect("decode token transfer");
     assert_eq!(
@@ -1659,6 +2171,97 @@ fn test_no_execution_sentinel_zero_executor_fee_and_no_transfer() {
         fee_token_client.balance(&no_exec),
         0,
         "no-execution sentinel must receive no fee token transfer (M-7)"
+    );
+}
+
+/// H-5 / INV-SRC-5 + M-7: the token-transfer counterpart to the data-only
+/// no-exec test. With the no-execution sentinel as the message executor, the
+/// executor fee (flat + exec-gas) and the H-3 fee transfer must both be zeroed
+/// (no auto-execution), BUT `execution_gas_limit` is a *message property*,
+/// not a priced cost — it is still computed as Σ CCV gas (0) + pool
+/// `dest_gas_overhead` (75_000) + `base_execution_gas_cost` (200_000) + user
+/// `gas_limit` (0) = 275_000, exactly as for an auto-executed transfer. This
+/// pins EVM parity: `OnRamp._getReceipts` builds `gasLimitSum` (CCV + pool +
+/// executor gas) and writes it to `message.header.executionGasLimit`
+/// regardless of whether the executor is the no-exec sentinel, while the
+/// no-exec branch (`Executor.isNoExecution`) zeroes only the executor *fee*.
+#[test]
+fn test_no_execution_sentinel_token_transfer_keeps_pool_gas_in_message() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    let no_exec = GenericExtraArgsV3::no_execution_address(env);
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: no_exec.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let (receipts, encoded) = lane.send_with_extra_args(extra_args.to_xdr(env));
+
+    // Token transfer: [CCV, Pool, Executor, NetworkFee].
+    assert_eq!(
+        receipts.len(),
+        4,
+        "expected 1 CCV + pool + executor + network"
+    );
+    // The pool receipt still carries its dest_gas_overhead (75_000) — the pool
+    // ran `get_fee` regardless of the executor sentinel.
+    assert_eq!(receipts.get(1).unwrap().dest_gas_limit, 75_000);
+
+    let exec_receipt = TokenTransferLane::executor_receipt(&receipts);
+    assert_eq!(
+        exec_receipt.issuer, no_exec,
+        "executor receipt issuer must be the no-execution sentinel"
+    );
+    assert_eq!(
+        exec_receipt.fee_token_amount, 0,
+        "no-execution sentinel must yield zero executor fee (flat + exec gas)"
+    );
+
+    // The on-wire message still advertises the full execution_gas_limit —
+    // pool gas included — even though nothing is priced for it.
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.execution_gas_limit, 275_000,
+        "execution_gas_limit is a message property: it must include the pool \
+         dest_gas_overhead (75_000) + base_execution_gas_cost (200_000) even \
+         with the no-execution sentinel"
+    );
+
+    // No H-3 transfer to the sentinel. (Contract call — run last, after event
+    // extraction, since it clears the event view.)
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&no_exec),
+        0,
+        "no-execution sentinel must receive no fee token transfer (M-7)"
+    );
+}
+
+/// H-5 / INV-SRC-5 complement to `test_ccip_send_emits_token_pool_receipt...`:
+/// a data-only send has no pool receipt, so `pool_dest_gas_limit` is 0 and the
+/// on-wire `execution_gas_limit` must be just CCV gas (0, mock verifier) +
+/// `base_execution_gas_cost` (200_000) + user `gas_limit` (0) = 200_000. This
+/// pins that the pool-overhead term added to `execution_gas_limit` is scoped to
+/// token transfers only and does not inflate data-only messages.
+#[test]
+fn test_data_only_execution_gas_limit_excludes_pool_overhead() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3::new(env, lane.default_executor.clone());
+    let (_, encoded) = lane.send_data_only_full(extra_args);
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+
+    assert_eq!(
+        decoded.execution_gas_limit, 200_000,
+        "data-only execution_gas_limit must be base_execution_gas_cost only (no pool overhead)"
     );
 }
 

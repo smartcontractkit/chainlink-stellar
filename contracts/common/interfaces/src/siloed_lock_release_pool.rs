@@ -92,6 +92,7 @@ pub trait SiloedLockReleasePoolInterface {
     ) -> Result<(), CCIPError>;
     fn withdraw_fee_tokens(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
         recipient: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
@@ -106,6 +107,7 @@ pub trait SiloedLockReleasePoolInterface {
     ) -> Result<(), CCIPError>;
     fn set_rate_limit_config(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         remote_chain_selector: u64,
         outbound_config: RateLimitConfig,
         inbound_config: RateLimitConfig,

@@ -286,9 +286,17 @@ impl OnRampContract {
                 .ok_or(CCIPError::InvalidFeeCalculation)?;
         }
 
-        // H-5 / INV-FEE-10: execution_gas_limit = Σ CCV dest_gas_limit + base
-        // execution gas + user gas_limit. This is a *message property* (it goes
-        // into MessageV1), so it is always computed. It is *priced* only when
+        // H-5 / INV-FEE-10: execution_gas_limit = Σ CCV dest_gas_limit +
+        // pool dest_gas_limit + base execution gas + user gas_limit (EVM
+        // `OnRamp._getReceipts` L1009/1055/1065: CCV gas → pool gas → executor
+        // gas, in that order). The pool's `dest_gas_overhead` is the gas the
+        // destination `release_or_mint` will consume; omitting it both
+        // under-prices the execution-gas cost (priced below via
+        // `quote_gas_for_exec`) and under-advertises the on-wire gas limit,
+        // stranding auto-executed token transfers with an out-of-gas
+        // destination call. This is a *message property* (it goes into
+        // MessageV1), so it is always computed; `pool_dest_gas_limit` is 0
+        // when there is no token transfer. It is *priced* only when
         // auto-executing (executor ≠ no-exec sentinel); see below.
         let mut execution_gas_limit: u32 = 0;
         for i in 0..ccv_fee_responses.len() {
@@ -296,6 +304,7 @@ impl OnRampContract {
                 execution_gas_limit = execution_gas_limit.saturating_add(r.dest_gas_limit);
             }
         }
+        execution_gas_limit = execution_gas_limit.saturating_add(pool_dest_gas_limit);
         let executor_dest_gas = dest_config
             .base_execution_gas_cost
             .saturating_add(extra_args.gas_limit);

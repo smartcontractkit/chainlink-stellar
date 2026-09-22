@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger, token, Address, Bytes, BytesN, Env, Vec,
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
+    token, Address, Bytes, BytesN, Env, IntoVal, Val, Vec,
 };
 
 use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
@@ -39,9 +40,10 @@ mod mock_hooks {
             env: Env,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
+            token_args: Bytes,
             amount: i128,
         ) -> Result<(), CCIPError> {
-            let _ = (env, lock_or_burn_in, requested_finality, amount);
+            let _ = (env, lock_or_burn_in, requested_finality, token_args, amount);
             Err(CCIPError::SenderNotAllowed)
         }
 
@@ -80,9 +82,10 @@ mod mock_hooks {
             env: Env,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
+            token_args: Bytes,
             amount: i128,
         ) -> Result<(), CCIPError> {
-            let _ = (env, lock_or_burn_in, requested_finality, amount);
+            let _ = (env, lock_or_burn_in, requested_finality, token_args, amount);
             Ok(())
         }
 
@@ -127,9 +130,10 @@ mod mock_hooks {
             env: Env,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
+            token_args: Bytes,
             amount: i128,
         ) -> Result<(), CCIPError> {
-            let _ = (env, lock_or_burn_in, requested_finality, amount);
+            let _ = (env, lock_or_burn_in, requested_finality, token_args, amount);
             Ok(())
         }
 
@@ -160,6 +164,64 @@ mod mock_hooks {
             IfacePoolRequiredCCVs {
                 ccvs: Vec::from_array(&env, [ccv]),
                 include_defaults: false,
+            }
+        }
+    }
+
+    const CAPTURED_TOKEN_ARGS_KEY: Symbol = symbol_short!("CTA");
+
+    /// Captures the `token_args` received by `preflight_check` into instance
+    /// storage so a test can assert the sender-supplied payload is threaded
+    /// end-to-end from `lock_or_burn` to the advanced-pool-hooks contract
+    /// (EVM `IAdvancedPoolHooks.preflightCheck` parity).
+    #[contract]
+    pub struct MockCapturesTokenArgs;
+
+    #[contractimpl]
+    impl MockCapturesTokenArgs {
+        pub fn get_captured_token_args(env: Env) -> Bytes {
+            env.storage()
+                .instance()
+                .get(&CAPTURED_TOKEN_ARGS_KEY)
+                .unwrap_or_else(|| Bytes::new(&env))
+        }
+
+        pub fn preflight_check(
+            env: Env,
+            lock_or_burn_in: IfaceLockOrBurnIn,
+            requested_finality: u32,
+            token_args: Bytes,
+            amount: i128,
+        ) -> Result<(), CCIPError> {
+            env.storage()
+                .instance()
+                .set(&CAPTURED_TOKEN_ARGS_KEY, &token_args);
+            let _ = (lock_or_burn_in, requested_finality, amount);
+            Ok(())
+        }
+
+        pub fn postflight_check(
+            env: Env,
+            release_or_mint_in: IfaceReleaseOrMintIn,
+            local_amount: i128,
+            requested_finality: u32,
+        ) -> Result<(), CCIPError> {
+            let _ = (env, release_or_mint_in, local_amount, requested_finality);
+            Ok(())
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: IfaceMessageDirection,
+        ) -> IfacePoolRequiredCCVs {
+            IfacePoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
             }
         }
     }
@@ -1701,7 +1763,7 @@ fn test_set_rate_limit_config_updates_limits() {
     let (
         env,
         pool_client,
-        _owner,
+        owner,
         token_address,
         _token_client,
         token_admin_client,
@@ -1728,6 +1790,7 @@ fn test_set_rate_limit_config_updates_limits() {
         rate: 5,
     };
     pool_client.set_rate_limit_config(
+        &owner,
         &remote_chain,
         &new_outbound,
         &RateLimitConfig::disabled(),
@@ -1785,7 +1848,13 @@ fn test_set_rate_limit_admin_and_admin_can_set_config() {
         capacity: 100,
         rate: 1,
     };
-    pool_client.set_rate_limit_config(&remote_chain, &cfg, &RateLimitConfig::disabled(), &false);
+    pool_client.set_rate_limit_config(
+        &admin,
+        &remote_chain,
+        &cfg,
+        &RateLimitConfig::disabled(),
+        &false,
+    );
 
     let state = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
     assert!(state.outbound.is_enabled);
@@ -1932,7 +2001,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
     let (
         env,
         pool_client,
-        _owner,
+        owner,
         token_address,
         token_client,
         _token_admin_client,
@@ -1955,6 +2024,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         rate: 2,
     };
     pool_client.set_rate_limit_config(
+        &owner,
         &remote_chain,
         &RateLimitConfig::disabled(),
         &ftf_inbound,
@@ -2076,7 +2146,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
     let (
         env,
         pool_client,
-        _owner,
+        owner,
         token_address,
         _token_client,
         token_admin_client,
@@ -2102,6 +2172,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         rate: 3,
     };
     pool_client.set_rate_limit_config(
+        &owner,
         &remote_chain,
         &ftf_outbound,
         &RateLimitConfig::disabled(),
@@ -2191,7 +2262,7 @@ fn test_ftf_and_default_buckets_are_independent() {
     let (
         env,
         pool_client,
-        _owner,
+        owner,
         token_address,
         token_client,
         _token_admin_client,
@@ -2230,6 +2301,7 @@ fn test_ftf_and_default_buckets_are_independent() {
         rate: 3,
     };
     pool_client.set_rate_limit_config(
+        &owner,
         &remote_chain,
         &RateLimitConfig::disabled(),
         &ftf_inbound,
@@ -2351,6 +2423,56 @@ fn test_preflight_hook_rejects_lock_or_burn() {
     let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::SenderNotAllowed);
     assert_eq!(token_client.balance(&sender), 1_000_000_000);
+}
+
+/// The sender-supplied `token_args` (threaded from the CCIP message's
+/// `extra_args.token_args` → OnRamp → `lock_or_burn`) must reach the
+/// advanced-pool-hooks `preflight_check` byte-for-byte (EVM
+/// `IAdvancedPoolHooks.preflightCheck` parity).
+#[test]
+fn test_preflight_hook_receives_token_args() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let hooks_id = env.register(mock_hooks::MockCapturesTokenArgs, ());
+    let hooks_client = mock_hooks::MockCapturesTokenArgsClient::new(&env, &hooks_id);
+    pool_client.set_advanced_pool_hooks(&hooks_id.clone());
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &1_000_000_000);
+
+    let token_args = Bytes::from_array(&env, &[0xde, 0xad, 0xbe, 0xef]);
+
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender.clone(),
+        amount: 1_000_000_000,
+        local_token: token_address.clone(),
+    };
+
+    // Empty before the call proves the hook actually ran and captured.
+    assert_eq!(hooks_client.get_captured_token_args(), Bytes::new(&env));
+
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &token_args);
+
+    // The sender-supplied `token_args` reached the hooks preflight unchanged.
+    assert_eq!(hooks_client.get_captured_token_args(), token_args);
 }
 
 #[test]
@@ -2793,11 +2915,206 @@ fn test_withdraw_fee_tokens_sweeps_accrued() {
 
     // Owner sweeps the accrued fee to a recipient.
     let recipient = Address::generate(&env);
-    pool_client.withdraw_fee_tokens(&Vec::from_array(&env, [token_address.clone()]), &recipient);
+    pool_client.withdraw_fee_tokens(
+        &owner,
+        &Vec::from_array(&env, [token_address.clone()]),
+        &recipient,
+    );
     assert_eq!(token_client.balance(&recipient), fee);
     assert_eq!(token_client.balance(&pool_address), 0);
 
     let _ = owner; // owner-gated call; auth mocked in setup_env
+}
+
+/// H-13 / auth-fix: the fee admin (a non-owner party) must be able to call
+/// `withdraw_fee_tokens`. Under the old trap-OR gate (`require_owner(env).is_ok()`),
+/// `owner.require_auth()` trapped for any non-owner caller before the fee-admin
+/// fallback was reachable, so the fee admin could never withdraw. The fix checks
+/// identity first (`is_owner` OR fee-admin equality) then calls `require_auth`
+/// once on the confirmed party. This test authorizes ONLY the fee admin (precise
+/// auth via `mock_auths`, which switches the env off `mock_all_auths`) so that
+/// `owner.require_auth()` would trap under the old code — the call succeeding
+/// proves the fee-admin path is now reachable (EVM `onlyOwnerOrFeeAdmin` parity).
+#[test]
+fn test_withdraw_fee_tokens_fee_admin_can_withdraw_precise_auth() {
+    let (
+        env,
+        pool_client,
+        owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
+
+    // Configure a dedicated fee admin distinct from the owner (owner-gated;
+    // done while mock_all_auths is still active from setup_env).
+    let fee_admin = Address::generate(&env);
+    pool_client.set_fee_admin(&fee_admin);
+    assert_eq!(pool_client.get_fee_admin().unwrap(), fee_admin);
+
+    // Accrue a fee on the pool.
+    let sender = Address::generate(&env);
+    let amount: i128 = 1_000 * E18;
+    token_admin_client.mint(&sender, &amount);
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    let fee: i128 = 10 * E18;
+    let pool_address = pool_client.address.clone();
+    assert_eq!(token_client.balance(&pool_address), fee);
+
+    let recipient = Address::generate(&env);
+    let fee_tokens = Vec::from_array(&env, [token_address.clone()]);
+
+    // Authorize ONLY the fee admin for this exact invocation. `mock_auths`
+    // switches the env to precise-auth mode (displacing `mock_all_auths`), so
+    // the owner is NOT authorized — under the old trap-OR gate
+    // `owner.require_auth()` would trap here. With the fix, `is_owner(fee_admin)`
+    // is false but `is_fee_admin` is true, so `fee_admin.require_auth()` is the
+    // single auth call and it succeeds.
+    let args: Vec<Val> = soroban_sdk::vec![
+        &env,
+        fee_admin.clone().into_val(&env),
+        fee_tokens.clone().into_val(&env),
+        recipient.clone().into_val(&env),
+    ];
+    let invoke = MockAuthInvoke {
+        contract: &pool_client.address,
+        fn_name: "withdraw_fee_tokens",
+        args,
+        sub_invokes: &[],
+    };
+    env.mock_auths(&[MockAuth {
+        address: &fee_admin,
+        invoke: &invoke,
+    }]);
+
+    pool_client.withdraw_fee_tokens(&fee_admin, &fee_tokens, &recipient);
+    assert_eq!(token_client.balance(&recipient), fee);
+    assert_eq!(token_client.balance(&pool_address), 0);
+
+    let _ = owner;
+}
+
+/// A caller that is neither the owner nor the fee admin must be rejected with
+/// `Unauthorized` (a typed error, not a host auth trap): the identity check runs
+/// before `require_auth`, so an unrelated caller never reaches an auth call.
+/// Auth stays mocked from `setup_env`; the rejection is identity-bound, not
+/// auth-bound.
+#[test]
+fn test_withdraw_fee_tokens_rejects_unauthorized_caller() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let r = pool_client.try_withdraw_fee_tokens(
+        &stranger,
+        &Vec::from_array(&env, [token_address.clone()]),
+        &recipient,
+    );
+    assert!(r.is_err(), "unauthorized caller must be rejected");
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::Unauthorized);
+}
+
+/// H-13 / auth-fix counterpart for the rate-limit gate: the rate-limit admin (a
+/// non-owner party) must be able to call `set_rate_limit_config`. Same trap-OR
+/// bug existed in `require_owner_or_rate_limit_admin`. Precise auth authorizes
+/// ONLY the rate-limit admin so `owner.require_auth()` would trap under the old
+/// code; the config update succeeding proves the admin path is now reachable
+/// (EVM `onlyOwnerOrRateLimitAdmin` parity).
+#[test]
+fn test_set_rate_limit_config_rate_limit_admin_can_set_precise_auth() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Configure a dedicated rate-limit admin (owner-gated; while mock_all_auths
+    // is still active from setup_env).
+    let admin = Address::generate(&env);
+    pool_client.set_rate_limit_admin(&admin);
+    assert_eq!(pool_client.get_rate_limit_admin().unwrap(), admin);
+
+    let cfg = RateLimitConfig {
+        is_enabled: true,
+        capacity: 100,
+        rate: 1,
+    };
+
+    // Authorize ONLY the rate-limit admin for this exact invocation.
+    let args: Vec<Val> = soroban_sdk::vec![
+        &env,
+        admin.clone().into_val(&env),
+        remote_chain.into_val(&env),
+        cfg.clone().into_val(&env),
+        RateLimitConfig::disabled().into_val(&env),
+        false.into_val(&env),
+    ];
+    let invoke = MockAuthInvoke {
+        contract: &pool_client.address,
+        fn_name: "set_rate_limit_config",
+        args,
+        sub_invokes: &[],
+    };
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &invoke,
+    }]);
+
+    pool_client.set_rate_limit_config(
+        &admin,
+        &remote_chain,
+        &cfg,
+        &RateLimitConfig::disabled(),
+        &false,
+    );
+
+    let state = pool_client.get_current_rate_limiter_state(&remote_chain, &false);
+    assert!(state.outbound.is_enabled);
+    assert_eq!(state.outbound.capacity, 100);
 }
 
 // ================================================================
