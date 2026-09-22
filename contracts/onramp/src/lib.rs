@@ -517,6 +517,22 @@ impl OnRampContract {
             }
         }
 
+        // H-1 / INV-CC-1: an outbound message must carry at least one CCV. EVM
+        // `OnRamp.forwardFromRouter` guarantees this by construction: an empty
+        // pool-returned CCV list is treated as "use lane defaults", so the merged
+        // set is never empty when the lane has defaults. Stellar pools instead
+        // return an explicit `include_defaults` flag, and token-only transfers
+        // skip the user-fallback defaults path (`user_fallback_defaults` above) —
+        // so a token-only message on a lane whose pool returns
+        // `{ccvs:[], include_defaults:false}` (with no lane-mandated CCVs) would
+        // otherwise be emitted with zero CCVs, bypassing verification entirely.
+        // Reject that here, at the single merge point both `get_fee` and
+        // `forward_from_router` route through. Reuses `CCVQuorumNotMet` (#108) —
+        // no new error variant, no schema break.
+        if merged_ccvs.is_empty() {
+            return Err(CCIPError::CCVQuorumNotMet);
+        }
+
         Ok((merged_ccvs, merged_ccv_args))
     }
 
