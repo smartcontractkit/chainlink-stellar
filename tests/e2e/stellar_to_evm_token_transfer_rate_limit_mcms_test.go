@@ -22,10 +22,10 @@ import (
 	lrpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 

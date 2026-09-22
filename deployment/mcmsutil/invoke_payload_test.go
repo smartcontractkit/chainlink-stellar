@@ -1,87 +1,96 @@
 package mcmsutil
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stretchr/testify/require"
 )
 
-func TestEncodeSorobanMCMSInvokePayload_acceptOwnership(t *testing.T) {
-	b, err := EncodeSorobanMCMSInvokePayload("accept_ownership", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(b) == 0 {
-		t.Fatal("expected non-empty XDR payload")
-	}
-	var sc xdr.ScVal
-	if err := sc.UnmarshalBinary(b); err != nil {
-		t.Fatalf("unmarshal roundtrip: %v", err)
-	}
-	vec, ok := sc.GetVec()
-	if !ok || vec == nil || len(*vec) < 1 {
-		t.Fatalf("expected ScVal vec, got %+v", sc)
-	}
-}
-
-func TestEncodeSorobanMCMSInvokePayload_transferOwnership(t *testing.T) {
-	b, err := EncodeSorobanMCMSInvokePayload("transfer_ownership", []xdr.ScVal{
-		scval.AddressToScVal("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+func TestDecodeSorobanMCMSInvokePayload_RoundTrip(t *testing.T) {
+	t.Parallel()
+	subjects := [][16]byte{{0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFD}}
+	caller, err := strkey.Encode(strkey.VersionByteContract, make([]byte, 32))
+	require.NoError(t, err)
+	data, err := EncodeSorobanMCMSInvokePayload("curse", []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.Bytes16SliceToScVal(subjects),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sc xdr.ScVal
-	if err := sc.UnmarshalBinary(b); err != nil {
-		t.Fatal(err)
-	}
-	vec, ok := sc.GetVec()
-	if !ok || vec == nil || len(*vec) != 2 {
-		t.Fatalf("expected 2-element vec, got %v", vec)
+	require.NoError(t, err)
+	_ = err
+
+	fn, args, err := DecodeSorobanMCMSInvokePayload(data)
+	require.NoError(t, err)
+	require.Equal(t, "curse", fn)
+	require.Len(t, args, 2)
+
+	decodedCaller, err := scval.AddressFromScVal(args[0])
+	require.NoError(t, err)
+	require.Equal(t, caller, decodedCaller)
+
+	subjectVec, ok := args[1].GetVec()
+	require.True(t, ok, "second arg must be a vec of Bytes16")
+	require.NotNil(t, subjectVec)
+	require.Len(t, *subjectVec, len(subjects))
+	for i, item := range *subjectVec {
+		decoded, err := scval.Bytes16FromScVal(item)
+		require.NoError(t, err)
+		require.Equal(t, subjects[i], decoded)
 	}
 }
 
-// Decode as xdr.ScVal, not xdr.ScVec: args_xdr is the full ScVal::Vec encoding that
-// soroban_sdk Vec::<Val>::from_xdr consumes. Unmarshalling into xdr.ScVec reads the SCV_VEC
-// discriminant as an element count, so it accepts wrapper-less output and rejects correct output.
-func TestEncodeSorobanInvokeArgs_empty(t *testing.T) {
-	b, err := EncodeSorobanInvokeArgs(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sc xdr.ScVal
-	if err := sc.UnmarshalBinary(b); err != nil {
-		t.Fatalf("unmarshal roundtrip: %v", err)
-	}
-	if sc.Type != xdr.ScValTypeScvVec {
-		t.Fatalf("decoded type = %v, want ScvVec", sc.Type)
-	}
-	vec, ok := sc.GetVec()
-	if !ok || vec == nil {
-		t.Fatalf("expected ScVal vec, got %+v", sc)
-	}
-	if len(*vec) != 0 {
-		t.Fatalf("expected empty vec, got %d elements", len(*vec))
-	}
+func TestDecodeSorobanMCMSInvokePayload_EmptyArgsGoldenVector(t *testing.T) {
+	t.Parallel()
+	// The canonical empty-args encoding from EncodeSorobanInvokeArgs:
+	// SCV_VEC discriminant + present flag + zero element count.
+	golden, err := hex.DecodeString("000000100000000100000000")
+	require.NoError(t, err)
+	argsData, err := EncodeSorobanInvokeArgs(nil)
+	require.NoError(t, err)
+	require.Equal(t, golden, argsData)
+
+	// The payload vec always carries the function symbol, so a no-arg payload
+	// decodes to the function name and an empty arg slice.
+	data, err := EncodeSorobanMCMSInvokePayload("accept_ownership", nil)
+	require.NoError(t, err)
+	fn, args, err := DecodeSorobanMCMSInvokePayload(data)
+	require.NoError(t, err)
+	require.Equal(t, "accept_ownership", fn)
+	require.Empty(t, args)
 }
 
-func TestEncodeSorobanInvokeArgs_transferOwnership(t *testing.T) {
-	b, err := EncodeSorobanInvokeArgs([]xdr.ScVal{
-		scval.AddressToScVal("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+func TestDecodeSorobanMCMSInvokePayload_RejectsMalformed(t *testing.T) {
+	t.Parallel()
+	t.Run("not xdr", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := DecodeSorobanMCMSInvokePayload([]byte{0xFF, 0xFF})
+		require.Error(t, err)
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sc xdr.ScVal
-	if err := sc.UnmarshalBinary(b); err != nil {
-		t.Fatalf("unmarshal roundtrip: %v", err)
-	}
-	if sc.Type != xdr.ScValTypeScvVec {
-		t.Fatalf("decoded type = %v, want ScvVec", sc.Type)
-	}
-	vec, ok := sc.GetVec()
-	if !ok || vec == nil || len(*vec) != 1 {
-		t.Fatalf("expected 1-element vec, got %v", vec)
-	}
+	t.Run("not a vec", func(t *testing.T) {
+		t.Parallel()
+		data, err := scval.SymbolToScVal("curse").MarshalBinary()
+		require.NoError(t, err)
+		_, _, err = DecodeSorobanMCMSInvokePayload(data)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a populated vec")
+	})
+	t.Run("empty vec", func(t *testing.T) {
+		t.Parallel()
+		data, err := scval.VecToScVal(nil).MarshalBinary()
+		require.NoError(t, err)
+		_, _, err = DecodeSorobanMCMSInvokePayload(data)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "vec is empty")
+	})
+	t.Run("first element not a symbol", func(t *testing.T) {
+		t.Parallel()
+		data, err := scval.VecToScVal([]xdr.ScVal{scval.Uint64ToScVal(1)}).MarshalBinary()
+		require.NoError(t, err)
+		_, _, err = DecodeSorobanMCMSInvokePayload(data)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a symbol")
+	})
 }

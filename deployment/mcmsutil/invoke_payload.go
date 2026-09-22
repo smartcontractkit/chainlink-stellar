@@ -51,3 +51,27 @@ func EncodeSorobanInvokeArgs(argScVals []xdr.ScVal) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// DecodeSorobanMCMSInvokePayload is the inverse of EncodeSorobanMCMSInvokePayload:
+// it splits an MCMS transaction-data payload back into the invoked function name
+// and its argument ScVals. The Vec wrapper is mandatory on the wire (see
+// EncodeSorobanInvokeArgs), so a missing or nil Vec is an error rather than an
+// empty invocation.
+func DecodeSorobanMCMSInvokePayload(data []byte) (string, []xdr.ScVal, error) {
+	var sc xdr.ScVal
+	if err := xdr.SafeUnmarshal(data, &sc); err != nil {
+		return "", nil, fmt.Errorf("unmarshal soroban invoke payload: %w", err)
+	}
+	if sc.Type != xdr.ScValTypeScvVec || sc.Vec == nil || *sc.Vec == nil {
+		return "", nil, fmt.Errorf("soroban invoke payload is not a populated vec (type %v)", sc.Type)
+	}
+	vec := *(*sc.Vec)
+	if len(vec) == 0 {
+		return "", nil, fmt.Errorf("soroban invoke payload vec is empty; expected [Symbol(function), ...args]")
+	}
+	fn, ok := vec[0].GetSym()
+	if !ok {
+		return "", nil, fmt.Errorf("soroban invoke payload first element is not a symbol (type %v)", vec[0].Type)
+	}
+	return string(fn), vec[1:], nil
+}
