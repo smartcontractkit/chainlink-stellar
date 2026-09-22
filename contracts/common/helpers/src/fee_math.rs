@@ -64,6 +64,47 @@ pub fn usd_cents_to_fee_token(usd_cents: u128, fee_token_price: u128) -> Result<
     Ok(amount as i128)
 }
 
+/// Convert USD cents into fee-token smallest units with the LINK
+/// premium/discount applied.
+///
+/// Matches EVM `receipt.feeTokenAmount *= feeMultiplier` where
+/// `feeMultiplier = percentMultiplier * 1e32 / feeTokenPrice`
+/// (`onRamp/OnRamp.sol` `_getReceipts`, L1086-1090) — the per-receipt scaling
+/// EVM applies to every non-execution-cost receipt (CCV, pool, executor flat,
+/// network). `premium_percent = 100` ⇒ no change and is **bit-identical** to
+/// [`usd_cents_to_fee_token`] (since `100 * 1e32 == 1e34`); `< 100` ⇒ the LINK
+/// discount; `> 100` ⇒ a surcharge. Execution-gas cost must NOT use this — EVM
+/// adds `execCost * 1e34 / price` without the multiplier (L1095-1097), so callers
+/// price exec cost with the bare [`usd_cents_to_fee_token`].
+///
+/// Same error contract as [`usd_cents_to_fee_token`]: `FeeTokenNotSupported`
+/// when `fee_token_price == 0`, `InvalidFeeCalculation` if the quotient does not
+/// fit in `i128` (or `premium_percent` is pathologically large).
+pub fn usd_cents_to_fee_token_with_premium(
+    usd_cents: u128,
+    premium_percent: u32,
+    fee_token_price: u128,
+) -> Result<i128, CCIPError> {
+    if fee_token_price == 0 {
+        return Err(CCIPError::FeeTokenNotSupported);
+    }
+    // percentMultiplier * 1e32 (EVM L1086). Realistic percents are ≤ a few
+    // hundred ⇒ ≤ ~1e34, far under u128::MAX; a misconfigured value reverts
+    // cleanly via `InvalidFeeCalculation` rather than aborting.
+    let scaled_percent = (premium_percent as u128)
+        .checked_mul(10_u128.pow(32))
+        .ok_or(CCIPError::InvalidFeeCalculation)?;
+    // floor(usd_cents * scaled_percent / fee_token_price) = floor(usd_cents *
+    // percentMultiplier * 1e32 / price), the EVM feeMultiplier product. Full
+    // 256-bit so the overflowing intermediate is never materialized.
+    let amount = mul_div(usd_cents, scaled_percent, fee_token_price)
+        .ok_or(CCIPError::InvalidFeeCalculation)?;
+    if amount > i128::MAX as u128 {
+        return Err(CCIPError::InvalidFeeCalculation);
+    }
+    Ok(amount as i128)
+}
+
 /// Compute `floor(a * b / denom)` for `u128` inputs without materializing the
 /// 256-bit product as a single value that could overflow `u128`.
 ///
@@ -232,6 +273,80 @@ mod tests {
                 assert_eq!(got as u128, naive, "cents={cents} price={price}");
             }
         }
+    }
+
+    #[test]
+    fn test_premium_100_is_bit_identical_to_bare() {
+        // percentMultiplier = 100 ⇒ 100 * 1e32 == 1e34 ⇒ exactly the bare helper.
+        for cents in [1u128, 99, 150, 3254, 10_000, 100_000] {
+            for price in [
+                1_000_000_000_000_000_000u128, // $1 (18-dec)
+                15_000_000_000_000_000_000,    // $15 LINK
+                10_u128.pow(29),               // $1 (7-dec)
+                15_u128 * 10_u128.pow(29),     // $15 (7-dec)
+            ] {
+                assert_eq!(
+                    usd_cents_to_fee_token_with_premium(cents, 100, price).unwrap(),
+                    usd_cents_to_fee_token(cents, price).unwrap(),
+                    "cents={cents} price={price}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_premium_link_discount_matches_evm_fee_multiplier() {
+        // EVM: feeTokenAmount = usdCents * percentMultiplier * 1e32 / price.
+        // LINK @ $15, 90% (10% discount), $1.50 fee (150 cents):
+        //   150 * 90 * 1e32 / 15e18 = 150 * 90 / 15 * 1e14 = 900 * 1e14 = 9e16.
+        let price = 15_000_000_000_000_000_000u128;
+        let amt = usd_cents_to_fee_token_with_premium(150, 90, price).unwrap();
+        assert_eq!(amt, 90_000_000_000_000_000); // 0.09 LINK (vs 0.10 at full price)
+                                                 // Cross-check: exactly 90% of the bare (full-price) amount, floor-aligned
+                                                 // because 150 * 1e34 / 15e18 = 1e17 is exact ⇒ 90% = 9e16 exact.
+        let bare = usd_cents_to_fee_token(150, price).unwrap();
+        assert_eq!(amt, bare * 90 / 100);
+
+        // Non-exact case (3254 cents @ $15, 90%). EVM computes the feeMultiplier
+        // product as ONE full-width division: floor(3254 * 90 * 1e32 / 15e18) =
+        // floor(292860e32 / 15e18) = 195240 * 1e13 = 1952400000000000000 (exact
+        // here, 292860 = 1.5 * 195240). Note this is NOT `bare * 90 / 100`, which
+        // floors twice and yields one fewer (1952399999999999999) — EVM never
+        // re-floors an already-floored bare amount.
+        assert_eq!(
+            usd_cents_to_fee_token_with_premium(3254, 90, price).unwrap(),
+            1_952_400_000_000_000_000
+        );
+    }
+
+    #[test]
+    fn test_premium_zero_price_rejected() {
+        assert_eq!(
+            usd_cents_to_fee_token_with_premium(1_000, 90, 0).unwrap_err(),
+            CCIPError::FeeTokenNotSupported
+        );
+    }
+
+    #[test]
+    fn test_premium_pathological_percent_reverts() {
+        // percentMultiplier so large that percent * 1e32 overflows u128 reverts
+        // cleanly (InvalidFeeCalculation), not an abort. u32::MAX * 1e32 ≫ u128::MAX.
+        assert_eq!(
+            usd_cents_to_fee_token_with_premium(100, u32::MAX, 15_000_000_000_000_000_000)
+                .unwrap_err(),
+            CCIPError::InvalidFeeCalculation
+        );
+    }
+
+    #[test]
+    fn test_premium_surcharge_above_100() {
+        // percentMultiplier = 110 ⇒ 10% surcharge. $1 (100 cents) @ $1 18-dec token:
+        // bare = 100 * 1e34 / 1e18 = 1e18; 110% = 1.1e18.
+        let price = 1_000_000_000_000_000_000u128;
+        assert_eq!(
+            usd_cents_to_fee_token_with_premium(100, 110, price).unwrap(),
+            1_100_000_000_000_000_000
+        );
     }
 
     #[test]

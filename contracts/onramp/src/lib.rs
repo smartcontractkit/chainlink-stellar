@@ -67,6 +67,10 @@ struct FeeBreakdown {
     pool_dest_gas_limit: u32,
     pool_dest_bytes_overhead: u32,
     pool_fee_usd_cents: u128,
+    /// Fee-quoter premium percent (100 = no premium, <100 = LINK discount). EVM
+    /// `percentMultiplier` (`FeeQuoter.sol` L337). Carried for the per-receipt
+    /// distribution conversions in `forward_from_router`.
+    premium_multiplier: u32,
 }
 
 /// True iff `addr` is the zero Stellar account (EVM `address(0)` parity).
@@ -327,6 +331,22 @@ impl OnRampContract {
         // not multiplied by `percentMultiplier`; the message-fee portion already
         // carries `get_message_fee`'s internal premium). `calldata_size = 0`
         // because payload bytes are already priced inside `get_message_fee`.
+        // H-5 / INV-FEE-10 + M-10 / INV-FEE-13: price the execution gas once via
+        // `quote_gas_for_exec`, unconditionally — EVM `_getReceipts` calls
+        // `quoteGasForExec` for every message (OnRamp.sol L1075-1077) and only
+        // adds the exec cost to the executor receipt when the executor isn't the
+        // no-exec sentinel (L1094). Calling it here regardless yields
+        // `premium_multiplier` for the CCV/pool/executor-flat conversions below
+        // even on the no-exec path (those fees still need the LINK discount).
+        let calldata_size: u32 = 0;
+        let gas_quote = fee_quoter.quote_gas_for_exec(
+            &dest_chain_selector,
+            &execution_gas_limit,
+            &calldata_size,
+            &message.fee_token,
+        );
+        let premium_multiplier = gas_quote.premium_multiplier;
+
         let (executor_flat_usd_cents, exec_cost_usd_cents) = if is_no_exec {
             // No-execution sentinel: zero executor fee, zero exec-gas cost. The
             // sentinel is left in place (EVM leaves `NO_EXECUTION_ADDRESS`).
@@ -341,36 +361,44 @@ impl OnRampContract {
                 &extra_args.executor_args,
                 &message.fee_token,
             )? as u128;
-            let calldata_size: u32 = 0;
-            let gas_quote = fee_quoter.quote_gas_for_exec(
-                &dest_chain_selector,
-                &execution_gas_limit,
-                &calldata_size,
-                &message.fee_token,
-            );
             (executor_flat, gas_quote.gas_cost_usd_cents)
         };
 
+        // `additional_usd_cents` accumulates the premium-eligible slice
+        // (CCV + pool + executor flat). Exec-gas cost is kept separate: EVM adds
+        // it to the executor receipt AFTER the `feeMultiplier` (OnRamp.sol
+        // L1095-1097), so it must NOT be discounted.
         additional_usd_cents = additional_usd_cents
             .checked_add(executor_flat_usd_cents)
-            .ok_or(CCIPError::InvalidFeeCalculation)?
-            .checked_add(exec_cost_usd_cents)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
-        // H-3 / INV-FEE-19: executor fee (flat + exec cost) in fee-token units,
-        // for the receipt and the distribution transfer to the executor contract.
-        let executor_fee_tokens = fee_math::usd_cents_to_fee_token(
-            executor_flat_usd_cents
-                .checked_add(exec_cost_usd_cents)
-                .ok_or(CCIPError::InvalidFeeCalculation)?,
+        // M-10 / INV-FEE-13: convert the premium-eligible slice with the EVM
+        // `feeMultiplier` (`usd_cents_to_fee_token_with_premium`) and the exec-cost
+        // slice with the bare helper, then sum — matching EVM's per-receipt
+        // `feeTokenAmount = usdCents * feeMultiplier` plus the non-multiplied
+        // exec-cost addend. `premium_multiplier = 100` (non-LINK) makes the
+        // premium helper bit-identical to the bare one, so non-LINK fees are
+        // unchanged.
+        let exec_cost_in_fee_token =
+            fee_math::usd_cents_to_fee_token(exec_cost_usd_cents, message_fee.fee_token_price)?;
+        let additional_in_fee_token = fee_math::usd_cents_to_fee_token_with_premium(
+            additional_usd_cents,
+            premium_multiplier,
             message_fee.fee_token_price,
-        )?;
+        )?
+        .checked_add(exec_cost_in_fee_token)
+        .ok_or(CCIPError::InvalidFeeCalculation)?;
 
-        // Convert additional (pool + executor) USD-cents to fee-token units with
-        // the EVM 1e34 convention. See `common_helpers::fee_math` for why the
-        // naive `cents * 1e34` is split (u128 overflow avoidance, exact parity).
-        let additional_in_fee_token =
-            fee_math::usd_cents_to_fee_token(additional_usd_cents, message_fee.fee_token_price)?;
+        // H-3 / INV-FEE-19 + M-10 / INV-FEE-13: executor fee in fee-token units
+        // (flat discounted + exec cost not), for the receipt and the H-3
+        // distribution transfer to the executor contract.
+        let executor_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
+            executor_flat_usd_cents,
+            premium_multiplier,
+            message_fee.fee_token_price,
+        )?
+        .checked_add(exec_cost_in_fee_token)
+        .ok_or(CCIPError::InvalidFeeCalculation)?;
 
         let total_fee = message_fee
             .fee_token_amount
@@ -409,6 +437,7 @@ impl OnRampContract {
             pool_dest_gas_limit,
             pool_dest_bytes_overhead,
             pool_fee_usd_cents,
+            premium_multiplier,
         })
     }
 
@@ -897,64 +926,85 @@ impl OnRampContract {
         // Persist updated sequence number
         Self::set_dest_chain_config(&env, dest_chain_selector, &dest_config);
 
-        // Sum every USD-cent-denominated receipt fee EXCEPT the trailing network
-        // fee receipt (the FeeQuoter already includes the network fee in
-        // `message_fee.fee_token_amount`). This stays in lockstep with
-        // `compute_outbound_fee_breakdown`, which prices the executor flat fee
-        // (`Executor::get_fee`) + execution-gas cost and folds both into the same
-        // `additional_usd_cents` the total fee is built from — so summing the
-        // receipts reproduces that amount without re-reading the now-deprecated
-        // `execution_fee_usd_cents` lane field (the live executor fee now comes
-        // from the Executor contract).
-        let network_receipt_index = receipts.len().saturating_sub(1);
-        let mut additional_usd_cents: u128 = 0;
-        for i in 0..network_receipt_index {
-            if let Some(r) = receipts.get(i) {
-                additional_usd_cents = additional_usd_cents
-                    .checked_add(r.fee_token_amount as u128)
-                    .ok_or(CCIPError::InvalidFeeCalculation)?;
-            }
-        }
-
-        // Convert additional (CCV + executor) USD-cents to fee-token units with
-        // the EVM 1e34 convention (see `common_helpers::fee_math`).
-        let additional_in_fee_token =
-            fee_math::usd_cents_to_fee_token(additional_usd_cents, message_fee.fee_token_price)?;
-
-        let total_fee = message_fee
-            .fee_token_amount
-            .checked_add(additional_in_fee_token)
-            .ok_or(CCIPError::InvalidFeeCalculation)?;
+        // Total required fee is computed once, premium-aware, in
+        // `compute_outbound_fee_breakdown` (M-10 / INV-FEE-13: the CCV/pool/
+        // executor-flat slices carry the fee-quoter `premium_multiplier`, the
+        // exec-cost slice does not). Reusing it here — instead of re-summing the
+        // receipts and re-converting — makes the send-path total identical to the
+        // `get_fee` quote by construction and guarantees the per-receipt
+        // distribution below never exceeds the funded additional.
+        let total_fee = breakdown.total_fee;
 
         if fee_token_amount < total_fee {
             return Err(CCIPError::InsufficientFeeTokenAmount);
         }
 
-        // Distribute fee tokens at send time. CCV fees stay in the OnRamp balance
-        // for later sweep via `withdraw_fee_tokens` (CCV/pool distribution is out
-        // of scope). Two portions are transferred immediately:
-        //   * the network fee → fee_aggregator (protocol revenue, not delayed); and
-        //   * the executor fee (H-3 / INV-FEE-19) → the executor contract, which
-        //     custody/sweeps it via `Executor::withdraw_fee_tokens`. Skipped for the
-        //     no-execution sentinel (M-7) and when the priced amount rounds to 0.
+        // Distribute fee tokens at send time (H-3 / INV-FEE-18..21, EVM
+        // `OnRamp._distributeFees` parity). CCV fees → each CCV's resolver (the
+        // receipt `issuer` is the VVR, which custodies/sweeps via its own
+        // `withdraw_fee_tokens`); the pool fee → the token pool; the executor fee →
+        // the executor. The network fee is intentionally LEFT on the OnRamp — it is
+        // swept to `fee_aggregator` by the permissionless `withdraw_fee_tokens`
+        // (EVM: "network fee receipt which must remain in the onRamp"). The network
+        // fee receipt is still emitted above, unchanged.
+        //
+        // Receipt ordering: [CCV_0..CCV_N, TokenPool?, Executor, NetworkFee], so the
+        // first `n_ccvs` receipts are CCVs and the pool receipt (if any) sits at
+        // index `n_ccvs`. M-10 / INV-FEE-13: each CCV/pool slice is converted
+        // per-receipt with the EVM `feeMultiplier` (`usd_cents_to_fee_token_with_
+        // premium`, `breakdown.premium_multiplier`) — the same multiplier
+        // `compute_outbound_fee_breakdown` applied to the charged total — so for a
+        // LINK fee token (discount) the distributed sum stays ≤
+        // `breakdown.additional_in_fee_token` and the OnRamp (funded with
+        // `fee_token_amount ≥ total_fee`) is never over-drawn. The executor slice
+        // is transferred as `breakdown.executor_fee_tokens` (already premium-aware:
+        // flat discounted, exec cost not). Floor division keeps
+        // `Σ premium_convert(each) ≤ premium_convert(Σ)`.
         if fee_token_amount > 0 {
             let fee_token_client = token::Client::new(&env, &message.fee_token);
             let onramp_address = env.current_contract_address();
-            let network_fee = network_fee_usd_cents as i128;
-            if network_fee > 0 {
-                let network_fee_tokens = fee_math::usd_cents_to_fee_token(
-                    network_fee as u128,
+            let n_ccvs = merged_ccvs.len();
+
+            // H-3: CCV fees → each CCV's resolver (receipt issuer = the VVR). Skip
+            // when the CCV charged no fee or the converted amount rounds to 0.
+            for i in 0..n_ccvs {
+                let receipt = receipts.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
+                let ccv_usd_cents = receipt.fee_token_amount as u128;
+                if ccv_usd_cents == 0 {
+                    continue;
+                }
+                let ccv_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
+                    ccv_usd_cents,
+                    breakdown.premium_multiplier,
                     message_fee.fee_token_price,
                 )?;
-                if network_fee_tokens > 0 {
+                if ccv_fee_tokens > 0 {
+                    fee_token_client.transfer(&onramp_address, &receipt.issuer, &ccv_fee_tokens);
+                }
+            }
+
+            // H-3: pool fee → the token pool (receipt issuer). The pool receipt sits
+            // at index `n_ccvs` and is present iff this is a token transfer. Stellar
+            // pools are all V2 post-H-13, so the pool fee is always transferred
+            // (EVM's V1 leave-it-for-sweep branch is N/A). Skip when it rounds to 0.
+            if !message.token_amounts.is_empty() && breakdown.pool_fee_usd_cents > 0 {
+                let pool_receipt = receipts.get(n_ccvs).ok_or(CCIPError::CCVLengthMismatch)?;
+                let pool_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
+                    breakdown.pool_fee_usd_cents,
+                    breakdown.premium_multiplier,
+                    message_fee.fee_token_price,
+                )?;
+                if pool_fee_tokens > 0 {
                     fee_token_client.transfer(
                         &onramp_address,
-                        &dynamic_config.fee_aggregator,
-                        &network_fee_tokens,
+                        &pool_receipt.issuer,
+                        &pool_fee_tokens,
                     );
                 }
             }
-            // H-3: executor fee transfer to the executor contract.
+
+            // Executor fee → the executor contract (unchanged). Skipped for the
+            // no-execution sentinel (M-7) and when the priced amount rounds to 0.
             if !breakdown.is_no_exec && breakdown.executor_fee_tokens > 0 {
                 fee_token_client.transfer(
                     &onramp_address,
