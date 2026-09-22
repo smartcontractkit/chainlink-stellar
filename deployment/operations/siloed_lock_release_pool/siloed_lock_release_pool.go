@@ -135,9 +135,9 @@ var ConfigureLockBoxes = cldfops.NewOperation(
 // `is_enabled == false` (use the disable list), bps >= BPS_DIVIDER (10_000), and
 // `dest_gas_overhead == 0`; the chain must be supported. Disables delete the stored entry.
 type ApplyTokenFeeConfigUpdatesInput struct {
-	ContractID string                                    `json:"contract_id"`
+	ContractID string                                   `json:"contract_id"`
 	Adds       []slrbindings.TokenTransferFeeConfigArgs `json:"adds"`
-	Disables   []uint64                                  `json:"disables"`
+	Disables   []uint64                                 `json:"disables"`
 }
 
 // ApplyTokenFeeConfigUpdates calls siloed lock-release pool `apply_token_fee_config_updates`.
@@ -158,8 +158,14 @@ var ApplyTokenFeeConfigUpdates = cldfops.NewOperation(
 // `TokenPool.withdrawFeeTokens`). Callable on-chain by the owner or fee admin; the op uses the
 // deployer/invoker which must be one of those. Safe to sweep the full pool balance because user
 // liquidity is escrowed in the lockbox, not held on the pool address.
+//
+// Caller is the explicit address that invokes and authorizes the call (Soroban has no
+// msg.sender, so the contract takes the caller as an argument and require_auths it after checking
+// it is the owner or fee admin). Set it to the deployer/invoker signer address (or the governing
+// owner address) that will sign the transaction.
 type WithdrawFeeTokensInput struct {
 	ContractID string   `json:"contract_id"`
+	Caller     string   `json:"caller"`
 	FeeTokens  []string `json:"fee_tokens"`
 	Recipient  string   `json:"recipient"`
 }
@@ -171,7 +177,7 @@ var WithdrawFeeTokens = cldfops.NewOperation(
 	"Withdraws accrued fee-token balances to a recipient on the siloed lock-release pool (EVM withdrawFeeTokens parity)",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in WithdrawFeeTokensInput) (stellarops.Void, error) {
 		c := slrbindings.NewSiloedLockReleasePoolClient(d.Invoker, in.ContractID)
-		if err := c.WithdrawFeeTokens(b.GetContext(), in.FeeTokens, in.Recipient); err != nil {
+		if err := c.WithdrawFeeTokens(b.GetContext(), in.Caller, in.FeeTokens, in.Recipient); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

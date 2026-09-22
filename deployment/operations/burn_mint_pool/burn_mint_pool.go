@@ -117,8 +117,14 @@ var ApplyTokenFeeConfigUpdates = cldfops.NewOperation(
 // `TokenPool.withdrawFeeTokens`). Callable on-chain by the owner or fee admin; the op uses the
 // deployer/invoker which must be one of those. Safe to sweep the full pool balance because a
 // burn-mint pool holds only accrued fees (user tokens are burned, not held on the pool address).
+//
+// Caller is the explicit address that invokes and authorizes the call (Soroban has no
+// msg.sender, so the contract takes the caller as an argument and require_auths it after checking
+// it is the owner or fee admin). Set it to the deployer/invoker signer address (or the governing
+// owner address) that will sign the transaction.
 type WithdrawFeeTokensInput struct {
 	ContractID string   `json:"contract_id"`
+	Caller     string   `json:"caller"`
 	FeeTokens  []string `json:"fee_tokens"`
 	Recipient  string   `json:"recipient"`
 }
@@ -130,7 +136,7 @@ var WithdrawFeeTokens = cldfops.NewOperation(
 	"Withdraws accrued fee-token balances to a recipient on the burn-mint pool (EVM withdrawFeeTokens parity)",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in WithdrawFeeTokensInput) (stellarops.Void, error) {
 		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
-		if err := c.WithdrawFeeTokens(b.GetContext(), in.FeeTokens, in.Recipient); err != nil {
+		if err := c.WithdrawFeeTokens(b.GetContext(), in.Caller, in.FeeTokens, in.Recipient); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

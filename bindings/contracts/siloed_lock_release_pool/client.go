@@ -570,8 +570,9 @@ func (c *SiloedLockReleasePoolClient) ApplyChainUpdates(ctx context.Context, add
 }
 
 // WithdrawFeeTokens calls the withdraw_fee_tokens function on the contract.
-func (c *SiloedLockReleasePoolClient) WithdrawFeeTokens(ctx context.Context, feeTokens []string, recipient string) error {
+func (c *SiloedLockReleasePoolClient) WithdrawFeeTokens(ctx context.Context, caller string, feeTokens []string, recipient string) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.AddressSliceToScVal(feeTokens),
 		scval.AddressToScVal(recipient),
 	}
@@ -636,8 +637,9 @@ func (c *SiloedLockReleasePoolClient) SetRateLimitAdmin(ctx context.Context, adm
 }
 
 // SetRateLimitConfig calls the set_rate_limit_config function on the contract.
-func (c *SiloedLockReleasePoolClient) SetRateLimitConfig(ctx context.Context, remoteChainSelector uint64, outboundConfig RateLimitConfig, inboundConfig RateLimitConfig, fastFinality bool) error {
+func (c *SiloedLockReleasePoolClient) SetRateLimitConfig(ctx context.Context, caller string, remoteChainSelector uint64, outboundConfig RateLimitConfig, inboundConfig RateLimitConfig, fastFinality bool) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.Uint64ToScVal(remoteChainSelector),
 		scval.MustToScVal(outboundConfig.ToScVal()),
 		scval.MustToScVal(inboundConfig.ToScVal()),

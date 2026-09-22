@@ -682,10 +682,13 @@ pub trait BaseTokenPool {
 
     /// Pre-flight hook: called before lock_or_burn if a hooks contract is configured.
     /// Delegates to `PoolHooksClient::preflight_check`. No-op if hooks not set.
+    /// `token_args` is forwarded to the hooks contract as opaque policy-engine context
+    /// (EVM `IAdvancedPoolHooks.preflightCheck` parity).
     fn preflight_check(
         env: &Env,
         lock_or_burn_in: &LockOrBurnIn,
         requested_finality: u32,
+        token_args: &Bytes,
         amount: i128,
     ) -> Result<(), CCIPError> {
         if let Some(hooks_addr) = env
@@ -696,7 +699,7 @@ pub trait BaseTokenPool {
             let client = PoolHooksClient::new(env, &hooks_addr);
             let input = lock_or_burn_in_to_iface(lock_or_burn_in);
             // Hook failures abort the invocation at the host; the client returns `()`.
-            client.preflight_check(&input, &requested_finality, &amount);
+            client.preflight_check(&input, &requested_finality, token_args, &amount);
         }
         Ok(())
     }
