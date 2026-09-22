@@ -1,5 +1,5 @@
 use common_error::CCIPError;
-use common_helpers::validation::Validatable;
+use common_helpers::validation::{assert_ccv_set_valid, Validatable};
 use soroban_sdk::{contracttype, Address, Bytes, Vec};
 
 // ============================================================
@@ -107,6 +107,17 @@ impl Validatable for DestChainConfigArgs {
         if self.default_ccvs.is_empty() && self.lane_mandated_ccvs.is_empty() {
             return Err(CCIPError::InvalidConfig);
         }
+
+        // H-11 / INV-CFG-7: reject duplicate CCVs within either list, and a CCV
+        // present in both the default and lane-mandated sets (EVM
+        // `CCVConfigValidation._assertNoDuplicates`). Cross-list overlap surfaces
+        // as `InvalidConfig` on the OnRamp. (INV-CFG-6 zero-value rejection is
+        // satisfied by construction on Soroban — `Address` has no zero form.)
+        assert_ccv_set_valid(
+            &self.default_ccvs,
+            &self.lane_mandated_ccvs,
+            CCIPError::InvalidConfig,
+        )?;
 
         Ok(())
     }

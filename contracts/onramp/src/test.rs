@@ -2611,3 +2611,111 @@ fn test_apply_dest_chain_updates_rejects_zero_account_default_executor() {
     );
     client.apply_dest_chain_config_updates(&vec![&env, args]);
 }
+
+// ============================================================
+// H-11 / INV-CFG-7: config-time CCV set validation
+// ============================================================
+//
+// `DestChainConfigArgs::validate` must reject a CCV configuration where either
+// `default_ccvs` or `lane_mandated_ccvs` contains a duplicate, and where a CCV is
+// classified as BOTH a default and lane-mandated (EVM
+// `CCVConfigValidation._assertNoDuplicates`). Within-list duplicates surface as
+// `DuplicateCCVNotAllowed` (#320); cross-list overlap surfaces as `InvalidConfig`
+// (#52). A valid unique configuration applies cleanly.
+
+/// Two identical CCVs in `default_ccvs` are rejected with `DuplicateCCVNotAllowed`
+/// (#320) at config-apply time.
+#[test]
+#[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
+fn test_dest_chain_config_rejects_duplicate_default_ccvs() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let dup = Address::generate(&env);
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.default_ccvs = vec![&env, dup.clone(), dup.clone()];
+    client.apply_dest_chain_config_updates(&vec![&env, args]);
+}
+
+/// Two identical CCVs in `lane_mandated_ccvs` are rejected with
+/// `DuplicateCCVNotAllowed` (#320) at config-apply time.
+#[test]
+#[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
+fn test_dest_chain_config_rejects_duplicate_mandated_ccvs() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let dup = Address::generate(&env);
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.lane_mandated_ccvs = vec![&env, dup.clone(), dup.clone()];
+    client.apply_dest_chain_config_updates(&vec![&env, args]);
+}
+
+/// A CCV present in BOTH `default_ccvs` and `lane_mandated_ccvs` is rejected with
+/// `InvalidConfig` (#52) at config-apply time — a CCV must not be double-classified.
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig - cross-list CCV overlap
+fn test_dest_chain_config_rejects_cross_list_ccv_overlap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let shared = Address::generate(&env);
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.default_ccvs = vec![&env, shared.clone()];
+    args.lane_mandated_ccvs = vec![&env, shared];
+    client.apply_dest_chain_config_updates(&vec![&env, args]);
+}
+
+/// A CCV set with non-empty, distinct `default_ccvs` and `lane_mandated_ccvs` applies
+/// cleanly (positive control for the H-11 validation path).
+#[test]
+fn test_dest_chain_config_accepts_unique_ccv_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let mut args = create_test_dest_chain_config_args(&env, 67890);
+    args.default_ccvs = vec![&env, Address::generate(&env), Address::generate(&env)];
+    args.lane_mandated_ccvs = vec![&env, Address::generate(&env)];
+    client.apply_dest_chain_config_updates(&vec![&env, args.clone()]);
+
+    // Sanity: round-trips through storage.
+    let stored = client.get_dest_chain_config(&67890);
+    assert_eq!(stored.default_ccvs, args.default_ccvs);
+    assert_eq!(stored.lane_mandated_ccvs, args.lane_mandated_ccvs);
+}

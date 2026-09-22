@@ -825,3 +825,124 @@ fn test_address_from_token_bytes_nonzero_prefix_rejected() {
         err
     );
 }
+
+// ============================================================
+// H-11 / INV-CFG-5 + INV-CFG-7: config-time CCV set validation
+// ============================================================
+//
+// `SourceChainConfigArgs::validate` must (a) mandate a non-empty `default_ccvs`
+// (INV-CFG-5 — the OffRamp's lane fallback verification set; lane-mandated alone
+// does not satisfy), and (b) reject duplicates within either CCV list and a CCV
+// present in both (INV-CFG-7). Within-list duplicates surface as
+// `DuplicateCCVNotAllowed` (#320); empty defaults and cross-list overlap surface
+// as `InvalidSourceChainConfig` (#101). A valid unique configuration applies
+// cleanly.
+
+/// Build a structurally-valid `SourceChainConfigArgs` with a single default CCV and
+/// one on-ramp, used as the base for the H-11 negative overrides.
+fn valid_source_chain_args(env: &Env, selector: u64) -> SourceChainConfigArgs {
+    let mut on_ramps = Vec::new(env);
+    on_ramps.push_back(Bytes::from_array(env, &[1u8; 32]));
+
+    let mut default_ccvs = Vec::new(env);
+    default_ccvs.push_back(Address::generate(env));
+
+    SourceChainConfigArgs {
+        source_chain_selector: selector,
+        router: Address::generate(env),
+        is_enabled: true,
+        on_ramps,
+        default_ccvs,
+        lane_mandated_ccvs: Vec::new(env),
+    }
+}
+
+/// Two identical CCVs in `default_ccvs` are rejected with `DuplicateCCVNotAllowed`
+/// (#320) at config-apply time.
+#[test]
+#[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
+fn test_source_chain_config_rejects_duplicate_default_ccvs() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let dup = Address::generate(&env);
+    let mut args = valid_source_chain_args(&env, 5678);
+    args.default_ccvs = vec![&env, dup.clone(), dup.clone()];
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
+/// Two identical CCVs in `lane_mandated_ccvs` are rejected with
+/// `DuplicateCCVNotAllowed` (#320) at config-apply time.
+#[test]
+#[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
+fn test_source_chain_config_rejects_duplicate_mandated_ccvs() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let dup = Address::generate(&env);
+    let mut args = valid_source_chain_args(&env, 5678);
+    args.lane_mandated_ccvs = vec![&env, dup.clone(), dup.clone()];
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
+/// A CCV present in BOTH `default_ccvs` and `lane_mandated_ccvs` is rejected with
+/// `InvalidSourceChainConfig` (#101) — a CCV must not be double-classified.
+#[test]
+#[should_panic(expected = "Error(Contract, #101)")] // InvalidSourceChainConfig - cross-list overlap
+fn test_source_chain_config_rejects_cross_list_ccv_overlap() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let shared = Address::generate(&env);
+    let mut args = valid_source_chain_args(&env, 5678);
+    args.default_ccvs = vec![&env, shared.clone()];
+    args.lane_mandated_ccvs = vec![&env, shared];
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
+/// INV-CFG-5 discriminator: empty `default_ccvs` is rejected with
+/// `InvalidSourceChainConfig` (#101) even when `lane_mandated_ccvs` is non-empty —
+/// the OffRamp always requires a default verification set.
+#[test]
+#[should_panic(expected = "Error(Contract, #101)")] // InvalidSourceChainConfig - empty defaults (INV-CFG-5)
+fn test_source_chain_config_rejects_empty_defaults_with_mandated() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let mut args = valid_source_chain_args(&env, 5678);
+    args.default_ccvs = Vec::new(&env);
+    args.lane_mandated_ccvs = vec![&env, Address::generate(&env)];
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
+/// A CCV set with non-empty, distinct `default_ccvs` and `lane_mandated_ccvs` applies
+/// cleanly (positive control for the H-11 validation path).
+#[test]
+fn test_source_chain_config_accepts_unique_ccv_set() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let mut args = valid_source_chain_args(&env, 5678);
+    args.default_ccvs = vec![&env, Address::generate(&env), Address::generate(&env)];
+    args.lane_mandated_ccvs = vec![&env, Address::generate(&env)];
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args.clone());
+    client.apply_source_chain_cfg_updates(&updates);
+
+    let config = client.get_source_chain_config(&5678);
+    assert_eq!(config.default_ccvs, args.default_ccvs);
+    assert_eq!(config.lane_mandated_ccvs, args.lane_mandated_ccvs);
+}
