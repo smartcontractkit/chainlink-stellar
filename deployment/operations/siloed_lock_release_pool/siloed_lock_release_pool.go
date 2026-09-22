@@ -135,9 +135,9 @@ var ConfigureLockBoxes = cldfops.NewOperation(
 // `is_enabled == false` (use the disable list), bps >= BPS_DIVIDER (10_000), and
 // `dest_gas_overhead == 0`; the chain must be supported. Disables delete the stored entry.
 type ApplyTokenFeeConfigUpdatesInput struct {
-	ContractID string                                    `json:"contract_id"`
+	ContractID string                                   `json:"contract_id"`
 	Adds       []slrbindings.TokenTransferFeeConfigArgs `json:"adds"`
-	Disables   []uint64                                  `json:"disables"`
+	Disables   []uint64                                 `json:"disables"`
 }
 
 // ApplyTokenFeeConfigUpdates calls siloed lock-release pool `apply_token_fee_config_updates`.

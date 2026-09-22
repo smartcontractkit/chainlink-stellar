@@ -195,9 +195,9 @@ var ConfigureLockBoxes = cldfops.NewOperation(
 // `is_enabled == false` (use the disable list), bps >= BPS_DIVIDER (10_000), and
 // `dest_gas_overhead == 0`; the chain must be supported. Disables delete the stored entry.
 type ApplyTokenFeeConfigUpdatesInput struct {
-	ContractID string                              `json:"contract_id"`
+	ContractID string                                   `json:"contract_id"`
 	Adds       []lrpbindings.TokenTransferFeeConfigArgs `json:"adds"`
-	Disables   []uint64                            `json:"disables"`
+	Disables   []uint64                                 `json:"disables"`
 }
 
 // ApplyTokenFeeConfigUpdates calls lock-release pool `apply_token_fee_config_updates`.
@@ -216,8 +216,8 @@ var ApplyTokenFeeConfigUpdates = cldfops.NewOperation(
 
 // GetTokenTransferFeeConfigInput reads the per-chain token-transfer fee config.
 type GetTokenTransferFeeConfigInput struct {
-	ContractID          string `json:"contract_id"`
-	DestChainSelector   uint64 `json:"dest_chain_selector"`
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
 }
 
 // GetTokenTransferFeeConfigOutput is the on-chain token-transfer fee config (a disabled

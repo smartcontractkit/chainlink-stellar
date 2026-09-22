@@ -229,6 +229,13 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		inbound := lrpbindings.RateLimitConfig{}
 
 		rateLimitArgs, err := helpers.EncodeTimelockCallArgs([]xdr.ScVal{
+			// caller = the timelock, which owns the pool (phase 3) and is the contract on the
+			// call stack that invokes set_rate_limit_config via execute_batch. Soroban has no
+			// msg.sender, so the contract takes caller explicitly and require_auths it after
+			// checking it is the owner or rate-limit admin. The timelock is the owner AND an
+			// ancestor on the call stack, so both the identity check and require_auth pass —
+			// the Soroban equivalent of EVM onlyOwnerOrRateLimitAdmin with msg.sender=timelock.
+			scval.AddressToScVal(gov.TimelockID),
 			scval.Uint64ToScVal(evmDetails.ChainSelector),
 			scval.MustToScVal(outbound.ToScVal()),
 			scval.MustToScVal(inbound.ToScVal()),

@@ -281,6 +281,7 @@ func CleanupMCMSTestPool(
 	}
 	if _, err := cldfops.ExecuteOperation(bundle, lrpops.SetRateLimitConfig, deps, lrpops.SetRateLimitConfigInput{
 		ContractID:          poolContractID,
+		Caller:              deployerAddr,
 		RemoteChainSelector: remoteSelector,
 		FastFinality:        false,
 	}); err != nil {
