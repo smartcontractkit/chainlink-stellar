@@ -121,7 +121,8 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "CLLCCIP")
 		require.Contains(t, err.Error(), cclTL, "error must name the unauthorized timelock")
-		require.Contains(t, err.Error(), "apply_curse_admin_updates")
+		require.NotContains(t, err.Error(), "apply_curse_admin_updates",
+			"remedies belong to the calling sequence, not the shared authorization check")
 	})
 	t.Run("unknown qualifier has no timelock", func(t *testing.T) {
 		t.Parallel()
@@ -161,7 +162,8 @@ func TestAuthorizeCurseCaller(t *testing.T) {
 		require.Contains(t, err.Error(), "no authorized curse caller")
 		require.Contains(t, err.Error(), deployer)
 		require.Contains(t, err.Error(), strangerTL)
-		require.Contains(t, err.Error(), "apply_curse_admin_updates")
+		require.NotContains(t, err.Error(), "apply_curse_admin_updates",
+			"remedies belong to the calling sequence, not the shared authorization check")
 	})
 }
 
@@ -251,6 +253,8 @@ func TestStellarCurse_ProposesViaQualifierTimelock(t *testing.T) {
 		_, err := cldf_ops.ExecuteSequence(b, StellarCurse, chains, in)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not authorized")
+		require.Contains(t, err.Error(), "apply_curse_admin_updates",
+			"the curse sequence appends the curse remedy")
 	})
 
 	t.Run("fail closed with no authorized caller", func(t *testing.T) {
@@ -267,6 +271,8 @@ func TestStellarCurse_ProposesViaQualifierTimelock(t *testing.T) {
 		_, err := cldf_ops.ExecuteSequence(b, StellarCurse, chains, in)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no authorized curse caller")
+		require.Contains(t, err.Error(), "apply_curse_admin_updates",
+			"the curse sequence appends the curse remedy")
 	})
 
 	t.Run("empty qualifier with an unauthorized deployer fails closed naming the stack to set", func(t *testing.T) {
@@ -395,6 +401,25 @@ func TestStellarUncurse_OwnerOnlyRouting(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "set the MCMS qualifier")
 		require.Contains(t, err.Error(), utils.RMNTimelockQualifier, "the error must name the owner stack's qualifier")
+	})
+
+	t.Run("nothing authorized recommends ownership, not admin grants", func(t *testing.T) {
+		in := StellarCurseInput{
+			CurseInput: curseAPIInput(subjects, ""),
+			Owner:      contractStrkey(t, 6), // owned by neither the deployer nor any deployed timelock
+			Timelocks: map[string]string{
+				utils.RMNTimelockQualifier:        govTL,
+				utils.UltraFastCurseMCMSQualifier: fastTL,
+			},
+		}
+		in.RMNContractID = rmn
+		in.CurseInput.ChainSelector = sel
+		_, err := cldf_ops.ExecuteSequence(b, StellarUncurse, chains, in)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no authorized curse caller")
+		require.Contains(t, err.Error(), "uncurse is owner-only", "the uncurse sequence appends the ownership remedy")
+		require.NotContains(t, err.Error(), "apply_curse_admin_updates",
+			"an admin grant cannot authorize the owner-only uncurse; recommending one is misleading")
 	})
 }
 

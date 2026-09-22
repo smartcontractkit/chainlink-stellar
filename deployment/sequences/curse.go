@@ -45,6 +45,10 @@ type StellarCurseInput struct {
 // rmn_remote.curse must equal the invoking address, so on MCMS runs it is the
 // executing timelock's contract ID.
 //
+// Its errors state facts only — the calling sequence appends the remedy, because
+// the same authorization failure needs different advice on the curse and uncurse
+// paths (curse is fixed by admin grants; uncurse is owner-only and never is).
+//
 // Order:
 //  1. MCMSQualifier set → that qualifier's timelock, verified to be owner-or-admin;
 //     a missing stack or an unauthorized timelock is a build-time error. The explicit
@@ -71,7 +75,7 @@ func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, st
 		}
 		if tl != in.Owner && !slices.Contains(in.CurseAdmins, tl) {
 			return "", "", fmt.Errorf(
-				"curse via qualifier %q is not authorized: its timelock %s is neither the owner %s of RMN Remote %s nor in its curse admins %v; grant it with apply_curse_admin_updates",
+				"curse via qualifier %q is not authorized: its timelock %s is neither the owner %s of RMN Remote %s nor in its curse admins %v",
 				in.MCMSQualifier, tl, in.Owner, in.RMNContractID, in.CurseAdmins,
 			)
 		}
@@ -91,7 +95,7 @@ func authorizeCurseCaller(in StellarCurseInput, deployerAddr string) (string, st
 	}
 
 	return "", "", fmt.Errorf(
-		"no authorized curse caller on chain %d: deployer %s is neither the owner %s of RMN Remote %s nor a curse admin (%v), and no authorized timelock was found in %v; grant curse-admin access with apply_curse_admin_updates",
+		"no authorized curse caller on chain %d: deployer %s is neither the owner %s of RMN Remote %s nor a curse admin (%v), and no authorized timelock was found in %v",
 		in.ChainSelector, deployerAddr, in.Owner, in.RMNContractID, in.CurseAdmins, in.Timelocks,
 	)
 }
@@ -117,7 +121,10 @@ var StellarCurse = cldfops.NewSequence(
 
 		caller, effectiveQualifier, err := authorizeCurseCaller(in, deployerAddr)
 		if err != nil {
-			return seqcore.OnChainOutput{}, fmt.Errorf("curse on chain %d: %w", in.ChainSelector, err)
+			return seqcore.OnChainOutput{}, fmt.Errorf(
+				"curse on chain %d: %w; grant curse-admin access with apply_curse_admin_updates, or set the MCMS qualifier to a stack that is authorized",
+				in.ChainSelector, err,
+			)
 		}
 
 		if caller == deployerAddr {
@@ -204,7 +211,10 @@ var StellarUncurse = cldfops.NewSequence(
 		// Resolve the executing timelock and require it to be the RMN owner.
 		caller, effectiveQualifier, err := authorizeCurseCaller(in, deployerAddr)
 		if err != nil {
-			return seqcore.OnChainOutput{}, fmt.Errorf("uncurse on chain %d: %w", in.ChainSelector, err)
+			return seqcore.OnChainOutput{}, fmt.Errorf(
+				"uncurse on chain %d: %w; uncurse is owner-only — curse-admin grants cannot authorize it; transfer RMN Remote ownership, or route via the owner timelock's qualifier",
+				in.ChainSelector, err,
+			)
 		}
 		if caller != in.Owner {
 			return seqcore.OnChainOutput{}, fmt.Errorf(
