@@ -518,12 +518,94 @@ fn test_get_message_fee() {
     // Get message fee
     let fee = client.get_message_fee(&1, &message);
 
-    // Fee should be positive (gas cost + network fee, with LINK discount applied).
-    // Gas: (350000 + 100*16) = 351600 units; gas_cost_usd_cents = 3516 (ceil).
-    // + network_fee 100 = 3616 cents. With 90% LINK premium: 3254 cents.
-    // In LINK (EVM 1e34 convention): 3254 * 1e34 / 15e18 ≈ 2.169e18 smallest units
-    // (≈ 2.17 LINK), well under the 1000-LINK cap.
-    assert!(fee.fee_token_amount > 0);
+    // INV-FEE-14: `get_message_fee` is NETWORK-ONLY. Gas (dest_gas_overhead +
+    // payload bytes) is no longer priced here — it is priced once, non-premium,
+    // in the OnRamp executor receipt (EVM `OnRamp._getReceipts` single
+    // `quoteGasForExec`). So the fee is just the network fee with the LINK
+    // premium applied: network_fee_usd_cents (100) × premium_multiplier (90) / 100
+    // = 90 cents. The 100 payload bytes and 350_000 dest_gas_overhead above do
+    // NOT affect this result.
+    assert_eq!(fee.fee_usd_cents, 90, "network-only fee, LINK-discounted");
+    // floor(90 * 1e34 / 15e18) = 6e16 smallest units (EVM 1e34 convention).
+    assert_eq!(
+        fee.fee_token_amount, 60_000_000_000_000_000,
+        "fee_token_amount = floor(90 * 1e34 / 15e18)"
+    );
+    assert_eq!(fee.fee_token_price, 15_000_000_000_000_000_000);
+}
+
+#[test]
+fn test_get_message_fee_independent_of_gas_and_data() {
+    // INV-FEE-14: gas/payload bytes no longer affect `get_message_fee`. Two
+    // messages with very different `data` lengths (and a dest config with a
+    // different `dest_gas_overhead`) must yield the SAME network-only fee.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config = create_dest_chain_config();
+    config.dest_gas_overhead = 2_000_000; // very different from the default 350_000
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config,
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+    let mut gas_updates: Vec<GasPriceUpdate> = Vec::new(&env);
+    gas_updates.push_back(GasPriceUpdate {
+        dest_chain_selector: 1,
+        usd_per_unit_gas: 100_000_000_000_000,
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: gas_updates,
+        },
+    );
+
+    let receiver = Bytes::from_slice(
+        &env,
+        &[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ],
+    );
+    let small = StellarToAnyMessage {
+        receiver: receiver.clone(),
+        data: Bytes::from_slice(&env, &[0u8; 10]),
+        token_amounts: Vec::new(&env),
+        fee_token: link_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+    let large = StellarToAnyMessage {
+        receiver,
+        data: Bytes::from_slice(&env, &[0u8; 500]),
+        token_amounts: Vec::new(&env),
+        fee_token: link_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
+    let fee_small = client.get_message_fee(&1, &small);
+    let fee_large = client.get_message_fee(&1, &large);
+
+    // Both are network-only (100 cents × 90% = 90), identical regardless of
+    // data length or dest_gas_overhead.
+    assert_eq!(fee_small.fee_usd_cents, 90);
+    assert_eq!(fee_large.fee_usd_cents, 90);
+    assert_eq!(
+        fee_small.fee_token_amount, fee_large.fee_token_amount,
+        "payload size / dest_gas_overhead must not affect get_message_fee"
+    );
 }
 
 #[test]
@@ -615,12 +697,14 @@ fn test_get_message_fee_excludes_token_transfer() {
     let fee_no_token = client.get_message_fee(&1, &message_no_token);
     let fee_with_token = client.get_message_fee(&1, &message_with_token);
 
-    // `get_message_fee` is gas + network only (× premium) — the token-transfer
-    // fee is NOT bundled. EVM `FeeQuoter` has no bundled message-fee view; the
-    // OnRamp assembles the token fee from the pool's `get_fee` (enabled) or
-    // `get_token_transfer_fee` (disabled) exactly once. Bundling it here caused a
-    // double-count. Both messages share the same gas/network cost, so their
-    // `get_message_fee` results must be equal regardless of the token fee config.
+    // `get_message_fee` is NETWORK only (× premium) — the token-transfer fee is
+    // NOT bundled (and, post INV-FEE-14, neither is gas; gas is priced once in
+    // the OnRamp executor receipt). EVM `FeeQuoter` has no bundled message-fee
+    // view; the OnRamp assembles the token fee from the pool's `get_fee`
+    // (enabled) or `get_token_transfer_fee` (disabled) exactly once. Bundling it
+    // here caused a double-count. Both messages share the same network cost, so
+    // their `get_message_fee` results must be equal regardless of the token fee
+    // config.
     assert_eq!(
         fee_with_token.fee_token_amount, fee_no_token.fee_token_amount,
         "get_message_fee must not include the token-transfer fee"

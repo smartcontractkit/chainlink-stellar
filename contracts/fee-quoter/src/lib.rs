@@ -576,21 +576,20 @@ impl FeeQuoterContract {
             return Err(CCIPError::DestinationChainNotEnabled);
         }
 
-        // Calculate gas cost for the message payload
-        let calldata_size = message.data.len() as u32;
+        // Harvest fee_token_price + premium_multiplier (LINK-premium resolution)
+        // without pricing gas. INV-FEE-14: `get_message_fee` is now NETWORK-ONLY.
+        // Gas is priced once, non-premium, in the OnRamp executor receipt — EVM
+        // `OnRamp._getReceipts` calls a single `quoteGasForExec(gasLimitSum,
+        // bytesOverheadSum)` and adds the cost to the executor receipt WITHOUT
+        // `percentMultiplier` (OnRamp.sol:1075-1097). A (0,0) quote returns
+        // `gas_cost_usd_cents == 0` (discarded) plus the resolved price + premium.
         let gas_quote = Self::quote_gas_for_exec(
             env.clone(),
             dest_chain_selector,
-            dest_config.dest_gas_overhead,
-            calldata_size,
+            0, // no gas priced here
+            0, // no calldata priced here
             message.fee_token.clone(),
         )?;
-
-        // Start with gas cost in USD cents
-        let mut total_usd_cents: u128 = gas_quote.gas_cost_usd_cents;
-
-        // Add network fee
-        total_usd_cents += dest_config.network_fee_usd_cents as u128;
 
         // NOTE: the token-transfer fee is intentionally NOT bundled here. EVM
         // `FeeQuoter` has no bundled message-fee view; `OnRamp._getReceipts`
@@ -600,7 +599,11 @@ impl FeeQuoterContract {
         // count it (FQ token fee + pool fee). The OnRamp now assembles the token
         // fee exactly once via `compute_outbound_fee_breakdown`.
 
-        // Apply premium multiplier (percentage)
+        // Network fee only, premium-applied. EVM applies `feeMultiplier` to the
+        // network receipt (a flat USD receipt); gas is exempt from the premium
+        // (INV-FEE-14). `dest_config.dest_gas_overhead` and payload bytes are no
+        // longer read here — they are priced in the OnRamp's executor receipt.
+        let mut total_usd_cents: u128 = dest_config.network_fee_usd_cents as u128;
         total_usd_cents = total_usd_cents * gas_quote.premium_multiplier as u128 / 100;
 
         // Convert USD cents to fee-token smallest units. Mirrors EVM

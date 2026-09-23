@@ -328,9 +328,13 @@ impl OnRampContract {
         //
         // H-5 / INV-FEE-10: the execution-gas *cost* is priced via the fee
         // quoter with NO premium (mirror EVM `OnRamp.sol:1095-1097`: exec cost is
-        // not multiplied by `percentMultiplier`; the message-fee portion already
-        // carries `get_message_fee`'s internal premium). `calldata_size = 0`
-        // because payload bytes are already priced inside `get_message_fee`.
+        // not multiplied by `percentMultiplier`). INV-FEE-14: `get_message_fee`
+        // is now network-only, so the gas + bytes-overhead cost is priced HERE,
+        // once, into the executor receipt. `calldata_size` is the EVM
+        // `bytesOverheadSum` = ΣCCV `dest_bytes_overhead` + pool
+        // `dest_bytes_overhead` + payload bytes (`OnRamp._getReceipts` sums every
+        // receipt's `destBytesOverhead`). `execution_gas_limit` (the EVM
+        // `gasLimitSum`) is unchanged and goes on-wire into `MessageV1`.
         // H-5 / INV-FEE-10 + M-10 / INV-FEE-13: price the execution gas once via
         // `quote_gas_for_exec`, unconditionally — EVM `_getReceipts` calls
         // `quoteGasForExec` for every message (OnRamp.sol L1075-1077) and only
@@ -338,7 +342,13 @@ impl OnRampContract {
         // no-exec sentinel (L1094). Calling it here regardless yields
         // `premium_multiplier` for the CCV/pool/executor-flat conversions below
         // even on the no-exec path (those fees still need the LINK discount).
-        let calldata_size: u32 = 0;
+        let mut calldata_size: u32 = message.data.len() as u32;
+        for i in 0..ccv_fee_responses.len() {
+            if let Some(r) = ccv_fee_responses.get(i) {
+                calldata_size = calldata_size.saturating_add(r.dest_bytes_overhead);
+            }
+        }
+        calldata_size = calldata_size.saturating_add(pool_dest_bytes_overhead);
         let gas_quote = fee_quoter.quote_gas_for_exec(
             &dest_chain_selector,
             &execution_gas_limit,
@@ -897,7 +907,10 @@ impl OnRampContract {
             dest_gas_limit: dest_config
                 .base_execution_gas_cost
                 .saturating_add(extra_args.gas_limit),
-            dest_bytes_overhead: 0,
+            // INV-FEE-14: EVM `_getExecutionFee` sets the executor receipt's
+            // `destBytesOverhead = message.data.length` (the payload bytes priced
+            // into the executor exec-cost above). Was 0.
+            dest_bytes_overhead: message.data.len() as u32,
             fee_token_amount: (breakdown
                 .executor_flat_usd_cents
                 .checked_add(breakdown.exec_cost_usd_cents)
