@@ -483,17 +483,23 @@ impl FeeQuoterContract {
         }
 
         // Price gas from the aggregate `bytesOverheadSum` (payload + CCV/pool
-        // `dest_bytes_overhead`), mirroring EVM `FeeQuoter.quoteGasForExec`. The
-        // gas-limit cap is enforced here; payload-size validation against
-        // `max_data_bytes` is NOT — that is a message-property check (EVM does
-        // it in `OnRamp._validateMessage` against `message.data.length` alone)
-        // and is performed by the callers so the aggregate used for gas pricing
-        // cannot trigger a false `MessageTooLarge` for an in-limit payload with
-        // large CCV/pool overhead.
+        // `dest_bytes_overhead`), mirroring EVM `FeeQuoter.quoteGasForExec`.
+        // EVM enforces BOTH the gas-limit cap AND `calldataSize > maxDataBytes`
+        // here, where `calldataSize` is the aggregate `bytesOverheadSum` passed
+        // by `OnRamp._getReceipts` (which includes the payload via the executor
+        // receipt's `destBytesOverhead`, plus CCV/pool overheads). So
+        // `maxDataBytes` is a cap on the aggregate byte budget, not the payload
+        // alone — a payload within the limit CAN legitimately fail with
+        // `MessageTooLarge` when verifier/pool overhead is large. That is EVM's
+        // intended behavior; we match it.
         let total_gas = non_calldata_gas + calldata_size * dest_config.dest_gas_per_payload_byte;
 
         if total_gas > dest_config.max_per_msg_gas_limit {
             return Err(CCIPError::MessageGasLimitTooHigh);
+        }
+
+        if calldata_size > dest_config.max_data_bytes {
+            return Err(CCIPError::MessageTooLarge);
         }
 
         // Get gas price
@@ -609,26 +615,25 @@ impl FeeQuoterContract {
             return Err(CCIPError::DestinationChainNotEnabled);
         }
 
-        // Payload-size validation against the dest-config limit. EVM enforces
-        // `message.data.length <= maxDataBytes` in `OnRamp._validateMessage`;
-        // `quote_gas_for_exec` no longer performs this check (it prices gas from
-        // the aggregate bytesOverheadSum), so it is enforced here and in the
-        // OnRamp send path. `message.validate()` only guards structural width
-        // (INV-ENC-11), not the operator-configured per-destination limit.
-        if (message.data.len() as u32) > dest_config.max_data_bytes {
-            return Err(CCIPError::MessageTooLarge);
-        }
-
+        // NOTE: payload/aggregate size validation against `max_data_bytes` is
+        // NOT done here. `get_message_fee` is NETWORK-ONLY (INV-FEE-14): it does
+        // not price gas and does not call `quote_gas_for_exec`, so the aggregate
+        // `bytesOverheadSum > maxDataBytes` guard there does not fire on this
+        // path. EVM has no standalone network-only fee view — its `getFee`
+        // always calls `quoteGasForExec` and enforces the guard. On Stellar the
+        // authoritative fee path is `OnRamp.get_fee` → `compute_outbound_fee_breakdown`,
+        // which calls `quote_gas_for_exec` with the aggregate and enforces the
+        // guard; this standalone view is a Stellar-only network slice. The
+        // payload does not affect the network fee, so omitting the check here
+        // matches the network-only semantics. `message.validate()` (called
+        // above) still guards structural width (INV-ENC-11).
+        //
         // Resolve fee-token price + premium (LINK-premium resolution) WITHOUT
-        // pricing gas or loading the destination gas price. INV-FEE-14:
-        // `get_message_fee` is NETWORK-ONLY — gas is priced once, non-premium,
-        // in the OnRamp executor receipt (EVM `OnRamp._getReceipts` calls a
-        // single `quoteGasForExec(gasLimitSum, bytesOverheadSum)` and adds the
-        // cost to the executor receipt WITHOUT `percentMultiplier`,
-        // OnRamp.sol:1075-1097). Routing this through `quote_gas_for_exec(0,0)`
-        // previously dragged in the gas-price load, rejecting a network-only
-        // quote with `NoGasPriceAvailable` on a lane with a missing/stale
-        // gas-price update even though no gas component is priced.
+        // pricing gas or loading the destination gas price. Routing this through
+        // `quote_gas_for_exec(0,0)` previously dragged in the gas-price load,
+        // rejecting a network-only quote with `NoGasPriceAvailable` on a lane
+        // with a missing/stale gas-price update even though no gas component is
+        // priced.
         let pricing = Self::resolve_fee_token_pricing(
             env.clone(),
             dest_chain_selector,

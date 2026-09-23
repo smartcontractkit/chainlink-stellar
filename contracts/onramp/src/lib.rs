@@ -221,14 +221,16 @@ impl OnRampContract {
             return Err(CCIPError::CCVLengthMismatch);
         }
 
-        // Payload-size validation against the dest-config `max_data_bytes` limit
-        // is performed inside `get_message_fee` (the fee-quoter owns that field),
-        // which is called next and aborts with `MessageTooLarge` before the
-        // aggregate `bytesOverheadSum` reaches `quote_gas_for_exec`. EVM does
-        // this in `OnRamp._validateMessage` against `message.data.length` alone;
-        // `quote_gas_for_exec` no longer performs the check, so an in-limit
-        // payload cannot fail merely because verifier/pool overhead is large.
-        // `message.validate()` only guards structural width (INV-ENC-11).
+        // Aggregate size validation against `max_data_bytes` is enforced inside
+        // `quote_gas_for_exec` (called below with the aggregate `bytesOverheadSum`
+        // = payload + CCV/pool `dest_bytes_overhead`), mirroring EVM
+        // `FeeQuoter.quoteGasForExec`'s `calldataSize > maxDataBytes` guard.
+        // `maxDataBytes` caps the aggregate byte budget (EVM's `bytesOverheadSum`
+        // includes the payload via the executor receipt plus CCV/pool overheads),
+        // so an in-limit payload can legitimately fail `MessageTooLarge` when
+        // verifier/pool overhead is large — that is EVM's intended behavior.
+        // `message.validate()` (called by the entrypoints) guards structural
+        // width (INV-ENC-11) only.
         let message_bytes = message.to_bytes(env)?;
 
         let fee_quoter = FeeQuoterClient::new(env, &dynamic_config.fee_quoter);

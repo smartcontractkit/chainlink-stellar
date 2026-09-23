@@ -696,7 +696,7 @@ func RateLimiterStateFromScVal(val xdr.ScVal) (*RateLimiterState, error) {
 // ChainUpdate represents the ChainUpdate struct from the contract.
 type ChainUpdate struct {
 	RemoteChainSelector       uint64
-	RemotePoolAddresses       []byte
+	RemotePoolAddresses       [][]byte
 	RemoteTokenAddress        []byte
 	OutboundRateLimiterConfig RateLimitConfig
 	InboundRateLimiterConfig  RateLimitConfig
@@ -706,7 +706,7 @@ type ChainUpdate struct {
 func (s ChainUpdate) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
 		"remote_chain_selector":        scval.Uint64ToScVal(s.RemoteChainSelector),
-		"remote_pool_addresses":        scval.BytesToScVal(s.RemotePoolAddresses),
+		"remote_pool_addresses":        scval.BytesSliceToScVal(s.RemotePoolAddresses),
 		"remote_token_address":         scval.BytesToScVal(s.RemoteTokenAddress),
 		"outbound_rate_limiter_config": scval.MustToScVal((s.OutboundRateLimiterConfig).ToScVal()),
 		"inbound_rate_limiter_config":  scval.MustToScVal((s.InboundRateLimiterConfig).ToScVal()),
@@ -735,11 +735,18 @@ func ChainUpdateFromScVal(val xdr.ScVal) (*ChainUpdate, error) {
 			}
 			result.RemoteChainSelector = v
 		case "remote_pool_addresses":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("remote_pool_addresses is not bytes")
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("remote_pool_addresses is not a vec")
 			}
-			result.RemotePoolAddresses = []byte(v)
+			result.RemotePoolAddresses = make([][]byte, len(*vec))
+			for i, item := range *vec {
+				v, ok := item.GetBytes()
+				if !ok {
+					return nil, fmt.Errorf("vec item is not bytes")
+				}
+				result.RemotePoolAddresses[i] = []byte(v)
+			}
 		case "remote_token_address":
 			v, ok := entry.Val.GetBytes()
 			if !ok {

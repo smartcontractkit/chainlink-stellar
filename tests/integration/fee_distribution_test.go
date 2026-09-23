@@ -78,7 +78,7 @@ func TestOnRampFeeDistribution(t *testing.T) {
 	}
 	if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
 		RemoteChainSelector:       remoteDestChain,
-		RemotePoolAddresses:       remotePool,
+		RemotePoolAddresses:       [][]byte{remotePool},
 		RemoteTokenAddress:        remoteToken,
 		OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 		InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
