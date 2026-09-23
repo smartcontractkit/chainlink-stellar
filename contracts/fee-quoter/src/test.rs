@@ -534,6 +534,236 @@ fn test_get_message_fee() {
     assert_eq!(fee.fee_token_price, 15_000_000_000_000_000_000);
 }
 
+// ---- Regression tests for the quote_gas_for_exec / get_message_fee split ----
+//
+// `quote_gas_for_exec` previously bundled (a) gas pricing from the aggregate
+// `bytesOverheadSum`, (b) payload-size validation against `max_data_bytes`, and
+// (c) fee-token price/premium resolution. The INV-FEE-14 refactor passed the
+// aggregate (payload + CCV/pool overhead) into it from the OnRamp, so an
+// in-limit payload could fail `MessageTooLarge` purely from large verifier/pool
+// overhead, and the network-only `get_message_fee` rejected with
+// `NoGasPriceAvailable` on a lane with a missing/stale gas-price update. These
+// tests pin the split: payload validation lives in `get_message_fee` (payload
+// only), gas pricing stays in `quote_gas_for_exec` (aggregate, no payload guard),
+// and fee-token price/premium resolution needs no gas price.
+
+#[test]
+fn test_quote_gas_for_exec_accepts_calldata_above_max_data_bytes() {
+    // Finding 1: `quote_gas_for_exec` must price gas from the aggregate
+    // `bytesOverheadSum` WITHOUT rejecting it as `MessageTooLarge`. A calldata
+    // size above `max_data_bytes` (50000) but whose total gas stays under
+    // `max_per_msg_gas_limit` must succeed — payload-size validation is now the
+    // callers' job, not the gas quote's.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config: create_dest_chain_config(), // max_data_bytes = 50000
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+    let mut gas_updates: Vec<GasPriceUpdate> = Vec::new(&env);
+    gas_updates.push_back(GasPriceUpdate {
+        dest_chain_selector: 1,
+        usd_per_unit_gas: 1_000_000_000_000, // 1e12
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: gas_updates,
+        },
+    );
+
+    // calldata_size = 60000 > max_data_bytes (50000), but with no non-calldata
+    // gas the total gas (60000 * 16 = 960000) is well under max_per_msg_gas_limit
+    // (4_000_000). Pre-fix this returned MessageTooLarge; it must now succeed.
+    let result = client.quote_gas_for_exec(&1, &0, &60000, &link_token);
+    assert_eq!(
+        result.total_gas,
+        60000 * 16,
+        "gas is priced from the aggregate calldata"
+    );
+    assert!(result.gas_cost_usd_cents > 0);
+}
+
+#[test]
+fn test_get_message_fee_rejects_payload_above_max_data_bytes() {
+    // Finding 1 (companion): payload-size validation moved to `get_message_fee`
+    // and checks the payload ALONE. A payload exceeding `max_data_bytes` must
+    // still be rejected with `MessageTooLarge`.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config: create_dest_chain_config(), // max_data_bytes = 50000
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+    let mut gas_updates: Vec<GasPriceUpdate> = Vec::new(&env);
+    gas_updates.push_back(GasPriceUpdate {
+        dest_chain_selector: 1,
+        usd_per_unit_gas: 1_000_000_000_000,
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: gas_updates,
+        },
+    );
+
+    // Payload of 60001 bytes > max_data_bytes (50000).
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_slice(
+            &env,
+            &[
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            ],
+        ),
+        data: Bytes::from_slice(&env, &[0u8; 60001]),
+        token_amounts: Vec::new(&env),
+        fee_token: link_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
+    let err = client
+        .try_get_message_fee(&1, &message)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        err,
+        CCIPError::MessageTooLarge,
+        "payload above max_data_bytes must be rejected"
+    );
+}
+
+#[test]
+fn test_get_message_fee_succeeds_without_gas_price() {
+    // Finding 2: `get_message_fee` is network-only, so it must NOT require a
+    // destination gas price. With a token price set but NO gas-price update
+    // pushed, it must still return the network fee. Pre-fix this reverted with
+    // `NoGasPriceAvailable`.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config: create_dest_chain_config(),
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    // Token price set, but NO gas price update — gas_prices map stays empty.
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_slice(
+            &env,
+            &[
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            ],
+        ),
+        data: Bytes::from_slice(&env, &[0u8; 100]),
+        token_amounts: Vec::new(&env),
+        fee_token: link_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
+    let fee = client.get_message_fee(&1, &message);
+    // Network-only, LINK-discounted: 100 * 90 / 100 = 90 cents.
+    assert_eq!(
+        fee.fee_usd_cents, 90,
+        "network-only fee without a gas price"
+    );
+    assert_eq!(fee.fee_token_price, 15_000_000_000_000_000_000);
+}
+
+#[test]
+fn test_quote_gas_for_exec_reverts_without_gas_price() {
+    // Finding 2 (companion): the gas-pricing path itself still requires a gas
+    // price. `quote_gas_for_exec` must revert `NoGasPriceAvailable` when no gas
+    // price is set — proving the gas path still gates correctly after the split.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config: create_dest_chain_config(),
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    // Token price set, NO gas price.
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000,
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let err = client
+        .try_quote_gas_for_exec(&1, &100_000, &1000, &link_token)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        err,
+        CCIPError::NoGasPriceAvailable,
+        "gas quote must require a gas price"
+    );
+}
+
 #[test]
 fn test_get_message_fee_independent_of_gas_and_data() {
     // INV-FEE-14: gas/payload bytes no longer affect `get_message_fee`. Two

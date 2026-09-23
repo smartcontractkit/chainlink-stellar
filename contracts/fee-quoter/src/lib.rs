@@ -15,9 +15,9 @@ use events::{
     UsdPerUnitGasUpdatedEvent,
 };
 use types::{
-    DestChainConfig, DestChainConfigArgs, GasQuoteResult, PriceUpdates, StaticConfig,
-    TimestampedPrice, TokenFeeConfigArgs, TokenFeeConfigRemoveArgs, TokenTransferFeeConfig,
-    TokenTransferFeeResult,
+    DestChainConfig, DestChainConfigArgs, FeeTokenPricing, GasQuoteResult, PriceUpdates,
+    StaticConfig, TimestampedPrice, TokenFeeConfigArgs, TokenFeeConfigRemoveArgs,
+    TokenTransferFeeConfig, TokenTransferFeeResult,
 };
 
 use crate::types::MessageFeeResult;
@@ -414,6 +414,49 @@ impl FeeQuoterContract {
     // Fee Calculation Functions
     // ========================================
 
+    /// Resolve the fee-token price and premium multiplier for a destination
+    /// chain WITHOUT loading or validating the destination gas price.
+    ///
+    /// EVM separates fee-token price/premium resolution from gas pricing: the
+    /// network fee and the premium multiplier depend only on the fee-token
+    /// price and the LINK-premium config, not on the destination gas price.
+    /// Bundling this into `quote_gas_for_exec` made the network-only
+    /// `get_message_fee` reject with `NoGasPriceAvailable` on a lane with a
+    /// missing/stale gas-price update even though no gas component is priced
+    /// (INV-FEE-14 regression). This helper is the gas-price-independent core
+    /// shared by `get_message_fee` and `quote_gas_for_exec`.
+    fn resolve_fee_token_pricing(
+        env: Env,
+        dest_chain_selector: u64,
+        fee_token: Address,
+    ) -> Result<FeeTokenPricing, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+
+        let dest_config = Self::get_dest_chain_config_internal(&env, dest_chain_selector)?;
+        if !dest_config.is_enabled {
+            return Err(CCIPError::DestinationChainNotEnabled);
+        }
+
+        let fee_token_price = Self::get_validated_token_price(env.clone(), fee_token.clone())?;
+
+        let static_config: StaticConfig = env
+            .storage()
+            .instance()
+            .get(&STATIC_CFG)
+            .ok_or(CCIPError::NotInitialized)?;
+
+        let premium_multiplier = if fee_token == static_config.link_token {
+            dest_config.link_premium_percent
+        } else {
+            100 // No discount for non-LINK tokens
+        };
+
+        Ok(FeeTokenPricing {
+            fee_token_price,
+            premium_multiplier,
+        })
+    }
+
     /// Quote gas for execution on a destination chain.
     ///
     /// # Arguments
@@ -439,15 +482,18 @@ impl FeeQuoterContract {
             return Err(CCIPError::DestinationChainNotEnabled);
         }
 
-        // Calculate total gas
+        // Price gas from the aggregate `bytesOverheadSum` (payload + CCV/pool
+        // `dest_bytes_overhead`), mirroring EVM `FeeQuoter.quoteGasForExec`. The
+        // gas-limit cap is enforced here; payload-size validation against
+        // `max_data_bytes` is NOT — that is a message-property check (EVM does
+        // it in `OnRamp._validateMessage` against `message.data.length` alone)
+        // and is performed by the callers so the aggregate used for gas pricing
+        // cannot trigger a false `MessageTooLarge` for an in-limit payload with
+        // large CCV/pool overhead.
         let total_gas = non_calldata_gas + calldata_size * dest_config.dest_gas_per_payload_byte;
 
         if total_gas > dest_config.max_per_msg_gas_limit {
             return Err(CCIPError::MessageGasLimitTooHigh);
-        }
-
-        if calldata_size > dest_config.max_data_bytes {
-            return Err(CCIPError::MessageTooLarge);
         }
 
         // Get gas price
@@ -471,27 +517,14 @@ impl FeeQuoterContract {
         let gas_cost_usd_cents =
             ((total_gas as u128) * gas_price.value + (10_u128.pow(16) - 1)) / 10_u128.pow(16);
 
-        // Get fee token price
-        let fee_token_price = Self::get_validated_token_price(env.clone(), fee_token.clone())?;
-
-        // Apply premium/discount based on fee token
-        let static_config: StaticConfig = env
-            .storage()
-            .instance()
-            .get(&STATIC_CFG)
-            .ok_or(CCIPError::NotInitialized)?;
-
-        let premium_multiplier = if fee_token == static_config.link_token {
-            dest_config.link_premium_percent
-        } else {
-            100 // No discount for non-LINK tokens
-        };
+        // Fee-token price + premium, resolved without re-loading the gas price.
+        let pricing = Self::resolve_fee_token_pricing(env.clone(), dest_chain_selector, fee_token)?;
 
         Ok(GasQuoteResult {
             total_gas,
             gas_cost_usd_cents,
-            fee_token_price,
-            premium_multiplier,
+            fee_token_price: pricing.fee_token_price,
+            premium_multiplier: pricing.premium_multiplier,
         })
     }
 
@@ -576,18 +609,29 @@ impl FeeQuoterContract {
             return Err(CCIPError::DestinationChainNotEnabled);
         }
 
-        // Harvest fee_token_price + premium_multiplier (LINK-premium resolution)
-        // without pricing gas. INV-FEE-14: `get_message_fee` is now NETWORK-ONLY.
-        // Gas is priced once, non-premium, in the OnRamp executor receipt — EVM
-        // `OnRamp._getReceipts` calls a single `quoteGasForExec(gasLimitSum,
-        // bytesOverheadSum)` and adds the cost to the executor receipt WITHOUT
-        // `percentMultiplier` (OnRamp.sol:1075-1097). A (0,0) quote returns
-        // `gas_cost_usd_cents == 0` (discarded) plus the resolved price + premium.
-        let gas_quote = Self::quote_gas_for_exec(
+        // Payload-size validation against the dest-config limit. EVM enforces
+        // `message.data.length <= maxDataBytes` in `OnRamp._validateMessage`;
+        // `quote_gas_for_exec` no longer performs this check (it prices gas from
+        // the aggregate bytesOverheadSum), so it is enforced here and in the
+        // OnRamp send path. `message.validate()` only guards structural width
+        // (INV-ENC-11), not the operator-configured per-destination limit.
+        if (message.data.len() as u32) > dest_config.max_data_bytes {
+            return Err(CCIPError::MessageTooLarge);
+        }
+
+        // Resolve fee-token price + premium (LINK-premium resolution) WITHOUT
+        // pricing gas or loading the destination gas price. INV-FEE-14:
+        // `get_message_fee` is NETWORK-ONLY — gas is priced once, non-premium,
+        // in the OnRamp executor receipt (EVM `OnRamp._getReceipts` calls a
+        // single `quoteGasForExec(gasLimitSum, bytesOverheadSum)` and adds the
+        // cost to the executor receipt WITHOUT `percentMultiplier`,
+        // OnRamp.sol:1075-1097). Routing this through `quote_gas_for_exec(0,0)`
+        // previously dragged in the gas-price load, rejecting a network-only
+        // quote with `NoGasPriceAvailable` on a lane with a missing/stale
+        // gas-price update even though no gas component is priced.
+        let pricing = Self::resolve_fee_token_pricing(
             env.clone(),
             dest_chain_selector,
-            0, // no gas priced here
-            0, // no calldata priced here
             message.fee_token.clone(),
         )?;
 
@@ -604,7 +648,7 @@ impl FeeQuoterContract {
         // (INV-FEE-14). `dest_config.dest_gas_overhead` and payload bytes are no
         // longer read here — they are priced in the OnRamp's executor receipt.
         let mut total_usd_cents: u128 = dest_config.network_fee_usd_cents as u128;
-        total_usd_cents = total_usd_cents * gas_quote.premium_multiplier as u128 / 100;
+        total_usd_cents = total_usd_cents * pricing.premium_multiplier as u128 / 100;
 
         // Convert USD cents to fee-token smallest units. Mirrors EVM
         // `usdCents * 1e34 / feeTokenPrice` (USDPriceWith18Decimals convention:
@@ -613,7 +657,7 @@ impl FeeQuoterContract {
         // fees and returns FeeTokenNotSupported when the price is zero.
         let fee_amount = common_helpers::fee_math::usd_cents_to_fee_token(
             total_usd_cents,
-            gas_quote.fee_token_price,
+            pricing.fee_token_price,
         )?;
 
         // Per-message fee cap is enforced by the OnRamp against
@@ -630,7 +674,7 @@ impl FeeQuoterContract {
         Ok(MessageFeeResult {
             fee_usd_cents: total_usd_cents,
             fee_token_amount: fee_amount,
-            fee_token_price: gas_quote.fee_token_price,
+            fee_token_price: pricing.fee_token_price,
         })
     }
 
