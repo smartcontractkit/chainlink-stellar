@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, Bytes};
+use soroban_sdk::{contractevent, Address, Bytes, Vec};
 
 use crate::types::{RateLimitConfig, TokenTransferFeeConfig};
 
@@ -36,7 +36,9 @@ pub struct MintedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChainConfiguredEvent {
     pub remote_chain_selector: u64,
-    pub remote_pool_address: Bytes,
+    /// Initial set of remote pool addresses seeded for the chain (EVM
+    /// `bytes[] remotePoolAddresses`). H-14: was a single `Bytes`.
+    pub remote_pool_addresses: Vec<Bytes>,
     pub remote_token_address: Bytes,
     pub outbound_rate_limiter_config: RateLimitConfig,
     pub inbound_rate_limiter_config: RateLimitConfig,
@@ -46,6 +48,26 @@ pub struct ChainConfiguredEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChainRemovedEvent {
     pub remote_chain_selector: u64,
+}
+
+/// EVM `RemotePoolAdded(uint64 indexed remoteChainSelector, bytes remotePoolAddress)`
+/// (`pools/TokenPool.sol:75`). Emitted by `add_remote_pool` when a new remote
+/// pool is appended to a chain's configured set (H-14).
+#[contractevent(topics = ["pool_RemotePoolAdded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemotePoolAddedEvent {
+    pub remote_chain_selector: u64,
+    pub remote_pool_address: Bytes,
+}
+
+/// EVM `RemotePoolRemoved(uint64 indexed remoteChainSelector, bytes remotePoolAddress)`
+/// (`pools/TokenPool.sol:76`). Emitted by `remove_remote_pool` when a remote
+/// pool is removed from a chain's configured set (H-14).
+#[contractevent(topics = ["pool_RemotePoolRemoved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemotePoolRemovedEvent {
+    pub remote_chain_selector: u64,
+    pub remote_pool_address: Bytes,
 }
 
 #[contractevent(topics = ["pool_RateLimitConfigured"])]

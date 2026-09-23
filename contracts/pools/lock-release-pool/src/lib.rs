@@ -430,6 +430,32 @@ impl LockReleaseTokenPoolContract {
         <Self as BaseTokenPool>::apply_chain_updates(&env, adds, removes)
     }
 
+    /// Adds a remote pool to a chain's configured set (EVM `addRemotePool`). Owner-only.
+    pub fn add_remote_pool(
+        env: Env,
+        remote_chain_selector: u64,
+        remote_pool_address: Bytes,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::add_remote_pool(&env, remote_chain_selector, &remote_pool_address)
+    }
+
+    /// Removes a remote pool from a chain's configured set (EVM `removeRemotePool`). Owner-only.
+    pub fn remove_remote_pool(
+        env: Env,
+        remote_chain_selector: u64,
+        remote_pool_address: Bytes,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        <Self as BaseTokenPool>::remove_remote_pool(
+            &env,
+            remote_chain_selector,
+            &remote_pool_address,
+        )
+    }
+
     /// Update rate limit configs for a chain. Callable by owner or rate limit admin.
     /// When `fast_finality` is true, sets the FTF buckets; otherwise the default buckets.
     pub fn set_rate_limit_config(
@@ -480,8 +506,8 @@ impl LockReleaseTokenPoolContract {
         <Self as BaseTokenPool>::is_supported_chain(&env, remote_chain_selector)
     }
 
-    pub fn get_remote_pool(env: Env, remote_chain_selector: u64) -> Result<Bytes, CCIPError> {
-        <Self as BaseTokenPool>::get_remote_pool(&env, remote_chain_selector)
+    pub fn get_remote_pools(env: Env, remote_chain_selector: u64) -> Result<Vec<Bytes>, CCIPError> {
+        <Self as BaseTokenPool>::get_remote_pools(&env, remote_chain_selector)
     }
 
     pub fn get_remote_token(env: Env, remote_chain_selector: u64) -> Result<Bytes, CCIPError> {

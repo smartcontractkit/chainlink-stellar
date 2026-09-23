@@ -1213,6 +1213,81 @@ mod mock_pool {
             }
         }
     }
+
+    /// A `TokenPoolInterface` mock whose `lock_or_burn` returns a `dest_pool_data` of a
+    /// configured length, so M-15 / INV-POOL-21 can be exercised: when that length exceeds
+    /// the FeeQuoter's `dest_bytes_overhead` (the bytes the sender paid for in the pool
+    /// receipt), the OnRamp must reject with `SourceTokenDataTooLarge`. `get_fee` returns a
+    /// *disabled* `PoolFeeResult` so the OnRamp falls back to the FeeQuoter (overhead 64 in
+    /// the harness), and `get_required_ccvs` folds lane defaults so the merged CCV list is
+    /// non-empty (clearing the H-1 zero-CCV guard before `lock_or_burn` runs).
+    #[contract]
+    pub struct MockPoolLargeDestPoolData;
+
+    #[contractimpl]
+    impl MockPoolLargeDestPoolData {
+        pub fn set_dest_pool_data_len(env: Env, len: u32) {
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "dplen"), &len);
+        }
+
+        pub fn get_fee(
+            _env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            let len: u32 = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "dplen"))
+                .unwrap_or(0);
+            // `dest_pool_data` of `len` non-zero bytes (non-zero so a 0-len/empty carve-out
+            // is distinguishable if ever needed). Length alone is what M-15 checks.
+            let mut data = Bytes::new(&env);
+            for _ in 0..len {
+                data.push_back(0xABu8);
+            }
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: data,
+            })
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> PoolRequiredCCVs {
+            PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
+            }
+        }
+    }
 }
 
 // ============================================================
@@ -1416,7 +1491,7 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
                 &env,
                 ChainUpdate {
                     remote_chain_selector: evm_chain_selector,
-                    remote_pool_addresses: remote_pool,
+                    remote_pool_addresses: vec![&env, remote_pool],
                     remote_token_address: remote_token,
                     outbound_rate_limiter_config: RateLimitConfig::disabled(),
                     inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -1789,7 +1864,7 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
             &env,
             ChainUpdate {
                 remote_chain_selector: evm_chain_selector,
-                remote_pool_addresses: remote_pool,
+                remote_pool_addresses: vec![&env, remote_pool],
                 remote_token_address: remote_token,
                 outbound_rate_limiter_config: RateLimitConfig::disabled(),
                 inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -2144,7 +2219,7 @@ fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) 
             &env,
             ChainUpdate {
                 remote_chain_selector: evm_chain_selector,
-                remote_pool_addresses: remote_pool,
+                remote_pool_addresses: vec![&env, remote_pool],
                 remote_token_address: remote_token,
                 outbound_rate_limiter_config: RateLimitConfig::disabled(),
                 inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -3626,4 +3701,161 @@ fn test_dest_chain_config_accepts_unique_ccv_set() {
     let stored = client.get_dest_chain_config(&67890);
     assert_eq!(stored.default_ccvs, args.default_ccvs);
     assert_eq!(stored.lane_mandated_ccvs, args.lane_mandated_ccvs);
+}
+
+// ============================================================
+// M-15 / INV-POOL-21: bound dest_pool_data ≤ dest_bytes_overhead
+// ============================================================
+
+/// M-15 / INV-POOL-21: the pool's `dest_pool_data` (wire `extraData`) must not exceed the
+/// `dest_bytes_overhead` quoted and paid for in the pool receipt. Mirrors EVM
+/// `OnRamp.sol:317-323` (`actualExtraDataLength > maxExtraDataLength` ⇒ `SourceTokenDataTooLarge`).
+/// The harness FeeQuoter advertises `dest_bytes_overhead = 64`; a mock pool returning 100 bytes
+/// of `dest_pool_data` from `lock_or_burn` must make `ccip_send` revert with #35.
+#[test]
+#[should_panic(expected = "Error(Contract, #35)")] // SourceTokenDataTooLarge
+fn test_ccip_send_rejects_dest_pool_data_exceeding_overhead() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    // Mock pool that returns 100 bytes of dest_pool_data ( > the 64-byte overhead).
+    let mock_pool_id = lane.env.register(mock_pool::MockPoolLargeDestPoolData, ());
+    let mock_client = mock_pool::MockPoolLargeDestPoolDataClient::new(&lane.env, &mock_pool_id);
+    mock_client.set_dest_pool_data_len(&100);
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    // `send` quotes a fee (pool.get_fee disabled ⇒ FeeQuoter overhead 64), funds the
+    // sender, and calls `ccip_send` → `forward_from_router` → `lock_or_burn` returns 100
+    // bytes ⇒ the M-15 guard reverts SourceTokenDataTooLarge before the message is emitted.
+    let _ = lane.send();
+}
+
+/// M-15 boundary: `dest_pool_data` length exactly equal to `dest_bytes_overhead` (64) is
+/// accepted (EVM uses strict `>`). Reuses the same mock pool with len = 64.
+#[test]
+fn test_ccip_send_accepts_dest_pool_data_equal_to_overhead() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    let mock_pool_id = lane.env.register(mock_pool::MockPoolLargeDestPoolData, ());
+    let mock_client = mock_pool::MockPoolLargeDestPoolDataClient::new(&lane.env, &mock_pool_id);
+    mock_client.set_dest_pool_data_len(&64); // == overhead ⇒ accepted (strict >)
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    // Must not trap: the message is emitted and a token-pool receipt is present.
+    let receipts = lane.send();
+    let want: u32 = 4; // [CCV, Pool, Executor, NetworkFee]
+    assert_eq!(
+        receipts.len(),
+        want,
+        "equal-length dest_pool_data must be accepted (EVM strict `>` parity)"
+    );
+}
+
+// ============================================================
+// M-2 / INV-MSG-8: validate token_receiver length on send
+// ============================================================
+
+/// M-2 / INV-MSG-8 / INV-LCFG-3: a sender-specified `token_receiver` whose length does not
+/// match the destination's `address_bytes_length` must be rejected on send. EVM validates the
+/// token receiver in `_lockOrBurnSingleToken` via `_validateDestChainAddress(receiver,
+/// destAddressBytesLength)` (OnRamp.sol:779). The lane's `address_bytes_length` is 20; a
+/// 15-byte `token_receiver` ⇒ `InvalidDestChainAddress` (#43).
+#[test]
+#[should_panic(expected = "Error(Contract, #43)")] // InvalidDestChainAddress
+fn test_ccip_send_rejects_wrong_length_token_receiver() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    // 15-byte token_receiver ≠ address_bytes_length (20). token_receiver_allowed is true,
+    // so the allowed-flag gate passes and the length gate fires.
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::from_array(env, &[0x44u8; 15]),
+        token_args: Bytes::new(env),
+    };
+
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]), // valid 20-byte receiver
+        data: Bytes::from_slice(env, b"token send with data"),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    let required_fee = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+    assert!(required_fee > 0, "quoted fee must be positive");
+    lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+    lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
+    let _ = lane.router_client.ccip_send(
+        &lane.sender,
+        &lane.evm_chain_selector,
+        &message,
+        &required_fee,
+    );
+}
+
+/// M-2 positive: a sender-specified `token_receiver` of the correct length (20) is accepted.
+#[test]
+fn test_ccip_send_accepts_correct_length_token_receiver() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::from_array(env, &[0x55u8; 20]), // matches address_bytes_length
+        token_args: Bytes::new(env),
+    };
+
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::from_slice(env, b"token send with data"),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    let required_fee = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+    assert!(required_fee > 0, "quoted fee must be positive");
+    lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+    lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
+    lane.router_client.ccip_send(
+        &lane.sender,
+        &lane.evm_chain_selector,
+        &message,
+        &required_fee,
+    );
+
+    // ccip_send did not trap; a full 4-receipt token send was emitted.
+    let receipts = receipts_from_last_onramp_ccip_event(env, &lane.onramp_id);
+    let want: u32 = 4; // [CCV, Pool, Executor, NetworkFee]
+    assert_eq!(
+        receipts.len(),
+        want,
+        "correct-length token_receiver must be accepted and emit a full token-send receipt set"
+    );
 }

@@ -817,6 +817,15 @@ impl OnRampContract {
                 &extra_args.token_args,
             );
 
+            // M-15 / INV-POOL-21: the pool's `dest_pool_data` (wire `extraData`) must not
+            // exceed the `dest_bytes_overhead` that was quoted and paid for in the pool
+            // receipt — otherwise the sender pays for fewer bytes than the message carries.
+            // Mirrors EVM `OnRamp.sol:317-323` (`actualExtraDataLength > maxExtraDataLength`
+            // ⇒ `SourceTokenDataTooLarge`); equal length is allowed (strict `>`).
+            if (lock_result.dest_pool_data.len() as u32) > breakdown.pool_dest_bytes_overhead {
+                return Err(CCIPError::SourceTokenDataTooLarge);
+            }
+
             // H-13: reuse the breakdown's resolved pool-fee slice — no second
             // `get_fee` call (the fee config is unchanged by `lock_or_burn`).
             // The wire amount is the post-fee `dest_token_amount` returned by the
@@ -829,22 +838,33 @@ impl OnRampContract {
                 extra_args: extra_args.token_args.clone(),
             });
 
+            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
+            // message receiver, so the destination pool releases/mints to the same account
+            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
+            // accept this — the empty case is the default, gated only by
+            // `validate_token_receiver_allowed` above (INV-TR-3).
+            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
+                extra_args.token_receiver.clone()
+            } else {
+                message.receiver.clone()
+            };
+
+            // M-2 / INV-MSG-8 / INV-LCFG-3: validate the effective `token_receiver` length
+            // against the destination's `address_bytes_length` on send. EVM validates the
+            // token receiver in `_lockOrBurnSingleToken` via `_validateDestChainAddress(
+            // receiver, destAddressBytesLength)` (OnRamp.sol:779) — the same check applied
+            // to `message.receiver` above. When the sender specifies a non-default
+            // `token_receiver`, it must be exactly `address_bytes_length` bytes; the empty
+            // (default) case reduces to `message.receiver`, already validated.
+            Self::validate_dest_address(&dest_config, &effective_token_receiver)?;
+
             let token_transfer = CcipTokenTransferV1 {
                 version: MESSAGE_V1_VERSION,
                 amount: Self::i128_to_bytes32(&env, lock_result.dest_token_amount),
                 source_pool_address: pool_address.to_xdr(&env),
                 source_token_address: token_amount.token.clone().to_xdr(&env),
                 dest_token_address: lock_result.dest_token_address,
-                // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
-                // message receiver, so the destination pool releases/mints to the same account
-                // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
-                // accept this — the empty case is the default, gated only by
-                // `validate_token_receiver_allowed` above (INV-TR-3).
-                token_receiver: if extra_args.token_receiver.len() != 0 {
-                    extra_args.token_receiver.clone()
-                } else {
-                    message.receiver.clone()
-                },
+                token_receiver: effective_token_receiver,
                 extra_data: lock_result.dest_pool_data,
             };
             token_transfer.to_bytes(&env)?

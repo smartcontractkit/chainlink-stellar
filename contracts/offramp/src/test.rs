@@ -605,6 +605,18 @@ pub struct MockTokenPool;
 
 #[contractimpl]
 impl MockTokenPool {
+    /// Override the pool's required-CCV response (H-10: a pool that mandates its own CCVs and
+    /// does NOT fold lane defaults). When unset, the pool reports no own CCVs and
+    /// `include_defaults = true` (the pre-V2 fallback used by the H-2 test).
+    pub fn set_required_ccvs(env: Env, ccvs: Vec<Address>, include_defaults: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "reqccvs"), &ccvs);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "incldef"), &include_defaults);
+    }
+
     pub fn get_required_ccvs(
         env: Env,
         _local_token: Address,
@@ -614,10 +626,19 @@ impl MockTokenPool {
         _extra_data: Bytes,
         _direction: MessageDirection,
     ) -> PoolRequiredCCVs {
-        // No pool-specific CCVs; append lane defaults (include_defaults = true).
+        let ccvs: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "reqccvs"))
+            .unwrap_or_else(|| Vec::new(&env));
+        let include_defaults: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "incldef"))
+            .unwrap_or(true);
         PoolRequiredCCVs {
-            ccvs: Vec::new(&env),
-            include_defaults: true,
+            ccvs,
+            include_defaults,
         }
     }
 
@@ -784,6 +805,231 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         pool_client.last_receiver(),
         receiver_contract,
         "empty token_receiver must fall back to message.receiver"
+    );
+}
+
+// ============================================================
+// H-10 / INV-TO-4: token-only destination skips the default-CCV floor
+// ============================================================
+
+/// A token-only transfer (no data, no ccipReceive gas, tokens present) to a pool that mandates
+/// its OWN CCVs — distinct from the lane defaults — and does NOT fold defaults, must succeed when
+/// exactly the pool's CCVs attest. The previous "≥1 default verifies when no lane-mandated CCVs
+/// exist" floor rejected this (CCVQuorumNotMet) even though EVM `_getCCVsForMessage`'s token-only
+/// arm accepts it: required = pool-required + lane-mandated only, no default floor.
+#[test]
+fn test_execute_token_only_skips_default_ccv_floor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    let registry_id = env.register(MockTokenAdminRegistry, ());
+    let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
+    let pool_id = env.register(MockTokenPool, ());
+    let pool_client = MockTokenPoolClient::new(&env, &pool_id);
+    registry_client.set_pool(&Address::generate(&env), &pool_id);
+
+    // Two independent VVR→verifier chains: the lane default, and the pool's own mandated CCV.
+    let default_verifier_id = env.register(MockVerifier, ());
+    let default_vvr_id = env.register(MockVvr, ());
+    MockVvrClient::new(&env, &default_vvr_id).set_verifier(&default_verifier_id);
+
+    let pool_verifier_id = env.register(MockVerifier, ());
+    let pool_vvr_id = env.register(MockVvr, ());
+    MockVvrClient::new(&env, &pool_vvr_id).set_verifier(&pool_verifier_id);
+
+    // The pool mandates its own CCV and does NOT fold lane defaults.
+    pool_client.set_required_ccvs(&vec![&env, pool_vvr_id.clone()], &false);
+
+    let static_config = StaticConfig {
+        chain_selector: EXEC_TEST_DEST_CHAIN,
+        rmn_proxy: rmn_proxy_id,
+        token_admin_registry: registry_id,
+    };
+
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    client.initialize(&owner, &static_config);
+
+    // Lane carries a default CCV (the lane default) and NO lane-mandated CCVs. The H-10 bug
+    // is that this default was force-required for token-only transfers regardless of the pool.
+    let router = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(
+        &env,
+        &client,
+        router,
+        default_vvr_id.clone(),
+        onramp.clone(),
+        true,
+    );
+
+    let receiver_contract = env.register(MockVerifier, ());
+    let receiver_field = offramp_address_field_from_contract(&env, &receiver_contract);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: receiver_field.clone(),
+        extra_data: Bytes::new(&env),
+    };
+
+    // Token-only message (no data, no ccipReceive gas).
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: onramp,
+        offramp_address: offramp_address_field_from_contract(&env, &contract_id),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: receiver_field,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::new(&env),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // The DON supplies ONLY the pool's mandated CCV — NOT the lane default. Before H-10 this
+    // failed with CCVQuorumNotMet (mandated_count==0 && default_verified==0); now it succeeds.
+    let ccvs = vec![&env, pool_vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "token-only to a pool-mandated CCV must not trap: {:?}",
+        res.err()
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "token-only transfer with only the pool's own CCV must succeed (H-10: no default floor)"
+    );
+}
+
+/// H-10 negative case: the pool's mandated CCV must still be supplied. Omitting it fails with
+/// `RequiredCCVMissing` (the floor is gone, but the required-set model still enforces pool CCVs).
+#[test]
+fn test_execute_token_only_still_requires_pool_ccvs() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    let registry_id = env.register(MockTokenAdminRegistry, ());
+    let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
+    let pool_id = env.register(MockTokenPool, ());
+    let pool_client = MockTokenPoolClient::new(&env, &pool_id);
+    registry_client.set_pool(&Address::generate(&env), &pool_id);
+
+    let default_verifier_id = env.register(MockVerifier, ());
+    let default_vvr_id = env.register(MockVvr, ());
+    MockVvrClient::new(&env, &default_vvr_id).set_verifier(&default_verifier_id);
+
+    let pool_verifier_id = env.register(MockVerifier, ());
+    let pool_vvr_id = env.register(MockVvr, ());
+    MockVvrClient::new(&env, &pool_vvr_id).set_verifier(&pool_verifier_id);
+
+    pool_client.set_required_ccvs(&vec![&env, pool_vvr_id.clone()], &false);
+
+    let static_config = StaticConfig {
+        chain_selector: EXEC_TEST_DEST_CHAIN,
+        rmn_proxy: rmn_proxy_id,
+        token_admin_registry: registry_id,
+    };
+
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    client.initialize(&owner, &static_config);
+
+    let router = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(
+        &env,
+        &client,
+        router,
+        default_vvr_id.clone(),
+        onramp.clone(),
+        true,
+    );
+
+    let receiver_contract = env.register(MockVerifier, ());
+    let receiver_field = offramp_address_field_from_contract(&env, &receiver_contract);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: receiver_field.clone(),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: onramp,
+        offramp_address: offramp_address_field_from_contract(&env, &contract_id),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: receiver_field,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::new(&env),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+
+    // Supply the lane DEFAULT instead of the pool's mandated CCV. The default is not in the
+    // required set (pool said include_defaults=false), so this must be recorded as `Failure`
+    // — with `RequiredCCVMissing` (#116), NOT the old default-floor `CCVQuorumNotMet` (#108).
+    // `execute` catches per-message contract errors and records `Failure` (returns Ok), so we
+    // assert on the execution state rather than a trap.
+    let ccvs = vec![&env, default_vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "execute must not trap on a quorum failure: {:?}",
+        res.err()
+    );
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure,
+        "token-only transfer must fail when the pool's mandated CCV is missing (RequiredCCVMissing)"
     );
 }
 
