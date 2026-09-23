@@ -524,10 +524,11 @@ impl OffRampContract {
     /// uses [`Self::get_ccvs_for_message_internal`] directly.
     ///
     /// Returns `(required, optional, optional_threshold)`:
-    /// - **token-only** (`data` empty AND `ccip_receive_gas_limit == 0`): `required` = lane-mandated,
-    ///   `optional` = lane defaults, threshold 1 when defaults exist — matching the existing off-chain
-    ///   reader output and the token-only "≥1 default when no lane-mandated" floor. Receiver
-    ///   consultation does NOT apply to token-only (mirroring EVM `_isTokenOnlyTransfer`).
+    /// - **token-only** (`data` empty AND `ccip_receive_gas_limit == 0`, or a non-Wasm receiver):
+    ///   `required` = pool-required + lane-mandated (no receiver consult, no "≥1 default" floor —
+    ///   H-10); for a no-token no-op, `required` = lane defaults + lane-mandated. `optional` is
+    ///   empty and `optional_threshold` is 0. Mirrors EVM `_getCCVsForMessage`'s token-only arm, so
+    ///   the DON gathers exactly the CCVs on-chain `execute` enforces.
     /// - **non-token-only**: identical to what `verify_ccv_quorum` enforces — the receiver's
     ///   `get_ccvs_and_finality_config` resolved + merged with pool-required + lane-mandated (+ lane
     ///   defaults via the empty-config sentinel), and the receiver's optional/threshold. (`allowed_finality`
@@ -560,14 +561,16 @@ impl OffRampContract {
         // probe; a Wasm contract that does not implement `ccip_receive` is caught at delivery (its
         // invocation traps ⇒ `Failure`) rather than pre-classified as token-only here.
         //
-        // INTENTIONAL VIEW↔EXECUTE DIVERGENCE for a non-Wasm receiver: this view returns lane
-        // defaults (gatherable) so the DON transmits, while the on-chain `execute` path
-        // (`verify_ccv_quorum` → `get_ccvs_for_message_internal`) keeps the require-V2 fail-fast and
-        // rejects with `ReceiverDoesNotExist`/`ReceiverNotWasmContract` (recorded as `Failure`,
-        // retryable). The divergence is benign: `execute` rejects at the pre-quorum existence check
+        // INTENTIONAL VIEW↔EXECUTE DIVERGENCE for a non-Wasm receiver carrying a payload (data
+        // or gas): this view classifies it as token-only (`receiver_not_wasm`) and returns the
+        // token-only required set (pool-required + lane-mandated, or lane defaults for a no-token
+        // no-op) so the DON transmits, while the on-chain `execute` path (`verify_ccv_quorum`'s
+        // `is_token_only` is `no_payload` only) keeps the require-V2 fail-fast and rejects with
+        // `ReceiverDoesNotExist`/`ReceiverNotWasmContract` (recorded as `Failure`, retryable). The
+        // divergence is benign: `execute` rejects at the pre-quorum existence check
         // (`get_ccvs_for_message_internal`, before `ensure_quorum_present`), so the CCVs the DON
-        // gathered from the defaults never affect the outcome. This is the C-1 require-V2 policy,
-        // preserved on-chain; the view simply mirrors EVM in not blocking transmission.
+        // gathered never affect the outcome. This is the C-1 require-V2 policy, preserved on-chain;
+        // the view simply mirrors EVM in not blocking transmission.
         let no_payload = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
         let receiver_not_wasm = match Self::ccip_receiver_contract_address(&env, &message.receiver)
         {
@@ -578,12 +581,26 @@ impl OffRampContract {
         let is_token_only = no_payload || receiver_not_wasm;
 
         if is_token_only {
-            // Token-only quorum (EVM `_getCCVsForMessage` token-only arm): lane-mandated required,
-            // lane defaults optional (≥1 when present). Receiver consultation does not apply.
-            let required = source_config.lane_mandated_ccvs.clone();
-            let optional = source_config.default_ccvs.clone();
-            let threshold = if optional.len() > 0 { 1 } else { 0 };
-            return Ok((required, optional, threshold));
+            // Token-only quorum (EVM `_getCCVsForMessage` token-only arm — H-10): no receiver
+            // consult, no "≥1 default" floor. required = pool-required (folds defaults via
+            // `include_defaults`) + lane-mandated; for a no-token no-op, required = lane
+            // defaults + lane-mandated. optional/threshold = 0.
+            let has_tokens = !message.token_transfer.is_empty();
+            let pool_required = if has_tokens {
+                Self::get_inbound_pool_required_ccvs(
+                    &env,
+                    message.source_chain_selector,
+                    message.finality,
+                    &message.token_transfer,
+                    &static_config,
+                    &source_config.default_ccvs,
+                )?
+            } else {
+                source_config.default_ccvs.clone()
+            };
+            let mut required = pool_required;
+            Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
+            return Ok((required, Vec::new(&env), 0));
         }
 
         // Non-token-only with a Wasm receiver: same resolution `verify_ccv_quorum` enforces
@@ -820,11 +837,16 @@ impl OffRampContract {
     /// Verify that the CCV quorum is met for a message (EVM `OffRamp._getCCVsForMessage` +
     /// `_ensureCCVQuorumIsReached`).
     ///
-    /// **Token-only** messages (`data` empty AND `ccip_receive_gas_limit == 0`) take the original
-    /// path unchanged: pool-required present, all CCVs verified, all lane-mandated verified, and a
-    /// "≥1 default CCV" floor when no lane-mandated CCVs exist. (H-10 — dropping that floor for
-    /// token-only — and M-12 — ignoring extra CCVs — are deferred; token-only behavior is
-    /// intentionally left as-is in this fix.)
+    /// **Token-only** messages (`data` empty AND `ccip_receive_gas_limit == 0`) mirror EVM
+    /// `_getCCVsForMessage`'s token-only arm (H-10): the receiver is NOT consulted, there is NO
+    /// "≥1 default CCV" floor, and `required` = pool-required + lane-mandated only (defaults
+    /// enter solely via the pool's `include_defaults` fallback, which
+    /// `get_inbound_pool_required_ccvs` already folds in). A no-token no-op (no data, no gas, no
+    /// tokens) seeds `required` with the lane defaults — EVM achieves this via the receiver arm's
+    /// `address(0)` marker. Optional/threshold are zero. Every required CCV must be supplied
+    /// (`RequiredCCVMissing`); then every attested CCV is verified. (M-12 — verifying only the
+    /// required set and ignoring extras — remains deferred, consistent with the non-token-only
+    /// path.)
     ///
     /// **Non-token-only** messages consult the receiver (`get_ccvs_for_message`, C-1) for
     /// required/optional/threshold + allowed-finality, enforce the receiver's finality config
@@ -847,42 +869,56 @@ impl OffRampContract {
         let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
 
         if is_token_only {
-            // === Token-only path (UNCHANGED — H-10/M-12 deferred) ===
-            if ccvs.is_empty() {
-                return Err(CCIPError::CCVQuorumNotMet);
-            }
+            // === Token-only path (EVM `_getCCVsForMessage` token-only arm — H-10) ===
+            //
+            // EVM `_isTokenOnlyTransfer` ⇒ `_getCCVsForMessage` skips the receiver consult
+            // entirely: no receiver CCVs, no receiver finality, and NO "≥1 default" floor.
+            // required = pool-required + lane-mandated only — defaults enter solely via the
+            // pool's own `include_defaults`/`address(0)` fallback, which
+            // `get_inbound_pool_required_ccvs` already folds in. For a no-token no-op (data
+            // empty, gas 0, no tokens) EVM seeds `[address(0)]` from the receiver arm ⇒ lane
+            // defaults; mirrored here by seeding `required` with `default_ccvs`.
+            //
+            // H-10 fix: the previous code enforced "≥1 default verifies when no lane-mandated
+            // CCVs exist", which wrongly rejected a token-only transfer to a pool that mandates
+            // its own (non-default) CCVs on a lane with no defaults — EVM accepts that. The
+            // required-set model below replaces the floor.
+            let has_tokens = !message.token_transfer.is_empty();
 
-            let pool_required = Self::get_inbound_pool_required_ccvs(
-                env,
-                source_chain_selector,
-                message.finality,
-                &message.token_transfer,
-                static_config,
-                &source_config.default_ccvs,
-            )?;
-            for i in 0..pool_required.len() {
-                if let Some(req) = pool_required.get(i) {
-                    if !Self::is_in_list(&req, ccvs) {
-                        return Err(CCIPError::RequiredCCVMissing);
-                    }
-                }
-            }
+            let pool_required = if has_tokens {
+                Self::get_inbound_pool_required_ccvs(
+                    env,
+                    source_chain_selector,
+                    message.finality,
+                    &message.token_transfer,
+                    static_config,
+                    &source_config.default_ccvs,
+                )?
+            } else {
+                // No-token no-op: EVM seeds `[address(0)]` from the receiver arm ⇒ defaults.
+                source_config.default_ccvs.clone()
+            };
 
-            // Track which mandated CCVs have been verified
-            let mut mandated_verified = 0u32;
-            let mut default_verified = 0u32;
+            // required = pool-required (or defaults) + lane-mandated, deduped. No optional.
+            let mut required: Vec<Address> = Vec::new(env);
+            Self::dedup_append(&mut required, &pool_required);
+            Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
 
+            // Every required CCV must be supplied (`RequiredCCVMissing`); no optional/threshold.
+            Self::ensure_quorum_present(&required, &Vec::new(env), 0, ccvs)?;
+
+            // Verify every attested CCV. (M-12 — verifying only required and ignoring extras —
+            // remains deferred; an extra CCV that fails `verify_message` still rejects,
+            // consistent with the non-token-only path.)
             for i in 0..ccvs.len() {
                 let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
                 let result = verifier_results
                     .get(i)
                     .ok_or(CCIPError::CCVLengthMismatch)?;
 
-                // Resolve the inbound verifier implementation from the CCV resolver
                 let vvr = VersionedVerifierResolverClient::new(env, &ccv);
                 let verifier_address = vvr.get_inbound_implementation(&result);
 
-                // Call verify_message on the resolved verifier
                 let message_hash: BytesN<32> = message_id.clone();
                 let mut verify_args = soroban_sdk::Vec::new(env);
                 verify_args.push_back(source_chain_selector.into_val(env));
@@ -894,25 +930,6 @@ impl OffRampContract {
                     &Symbol::new(env, "verify_message"),
                     verify_args,
                 )?;
-
-                // Check if this CCV is a mandated or default one
-                if Self::is_in_list(&ccv, &source_config.lane_mandated_ccvs) {
-                    mandated_verified += 1;
-                }
-                if Self::is_in_list(&ccv, &source_config.default_ccvs) {
-                    default_verified += 1;
-                }
-            }
-
-            // All lane-mandated CCVs must have verified
-            let mandated_count = source_config.lane_mandated_ccvs.len();
-            if mandated_verified < mandated_count {
-                return Err(CCIPError::CCVQuorumNotMet);
-            }
-
-            // If no mandated CCVs, at least one default CCV must verify
-            if mandated_count == 0 && default_verified == 0 {
-                return Err(CCIPError::CCVQuorumNotMet);
             }
 
             return Ok(());

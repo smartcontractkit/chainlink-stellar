@@ -118,7 +118,7 @@ func (s *fullStack) deploySiloedTokenPool(
 
 	if err := poolClient.ApplyChainUpdates(ctx, []slrbindings.ChainUpdate{{
 		RemoteChainSelector:       remoteChainSelector,
-		RemotePoolAddresses:       remotePool,
+		RemotePoolAddresses:       [][]byte{remotePool},
 		RemoteTokenAddress:        remoteToken,
 		OutboundRateLimiterConfig: slrbindings.RateLimitConfig{},
 		InboundRateLimiterConfig:  slrbindings.RateLimitConfig{},
@@ -176,9 +176,9 @@ func migrateSiloedTokenPool(
 	t.Helper()
 
 	oldPoolID := assets.PoolID
-	remotePool, err := assets.PoolClient.GetRemotePool(ctx, remoteChainSelector)
+	remotePools, err := assets.PoolClient.GetRemotePools(ctx, remoteChainSelector)
 	if err != nil {
-		t.Fatalf("GetRemotePool from old pool: %v", err)
+		t.Fatalf("GetRemotePools from old pool: %v", err)
 	}
 	remoteToken, err := assets.PoolClient.GetRemoteToken(ctx, remoteChainSelector)
 	if err != nil {
@@ -200,7 +200,7 @@ func migrateSiloedTokenPool(
 	}
 	if err := newPoolClient.ApplyChainUpdates(ctx, []slrbindings.ChainUpdate{{
 		RemoteChainSelector:       remoteChainSelector,
-		RemotePoolAddresses:       remotePool,
+		RemotePoolAddresses:       remotePools,
 		RemoteTokenAddress:        remoteToken,
 		OutboundRateLimiterConfig: slrbindings.RateLimitConfig{},
 		InboundRateLimiterConfig:  slrbindings.RateLimitConfig{},

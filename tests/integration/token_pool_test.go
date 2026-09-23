@@ -92,7 +92,7 @@ func TestTokenPool(t *testing.T) {
 		err = client.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{
 			{
 				RemoteChainSelector:       remoteChain,
-				RemotePoolAddresses:       remotePool,
+				RemotePoolAddresses:       [][]byte{remotePool},
 				RemoteTokenAddress:        remoteToken,
 				OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 				InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
@@ -157,7 +157,7 @@ func TestTokenPool(t *testing.T) {
 			}
 			if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
 				RemoteChainSelector:       remoteDestChain,
-				RemotePoolAddresses:       remotePool,
+				RemotePoolAddresses:       [][]byte{remotePool},
 				RemoteTokenAddress:        remoteToken,
 				OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 				InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
@@ -383,7 +383,7 @@ func TestTokenPool(t *testing.T) {
 		evmTok := bytes.Repeat([]byte{0x52}, 20)
 		if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
 			RemoteChainSelector:       remoteSourceChain,
-			RemotePoolAddresses:       evmPool,
+			RemotePoolAddresses:       [][]byte{evmPool},
 			RemoteTokenAddress:        evmTok,
 			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},

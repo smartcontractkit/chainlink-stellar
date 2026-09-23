@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
-    token, Address, Bytes, BytesN, Env, IntoVal, Val, Vec,
+    token, vec, Address, Bytes, BytesN, Env, IntoVal, Val, Vec,
 };
 
 use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
@@ -411,7 +411,7 @@ fn test_burn_and_mint() {
 
     let chain_update = ChainUpdate {
         remote_chain_selector: remote_chain,
-        remote_pool_addresses: remote_pool,
+        remote_pool_addresses: vec![&env, remote_pool],
         remote_token_address: remote_token.clone(),
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -517,7 +517,7 @@ fn test_wrong_token_rejected() {
 fn chain_update(env: &Env, selector: u64, pool_byte: u8, token_byte: u8) -> ChainUpdate {
     ChainUpdate {
         remote_chain_selector: selector,
-        remote_pool_addresses: Bytes::from_slice(env, &[pool_byte; 20]),
+        remote_pool_addresses: vec![env, Bytes::from_slice(env, &[pool_byte; 20])],
         remote_token_address: Bytes::from_slice(env, &[token_byte; 20]),
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -534,7 +534,7 @@ fn chain_update_with_limits(
 ) -> ChainUpdate {
     ChainUpdate {
         remote_chain_selector: selector,
-        remote_pool_addresses: Bytes::from_slice(env, &[pool_byte; 20]),
+        remote_pool_addresses: vec![env, Bytes::from_slice(env, &[pool_byte; 20])],
         remote_token_address: Bytes::from_slice(env, &[token_byte; 20]),
         outbound_rate_limiter_config: outbound,
         inbound_rate_limiter_config: inbound,
@@ -555,7 +555,7 @@ fn test_apply_chain_updates_rejects_empty_remote_pool_address() {
 
     let update = ChainUpdate {
         remote_chain_selector: remote_chain,
-        remote_pool_addresses: Bytes::new(&env), // empty ⇒ rejected
+        remote_pool_addresses: Vec::new(&env), // empty ⇒ rejected
         remote_token_address: Bytes::from_slice(&env, &[2u8; 20]),
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -574,7 +574,7 @@ fn test_apply_chain_updates_rejects_empty_remote_token_address() {
 
     let update = ChainUpdate {
         remote_chain_selector: remote_chain,
-        remote_pool_addresses: Bytes::from_slice(&env, &[1u8; 20]),
+        remote_pool_addresses: vec![&env, Bytes::from_slice(&env, &[1u8; 20])],
         remote_token_address: Bytes::new(&env), // empty ⇒ rejected
         outbound_rate_limiter_config: RateLimitConfig::disabled(),
         inbound_rate_limiter_config: RateLimitConfig::disabled(),
@@ -1231,6 +1231,163 @@ fn test_release_or_mint_rejects_wrong_source_pool() {
         .unwrap_err()
         .unwrap();
     assert_eq!(e, CCIPError::InvalidSourcePoolAddress);
+}
+
+#[test]
+fn test_add_remote_pool_accepts_inbound_from_new_pool() {
+    // H-14: a second remote pool can be added to a chain's configured set
+    // without disturbing the first, and inbound `release_or_mint` from the
+    // newly-added pool is then accepted (zero-downtime migration). Mirrors EVM
+    // `TokenPool.addRemotePool` (`pools/TokenPool.sol:621`).
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        registry_client,
+        stub_client,
+        _auth_onramp,
+    ) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+    register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
+
+    let release_from = |pool_byte: u8| ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: Address::generate(&env),
+        amount: 100,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[pool_byte; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+
+    // Before adding, inbound from [9;20] is rejected.
+    assert_eq!(
+        stub_client
+            .try_release(&pool_client.address, &release_from(9), &0u32)
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::InvalidSourcePoolAddress
+    );
+
+    // Add [9;20] as a second remote pool (owner-gated; auth mocked in setup_env).
+    pool_client.add_remote_pool(&remote_chain, &Bytes::from_slice(&env, &[9u8; 20]));
+
+    // Now inbound from [9;20] succeeds, and [1;20] still succeeds.
+    assert!(stub_client
+        .try_release(&pool_client.address, &release_from(9), &0u32)
+        .unwrap()
+        .is_ok());
+    assert!(stub_client
+        .try_release(&pool_client.address, &release_from(1), &0u32)
+        .unwrap()
+        .is_ok());
+
+    // The configured set now holds both pools.
+    let pools = pool_client.get_remote_pools(&remote_chain);
+    assert_eq!(pools.len(), 2);
+}
+
+#[test]
+fn test_remove_remote_pool_rejects_inbound() {
+    // H-14: removing a remote pool from a chain's configured set causes inbound
+    // `release_or_mint` from it to revert `InvalidSourcePoolAddress`. Removing an
+    // absent pool reverts `InvalidRemotePoolAddress` (305). Mirrors EVM
+    // `TokenPool.removeRemotePool` (`pools/TokenPool.sol:635`).
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        registry_client,
+        stub_client,
+        _auth_onramp,
+    ) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+    register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
+
+    let release_from_one = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&env, &[4u8; 20]),
+        remote_chain_selector: remote_chain,
+        receiver: Address::generate(&env),
+        amount: 100,
+        local_token: token_address.clone(),
+        source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
+        source_pool_data: Bytes::new(&env),
+    };
+    // [1;20] accepted before removal.
+    assert!(stub_client
+        .try_release(&pool_client.address, &release_from_one, &0u32)
+        .unwrap()
+        .is_ok());
+
+    // Remove [1;20]; inbound from it now reverts.
+    pool_client.remove_remote_pool(&remote_chain, &Bytes::from_slice(&env, &[1u8; 20]));
+    assert_eq!(
+        stub_client
+            .try_release(&pool_client.address, &release_from_one, &0u32)
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::InvalidSourcePoolAddress
+    );
+
+    // Removing an absent pool reverts InvalidRemotePoolAddress (305).
+    assert_eq!(
+        pool_client
+            .try_remove_remote_pool(&remote_chain, &Bytes::from_slice(&env, &[1u8; 20]))
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::InvalidRemotePoolAddress
+    );
+}
+
+#[test]
+fn test_add_remote_pool_idempotent() {
+    // H-14: re-adding an already-configured remote pool is a no-op (EVM
+    // `EnumerableSet.add` parity). The set size and contents are unchanged.
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    pool_client.add_remote_pool(&remote_chain, &Bytes::from_slice(&env, &[1u8; 20]));
+    let pools = pool_client.get_remote_pools(&remote_chain);
+    assert_eq!(pools.len(), 1);
+    assert_eq!(pools.get(0).unwrap(), Bytes::from_slice(&env, &[1u8; 20]));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_apply_chain_updates_rejects_empty_remote_pool_element() {
+    // H-14 / C-2 gap: now that `remote_pool_addresses` is a `Vec<Bytes>`, the
+    // len()==0 guard only catches an empty vec — a vec containing an empty
+    // `Bytes` element would slip through and create a degenerate lane whose
+    // source-pool validation (C-3) can never match. Reject any empty pool-address
+    // element (EVM `TokenPool._validateTokenPoolConfig`).
+    let (env, pool_client, ..) = setup_env();
+    let remote_chain: u64 = 5009297550715157269;
+    let update = ChainUpdate {
+        remote_chain_selector: remote_chain,
+        remote_pool_addresses: vec![&env, Bytes::new(&env)], // single empty element
+        remote_token_address: Bytes::from_slice(&env, &[2u8; 20]),
+        outbound_rate_limiter_config: RateLimitConfig::disabled(),
+        inbound_rate_limiter_config: RateLimitConfig::disabled(),
+    };
+    pool_client.apply_chain_updates(&Vec::from_array(&env, [update]), &Vec::new(&env));
 }
 
 #[test]

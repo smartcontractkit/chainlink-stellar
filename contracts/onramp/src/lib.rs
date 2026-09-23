@@ -221,6 +221,16 @@ impl OnRampContract {
             return Err(CCIPError::CCVLengthMismatch);
         }
 
+        // Aggregate size validation against `max_data_bytes` is enforced inside
+        // `quote_gas_for_exec` (called below with the aggregate `bytesOverheadSum`
+        // = payload + CCV/pool `dest_bytes_overhead`), mirroring EVM
+        // `FeeQuoter.quoteGasForExec`'s `calldataSize > maxDataBytes` guard.
+        // `maxDataBytes` caps the aggregate byte budget (EVM's `bytesOverheadSum`
+        // includes the payload via the executor receipt plus CCV/pool overheads),
+        // so an in-limit payload can legitimately fail `MessageTooLarge` when
+        // verifier/pool overhead is large — that is EVM's intended behavior.
+        // `message.validate()` (called by the entrypoints) guards structural
+        // width (INV-ENC-11) only.
         let message_bytes = message.to_bytes(env)?;
 
         let fee_quoter = FeeQuoterClient::new(env, &dynamic_config.fee_quoter);
@@ -328,9 +338,13 @@ impl OnRampContract {
         //
         // H-5 / INV-FEE-10: the execution-gas *cost* is priced via the fee
         // quoter with NO premium (mirror EVM `OnRamp.sol:1095-1097`: exec cost is
-        // not multiplied by `percentMultiplier`; the message-fee portion already
-        // carries `get_message_fee`'s internal premium). `calldata_size = 0`
-        // because payload bytes are already priced inside `get_message_fee`.
+        // not multiplied by `percentMultiplier`). INV-FEE-14: `get_message_fee`
+        // is now network-only, so the gas + bytes-overhead cost is priced HERE,
+        // once, into the executor receipt. `calldata_size` is the EVM
+        // `bytesOverheadSum` = ΣCCV `dest_bytes_overhead` + pool
+        // `dest_bytes_overhead` + payload bytes (`OnRamp._getReceipts` sums every
+        // receipt's `destBytesOverhead`). `execution_gas_limit` (the EVM
+        // `gasLimitSum`) is unchanged and goes on-wire into `MessageV1`.
         // H-5 / INV-FEE-10 + M-10 / INV-FEE-13: price the execution gas once via
         // `quote_gas_for_exec`, unconditionally — EVM `_getReceipts` calls
         // `quoteGasForExec` for every message (OnRamp.sol L1075-1077) and only
@@ -338,7 +352,13 @@ impl OnRampContract {
         // no-exec sentinel (L1094). Calling it here regardless yields
         // `premium_multiplier` for the CCV/pool/executor-flat conversions below
         // even on the no-exec path (those fees still need the LINK discount).
-        let calldata_size: u32 = 0;
+        let mut calldata_size: u32 = message.data.len() as u32;
+        for i in 0..ccv_fee_responses.len() {
+            if let Some(r) = ccv_fee_responses.get(i) {
+                calldata_size = calldata_size.saturating_add(r.dest_bytes_overhead);
+            }
+        }
+        calldata_size = calldata_size.saturating_add(pool_dest_bytes_overhead);
         let gas_quote = fee_quoter.quote_gas_for_exec(
             &dest_chain_selector,
             &execution_gas_limit,
@@ -807,6 +827,15 @@ impl OnRampContract {
                 &extra_args.token_args,
             );
 
+            // M-15 / INV-POOL-21: the pool's `dest_pool_data` (wire `extraData`) must not
+            // exceed the `dest_bytes_overhead` that was quoted and paid for in the pool
+            // receipt — otherwise the sender pays for fewer bytes than the message carries.
+            // Mirrors EVM `OnRamp.sol:317-323` (`actualExtraDataLength > maxExtraDataLength`
+            // ⇒ `SourceTokenDataTooLarge`); equal length is allowed (strict `>`).
+            if (lock_result.dest_pool_data.len() as u32) > breakdown.pool_dest_bytes_overhead {
+                return Err(CCIPError::SourceTokenDataTooLarge);
+            }
+
             // H-13: reuse the breakdown's resolved pool-fee slice — no second
             // `get_fee` call (the fee config is unchanged by `lock_or_burn`).
             // The wire amount is the post-fee `dest_token_amount` returned by the
@@ -819,22 +848,33 @@ impl OnRampContract {
                 extra_args: extra_args.token_args.clone(),
             });
 
+            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
+            // message receiver, so the destination pool releases/mints to the same account
+            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
+            // accept this — the empty case is the default, gated only by
+            // `validate_token_receiver_allowed` above (INV-TR-3).
+            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
+                extra_args.token_receiver.clone()
+            } else {
+                message.receiver.clone()
+            };
+
+            // M-2 / INV-MSG-8 / INV-LCFG-3: validate the effective `token_receiver` length
+            // against the destination's `address_bytes_length` on send. EVM validates the
+            // token receiver in `_lockOrBurnSingleToken` via `_validateDestChainAddress(
+            // receiver, destAddressBytesLength)` (OnRamp.sol:779) — the same check applied
+            // to `message.receiver` above. When the sender specifies a non-default
+            // `token_receiver`, it must be exactly `address_bytes_length` bytes; the empty
+            // (default) case reduces to `message.receiver`, already validated.
+            Self::validate_dest_address(&dest_config, &effective_token_receiver)?;
+
             let token_transfer = CcipTokenTransferV1 {
                 version: MESSAGE_V1_VERSION,
                 amount: Self::i128_to_bytes32(&env, lock_result.dest_token_amount),
                 source_pool_address: pool_address.to_xdr(&env),
                 source_token_address: token_amount.token.clone().to_xdr(&env),
                 dest_token_address: lock_result.dest_token_address,
-                // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
-                // message receiver, so the destination pool releases/mints to the same account
-                // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
-                // accept this — the empty case is the default, gated only by
-                // `validate_token_receiver_allowed` above (INV-TR-3).
-                token_receiver: if extra_args.token_receiver.len() != 0 {
-                    extra_args.token_receiver.clone()
-                } else {
-                    message.receiver.clone()
-                },
+                token_receiver: effective_token_receiver,
                 extra_data: lock_result.dest_pool_data,
             };
             token_transfer.to_bytes(&env)?
@@ -913,7 +953,10 @@ impl OnRampContract {
             dest_gas_limit: dest_config
                 .base_execution_gas_cost
                 .saturating_add(extra_args.gas_limit),
-            dest_bytes_overhead: 0,
+            // INV-FEE-14: EVM `_getExecutionFee` sets the executor receipt's
+            // `destBytesOverhead = message.data.length` (the payload bytes priced
+            // into the executor exec-cost above). Was 0.
+            dest_bytes_overhead: message.data.len() as u32,
             fee_token_amount: (breakdown
                 .executor_flat_usd_cents
                 .checked_add(breakdown.exec_cost_usd_cents)

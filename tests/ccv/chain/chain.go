@@ -1356,7 +1356,7 @@ func (c *Chain) buildPoolChainUpdates(ds datastore.DataStore, remoteSelectors []
 		remotePoolBytes = common.LeftPadBytes(remotePoolBytes, 32)
 		updates = append(updates, tokenpoolbindings.ChainUpdate{
 			RemoteChainSelector:       rs,
-			RemotePoolAddresses:       remotePoolBytes,
+			RemotePoolAddresses:       [][]byte{remotePoolBytes},
 			RemoteTokenAddress:        remoteTokenBytes,
 			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
 			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},

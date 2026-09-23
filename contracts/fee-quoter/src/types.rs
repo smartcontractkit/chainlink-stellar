@@ -158,6 +158,23 @@ pub struct GasQuoteResult {
     pub premium_multiplier: u32,
 }
 
+/// Resolved fee-token pricing (fee-token price + premium multiplier), independent
+/// of any destination gas price.
+///
+/// Used by `get_message_fee` (network-only) and internally by `quote_gas_for_exec`
+/// so that fee-token price/premium resolution is not coupled to the gas-price
+/// load. EVM separates these: the network fee and the premium multiplier depend
+/// only on the fee-token price and the LINK-premium config, never on the
+/// destination gas price.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTokenPricing {
+    /// Fee token price in USD with 18 decimals.
+    pub fee_token_price: u128,
+    /// Premium percentage multiplier (100 = no premium, 90 = 10% discount).
+    pub premium_multiplier: u32,
+}
+
 /// Result from getting token transfer fee.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

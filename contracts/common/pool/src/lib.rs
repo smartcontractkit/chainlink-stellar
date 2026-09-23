@@ -114,31 +114,111 @@ pub trait BaseTokenPool {
         Ok(false)
     }
 
-    fn get_remote_pool(env: &Env, remote_chain_selector: u64) -> Result<Bytes, CCIPError> {
+    /// Returns the set of configured remote pool addresses for
+    /// `remote_chain_selector`. Mirrors EVM `TokenPool.getRemotePools`
+    /// (`pools/TokenPool.sol:585`).
+    fn get_remote_pools(env: &Env, remote_chain_selector: u64) -> Result<Vec<Bytes>, CCIPError> {
         let config: RemoteChainConfig = env
             .storage()
             .persistent()
             .get(&PoolDataKey::RemoteChainConfig(remote_chain_selector))
             .ok_or(CCIPError::ChainNotSupported)?;
-        Ok(config.remote_pool_address)
+        Ok(config.remote_pool_addresses)
     }
 
-    /// True iff `source_pool_address` is the configured remote pool for
+    /// True iff `source_pool_address` is a configured remote pool for
     /// `remote_chain_selector`. Mirrors EVM `TokenPool.isRemotePool`
     /// (`pools/TokenPool.sol:601`), used by `_validateReleaseOrMint` to reject
     /// inbound messages whose claimed source pool is not configured here.
-    ///
-    /// Today the store holds a single pool per chain, so this is an equality
-    /// check. When H-14 widens `RemoteChainConfig.remote_pool_address` to a
-    /// per-chain set (`Vec<Bytes>`), only this body changes to set membership —
-    /// the call sites and the `InvalidSourcePoolAddress` revert stay identical.
+    /// Set membership over the per-chain `Vec<Bytes>` (H-14).
     fn is_remote_source_pool(
         env: &Env,
         remote_chain_selector: u64,
         source_pool_address: &Bytes,
     ) -> Result<bool, CCIPError> {
-        let configured = Self::get_remote_pool(env, remote_chain_selector)?;
-        Ok(configured == *source_pool_address)
+        let configured = Self::get_remote_pools(env, remote_chain_selector)?;
+        for pool in configured.iter() {
+            if pool == *source_pool_address {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Adds a remote pool address to the configured set for a chain. Mirrors
+    /// EVM `TokenPool.addRemotePool` (`pools/TokenPool.sol:621`). Owner check is
+    /// enforced by the concrete pool's wrapper entrypoint. Idempotent: adding an
+    /// already-configured pool is a no-op (EVM parity). Emits
+    /// [`RemotePoolAddedEvent`].
+    fn add_remote_pool(
+        env: &Env,
+        remote_chain_selector: u64,
+        remote_pool_address: &Bytes,
+    ) -> Result<(), CCIPError> {
+        if !Self::is_supported_chain(env, remote_chain_selector)? {
+            return Err(CCIPError::ChainNotSupported);
+        }
+        if Self::is_remote_source_pool(env, remote_chain_selector, remote_pool_address)? {
+            return Ok(());
+        }
+        let key = PoolDataKey::RemoteChainConfig(remote_chain_selector);
+        let mut config: RemoteChainConfig = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(CCIPError::ChainNotSupported)?;
+        config
+            .remote_pool_addresses
+            .push_back(remote_pool_address.clone());
+        env.storage().persistent().set(&key, &config);
+
+        RemotePoolAddedEvent {
+            remote_chain_selector,
+            remote_pool_address: remote_pool_address.clone(),
+        }
+        .publish(env);
+        Ok(())
+    }
+
+    /// Removes a remote pool address from the configured set for a chain.
+    /// Mirrors EVM `TokenPool.removeRemotePool` (`pools/TokenPool.sol:635`).
+    /// Owner check is enforced by the concrete pool's wrapper entrypoint.
+    /// Reverts [`CCIPError::InvalidRemotePoolAddress`] if the pool is not
+    /// configured. Emits [`RemotePoolRemovedEvent`].
+    fn remove_remote_pool(
+        env: &Env,
+        remote_chain_selector: u64,
+        remote_pool_address: &Bytes,
+    ) -> Result<(), CCIPError> {
+        if !Self::is_supported_chain(env, remote_chain_selector)? {
+            return Err(CCIPError::ChainNotSupported);
+        }
+        let key = PoolDataKey::RemoteChainConfig(remote_chain_selector);
+        let mut config: RemoteChainConfig = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(CCIPError::ChainNotSupported)?;
+
+        let mut found_index: Option<u32> = None;
+        for (i, pool) in config.remote_pool_addresses.iter().enumerate() {
+            if pool == *remote_pool_address {
+                found_index = Some(i as u32);
+                break;
+            }
+        }
+        let Some(i) = found_index else {
+            return Err(CCIPError::InvalidRemotePoolAddress);
+        };
+        config.remote_pool_addresses.remove(i);
+        env.storage().persistent().set(&key, &config);
+
+        RemotePoolRemovedEvent {
+            remote_chain_selector,
+            remote_pool_address: remote_pool_address.clone(),
+        }
+        .publish(env);
+        Ok(())
     }
 
     fn get_remote_token(env: &Env, remote_chain_selector: u64) -> Result<Bytes, CCIPError> {
@@ -395,9 +475,21 @@ pub trait BaseTokenPool {
             if update.remote_pool_addresses.len() == 0 || update.remote_token_address.len() == 0 {
                 return Err(CCIPError::InvalidConfig);
             }
+            // H-14 / C-2 gap: now that `remote_pool_addresses` is a `Vec<Bytes>`,
+            // the `len() == 0` guard above only catches an empty vec — a vec
+            // containing an empty `Bytes` element would slip through and create a
+            // degenerate lane whose source-pool validation (C-3) can never match.
+            // Reject any empty pool-address element (EVM
+            // `TokenPool._validateTokenPoolConfig` requires non-empty remote pool
+            // addresses).
+            for pool in update.remote_pool_addresses.iter() {
+                if pool.len() == 0 {
+                    return Err(CCIPError::InvalidConfig);
+                }
+            }
 
             let config = RemoteChainConfig {
-                remote_pool_address: update.remote_pool_addresses.clone(),
+                remote_pool_addresses: update.remote_pool_addresses.clone(),
                 remote_token_address: update.remote_token_address.clone(),
             };
             env.storage().persistent().set(
@@ -429,7 +521,7 @@ pub trait BaseTokenPool {
 
             ChainConfiguredEvent {
                 remote_chain_selector: update.remote_chain_selector,
-                remote_pool_address: update.remote_pool_addresses.clone(),
+                remote_pool_addresses: update.remote_pool_addresses.clone(),
                 remote_token_address: update.remote_token_address.clone(),
                 outbound_rate_limiter_config: update.outbound_rate_limiter_config.clone(),
                 inbound_rate_limiter_config: update.inbound_rate_limiter_config.clone(),

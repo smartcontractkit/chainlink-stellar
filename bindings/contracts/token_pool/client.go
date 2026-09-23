@@ -278,26 +278,66 @@ func (c *TokenPoolClient) GetTokenDecimals(ctx context.Context) (uint32, error) 
 	return uint32(v), nil
 }
 
-// GetRemotePool calls the get_remote_pool function on the contract.
-func (c *TokenPoolClient) GetRemotePool(ctx context.Context, remoteChainSelector uint64) ([]byte, error) {
+// AddRemotePool calls the add_remote_pool function on the contract.
+func (c *TokenPoolClient) AddRemotePool(ctx context.Context, remoteChainSelector uint64, remotePoolAddress []byte) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+		scval.BytesToScVal(remotePoolAddress),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "add_remote_pool", args)
+	if err != nil {
+		return fmt.Errorf("failed to call add_remote_pool: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// RemoveRemotePool calls the remove_remote_pool function on the contract.
+func (c *TokenPoolClient) RemoveRemotePool(ctx context.Context, remoteChainSelector uint64, remotePoolAddress []byte) error {
+	args := []xdr.ScVal{
+		scval.Uint64ToScVal(remoteChainSelector),
+		scval.BytesToScVal(remotePoolAddress),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "remove_remote_pool", args)
+	if err != nil {
+		return fmt.Errorf("failed to call remove_remote_pool: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetRemotePools calls the get_remote_pools function on the contract.
+func (c *TokenPoolClient) GetRemotePools(ctx context.Context, remoteChainSelector uint64) ([][]byte, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(remoteChainSelector),
 	}
 
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_pool", args)
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_remote_pools", args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call get_remote_pool: %w", err)
+		return nil, fmt.Errorf("failed to call get_remote_pools: %w", err)
 	}
 
 	if result == nil {
-		return nil, fmt.Errorf("no return value from get_remote_pool")
+		return nil, fmt.Errorf("no return value from get_remote_pools")
 	}
 
-	v, ok := result.GetBytes()
-	if !ok {
-		return nil, fmt.Errorf("expected bytes return type")
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
 	}
-	return []byte(v), nil
+	out := make([][]byte, len(*vec))
+	for i, item := range *vec {
+		v, ok := item.GetBytes()
+		if !ok {
+			return nil, fmt.Errorf("vec item is not bytes")
+		}
+		out[i] = []byte(v)
+	}
+	return out, nil
 }
 
 // GetRemoteToken calls the get_remote_token function on the contract.

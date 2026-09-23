@@ -219,7 +219,7 @@ fn add_chain(env: &Env, pool: &SiloedLockReleaseTokenPoolContractClient, selecto
             env,
             ChainUpdate {
                 remote_chain_selector: selector,
-                remote_pool_addresses: Bytes::from_slice(env, &[0xaa; 32]),
+                remote_pool_addresses: vec![env, Bytes::from_slice(env, &[0xaa; 32])],
                 remote_token_address: Bytes::from_slice(env, &[0xbb; 32]),
                 outbound_rate_limiter_config: disabled_rl(),
                 inbound_rate_limiter_config: disabled_rl(),
@@ -538,7 +538,7 @@ fn unconfigured_lockbox_rejects_lock() {
             &env,
             ChainUpdate {
                 remote_chain_selector: REMOTE_CHAIN,
-                remote_pool_addresses: remote_pool,
+                remote_pool_addresses: vec![&env, remote_pool],
                 remote_token_address: remote_token,
                 outbound_rate_limiter_config: disabled_rl(),
                 inbound_rate_limiter_config: disabled_rl(),
@@ -1010,6 +1010,139 @@ fn release_rejects_wrong_source_pool() {
         .stub_client
         .try_release(&t.pool_client.address, &release_in, &0);
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidSourcePoolAddress);
+}
+
+#[test]
+fn add_remote_pool_accepts_inbound_from_new_pool() {
+    // H-14: a second remote pool can be added to REMOTE_CHAIN's set and inbound
+    // `release_or_mint` from it then passes the source-pool membership check
+    // (zero-downtime migration). Mirrors EVM `TokenPool.addRemotePool`
+    // (`pools/TokenPool.sol:621`). `setup()` configures REMOTE_CHAIN with
+    // [0xaa;32]; siloed lock-release needs lockbox liquidity to fully release,
+    // so we assert the membership check passes (the error is no longer
+    // `InvalidSourcePoolAddress`), which is what H-14 changes.
+    let t = setup();
+    let release_from = |pool_bytes: [u8; 32]| {
+        t.stub_client.try_release(
+            &t.pool_client.address,
+            &ReleaseOrMintIn {
+                original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+                remote_chain_selector: REMOTE_CHAIN,
+                receiver: Address::generate(&t.env),
+                amount: 100,
+                local_token: t.token_addr.clone(),
+                source_pool_address: Bytes::from_slice(&t.env, &pool_bytes),
+                source_pool_data: Bytes::new(&t.env),
+            },
+            &0,
+        )
+    };
+
+    // Before adding, inbound from [0x99;32] fails the membership check.
+    assert_eq!(
+        release_from([0x99; 32]).unwrap_err().unwrap(),
+        CCIPError::InvalidSourcePoolAddress
+    );
+
+    // Add [0x99;32] as a second remote pool.
+    t.pool_client
+        .add_remote_pool(&REMOTE_CHAIN, &Bytes::from_slice(&t.env, &[0x99; 32]));
+
+    // After adding, the membership check passes for [0x99;32] (the error is no
+    // longer InvalidSourcePoolAddress) and [0xaa;32] still passes.
+    assert!(!matches!(
+        release_from([0x99; 32]),
+        Err(Ok(CCIPError::InvalidSourcePoolAddress))
+    ));
+    assert!(!matches!(
+        release_from([0xaa; 32]),
+        Err(Ok(CCIPError::InvalidSourcePoolAddress))
+    ));
+
+    let pools = t.pool_client.get_remote_pools(&REMOTE_CHAIN);
+    assert_eq!(pools.len(), 2);
+}
+
+#[test]
+fn remove_remote_pool_rejects_inbound() {
+    // H-14: removing a remote pool causes inbound from it to fail the membership
+    // check again; removing an absent pool returns `InvalidRemotePoolAddress`
+    // (305). Mirrors EVM `TokenPool.removeRemotePool` (`pools/TokenPool.sol:635`).
+    let t = setup();
+    let release_from_aa = || {
+        t.stub_client.try_release(
+            &t.pool_client.address,
+            &ReleaseOrMintIn {
+                original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+                remote_chain_selector: REMOTE_CHAIN,
+                receiver: Address::generate(&t.env),
+                amount: 100,
+                local_token: t.token_addr.clone(),
+                source_pool_address: Bytes::from_slice(&t.env, &[0xaa; 32]),
+                source_pool_data: Bytes::new(&t.env),
+            },
+            &0,
+        )
+    };
+
+    // [0xaa;32] passes the membership check before removal.
+    assert!(!matches!(
+        release_from_aa(),
+        Err(Ok(CCIPError::InvalidSourcePoolAddress))
+    ));
+
+    // Remove [0xaa;32]; inbound from it now fails the membership check.
+    t.pool_client
+        .remove_remote_pool(&REMOTE_CHAIN, &Bytes::from_slice(&t.env, &[0xaa; 32]));
+    assert_eq!(
+        release_from_aa().unwrap_err().unwrap(),
+        CCIPError::InvalidSourcePoolAddress
+    );
+
+    // Removing an absent pool returns InvalidRemotePoolAddress (305).
+    assert_eq!(
+        t.pool_client
+            .try_remove_remote_pool(&REMOTE_CHAIN, &Bytes::from_slice(&t.env, &[0xaa; 32]))
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::InvalidRemotePoolAddress
+    );
+}
+
+#[test]
+fn add_remote_pool_idempotent() {
+    // H-14: re-adding an already-configured remote pool is a no-op (EVM
+    // `EnumerableSet.add` parity).
+    let t = setup();
+    t.pool_client
+        .add_remote_pool(&REMOTE_CHAIN, &Bytes::from_slice(&t.env, &[0xaa; 32]));
+    let pools = t.pool_client.get_remote_pools(&REMOTE_CHAIN);
+    assert_eq!(pools.len(), 1);
+    assert_eq!(
+        pools.get(0).unwrap(),
+        Bytes::from_slice(&t.env, &[0xaa; 32])
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn apply_chain_updates_rejects_empty_remote_pool_element() {
+    // H-14 / C-2 gap: a `Vec<Bytes>` containing an empty `Bytes` element must be
+    // rejected (the len()==0 guard only catches an empty vec).
+    let t = setup();
+    t.pool_client.apply_chain_updates(
+        &vec![
+            &t.env,
+            ChainUpdate {
+                remote_chain_selector: REMOTE_CHAIN,
+                remote_pool_addresses: vec![&t.env, Bytes::new(&t.env)], // single empty element
+                remote_token_address: Bytes::from_slice(&t.env, &[0xbb; 32]),
+                outbound_rate_limiter_config: disabled_rl(),
+                inbound_rate_limiter_config: disabled_rl(),
+            },
+        ],
+        &Vec::new(&t.env),
+    );
 }
 
 // ============================================================
