@@ -357,9 +357,13 @@ fn require_owner_auth(env: &Env, caller: &Address) -> Result<(), CCIPError> {
 }
 
 fn validate_ccv_config_update(u: &CcvConfigUpdate) -> Result<(), CCIPError> {
+    // EVM `CCVConfigValidation` rejects only `optionalThreshold > optionalCCVs.length`;
+    // a threshold equal to the list length (1-of-1, N-of-N — "require all optionals")
+    // is valid. Using `>=` here would reject that legitimate policy (matches the
+    // offramp's own `merge_receiver_ccvs` `>` check, lib.rs:754).
     let olen = u.optional_ccvs.len();
     if olen > 0 {
-        if u.optional_threshold >= olen {
+        if u.optional_threshold > olen {
             return Err(CCIPError::InvalidConfig);
         }
     } else if u.optional_threshold > 0 {

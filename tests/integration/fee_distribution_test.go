@@ -52,15 +52,24 @@ func TestOnRampFeeDistribution(t *testing.T) {
 	feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-fee")
 	sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-bridge")
 
+	// Pool + lockbox for the bridged token, wired to the remote dest chain. The pool
+	// receives the pool-fee slice at send time (H-3) — asserted in the token subtest.
+	//
+	// MUST run before deployOutboundSendWire: deployTokenPool creates the stack's
+	// shared RampRegistry (and sets stack.RampRegistryClient), while the wire only
+	// registers the OnRamp into it when that client is already non-nil. Deploying the
+	// wire first leaves the pool's registry with no OnRamp for the dest chain, so the
+	// pool's require_authorized_onramp → get_onramp(dest) reverts
+	// UnsupportedDestinationChain (#63) inside lock_or_burn. Mirrors token_pool_test.go,
+	// which deploys the pool before the wire for the same reason.
+	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-bridge-pool", sacToken, remoteDestChain)
+
 	// One wire priced for both sends: the fee token is always priced; sacToken is
 	// registered as a transferable token so the FeeQuoter prices it + applies its
 	// TokenTransferFeeConfig (the pool-fee slice) on the token send.
 	wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
 		localSourceChain, remoteDestChain, feeToken, []string{sacToken})
 
-	// Pool + lockbox for the bridged token, wired to the remote dest chain. The pool
-	// receives the pool-fee slice at send time (H-3) — asserted in the token subtest.
-	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-bridge-pool", sacToken, remoteDestChain)
 	remotePool := make([]byte, 20)
 	remoteToken := make([]byte, 20)
 	for i := range remotePool {

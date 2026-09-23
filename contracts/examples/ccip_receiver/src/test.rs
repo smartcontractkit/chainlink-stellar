@@ -194,15 +194,42 @@ fn apply_ccv_config_rejects_invalid_optional_threshold() {
 
     let o1 = Address::generate(&env);
     let o2 = Address::generate(&env);
-    // optional_threshold >= optional.len() is invalid (EVM parity)
+    // optional_threshold > optional.len() is invalid (EVM parity). threshold == len
+    // (require-all-optionals) is valid — see validate_ccv_config_update.
     let upd = CcvConfigUpdate {
         source_chain_selector: 42,
         required_ccvs: vec![&env],
         optional_ccvs: vec![&env, o1, o2],
-        optional_threshold: 2,
+        optional_threshold: 3, // 3 > len(2) ⇒ rejected
     };
     let r = client.try_apply_ccv_config_updates(&owner, &vec![&env, upd]);
     assert!(r.is_err());
+}
+
+#[test]
+fn apply_ccv_config_accepts_threshold_equal_to_optional_len() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
+    client.initialize(&owner, &router);
+
+    let o1 = Address::generate(&env);
+    let o2 = Address::generate(&env);
+    // threshold == optional.len() (N-of-N, require all optionals) is valid (EVM parity).
+    let upd = CcvConfigUpdate {
+        source_chain_selector: 42,
+        required_ccvs: vec![&env],
+        optional_ccvs: vec![&env, o1, o2],
+        optional_threshold: 2, // 2 == len(2) ⇒ accepted
+    };
+    client.apply_ccv_config_updates(&owner, &vec![&env, upd]);
+    let cfg = client.get_ccv_config(&42);
+    assert_eq!(cfg.optional_ccvs.len(), 2);
+    assert_eq!(cfg.optional_threshold, 2);
 }
 
 #[test]
