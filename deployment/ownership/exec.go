@@ -33,7 +33,10 @@ func ExecuteTransferOwnership(
 	ref datastore.AddressRef,
 	newOwner string,
 ) error {
-	cid := ref.Address
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return fmt.Errorf("stellar transfer ownership: %w", err)
+	}
 	ct := string(ref.Type)
 	switch ct {
 	case mcmsops.ContractType:
@@ -94,7 +97,10 @@ func ExecuteTransferOwnership(
 
 // ExecuteAcceptOwnership runs the Soroban accept_ownership op for the contract type in ref.
 func ExecuteAcceptOwnership(b cldfops.Bundle, deps stellardeps.StellarDeps, ref datastore.AddressRef) error {
-	cid := ref.Address
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return fmt.Errorf("stellar accept ownership: %w", err)
+	}
 	ct := string(ref.Type)
 	switch ct {
 	case mcmsops.ContractType:
@@ -162,7 +168,10 @@ func ExecuteApplyCurseAdminUpdates(
 	ref datastore.AddressRef,
 	added, removed []string,
 ) error {
-	cid := ref.Address
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return fmt.Errorf("stellar apply curse admin updates: %w", err)
+	}
 	ct := string(ref.Type)
 	switch ct {
 	case rmnremote.ContractType:
