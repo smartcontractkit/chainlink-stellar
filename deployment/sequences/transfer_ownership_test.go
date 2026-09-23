@@ -8,8 +8,10 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stretchr/testify/require"
 )
@@ -163,4 +165,92 @@ func TestStellarAcceptOwnership_EmptyContractRefsReturnsNoBatchOps(t *testing.T)
 	out, err := cldf_ops.ExecuteSequence(b, StellarAcceptOwnership, chains, in)
 	require.NoError(t, err)
 	require.Empty(t, out.Output.BatchOps)
+}
+
+func TestStellarTransferOwnershipViaMCMS_NormalizesHexContractRef(t *testing.T) {
+	t.Parallel()
+	b := newTestBundle(t)
+	sel := uint64(424242420030)
+	ch := cldf_stellar.Chain{
+		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
+		Signer:            testStellarSigner{addr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+		NetworkPassphrase: "Standalone Network ; February 2017",
+	}
+	chains := cldf_chain.NewBlockChains(map[uint64]cldf_chain.BlockChain{sel: ch})
+
+	// The datastore records deployed contracts as hex; the ops and the proposal
+	// To must receive the strkey. The unsupported type makes the owner read fail
+	// right after normalization, so the error names the address form it saw.
+	strkeyAddr := stellarutil.MustGenerateMockContractID("deployer", "transfer-hex-ref-test")
+	hexForm, err := stellarutil.StrkeyToHex(strkeyAddr)
+	require.NoError(t, err)
+
+	in := StellarTransferOwnershipInput{
+		TransferOwnershipPerChainInput: deploy.TransferOwnershipPerChainInput{
+			ChainSelector: sel,
+			ContractRef:   []datastore.AddressRef{{Address: hexForm, Type: "UnsupportedType"}},
+			ProposedOwner: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+		},
+		GovernanceAddr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+	}
+	_, err = cldf_ops.ExecuteSequence(b, StellarTransferOwnershipViaMCMS, chains, in)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read owner "+strkeyAddr,
+		"the hex form must be normalized to the strkey before anything else sees it")
+	require.NotContains(t, err.Error(), hexForm)
+}
+
+func TestStellarTransferOwnershipViaMCMS_RejectsUnknownAddressForm(t *testing.T) {
+	t.Parallel()
+	b := newTestBundle(t)
+	sel := uint64(424242420031)
+	ch := cldf_stellar.Chain{
+		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
+		Signer:            testStellarSigner{addr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+		NetworkPassphrase: "Standalone Network ; February 2017",
+	}
+	chains := cldf_chain.NewBlockChains(map[uint64]cldf_chain.BlockChain{sel: ch})
+
+	in := StellarTransferOwnershipInput{
+		TransferOwnershipPerChainInput: deploy.TransferOwnershipPerChainInput{
+			ChainSelector: sel,
+			ContractRef:   []datastore.AddressRef{{Address: "garbage", Type: "UnsupportedType"}},
+			ProposedOwner: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+		},
+		GovernanceAddr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+	}
+	_, err := cldf_ops.ExecuteSequence(b, StellarTransferOwnershipViaMCMS, chains, in)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "neither a contract strkey nor the hex form")
+	require.NotContains(t, err.Error(), "read owner",
+		"an unusable address must fail before any contract read is attempted")
+}
+
+func TestStellarAcceptOwnership_NormalizesHexContractRef(t *testing.T) {
+	t.Parallel()
+	b := newTestBundle(t)
+	sel := uint64(424242420032)
+	ch := cldf_stellar.Chain{
+		ChainMetadata:     cldf_stellar.ChainMetadata{Selector: sel},
+		Signer:            testStellarSigner{addr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+		NetworkPassphrase: "Standalone Network ; February 2017",
+	}
+	chains := cldf_chain.NewBlockChains(map[uint64]cldf_chain.BlockChain{sel: ch})
+
+	strkeyAddr := stellarutil.MustGenerateMockContractID("deployer", "accept-hex-ref-test")
+	hexForm, err := stellarutil.StrkeyToHex(strkeyAddr)
+	require.NoError(t, err)
+
+	in := StellarTransferOwnershipInput{
+		TransferOwnershipPerChainInput: deploy.TransferOwnershipPerChainInput{
+			ChainSelector: sel,
+			ContractRef:   []datastore.AddressRef{{Address: hexForm, Type: "UnsupportedType"}},
+			ProposedOwner: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+		},
+		GovernanceAddr: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+	}
+	_, err = cldf_ops.ExecuteSequence(b, StellarAcceptOwnership, chains, in)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read owner "+strkeyAddr)
+	require.NotContains(t, err.Error(), hexForm)
 }

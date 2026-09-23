@@ -55,9 +55,13 @@ func optionalStellarOwner(o *string) (string, error) {
 // implicitly curse-authorized on chain but is never inserted into it, and
 // nothing filters it out — treat the owner as authorized independently of the
 // list. Only RMN Remote supports curse admins; other contract types error.
-// The ref address must be the contract strkey.
+// The ref address may be the contract strkey or the hex form the datastore
+// records; it is normalized to the strkey the bindings require.
 func CurseAdmins(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) ([]string, error) {
-	cid := ref.Address
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return nil, fmt.Errorf("stellar curse admins: %w", err)
+	}
 	switch string(ref.Type) {
 	case rmnremoteops.ContractType:
 		return rmnremotebindings.NewRmnRemoteClient(deps.Invoker, cid).GetCurseAdmins(ctx)
@@ -67,8 +71,13 @@ func CurseAdmins(ctx context.Context, deps stellardeps.StellarDeps, ref datastor
 }
 
 // ContractOwner returns the current owner address string for a Soroban CCIP contract ref (simulation read).
+// The ref address may be the contract strkey or the hex form the datastore records; it is
+// normalized to the strkey the bindings require.
 func ContractOwner(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) (string, error) {
-	cid := ref.Address
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return "", fmt.Errorf("stellar ownership: %w", err)
+	}
 	switch string(ref.Type) {
 	case mcmsops.ContractType:
 		o, err := mcmsbindings.NewMcmsClient(deps.Invoker, cid).Owner(ctx)

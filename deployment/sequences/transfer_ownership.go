@@ -52,6 +52,13 @@ var StellarTransferOwnershipViaMCMS = cldfops.NewSequence(
 		ctx := b.GetContext()
 
 		for _, ref := range in.ContractRef {
+			// Recorded refs may carry the hex form; the ops and the proposal To
+			// below need the strkey, so normalize once up front.
+			cid, err := ownership.NormalizeContractAddress(ref.Address)
+			if err != nil {
+				return output, fmt.Errorf("transfer ownership on chain %d: %w", in.ChainSelector, err)
+			}
+			ref.Address = cid
 			owner, err := ownership.ContractOwner(ctx, deps, ref)
 			if err != nil {
 				return output, fmt.Errorf("read owner %s: %w", ref.Address, err)
@@ -121,6 +128,13 @@ var StellarAcceptOwnership = cldfops.NewSequence(
 		ctx := b.GetContext()
 
 		for _, ref := range in.ContractRef {
+			// Recorded refs may carry the hex form; the ops and the proposal To
+			// below need the strkey, so normalize once up front.
+			cid, err := ownership.NormalizeContractAddress(ref.Address)
+			if err != nil {
+				return output, fmt.Errorf("accept ownership on chain %d: %w", in.ChainSelector, err)
+			}
+			ref.Address = cid
 			owner, err := ownership.ContractOwner(ctx, deps, ref)
 			if err != nil {
 				return output, fmt.Errorf("read owner %s: %w", ref.Address, err)
