@@ -1,5 +1,5 @@
 use common_error::CCIPError;
-use common_helpers::validation::Validatable;
+use common_helpers::validation::{assert_ccv_set_valid, Validatable};
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Vec};
 
 // ============================================================
@@ -96,9 +96,27 @@ impl Validatable for SourceChainConfigArgs {
             return Err(CCIPError::InvalidSourceChainConfig);
         }
 
-        if self.default_ccvs.is_empty() && self.lane_mandated_ccvs.is_empty() {
+        // H-11 / INV-CFG-5: the OffRamp requires a non-empty default CCV set —
+        // the lane's fallback verification set (EVM `OffRamp
+        // .applySourceChainConfigUpdates` mandates non-empty
+        // `defaultRmnConfirmedCCVs`). Lane-mandated CCVs alone do not satisfy
+        // this; defaults must always be configured. (This subsumes the old
+        // "both lists empty" rejection.)
+        if self.default_ccvs.is_empty() {
             return Err(CCIPError::InvalidSourceChainConfig);
         }
+
+        // H-11 / INV-CFG-7: reject duplicate CCVs within either list, and a CCV
+        // present in both the default and lane-mandated sets (EVM
+        // `CCVConfigValidation._assertNoDuplicates`). Cross-list overlap surfaces
+        // as `InvalidSourceChainConfig` on the OffRamp. (INV-CFG-6 zero-value
+        // rejection is satisfied by construction on Soroban — `Address` has no
+        // zero form.)
+        assert_ccv_set_valid(
+            &self.default_ccvs,
+            &self.lane_mandated_ccvs,
+            CCIPError::InvalidSourceChainConfig,
+        )?;
 
         Ok(())
     }
