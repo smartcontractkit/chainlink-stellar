@@ -126,6 +126,20 @@ func ParseCCIPMessageSentEvent(e protocolrpc.EventInfo) (*CCIPMessageSentEvent, 
 	return result, nil
 }
 
+// eventScanLookback is the number of ledgers subtracted from the caller-supplied
+// startLedger before scanning, so a just-emitted event is always within range.
+//
+// Callers (ConfirmSendOnSource, WaitForCCIPMessageSentEvent,
+// waitForExecutionStateChangedEvent) capture latestLedger AFTER the write that
+// emits the event has been awaited to inclusion (Deployer.InvokeContract blocks
+// on waitForTransaction). On a fast localnet a new ledger can close between that
+// inclusion and the latestLedger read, so the event lands at ledger L while the
+// forward-only GetEvents(StartLedger: L+1) scan never returns it — a flaky
+// "timeout waiting for event". Scanning from a few ledgers earlier closes that
+// gap; the filter (message ID or monotonic sequence number) is unique, so the
+// lookback cannot match a stale event from a different send.
+const eventScanLookback uint32 = 10
+
 // waitForSorobanEvent polls a contract for events matching topic from
 // startLedger to the latest ledger, returning the first parsed event accepted
 // by filter (nil filter accepts any).
@@ -138,6 +152,14 @@ func waitForSorobanEvent[T any](
 	parse func(protocolrpc.EventInfo) (*T, error),
 	filter func(*T) bool,
 ) (*T, error) {
+	// Absorb the inclusion/capture gap (see eventScanLookback). Guard uint32
+	// underflow for the rare case of a very early network ledger.
+	if startLedger > eventScanLookback {
+		startLedger -= eventScanLookback
+	} else {
+		startLedger = 1
+	}
+
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
