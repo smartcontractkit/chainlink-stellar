@@ -295,6 +295,21 @@ patch_ramp_registry_interfaces() {
   ' "$f"
 }
 
+# advanced_pool_hooks references LockOrBurnIn / ReleaseOrMintIn / MessageDirection /
+# PoolRequiredCCVs (defined in the token_pool interface, linked via common-pool) in its
+# hook method signatures, but its own wasm spec does not embed those external type
+# definitions, so prune_interface drops them and the Go generator emits undefined types.
+# Insert the canonical definitions (mirroring token_pool.rs / burn_mint_pool.rs) if absent.
+patch_advanced_pool_hooks_interfaces() {
+  local f="$1"
+  perl -i -0pe '
+    unless (/pub struct LockOrBurnIn/s) {
+      my $types = "#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PoolRequiredCCVs {\n    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub include_defaults: bool,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum MessageDirection {\n    Outbound,\n    Inbound,\n}\n";
+      s/(\n\}\n)((?:#\[[^\n]*\]\n)+pub struct CCVConfig)/$1 . $types . $2/se;
+    }
+  ' "$f"
+}
+
 do_build=true
 for arg in "$@"; do
   case "$arg" in
@@ -343,6 +358,9 @@ for entry in "${CONTRACTS[@]}"; do
   fi
   if [[ "$output_module" == "rmn_remote" ]]; then
     patch_rmn_remote_interfaces "$out_path"
+  fi
+  if [[ "$output_module" == "advanced_pool_hooks" ]]; then
+    patch_advanced_pool_hooks_interfaces "$out_path"
   fi
 done
 

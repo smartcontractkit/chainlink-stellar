@@ -60,6 +60,39 @@ pub trait AdvancedPoolHooksInterface {
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PoolRequiredCCVs {
+    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub include_defaults: bool,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct LockOrBurnIn {
+    pub receiver: soroban_sdk::Bytes,
+    pub remote_chain_selector: u64,
+    pub original_sender: soroban_sdk::Address,
+    pub amount: i128,
+    pub local_token: soroban_sdk::Address,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ReleaseOrMintIn {
+    pub original_sender: soroban_sdk::Bytes,
+    pub remote_chain_selector: u64,
+    pub receiver: soroban_sdk::Address,
+    /// Source-denominated amount (EVM `sourceDenominatedAmount`).
+    pub amount: i128,
+    pub local_token: soroban_sdk::Address,
+    pub source_pool_address: soroban_sdk::Bytes,
+    pub source_pool_data: soroban_sdk::Bytes,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum MessageDirection {
+    Outbound,
+    Inbound,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCVConfig {
     pub inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub inbound_include_defaults: bool,

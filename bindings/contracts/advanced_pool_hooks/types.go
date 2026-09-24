@@ -9,6 +9,218 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// PoolRequiredCCVs represents the PoolRequiredCCVs struct from the contract.
+type PoolRequiredCCVs struct {
+	Ccvs            []string
+	IncludeDefaults bool
+}
+
+// ToScVal converts PoolRequiredCCVs to an xdr.ScVal for contract calls.
+func (s PoolRequiredCCVs) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"ccvs":             scval.AddressSliceToScVal(s.Ccvs),
+		"include_defaults": scval.BoolToScVal(s.IncludeDefaults),
+	})
+}
+
+// PoolRequiredCCVsFromScVal parses an xdr.ScVal into PoolRequiredCCVs.
+func PoolRequiredCCVsFromScVal(val xdr.ScVal) (*PoolRequiredCCVs, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PoolRequiredCCVs{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "ccvs":
+			vec, ok := entry.Val.GetVec()
+			if !ok || vec == nil {
+				return nil, fmt.Errorf("ccvs is not a vec")
+			}
+			result.Ccvs = make([]string, len(*vec))
+			for i, item := range *vec {
+				v, err := scval.AddressFromScVal(item)
+				if err != nil {
+					return nil, err
+				}
+				result.Ccvs[i] = v
+			}
+		case "include_defaults":
+			v, ok := entry.Val.GetB()
+			if !ok {
+				return nil, fmt.Errorf("include_defaults is not bool")
+			}
+			result.IncludeDefaults = v
+		}
+	}
+
+	return result, nil
+}
+
+// LockOrBurnIn represents the LockOrBurnIn struct from the contract.
+type LockOrBurnIn struct {
+	Receiver            []byte
+	RemoteChainSelector uint64
+	OriginalSender      string
+	Amount              *big.Int
+	LocalToken          string
+}
+
+// ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
+func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"receiver":              scval.BytesToScVal(s.Receiver),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+		"original_sender":       scval.AddressToScVal(s.OriginalSender),
+		"amount":                scval.I128ToScVal(s.Amount),
+		"local_token":           scval.AddressToScVal(s.LocalToken),
+	})
+}
+
+// LockOrBurnInFromScVal parses an xdr.ScVal into LockOrBurnIn.
+func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &LockOrBurnIn{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "receiver":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("receiver is not bytes")
+			}
+			result.Receiver = []byte(v)
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
+		case "original_sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("original_sender: %w", err)
+			}
+			result.OriginalSender = v
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("amount: %w", err)
+			}
+			result.Amount = v
+		case "local_token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("local_token: %w", err)
+			}
+			result.LocalToken = v
+		}
+	}
+
+	return result, nil
+}
+
+// ReleaseOrMintIn represents the ReleaseOrMintIn struct from the contract.
+type ReleaseOrMintIn struct {
+	OriginalSender      []byte
+	RemoteChainSelector uint64
+	Receiver            string
+	Amount              *big.Int
+	LocalToken          string
+	SourcePoolAddress   []byte
+	SourcePoolData      []byte
+}
+
+// ToScVal converts ReleaseOrMintIn to an xdr.ScVal for contract calls.
+func (s ReleaseOrMintIn) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"original_sender":       scval.BytesToScVal(s.OriginalSender),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+		"receiver":              scval.AddressToScVal(s.Receiver),
+		"amount":                scval.I128ToScVal(s.Amount),
+		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"source_pool_address":   scval.BytesToScVal(s.SourcePoolAddress),
+		"source_pool_data":      scval.BytesToScVal(s.SourcePoolData),
+	})
+}
+
+// ReleaseOrMintInFromScVal parses an xdr.ScVal into ReleaseOrMintIn.
+func ReleaseOrMintInFromScVal(val xdr.ScVal) (*ReleaseOrMintIn, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &ReleaseOrMintIn{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "original_sender":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("original_sender is not bytes")
+			}
+			result.OriginalSender = []byte(v)
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
+		case "receiver":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("receiver: %w", err)
+			}
+			result.Receiver = v
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("amount: %w", err)
+			}
+			result.Amount = v
+		case "local_token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("local_token: %w", err)
+			}
+			result.LocalToken = v
+		case "source_pool_address":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("source_pool_address is not bytes")
+			}
+			result.SourcePoolAddress = []byte(v)
+		case "source_pool_data":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("source_pool_data is not bytes")
+			}
+			result.SourcePoolData = []byte(v)
+		}
+	}
+
+	return result, nil
+}
+
 // CCVConfig represents the CCVConfig struct from the contract.
 type CCVConfig struct {
 	InboundCcvs             []string
@@ -601,51 +813,24 @@ type ThresholdAmountSetEvent struct {
 // ThresholdAmountSetEventTopic is the event topic identifier.
 const ThresholdAmountSetEventTopic = "aph_ThresholdAmountSet"
 
-// AllowListAddEvent represents the AllowListAddEvent event.
-// Topics: [aph_AllowListAdd]
-type AllowListAddEvent struct {
-	Sender string
-	// Event metadata
-	Ledger uint32
-	TxHash string
+// MessageDirection represents the MessageDirection enum (unit-only Soroban contracttype, encoded as ScVal::U32).
+type MessageDirection uint32
+
+const (
+	MessageDirectionOutbound MessageDirection = 0
+	MessageDirectionInbound  MessageDirection = 1
+)
+
+// ToScVal converts MessageDirection to an xdr.ScVal.
+func (e MessageDirection) ToScVal() (xdr.ScVal, error) {
+	return scval.Uint32ToScVal(uint32(e)), nil
 }
 
-// AllowListAddEventTopic is the event topic identifier.
-const AllowListAddEventTopic = "aph_AllowListAdd"
-
-// AllowListRemoveEvent represents the AllowListRemoveEvent event.
-// Topics: [aph_AllowListRemove]
-type AllowListRemoveEvent struct {
-	Sender string
-	// Event metadata
-	Ledger uint32
-	TxHash string
+// MessageDirectionFromScVal parses an xdr.ScVal into MessageDirection.
+func MessageDirectionFromScVal(val xdr.ScVal) (MessageDirection, error) {
+	v, ok := val.GetU32()
+	if !ok {
+		return 0, fmt.Errorf("expected u32 for MessageDirection enum")
+	}
+	return MessageDirection(v), nil
 }
-
-// AllowListRemoveEventTopic is the event topic identifier.
-const AllowListRemoveEventTopic = "aph_AllowListRemove"
-
-// CCVConfigUpdatedEvent represents the CCVConfigUpdatedEvent event.
-// Topics: [aph_CCVConfigUpdated]
-type CCVConfigUpdatedEvent struct {
-	RemoteChainSelector uint64
-	Config              CCVConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// CCVConfigUpdatedEventTopic is the event topic identifier.
-const CCVConfigUpdatedEventTopic = "aph_CCVConfigUpdated"
-
-// ThresholdAmountSetEvent represents the ThresholdAmountSetEvent event.
-// Topics: [aph_ThresholdAmountSet]
-type ThresholdAmountSetEvent struct {
-	ThresholdAmount *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// ThresholdAmountSetEventTopic is the event topic identifier.
-const ThresholdAmountSetEventTopic = "aph_ThresholdAmountSet"
