@@ -66,6 +66,15 @@ pub struct RemoteChainConfigSetEvent {
     pub allowlist_enabled: bool,
 }
 
+/// Emitted when the verifier-global allowed finality config is set.
+/// Mirrors EVM `FinalityConfigSet(bytes4 allowedFinality)` (`BaseVerifier.sol:37`).
+#[contractevent(topics = ["ccv_FinalityConfigSet"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalityConfigSetEvent {
+    /// The new allowed finality config (`u32` finality-codec value; `0` = wait-for-finality).
+    pub allowed_finality: u32,
+}
+
 /// Emitted when a sender is added to the allowlist.
 /// Mirrors `AllowListSendersAdded(uint64 indexed destChainSelector, address senders)`.
 #[contractevent(topics = ["ccv_AllowListSendersAdded"])]

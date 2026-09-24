@@ -650,6 +650,18 @@ type ConfigSetEvent struct {
 // ConfigSetEventTopic is the event topic identifier.
 const ConfigSetEventTopic = "ccv_ConfigSet"
 
+// FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
+// Topics: [ccv_FinalityConfigSet]
+type FinalityConfigSetEvent struct {
+	AllowedFinality uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FinalityConfigSetEventTopic is the event topic identifier.
+const FinalityConfigSetEventTopic = "ccv_FinalityConfigSet"
+
 // SignatureConfigSetEvent represents the SignatureConfigSetEvent event.
 // Topics: [ccv_SignatureConfigSet]
 type SignatureConfigSetEvent struct {

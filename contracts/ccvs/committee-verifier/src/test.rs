@@ -315,6 +315,132 @@ fn test_get_fee_fails_when_chain_not_configured() {
 }
 
 // ============================================================
+// Allowed Finality Config Tests (M-9 / INV-FIN-CCV-1/2)
+//
+// The CCV enforces the last layer of the FTF opt-in matrix at fee-quote time,
+// mirroring EVM `BaseVerifier.getFee` → `FinalityCodec._ensureRequestedFinalityAllowed`.
+// The policy is verifier-global (one u32), defaulting to WAIT_FOR_FINALITY (0).
+// On instant-final Stellar as the source chain this gate is vacuous, but the
+// behavior is kept for EVM parity and defense-in-depth vs the OnRamp (M-8).
+// ============================================================
+
+const FINALITY_DEST_CHAIN: u64 = 12345;
+const WAIT_FOR_FINALITY: u32 = 0;
+const WAIT_FOR_SAFE: u32 = 1 << 16; // 0x00010000
+
+/// Helper: set up a verifier with `FINALITY_DEST_CHAIN` configured for `get_fee`.
+fn setup_with_finality_chain() -> (Env, CommitteeVerifierContractClient<'static>, Address) {
+    let (env, client, owner, ..) = setup();
+    client.apply_remote_chain_cfg_updates(&vec![
+        &env,
+        default_remote_chain_config(&env, FINALITY_DEST_CHAIN),
+    ]);
+    (env, client, owner)
+}
+
+#[test]
+fn test_get_allowed_finality_config_defaults_to_wait_for_finality() {
+    let (_env, client, ..) = setup();
+    // Unset → defaults to WAIT_FOR_FINALITY_FLAG (0), the most restrictive policy.
+    assert_eq!(client.get_allowed_finality_config(), WAIT_FOR_FINALITY);
+}
+
+#[test]
+fn test_get_fee_accepts_wait_for_finality_under_default_policy() {
+    let (env, client, ..) = setup_with_finality_chain();
+    // Default policy (0) always admits WAIT_FOR_FINALITY (0).
+    let FeeResponse { fee, .. } = client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &0u32,
+    );
+    assert_eq!(fee, 10);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")] // InvalidRequestedFinality
+fn test_get_fee_rejects_fast_finality_under_default_policy() {
+    let (env, client, ..) = setup_with_finality_chain();
+    // Default policy (0): a block-depth request (5) has no matching flag and
+    // allowed_depth == 0 → rejected.
+    client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &5u32,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")] // RequestedFinalityCanOnlyHaveOneMode
+fn test_get_fee_rejects_malformed_finality_two_modes() {
+    let (env, client, ..) = setup_with_finality_chain();
+    // A flag combined with a block depth is not a single mode → malformed.
+    let malformed: u32 = WAIT_FOR_SAFE | 5;
+    client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &malformed,
+    );
+}
+
+#[test]
+fn test_set_allowed_finality_config_allows_matching_flag_request() {
+    let (env, client, _owner) = setup_with_finality_chain();
+    // Owner permits the WAIT_FOR_SAFE flag.
+    client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    assert_eq!(client.get_allowed_finality_config(), WAIT_FOR_SAFE);
+    // A request carrying that flag is now admitted.
+    let FeeResponse { fee, .. } = client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &WAIT_FOR_SAFE,
+    );
+    assert_eq!(fee, 10);
+}
+
+#[test]
+fn test_get_fee_allows_depth_meeting_allowed_minimum() {
+    let (env, client, _owner) = setup_with_finality_chain();
+    // Owner sets a minimum block depth of 10.
+    client.set_allowed_finality_config(&10u32);
+    // A request at exactly the minimum depth is admitted (>= allowed_depth).
+    let FeeResponse { fee, .. } = client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &10u32,
+    );
+    assert_eq!(fee, 10);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")] // InvalidRequestedFinality
+fn test_get_fee_rejects_depth_below_allowed_minimum() {
+    let (env, client, _owner) = setup_with_finality_chain();
+    // Owner sets a minimum block depth of 10; a request for depth 5 is rejected.
+    client.set_allowed_finality_config(&10u32);
+    client.get_fee(
+        &FINALITY_DEST_CHAIN,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &5u32,
+    );
+}
+
+#[test]
+fn test_set_allowed_finality_config_is_owner_only() {
+    let (_env, client, ..) = setup();
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    _env.mock_auths(&[]);
+    let r = client.try_set_allowed_finality_config(&WAIT_FOR_SAFE);
+    assert!(r.is_err(), "non-owner must be rejected");
+}
+
+// ============================================================
 // Storage Locations Tests
 // ============================================================
 
