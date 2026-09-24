@@ -213,11 +213,21 @@ func TestAdvancedPoolHooks(t *testing.T) {
 			t.Fatalf("GetAllowlist: want [allowed], got %+v err=%v", got, err)
 		}
 
+		// preflight_check only reads lock_or_burn_in.original_sender (the
+		// allowlist gate) — see advanced-pool-hooks lib.rs:391-409. But the Go
+		// binding encodes the WHOLE LockOrBurnIn struct as an ScMap, so every
+		// Address field must be a valid encodable address: scval.AddressToScVal("")
+		// builds an ScvAddress with a nil inner pointer that nil-panics on XDR
+		// encode. local_token is unused by the allowlist path, so any valid
+		// contract address satisfies the encoder.
+		localToken := helpers.GenerateMockContractID(t, deployerAddr, "aph-local-token")
+
 		// Allowlisted original_sender -> preflight passes.
 		if err := client.PreflightCheck(ctx, advancedpoolhooksbindings.LockOrBurnIn{
 			OriginalSender:      allowed,
 			RemoteChainSelector: aphRemoteChain,
 			Amount:              big.NewInt(100),
+			LocalToken:          localToken,
 		}, 0, nil, big.NewInt(100)); err != nil {
 			t.Fatalf("PreflightCheck allowlisted: %v", err)
 		}
@@ -227,6 +237,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 			OriginalSender:      stranger,
 			RemoteChainSelector: aphRemoteChain,
 			Amount:              big.NewInt(100),
+			LocalToken:          localToken,
 		}, 0, nil, big.NewInt(100)); err == nil {
 			t.Fatal("PreflightCheck non-allowlisted: expected error, got nil")
 		}

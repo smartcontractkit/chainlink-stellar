@@ -12,17 +12,20 @@ import (
 	ccvsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 	"github.com/stellar/go-stellar-sdk/keypair"
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 func TestCommitteeVerifier(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
 
 	// Deploy the CommitteeVerifier contract
 	t.Log("Deploying CommitteeVerifier contract...")
@@ -185,8 +188,10 @@ func TestCommitteeVerifier(t *testing.T) {
 	})
 
 	t.Run("storage locations", func(t *testing.T) {
-		t.Skip("Skipping storage locations tests, not yet implemented")
-
+		// The contract bootstraps the storage-locations admin to the initializer
+		// (deployer) and the locations to the empty vec passed to initialize (see
+		// the initialize helper at the bottom of this file, which passes [][]byte{}).
+		// So the admin reads back as the deployer and the locations start empty.
 		admin, err := client.GetStorageLocationsAdmin(ctx)
 		if err != nil {
 			t.Fatalf("Failed to get storage locations admin: %v", err)
@@ -204,6 +209,10 @@ func TestCommitteeVerifier(t *testing.T) {
 			t.Errorf("Expected empty storage locations, got %d", len(locations))
 		}
 
+		// update_storage_locations requires the storage-locations admin's auth
+		// (committee-verifier lib.rs update_storage_locations → admin.require_auth()).
+		// The admin is the deployer, which is this transaction's source account, so
+		// the auth check passes.
 		newLocations := [][]byte{[]byte("location1"), []byte("location2")}
 		err = client.UpdateStorageLocations(ctx, newLocations)
 		if err != nil {
@@ -263,14 +272,57 @@ func TestCommitteeVerifier(t *testing.T) {
 	})
 
 	t.Run("withdraw fee tokens", func(t *testing.T) {
-		t.Skip("Skipping withdraw fee tokens tests, not yet implemented")
-
-		mockToken := helpers.GenerateMockContractID(t, deployerKP.Address(), "withdraw-token")
-		err := client.WithdrawFeeTokens(ctx, []string{mockToken})
-		if err != nil {
-			t.Fatalf("Failed to call withdraw_fee_tokens: %v", err)
+		// Point the fee_aggregator at a REAL account (the deployer) that holds a
+		// trustline to the SAC fee token. The init-time mockFeeAggregator is a bare
+		// contract strkey with no on-ledger trustline, so a SAC transfer to it reverts
+		// (same caveat documented in fee_distribution_test.go's sweep subtest).
+		// SetDynamicConfig is owner-only; the deployer is the contract owner.
+		if err := client.SetDynamicConfig(ctx, ccvsbindings.DynamicConfig{
+			FeeAggregator: &deployerAddr,
+		}); err != nil {
+			t.Fatalf("SetDynamicConfig(fee_aggregator=deployer): %v", err)
 		}
-		t.Log("WithdrawFeeTokens completed successfully")
+
+		// Real 7-decimal SAC fee token. deployIntegrationTestSAC establishes the
+		// deployer's trustline and mints 1000 tokens to the deployer.
+		feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "cv-withdraw")
+
+		// Fund the committee-verifier contract with a fee-token balance, simulating
+		// fees accrued to it. SAC transfer(deployer -> contract) is authorized by the
+		// deployer as the transaction source account.
+		const accrual int64 = 100_000_000 // 10 tokens at 7 decimals
+		transferArgs := []xdr.ScVal{
+			scval.AddressToScVal(deployerAddr),
+			scval.AddressToScVal(contractID),
+			scval.I128ToScVal(big.NewInt(accrual)),
+		}
+		if _, err := deployer.InvokeContract(ctx, feeToken, "transfer", transferArgs); err != nil {
+			t.Fatalf("fund verifier via SAC transfer: %v", err)
+		}
+
+		contractBal := sacBalanceOrFatal(ctx, t, deployer, feeToken, contractID)
+		if contractBal != accrual {
+			t.Fatalf("verifier fee-token balance after funding: want %d, got %d", accrual, contractBal)
+		}
+
+		aggBefore := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
+
+		// Permissionless sweep: withdraw_fee_tokens moves the contract's FULL balance
+		// of feeToken to the fee_aggregator (deployer). No require_auth on the caller —
+		// the contract authorizes its own outgoing transfer as the current contract.
+		if err := client.WithdrawFeeTokens(ctx, []string{feeToken}); err != nil {
+			t.Fatalf("WithdrawFeeTokens: %v", err)
+		}
+
+		contractAfter := sacBalanceOrFatal(ctx, t, deployer, feeToken, contractID)
+		if contractAfter != 0 {
+			t.Fatalf("verifier fee-token balance must be 0 after sweep, got %d (accrual was %d)", contractAfter, accrual)
+		}
+		aggAfter := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
+		if got := aggAfter - aggBefore; got != accrual {
+			t.Fatalf("fee_aggregator delta: want %d, got %d (before=%d after=%d)", accrual, got, aggBefore, aggAfter)
+		}
+		t.Logf("sweep moved %d fee-token units from the verifier to the fee_aggregator", accrual)
 	})
 
 	t.Log("CommitteeVerifier integration test passed!")
