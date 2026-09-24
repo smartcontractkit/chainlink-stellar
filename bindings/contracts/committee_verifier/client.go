@@ -53,12 +53,12 @@ func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, blockConfirmations uint32) (*FeeResponse, error) {
+func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, requestedFinality uint32) (*FeeResponse, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(message),
 		scval.BytesToScVal(extraArgs),
-		scval.Uint32ToScVal(blockConfirmations),
+		scval.Uint32ToScVal(requestedFinality),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)
@@ -532,6 +532,26 @@ func (c *CommitteeVerifierClient) CancelOwnershipTransfer(ctx context.Context) e
 	return nil
 }
 
+// GetAllowedFinalityConfig calls the get_allowed_finality_config function on the contract.
+func (c *CommitteeVerifierClient) GetAllowedFinalityConfig(ctx context.Context) (uint32, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_allowed_finality_config", args)
+	if err != nil {
+		return 0, fmt.Errorf("failed to call get_allowed_finality_config: %w", err)
+	}
+
+	if result == nil {
+		return 0, fmt.Errorf("no return value from get_allowed_finality_config")
+	}
+
+	v, ok := result.GetU32()
+	if !ok {
+		return 0, fmt.Errorf("expected u32 return type")
+	}
+	return uint32(v), nil
+}
+
 // GetStorageLocationsAdmin calls the get_storage_locations_admin function on the contract.
 func (c *CommitteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
@@ -550,6 +570,21 @@ func (c *CommitteeVerifierClient) GetStorageLocationsAdmin(ctx context.Context) 
 		return "", err
 	}
 	return v, nil
+}
+
+// SetAllowedFinalityConfig calls the set_allowed_finality_config function on the contract.
+func (c *CommitteeVerifierClient) SetAllowedFinalityConfig(ctx context.Context, allowedFinality uint32) error {
+	args := []xdr.ScVal{
+		scval.Uint32ToScVal(allowedFinality),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_allowed_finality_config", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_allowed_finality_config: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // GetPendingStorageLocAdmin calls the get_pending_storage_loc_admin function on the contract.
@@ -675,6 +710,73 @@ func ParseConfigSetEvent(e protocolrpc.EventInfo) (*ConfigSetEvent, error) {
 			v, err := DynamicConfigFromScVal(entry.Val)
 			if err == nil {
 				result.DynamicConfig = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFinalityConfigSetEvent waits for a FinalityConfigSetEvent event.
+func (c *CommitteeVerifierClient) WaitForFinalityConfigSetEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FinalityConfigSetEvent) bool) (*FinalityConfigSetEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FinalityConfigSetEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFinalityConfigSetEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFinalityConfigSetEvent(e protocolrpc.EventInfo) (*FinalityConfigSetEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FinalityConfigSetEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "allowed_finality":
+			v, ok := entry.Val.GetU32()
+			if ok {
+				result.AllowedFinality = uint32(v)
 			}
 		}
 	}

@@ -213,10 +213,21 @@ func TestStellarToEVMUseDefaultSentinel(t *testing.T) {
 	// sentinel was resolved before receipt emission (M-5 parity).
 	execReceipt := findExecutorReceiptByIssuer(t, l, sentEvent.Receipts, defaultExecutor)
 	require.NotNil(t, execReceipt.FeeTokenAmount, "executor receipt FeeTokenAmount must be present")
-	require.GreaterOrEqualf(t, execReceipt.FeeTokenAmount.Sign(), 0,
-		"use-default executor fee must be non-negative, got %s", execReceipt.FeeTokenAmount.String())
+	// A FUNCTIONAL executor charges the destination execution-gas cost. The
+	// executor flat fee (Executor::get_fee = USDCentsFee) is 0 in the devenv, but
+	// the exec-cost slice (gas_quote.gas_cost_usd_cents) is non-zero for any
+	// destination with a set gas price, so the resolved-default receipt MUST be
+	// strictly positive. This is the complement of TestStellarToEVMNoExecutionSentinel,
+	// which proves the no-exec sentinel zeroes the receipt to exactly 0 — so the
+	// pair together proves the functional executor charges a real, non-zero
+	// execution fee that the no-exec sentinel suppresses. A 0 here would mean the
+	// sentinel-resolution path silently collapsed to the no-exec behaviour (an
+	// economic bug) or the devenv is running with a zero dest gas price (L-12).
+	require.Greaterf(t, execReceipt.FeeTokenAmount.Sign(), 0,
+		"use-default (functional) executor fee must be > 0 — exec-gas cost charged; got %s",
+		execReceipt.FeeTokenAmount.String())
 	l.Info().
 		Str("issuer", execReceipt.Issuer).
 		Str("feeTokenAmount", execReceipt.FeeTokenAmount.String()).
-		Msg("✅ use-default sentinel: resolved to concrete default_executor, real executor receipt")
+		Msg("✅ use-default sentinel: resolved to concrete default_executor, non-zero functional executor fee")
 }

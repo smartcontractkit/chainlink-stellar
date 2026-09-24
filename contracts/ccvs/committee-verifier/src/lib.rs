@@ -7,7 +7,7 @@ use common_authorization::allowlist::{AllowListEntry, AllowListUpdate, AllowList
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
+use common_helpers::{curse_checkable::CurseCheckable, finality_codec, validation::Validatable};
 use common_signature::config::{
     SignatureConfig, SignatureConfigManager, SignatureVerificationConfig,
 };
@@ -36,6 +36,10 @@ const REMOTE_CHAINS: Symbol = symbol_short!("RCHAINS");
 const ALLOWLIST: Symbol = symbol_short!("ALLOWLST");
 /// Instance storage key for the immutable verifier version tag (`bytes4`), set at `initialize`.
 const VERIFIER_VERSION_TAG_KEY: Symbol = symbol_short!("CVRTAG");
+/// Instance storage key for the verifier-global allowed finality config (`u32`),
+/// mirroring EVM `BaseVerifier.s_allowedFinalityConfig`. Defaults to
+/// `finality_codec::WAIT_FOR_FINALITY_FLAG` (0) when unset.
+const ALLOWED_FINALITY: Symbol = symbol_short!("ALWDFIN");
 
 // ============================================================
 // Constants
@@ -436,21 +440,66 @@ impl CommitteeVerifierContract {
     }
 
     /// EVM-equivalent fee quote shape.
+    ///
+    /// Enforces the CCV layer of the FTF opt-in matrix (M-9 / INV-FIN-CCV-1/2):
+    /// `requested_finality` is validated against the verifier-global allowed
+    /// finality config, mirroring EVM `BaseVerifier.getFee` →
+    /// `FinalityCodec._ensureRequestedFinalityAllowed` (`BaseVerifier.sol:303`).
+    /// The policy is verifier-global (one `u32`), not per-remote-chain, and
+    /// enforcement is at fee-quote time only — the sign/verify path is
+    /// finality-agnostic, exactly as in EVM. On instant-final Stellar as the
+    /// source chain this gate is vacuous (senders always request
+    /// `WAIT_FOR_FINALITY`), but it is kept for EVM parity and as a separate
+    /// trust boundary from the OnRamp's own finality check (M-8).
     pub fn get_fee(
         env: Env,
         dest_chain_selector: u64,
         _message: Bytes,
         _extra_args: Bytes,
-        _block_confirmations: u32,
+        requested_finality: u32,
     ) -> Result<FeeResponse, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
 
-        let cfg = Self::get_remote_chain_config(env, dest_chain_selector)?;
+        let cfg = Self::get_remote_chain_config(env.clone(), dest_chain_selector)?;
+
+        finality_codec::ensure_requested_finality_allowed(
+            requested_finality,
+            load_allowed_finality_config(&env),
+        )?;
+
         Ok(FeeResponse {
             fee: cfg.fee_usd_cents,
             dest_gas_limit: cfg.gas_for_verification,
             dest_bytes_overhead: cfg.payload_size_bytes,
         })
+    }
+
+    // ========================================
+    // Allowed finality config (M-9 / INV-FIN-CCV-1/2)
+    // ========================================
+
+    /// Returns the verifier-global allowed finality config (EVM
+    /// `getAllowedFinalityConfig` / `BaseVerifier.s_allowedFinalityConfig`).
+    /// Defaults to `finality_codec::WAIT_FOR_FINALITY_FLAG` (0 = wait-for-finality,
+    /// the most restrictive) when unset. This is the CCV layer of the FTF opt-in
+    /// matrix.
+    pub fn get_allowed_finality_config(env: Env) -> Result<u32, CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        Ok(load_allowed_finality_config(&env))
+    }
+
+    /// Owner-only setter for the verifier-global allowed finality config (EVM
+    /// `setAllowedFinalityConfig`, `BaseVerifier.sol:177`). `allowed_finality` is
+    /// a `u32` finality-codec value (flag bits in the upper half, block depth in
+    /// the lower 16 bits); `0` = wait-for-finality (default, most restrictive).
+    pub fn set_allowed_finality_config(env: Env, allowed_finality: u32) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as Ownable>::require_owner(&env)?;
+        env.storage()
+            .instance()
+            .set(&ALLOWED_FINALITY, &allowed_finality);
+        events::FinalityConfigSetEvent { allowed_finality }.publish(&env);
+        Ok(())
     }
 
     // ========================================
@@ -601,6 +650,16 @@ fn is_zero_fee_recipient(env: &Env, addr: &Address) -> bool {
         env,
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     )
+}
+
+/// Reads the verifier-global allowed finality config from instance storage,
+/// defaulting to `finality_codec::WAIT_FOR_FINALITY_FLAG` (0) when unset.
+/// Mirrors EVM `BaseVerifier.getAllowedFinalityConfig`'s default.
+fn load_allowed_finality_config(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&ALLOWED_FINALITY)
+        .unwrap_or(finality_codec::WAIT_FOR_FINALITY_FLAG)
 }
 
 mod test;

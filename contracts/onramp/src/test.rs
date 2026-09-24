@@ -1214,6 +1214,81 @@ mod mock_pool {
         }
     }
 
+    /// A `TokenPoolInterface` mock whose `get_required_ccvs` returns a NON-empty CCV list
+    /// (a single, configurable `pool_ccv`) with `include_defaults = false`. Paired with
+    /// `MockPoolEmptyRequiredNoDefaults` (empty list ⇒ defaults) to guard the M-13
+    /// short-circuit's OVER-trigger boundary: a non-empty pool list that opts out of
+    /// folding defaults must NOT fold in lane defaults, so the committed
+    /// `ccv_and_executor_hash` is over `[pool_ccv]`, not over `default_ccvs`. `get_fee`
+    /// returns a *disabled* `PoolFeeResult` so the OnRamp falls back to the FeeQuoter;
+    /// `get_required_ccvs` reads the configured `pool_ccv` from instance storage.
+    #[contract]
+    pub struct MockPoolNonEmptyCcvsNoDefaults;
+
+    #[contractimpl]
+    impl MockPoolNonEmptyCcvsNoDefaults {
+        pub fn set_pool_ccv(env: Env, ccv: Address) {
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "pccv"), &ccv);
+        }
+
+        pub fn get_fee(
+            _env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        /// Minimal valid return for any `lock_or_burn` the send path may make.
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: Bytes::new(&env),
+            })
+        }
+
+        /// The pool mandates its OWN single CCV and does NOT fold in lane defaults — the
+        /// M-13 over-trigger discriminator (a non-empty list must not fall back to defaults).
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> PoolRequiredCCVs {
+            let ccv: Address = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "pccv"))
+                .expect("pool_ccv not set");
+            let mut ccvs = Vec::new(&env);
+            ccvs.push_back(ccv);
+            PoolRequiredCCVs {
+                ccvs,
+                include_defaults: false,
+            }
+        }
+    }
+
     /// A `TokenPoolInterface` mock whose `lock_or_burn` returns a `dest_pool_data` of a
     /// configured length, so M-15 / INV-POOL-21 can be exercised: when that length exceeds
     /// the FeeQuoter's `dest_bytes_overhead` (the bytes the sender paid for in the pool
@@ -1691,22 +1766,24 @@ fn test_get_fee_threads_token_args_to_pool() {
     );
 }
 
-/// H-1 / INV-CC-1: an outbound message must carry at least one CCV. A token-only
-/// transfer skips the user-fallback defaults path in `build_merged_outbound_ccv_lists`,
-/// so when the pool returns `{ccvs:[], include_defaults:false}` and the lane has no
-/// lane-mandated CCVs, the merged CCV list is empty. `get_fee` routes through that
-/// same merge point and must reject with `CCVQuorumNotMet` (#108) instead of quoting
-/// a fee for an unverified message.
+/// M-13 / INV-SRC-12: a token-only transfer skips the user-fallback defaults path in
+/// `build_merged_outbound_ccv_lists`, so when the pool returns `{ccvs:[],
+/// include_defaults:false}` the merged CCV list would be empty — but an empty
+/// pool-returned list is a request to use the lane defaults (EVM
+/// `OnRamp.forwardFromRouter` `if (requiredCCVs.length == 0) return defaultCCVs;`,
+/// OnRamp.sol:888-890), NOT a zero-CCV emission. So `get_fee` must now SUCCEED and
+/// quote a fee for a message verified by the lane defaults, rather than revert with
+/// `CCVQuorumNotMet` (#108). (The strong assertion that the defaults were actually
+/// applied — vs. an empty set quoted — lives in the send-path test below, which
+/// reads the committed `ccv_and_executor_hash`; `get_fee` only returns the amount.)
 #[test]
-#[should_panic(expected = "Error(Contract, #108)")] // CCVQuorumNotMet
-fn test_get_fee_rejects_zero_ccv() {
+fn test_get_fee_empty_pool_falls_back_to_defaults() {
     let mut lane = setup_token_transfer_lane_with_pool(None);
 
     // Rebind the transfer token's pool to a mock that returns no required CCVs
     // and asks the OnRamp NOT to fold in lane defaults. The lane itself still
     // carries a non-empty `default_ccvs` (so `DestChainConfigArgs::validate`
-    // accepts it), but `include_defaults = false` means those defaults are never
-    // appended for this pool — the precise H-1 gap.
+    // accepts it); the M-13 short-circuit upgrades the empty pool list to defaults.
     let mock_pool_id = lane
         .env
         .register(mock_pool::MockPoolEmptyRequiredNoDefaults, ());
@@ -1738,20 +1815,27 @@ fn test_get_fee_rejects_zero_ccv() {
         extra_args: extra_args.to_xdr(env),
     };
 
-    lane.router_client
+    // Was `CCVQuorumNotMet` (#108); now succeeds because the empty pool list ⇒ defaults.
+    let fee = lane
+        .router_client
         .get_fee(&lane.evm_chain_selector, &message);
+    assert!(
+        fee >= 0,
+        "empty-pool⇒defaults must quote a non-negative fee, got {fee}"
+    );
 }
 
-/// H-1 / INV-CC-1: the send path shares the same merge point as `get_fee`, so the
-/// same zero-CCV token-only scenario must be rejected at send time with
-/// `CCVQuorumNotMet` (#108). The guard fires inside `build_merged_outbound_ccv_lists`,
-/// which `forward_from_router` calls before fee validation and `lock_or_burn`, so no
-/// fee tokens need minting and a zero fee suffices. Invoked directly (the lane's
-/// `mock_all_auths` satisfies the router + sender auth checks) to target
-/// `forward_from_router` precisely.
+/// M-13 / INV-SRC-12 (send path): the strong complement to the `get_fee` test above.
+/// The same token-only + empty-pool scenario is sent via `ccip_send` (funded with the
+/// quoted fee, unlike the pre-M-13 direct `forward_from_router` call which relied on
+/// the guard firing before fee validation), and the emitted `CCIPMessageSent` message's
+/// `ccv_and_executor_hash` is asserted equal to `hash(lane default_ccvs, default_executor)`
+/// (the use-default sentinel is resolved into `extra_args.executor` before hashing). This
+/// proves the merged CCV set is exactly the lane defaults — distinguishing "defaults
+/// applied" (correct) from "empty CCV set emitted" (the H-1 bug) — because an empty set
+/// would hash differently.
 #[test]
-#[should_panic(expected = "Error(Contract, #108)")] // CCVQuorumNotMet
-fn test_forward_from_router_rejects_zero_ccv_token_only() {
+fn test_forward_from_router_empty_pool_falls_back_to_defaults() {
     let mut lane = setup_token_transfer_lane_with_pool(None);
 
     let mock_pool_id = lane
@@ -1761,6 +1845,8 @@ fn test_forward_from_router_rejects_zero_ccv_token_only() {
     rebind_pool_to_mock(&lane, &mock_pool_id);
 
     let env = &lane.env;
+    // Token-only: empty data, one token amount, gas_limit 0, empty user CCVs, use-default
+    // executor (resolved to the lane default before hashing/Executor::get_fee).
     let extra_args = GenericExtraArgsV3 {
         gas_limit: 0,
         block_confirmations: 0,
@@ -1784,8 +1870,152 @@ fn test_forward_from_router_rejects_zero_ccv_token_only() {
         extra_args: extra_args.to_xdr(env),
     };
 
-    let onramp_client = OnRampContractClient::new(&lane.env, &lane.onramp_id);
-    onramp_client.forward_from_router(&lane.evm_chain_selector, &message, &0_i128, &lane.sender);
+    // Was `CCVQuorumNotMet` (#108); now quotes a real fee (the empty pool list ⇒ defaults).
+    let required_fee = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+    assert!(
+        required_fee > 0,
+        "empty-pool⇒defaults must quote a positive fee, got {required_fee}"
+    );
+
+    // Read the lane's default CCV + executor BEFORE sending — any contract call after
+    // `ccip_send` clears the event view, so encoded-message extraction must run first.
+    let onramp_client = OnRampContractClient::new(env, &lane.onramp_id);
+    let stored = onramp_client.get_dest_chain_config(&lane.evm_chain_selector);
+    let expected_hash = CcipMessageV1::compute_ccv_and_executor_hash(
+        env,
+        &stored.default_ccvs,
+        &stored.default_executor,
+    );
+
+    // Fund the sender for the fee + the token transfer, then send.
+    lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+    lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
+    lane.router_client.ccip_send(
+        &lane.sender,
+        &lane.evm_chain_selector,
+        &message,
+        &required_fee,
+    );
+
+    // Extract the encoded on-wire message IMMEDIATELY after `ccip_send` (before any
+    // further contract call clears the event view) and assert the committed hash is
+    // over the lane defaults, not over an empty CCV set.
+    let encoded = encoded_message_from_last_onramp_event(env, &lane.onramp_id);
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.ccv_and_executor_hash, expected_hash,
+        "empty pool list must fall back to lane defaults — the committed \
+         ccv_and_executor_hash must equal hash(default_ccvs, default_executor), not \
+         hash of an empty CCV set"
+    );
+}
+
+/// M-13 / INV-SRC-12 over-trigger guard: the `include_defaults || ccvs.is_empty()`
+/// short-circuit must fold defaults ONLY when the pool list is empty. A pool that
+/// returns a NON-empty list with `include_defaults = false` must keep exactly that
+/// list — lane defaults must NOT be folded in — so the committed
+/// `ccv_and_executor_hash` is over `[pool_ccv]`, not over `default_ccvs`. Without
+/// this guard the short-circuit could over-trigger (fold defaults whenever
+/// `include_defaults == false`, ignoring the emptiness check) and silently swap the
+/// verifier set the destination commits to.
+#[test]
+fn test_forward_from_router_nonempty_pool_does_not_fold_defaults() {
+    let mut lane = setup_token_transfer_lane_with_pool(None);
+
+    let mock_pool_id = lane
+        .env
+        .register(mock_pool::MockPoolNonEmptyCcvsNoDefaults, ());
+    lane.mock_pool_id = Some(mock_pool_id.clone());
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    let env = &lane.env;
+    // A pool-mandated CCV DISTINCT from the lane default_ccv — the discriminator.
+    // It must be a REAL fee-charging CCV (a VVR wired to a verifier that answers
+    // `get_fee`), not a bare address: the OnRamp calls `get_fee` on every merged
+    // CCV during fee quoting, and a non-contract address panics with
+    // `Error(Storage, MissingValue)`. A fresh `deploy_default_ccv_resolver` yields
+    // a distinct VVR address from the lane's `default_ccv`, preserving the hash
+    // discriminator. `mock_all_auths` is on, so a throwaway owner suffices.
+    let pool_ccv =
+        deploy_default_ccv_resolver(env, &Address::generate(env), lane.evm_chain_selector);
+    mock_pool::MockPoolNonEmptyCcvsNoDefaultsClient::new(env, &mock_pool_id)
+        .set_pool_ccv(&pool_ccv);
+
+    // Token-only: empty data, one token amount, gas_limit 0, empty user CCVs,
+    // use-default executor (resolved to the lane default before hashing).
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    let required_fee = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+    assert!(
+        required_fee > 0,
+        "non-empty pool list must quote a positive fee, got {required_fee}"
+    );
+
+    // Read the lane's default CCV + executor BEFORE sending (event view clears on
+    // any later contract call).
+    let onramp_client = OnRampContractClient::new(env, &lane.onramp_id);
+    let stored = onramp_client.get_dest_chain_config(&lane.evm_chain_selector);
+
+    // Expected: hash over the pool's OWN list [pool_ccv], NOT over default_ccvs.
+    let expected_hash = CcipMessageV1::compute_ccv_and_executor_hash(
+        env,
+        &vec![env, pool_ccv.clone()],
+        &stored.default_executor,
+    );
+    // Discriminator: the pool_ccv hash must DIFFER from the default_ccv hash — if
+    // defaults were wrongly folded the committed hash would equal this instead.
+    let default_hash = CcipMessageV1::compute_ccv_and_executor_hash(
+        env,
+        &stored.default_ccvs,
+        &stored.default_executor,
+    );
+    assert_ne!(
+        expected_hash, default_hash,
+        "test setup invariant: pool_ccv hash must differ from default_ccv hash"
+    );
+
+    lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+    lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
+    lane.router_client.ccip_send(
+        &lane.sender,
+        &lane.evm_chain_selector,
+        &message,
+        &required_fee,
+    );
+
+    let encoded = encoded_message_from_last_onramp_event(env, &lane.onramp_id);
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.ccv_and_executor_hash, expected_hash,
+        "non-empty pool list with include_defaults=false must NOT fold lane defaults — \
+         the committed ccv_and_executor_hash must equal hash([pool_ccv], default_executor), \
+         not hash(default_ccvs, default_executor)"
+    );
 }
 
 /// Re-register the lane's transfer-token pool binding to point at `mock_pool`.
@@ -2703,8 +2933,11 @@ fn test_executor_receipt_prices_payload_bytes() {
 ///     BARE helper (no LINK discount), exactly `executor_fee_tokens`;
 ///   - the OnRamp holds the NETWORK-only message fee + flat-fee floor dust (NO gas
 ///     term — gas is no longer in `get_message_fee`), i.e. the residual equals
-///     `message_fee.fee_token_amount + (with_premium(125) - with_premium(30) -
-///     with_premium(70) - with_premium(25))` where 125 = ccv(100) + flat(25);
+///     `with_premium(message_network_fee_usd_cents) + (with_premium(125) -
+///     with_premium(30) - with_premium(70) - with_premium(25))` where 125 =
+///     ccv(100) + flat(25) and `message_network_fee_usd_cents = 50` is the OnRamp
+///     split selected for a data-only send (M-11 / INV-FEE-11/12: the charge sources
+///     the OnRamp split, not the fee-quoter legacy single);
 ///   - the fee aggregator has received nothing yet (the network fee is left, not
 ///     eagerly sent), and the permissionless sweep moves exactly the residual.
 /// The non-LINK lane (`pm = 100`) doubles as the INV-FEE-13/14 regression guard:
@@ -2739,14 +2972,19 @@ fn test_gas_routes_to_executor_not_fee_aggregator() {
     );
 
     // Residual = network-only message fee + flat-fee floor dust (no gas term).
-    let message_fee = lane
-        .fee_quoter_client
-        .get_message_fee(&lane.evm_chain_selector, &message);
+    // M-11 / INV-FEE-11/12: the charged network fee is sourced from the OnRamp's own
+    // split (`message_network_fee_usd_cents = 50` for a data-only send), premium-
+    // converted — NOT the fee-quoter's legacy single `network_fee_usd_cents` (100).
+    // The residual left on the OnRamp is that split-sourced network fee + the flat
+    // dust (premium floor rounding), with no gas term.
+    const MESSAGE_NETWORK_FEE_USD: u128 = 50;
+    let network_fee_tokens =
+        fee_math::usd_cents_to_fee_token_with_premium(MESSAGE_NETWORK_FEE_USD, pm, price).unwrap();
     let dust = fee_math::usd_cents_to_fee_token_with_premium(125_u128, pm, price).unwrap()
         - fee_math::usd_cents_to_fee_token_with_premium(30_u128, pm, price).unwrap()
         - fee_math::usd_cents_to_fee_token_with_premium(70_u128, pm, price).unwrap()
         - fee_math::usd_cents_to_fee_token_with_premium(EXECUTOR_FLAT_USD, pm, price).unwrap();
-    let expected_residual = message_fee.fee_token_amount + dust;
+    let expected_residual = network_fee_tokens + dust;
 
     let ccv_a_bal = fee_token_client.balance(&lane.ccv_a);
     let ccv_b_bal = fee_token_client.balance(&lane.ccv_b);
@@ -2780,6 +3018,49 @@ fn test_gas_routes_to_executor_not_fee_aggregator() {
         fee_token_client.balance(&lane.fee_aggregator),
         expected_residual,
         "the network-only residual must reach the fee aggregator via the sweep"
+    );
+}
+
+/// M-11 / INV-FEE-11/12: the charged network fee is sourced from the OnRamp's own
+/// split, selected by token presence — `message_network_fee_usd_cents` (50) for a
+/// data-only send, `token_network_fee_usd_cents` (100) for a token-transfer send —
+/// NOT a single fee-quoter `network_fee_usd_cents`. The network receipt is always
+/// last and carries the USD-cent source slice verbatim, so asserting 50 (data-only)
+/// then 100 (token-transfer) on the same lane directly pins the source-selection
+/// switch. A regression to the legacy single-source model (or a swap of the two
+/// split fields) would flip one of these.
+#[test]
+fn test_network_fee_source_selected_by_token_presence() {
+    let lane = setup_fee_dist_lane(); // non-LINK, pm = 100
+
+    // Data-only: receipts are [ccv_a, ccv_b, executor, network] (len 4); the network
+    // receipt (idx 3) carries the message_network_fee_usd_cents slice = 50.
+    let (data_receipts, _, _) = lane.send_data_only();
+    assert_eq!(
+        data_receipts.len(),
+        4,
+        "data-only: 2 CCV + executor + network"
+    );
+    let data_network = data_receipts.get(3).unwrap();
+    assert_eq!(
+        data_network.fee_token_amount, 50,
+        "data-only network receipt must carry message_network_fee_usd_cents (50), \
+         not token_network_fee_usd_cents (100) — source selected by token ABSENCE"
+    );
+
+    // Token transfer: receipts are [ccv_a, ccv_b, pool, executor, network] (len 5);
+    // the network receipt (idx 4) carries the token_network_fee_usd_cents slice = 100.
+    let (token_receipts, _, _) = lane.send_token_transfer();
+    assert_eq!(
+        token_receipts.len(),
+        5,
+        "token transfer: 2 CCV + pool + executor + network"
+    );
+    let token_network = token_receipts.get(4).unwrap();
+    assert_eq!(
+        token_network.fee_token_amount, 100,
+        "token-transfer network receipt must carry token_network_fee_usd_cents (100), \
+         not message_network_fee_usd_cents (50) — source selected by token PRESENCE"
     );
 }
 

@@ -637,3 +637,133 @@ func sacBalanceOrFatal(ctx context.Context, t *testing.T, deployer *deployment.D
 	// *big.Int. Truncation is impossible for any balance these tests can observe.
 	return bal.Int64()
 }
+
+// containsBytes reports whether needle is present in haystack.
+func containsBytes(haystack [][]byte, needle []byte) bool {
+	return countBytes(haystack, needle) > 0
+}
+
+// countBytes returns the number of entries equal to needle.
+func countBytes(haystack [][]byte, needle []byte) int {
+	n := 0
+	for _, b := range haystack {
+		if bytes.Equal(b, needle) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestTokenPoolMultipleRemotePoolsCoexistence is the H-14 high-stakes regression guard.
+//
+// PROVES-WORKS:  adding a SECOND remote pool for an existing lane keeps the FIRST pool
+// configured — `get_remote_pools` returns BOTH. This is the zero-downtime pool-migration
+// safety property: an inbound message sourced from the OLD pool is still accepted while
+// the NEW pool is already wired, so a pool cutover never strands in-flight liquidity.
+//
+// PROVES-DOESN'T-HAPPEN (two negative paths):
+//  1. `add_remote_pool` of an already-configured pool is a no-op (idempotent) — it does
+//     NOT duplicate the entry, so `get_remote_pools` never returns the same pool twice
+//     (which would let a caller double-count or misroute).
+//  2. `remove_remote_pool` of a pool that was NEVER configured reverts
+//     `InvalidRemotePoolAddress` — an operator cannot accidentally remove an arbitrary
+//     address, and a buggy migration script cannot silently no-op a wrong removal.
+//
+// Contract semantics are pinned by the Rust unit tests in
+// contracts/pools/siloed-lock-release-pool/src/test.rs
+// (`add_remote_pool_accepts_inbound_from_new_pool`, `add_remote_pool_idempotent`,
+// `remove_remote_pool_rejects_inbound`); this test lifts them to the Go binding layer.
+func TestTokenPoolMultipleRemotePoolsCoexistence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
+
+	const localSourceChain = uint64(11111)
+	const remoteDestChain = uint64(22222)
+	const saltPrefix = "h14-multipool"
+
+	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localSourceChain, saltPrefix, false)
+
+	// A real 7-dec SAC is required: deployTokenPool → ConfigureLockBoxes reads the
+	// lockbox token and asserts it matches the pool token, so a mock tokenID would trap.
+	sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-token")
+	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-pool", sacToken, remoteDestChain)
+
+	// Two distinct 20-byte remote pool addresses (EVM-address-shaped, as on main).
+	pool1 := make([]byte, 20)
+	pool2 := make([]byte, 20)
+	for i := range pool1 {
+		pool1[i] = 0xa1
+		pool2[i] = 0xa2
+	}
+
+	// Make the chain supported and seed it with pool1.
+	if err := stack.TokenPoolClient.ApplyChainUpdates(ctx, []tokenpoolbindings.ChainUpdate{{
+		RemoteChainSelector:       remoteDestChain,
+		RemotePoolAddresses:       [][]byte{pool1},
+		RemoteTokenAddress:        bytes.Repeat([]byte{0xbb}, 20),
+		OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
+		InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
+	}}, nil); err != nil {
+		t.Fatalf("ApplyChainUpdates (seed pool1): %v", err)
+	}
+
+	got, err := stack.TokenPoolClient.GetRemotePools(ctx, remoteDestChain)
+	if err != nil {
+		t.Fatalf("GetRemotePools (seeded): %v", err)
+	}
+	if len(got) != 1 || !bytes.Equal(got[0], pool1) {
+		t.Fatalf("seeded state: want [pool1], got %x", got)
+	}
+
+	// --- PROVES-WORKS: add a second pool; the first MUST still be present. ---
+	if err := stack.TokenPoolClient.AddRemotePool(ctx, remoteDestChain, pool2); err != nil {
+		t.Fatalf("AddRemotePool(pool2): %v", err)
+	}
+	got, err = stack.TokenPoolClient.GetRemotePools(ctx, remoteDestChain)
+	if err != nil {
+		t.Fatalf("GetRemotePools (after add pool2): %v", err)
+	}
+	if !containsBytes(got, pool1) || !containsBytes(got, pool2) {
+		t.Fatalf("coexistence broken after add: want both pool1+pool2, got %x", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want exactly 2 remote pools after add, got %d", len(got))
+	}
+	t.Logf("coexistence holds: get_remote_pools = %x (old pool retained)", got)
+
+	// --- PROVES-DOESN'T-HAPPEN (1): idempotent add — no duplicate. ---
+	if err := stack.TokenPoolClient.AddRemotePool(ctx, remoteDestChain, pool1); err != nil {
+		t.Fatalf("AddRemotePool(pool1) idempotent re-add should succeed (no-op), got %v", err)
+	}
+	got, err = stack.TokenPoolClient.GetRemotePools(ctx, remoteDestChain)
+	if err != nil {
+		t.Fatalf("GetRemotePools (after idempotent re-add): %v", err)
+	}
+	if len(got) != 2 || countBytes(got, pool1) != 1 {
+		t.Fatalf("idempotency broken: want pool1 once (2 total), got %x", got)
+	}
+	t.Logf("idempotency holds: re-adding pool1 left the set at 2 (no duplicate)")
+
+	// --- PROVES-WORKS: remove the old pool; the new one MUST remain. ---
+	if err := stack.TokenPoolClient.RemoveRemotePool(ctx, remoteDestChain, pool1); err != nil {
+		t.Fatalf("RemoveRemotePool(pool1): %v", err)
+	}
+	got, err = stack.TokenPoolClient.GetRemotePools(ctx, remoteDestChain)
+	if err != nil {
+		t.Fatalf("GetRemotePools (after remove pool1): %v", err)
+	}
+	if len(got) != 1 || !bytes.Equal(got[0], pool2) {
+		t.Fatalf("post-remove: want [pool2] only, got %x", got)
+	}
+	t.Logf("cutover safe: old pool removed, new pool remains = %x", got)
+
+	// --- PROVES-DOESN'T-HAPPEN (2): removing a never-configured pool reverts. ---
+	neverConfigured := bytes.Repeat([]byte{0xfe}, 20)
+	if err := stack.TokenPoolClient.RemoveRemotePool(ctx, remoteDestChain, neverConfigured); err == nil {
+		t.Fatal("RemoveRemotePool of a never-configured pool MUST revert InvalidRemotePoolAddress, got nil")
+	}
+	t.Log("negative path holds: removing an unconfigured pool reverted (no silent no-op)")
+}

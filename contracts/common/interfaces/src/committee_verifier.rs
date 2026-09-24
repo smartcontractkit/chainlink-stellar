@@ -7,7 +7,7 @@ pub trait CommitteeVerifierInterface {
         dest_chain_selector: u64,
         message: soroban_sdk::Bytes,
         extra_args: soroban_sdk::Bytes,
-        block_confirmations: u32,
+        requested_finality: u32,
     ) -> Result<FeeResponse, CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
@@ -89,9 +89,14 @@ pub trait CommitteeVerifierInterface {
         new_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn get_allowed_finality_config(env: soroban_sdk::Env) -> Result<u32, CCIPError>;
     fn get_storage_locations_admin(
         env: soroban_sdk::Env,
     ) -> Result<soroban_sdk::Address, CCIPError>;
+    fn set_allowed_finality_config(
+        env: soroban_sdk::Env,
+        allowed_finality: u32,
+    ) -> Result<(), CCIPError>;
     fn emit_allowlist_updated_event(
         env: soroban_sdk::Env,
         key: u64,
@@ -287,6 +292,11 @@ pub enum CCIPError {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub dynamic_config: DynamicConfig,
+}
+#[soroban_sdk::contractevent(topics = ["ccv_FinalityConfigSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FinalityConfigSetEvent {
+    pub allowed_finality: u32,
 }
 #[soroban_sdk::contractevent(topics = ["ccv_SignatureConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
