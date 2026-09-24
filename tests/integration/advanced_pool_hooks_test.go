@@ -40,6 +40,19 @@ import (
 // remoteChain mirrors the Rust tests' DEFAULT_REMOTE_CHAIN.
 const aphRemoteChain = uint64(5009297550715157269)
 
+// MessageDirection is a bare unit #[contracttype] enum, so the generated Go
+// binding encodes it as a discriminated union (ScVal::Vec([Symbol(variant)])),
+// not a uint32. Construct a value by setting exactly one variant pointer.
+func aphOutbound() advancedpoolhooksbindings.MessageDirection {
+	return advancedpoolhooksbindings.MessageDirection{Outbound: &advancedpoolhooksbindings.MessageDirectionOutbound{}}
+}
+func aphInbound() advancedpoolhooksbindings.MessageDirection {
+	return advancedpoolhooksbindings.MessageDirection{Inbound: &advancedpoolhooksbindings.MessageDirectionInbound{}}
+}
+func poolOutbound() tokenpoolbindings.MessageDirection {
+	return tokenpoolbindings.MessageDirection{Outbound: &tokenpoolbindings.MessageDirectionOutbound{}}
+}
+
 // deployHooks deploys the AdvancedPoolHooks WASM and returns a client + id.
 func deployHooks(ctx context.Context, t *testing.T, projectRoot, deployerAddr string, deployer *deployment.Deployer, saltSuffix string) (*advancedpoolhooksbindings.AdvancedPoolHooksClient, string) {
 	t.Helper()
@@ -86,7 +99,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		}
 
 		// Unconfigured chain -> no pool CCVs, fall back to lane defaults.
-		v, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, advancedpoolhooksbindings.MessageDirectionOutbound)
+		v, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, aphOutbound())
 		if err != nil {
 			t.Fatalf("GetRequiredCcvs: %v", err)
 		}
@@ -127,7 +140,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 			t.Fatalf("GetAllCcvConfigs: want 1, got %d err=%v", len(all), err)
 		}
 
-		out, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, advancedpoolhooksbindings.MessageDirectionOutbound)
+		out, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, aphOutbound())
 		if err != nil {
 			t.Fatalf("GetRequiredCcvs outbound: %v", err)
 		}
@@ -136,7 +149,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		}
 
 		// Inbound direction has no configured list -> empty + relayed include_defaults=true.
-		in, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, advancedpoolhooksbindings.MessageDirectionInbound)
+		in, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(100), 0, nil, aphInbound())
 		if err != nil {
 			t.Fatalf("GetRequiredCcvs inbound: %v", err)
 		}
@@ -166,7 +179,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 			t.Fatalf("ApplyCcvConfigUpdates: %v", err)
 		}
 
-		below, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(500), 0, nil, advancedpoolhooksbindings.MessageDirectionOutbound)
+		below, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(500), 0, nil, aphOutbound())
 		if err != nil {
 			t.Fatalf("GetRequiredCcvs below: %v", err)
 		}
@@ -174,7 +187,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 			t.Fatalf("below threshold: want [base], got %+v", below)
 		}
 
-		at, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(1000), 0, nil, advancedpoolhooksbindings.MessageDirectionOutbound)
+		at, err := client.GetRequiredCcvs(ctx, deployerAddr, aphRemoteChain, big.NewInt(1000), 0, nil, aphOutbound())
 		if err != nil {
 			t.Fatalf("GetRequiredCcvs at: %v", err)
 		}
@@ -259,7 +272,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 
 		// The pool's get_required_ccvs must delegate to the hooks and return the
 		// issuer-configured CCV (not a mock), proving the wiring end-to-end.
-		v, err := pool.GetRequiredCcvs(ctx, mockToken, aphRemoteChain, big.NewInt(100), 0, nil, tokenpoolbindings.MessageDirectionOutbound)
+		v, err := pool.GetRequiredCcvs(ctx, mockToken, aphRemoteChain, big.NewInt(100), 0, nil, poolOutbound())
 		if err != nil {
 			t.Fatalf("pool.GetRequiredCcvs: %v", err)
 		}

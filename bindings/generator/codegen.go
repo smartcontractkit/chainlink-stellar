@@ -6,10 +6,13 @@ import (
 	"unicode"
 )
 
-// knownEnumNames maps enum type name → whether it is a unit-only enum
+// knownEnumNames maps enum type name → whether it is an int-repr enum
 // (true) or a discriminated-union enum (false). This lets codegen choose the
-// correct Go zero value: unit-only enums are `uint32` newtypes (zero `0`),
-// union enums are structs (zero `T{}`).
+// correct Go zero value: int-repr enums are `uint32` newtypes (zero `0`),
+// union enums are structs (zero `T{}`). "int-repr" means every variant is a
+// unit variant with an explicit `= N` discriminant (Soroban ScVal::U32); any
+// other #[contracttype] enum — including bare unit enums like MessageDirection
+// — is a union encoded as ScVal::Vec([Symbol(name), ...]).
 var knownEnumNames = map[string]bool{}
 
 func isEnumType(rustType string) bool {
@@ -18,12 +21,12 @@ func isEnumType(rustType string) bool {
 	return ok
 }
 
-// isUnitEnumType reports whether the named enum is unit-only. Returns false
-// for non-enum types and for discriminated-union enums.
-func isUnitEnumType(rustType string) bool {
+// isIntReprEnumType reports whether the named enum is int-repr (ScVal::U32
+// newtype). Returns false for non-enum types and for discriminated-union enums.
+func isIntReprEnumType(rustType string) bool {
 	name := extractStructName(rustType)
-	isUnit, ok := knownEnumNames[name]
-	return ok && isUnit
+	isIntRepr, ok := knownEnumNames[name]
+	return ok && isIntRepr
 }
 
 // typesFileNeedsImports reports which standard imports types.go needs for the
@@ -69,7 +72,7 @@ func typesFileNeedsImports(contract *Contract) (needFmt, needScval, needXdr, nee
 func GenerateTypes(pkg string, contract *Contract) string {
 	knownEnumNames = map[string]bool{}
 	for _, e := range contract.Enums {
-		knownEnumNames[e.Name] = e.IsUnit()
+		knownEnumNames[e.Name] = e.IsIntRepr()
 	}
 
 	var b strings.Builder
@@ -365,15 +368,18 @@ func generateErrorEnum(b *strings.Builder, e ErrorEnum) {
 }
 
 // generateEnum dispatches between the two valid Soroban #[contracttype] enum
-// encodings: unit-only enums become Go uint32 newtypes (ScVal::U32 wire
-// format), and any enum with a tuple/struct variant becomes a discriminated
-// union encoded as ScVal::Vec([Symbol(<VariantName>), <payload-fields...>]).
+// encodings, matching the soroban-sdk-macros dispatch exactly:
+//   - int-repr enums (every variant a unit with an explicit `= N` discriminant)
+//     become Go uint32 newtypes (ScVal::U32 wire format);
+//   - every other enum — bare unit enums (e.g. MessageDirection) OR any enum
+//     with a tuple/struct variant — becomes a discriminated union encoded as
+//     ScVal::Vec([Symbol(<VariantName>), <payload-fields...>]).
 //
 // IMPORTANT: the variant identifier is used **verbatim** as the discriminant
 // symbol — Soroban does not snake_case it. This must match the on-chain
 // encoding produced by `#[contracttype]` derive on the Rust side.
 func generateEnum(b *strings.Builder, e Enum) {
-	if e.IsUnit() {
+	if e.IsIntRepr() {
 		generateUnitEnum(b, e)
 		return
 	}

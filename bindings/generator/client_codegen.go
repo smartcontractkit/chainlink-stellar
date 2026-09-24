@@ -9,7 +9,7 @@ import (
 func GenerateClient(pkg string, contract *Contract) string {
 	knownEnumNames = map[string]bool{}
 	for _, e := range contract.Enums {
-		knownEnumNames[e.Name] = e.IsUnit()
+		knownEnumNames[e.Name] = e.IsIntRepr()
 	}
 
 	var b strings.Builder
@@ -878,9 +878,9 @@ func zeroValue(rustType string) string {
 		return fmt.Sprintf("[%d]byte{}", n)
 	}
 	if isEnumType(rustType) {
-		// Unit-only enums are uint32 newtypes (zero value 0). Discriminated
+		// Int-repr enums are uint32 newtypes (zero value 0). Discriminated
 		// unions are structs (zero value `T{}`).
-		if isUnitEnumType(rustType) {
+		if isIntReprEnumType(rustType) {
 			return "0"
 		}
 		return extractStructName(rustType) + "{}"
