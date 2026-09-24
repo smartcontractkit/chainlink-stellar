@@ -1695,6 +1695,64 @@ fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
     );
 }
 
+/// INV-FEE-14 follow-up (§9.2 safe half; EVM `OnRamp.sol` L1066): EVM's
+/// `bytesOverheadSum` includes the executor receipt's `destBytesOverhead`, whose
+/// `executorArgs.length` portion is folded into the calldata size that
+/// `quote_gas_for_exec` prices. Stellar now adds `extra_args.executor_args.len()`
+/// to `calldata_size` in `compute_outbound_fee_breakdown`. This test proves the
+/// wiring: holding every other input fixed, a non-empty `executor_args` strictly
+/// raises the executor receipt's `fee_token_amount` over the empty-`executor_args`
+/// baseline — i.e. `executor_args.len()` is priced into the execution-gas cost.
+/// (The `BASE` portion of the executor `destBytesOverhead` is deliberately NOT
+/// added — design-gated; see `docs/h-items-parity-followup.md` §2.) The executor's
+/// own `get_fee` returns a constant flat fee independent of `executor_args` (the
+/// param is `_extra_args`/unused, `Executor::get_fee` → `Ok(cfg.usd_cents_fee)`),
+/// so the entire delta is attributable to `calldata_size`.
+#[test]
+fn test_executor_args_len_priced_into_calldata_size() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    // Baseline: empty executor_args ⇒ smaller calldata_size.
+    let extra_args_empty = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts_empty, _) = lane.send_with_extra_args(extra_args_empty.to_xdr(env));
+    let executor_fee_empty = TokenTransferLane::executor_receipt(&receipts_empty).fee_token_amount;
+
+    // Identical message but with non-empty executor_args ⇒ calldata_size grows
+    // by exactly executor_args.len() (here 128), raising the priced exec-gas
+    // cost (dest_gas_per_payload_byte = 16 ⇒ +128*16 = +2048 gas → higher cost).
+    let executor_args = Bytes::from_array(env, &[0xaau8; 128]);
+    let extra_args_with = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: executor_args.clone(),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts_with, _) = lane.send_with_extra_args(extra_args_with.to_xdr(env));
+    let executor_fee_with = TokenTransferLane::executor_receipt(&receipts_with).fee_token_amount;
+
+    assert!(
+        executor_fee_with > executor_fee_empty,
+        "executor receipt fee must include executor_args.len() in calldata_size \
+         (EVM OnRamp.sol:1066 parity): got with_args={:?} empty={:?}",
+        executor_fee_with,
+        executor_fee_empty
+    );
+}
+
 /// H-13 / INV-POOL-8: the sender-supplied `token_args` (carried in
 /// `extra_args.token_args`) must reach the pool's `get_fee` byte-for-byte
 /// (EVM `IPoolV2.getFee(localToken, destChainSelector, amount, feeToken,

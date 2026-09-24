@@ -373,6 +373,19 @@ impl OnRampContract {
             }
         }
         calldata_size = calldata_size.saturating_add(pool_dest_bytes_overhead);
+
+        // INV-FEE-14 follow-up (§9.2 safe half; EVM `OnRamp.sol` L1066): EVM's
+        // `bytesOverheadSum` also includes the executor receipt's `destBytesOverhead =
+        // BASE + executorArgs.length`. `executor_args.length` is the unambiguous
+        // subset — EVM unconditionally adds `executorArgs.length` and
+        // `GenericExtraArgsV3.executor_args: Bytes` is in scope — so add it now. The
+        // `BASE` portion (EVM `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` = 139, whose `+32+32`
+        // is EVM-source-encoding-specific) is deliberately OMITTED: it is
+        // destination-chain-dependent (EVM dest vs Soroban dest) and a wrong constant
+        // changes fee *magnitudes* — design-gated, must be validated against EVM fee
+        // vectors before adding. See `docs/h-items-parity-followup.md` §2.
+        calldata_size = calldata_size.saturating_add(extra_args.executor_args.len() as u32);
+
         let gas_quote = fee_quoter.quote_gas_for_exec(
             &dest_chain_selector,
             &execution_gas_limit,
