@@ -224,7 +224,7 @@ func TestConvertAndWriteMessageToChain(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// convertVerifierBlobToEIP2098 tests
+// ConvertVerifierBlobToEIP2098 tests
 // ---------------------------------------------------------------------------
 
 // buildV27Blob constructs a verifier result blob in the CCV aggregator's format:
@@ -261,7 +261,7 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 		copy(sig[32:], s32[:])
 
 		blob := buildV27Blob(versionTag, [][64]byte{sig})
-		result, err := convertVerifierBlobToEIP2098(blob)
+		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)
 
 		// For low-S, the output should be identical to input (high bit clear)
@@ -289,7 +289,7 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 		copy(sig[32:], s32[:])
 
 		blob := buildV27Blob(versionTag, [][64]byte{sig})
-		result, err := convertVerifierBlobToEIP2098(blob)
+		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)
 
 		// Extract the converted S
@@ -317,7 +317,7 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 		sig2[63] = 0x07
 
 		blob := buildV27Blob(versionTag, [][64]byte{sig1, sig2})
-		result, err := convertVerifierBlobToEIP2098(blob)
+		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)
 
 		// sig1: high bit should be set
@@ -330,14 +330,14 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 	t.Run("empty blob is passed through", func(t *testing.T) {
 		vt := stellarutil.DefaultCommitteeVerifierVersionTag()
 		blob := append(append([]byte(nil), vt[:]...), 0x00, 0x00)
-		result, err := convertVerifierBlobToEIP2098(blob)
+		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)
 		assert.Equal(t, blob, result)
 	})
 
 	t.Run("short blob is passed through", func(t *testing.T) {
 		blob := []byte{0x01, 0x02}
-		result, err := convertVerifierBlobToEIP2098(blob)
+		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)
 		assert.Equal(t, blob, result)
 	})
@@ -347,7 +347,7 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 		blob := make([]byte, 6+63)
 		copy(blob[:4], versionTag[:])
 		binary.BigEndian.PutUint16(blob[4:6], 63)
-		_, err := convertVerifierBlobToEIP2098(blob)
+		_, err := ConvertVerifierBlobToEIP2098(blob)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not a multiple of")
 	})

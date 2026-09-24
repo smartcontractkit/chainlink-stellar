@@ -544,10 +544,10 @@ pub trait BaseTokenPool {
     /// When `fast_finality` is true, sets the FTF buckets; otherwise the default buckets.
     /// Mirrors EVM `setRateLimitConfig`. Caller must enforce owner-or-admin.
     ///
-    /// TODO: When the FTF outbound simplification is applied, the `fast_finality`
-    /// path should only allow setting FTF inbound config. FTF outbound config is
-    /// not meaningful on Stellar. Consider rejecting non-disabled FTF outbound
-    /// config or splitting into separate inbound/outbound setters.
+    /// The FTF outbound bucket is kept for EVM `setRateLimitConfig` parity. It is
+    /// config-only and vacuous while Stellar-source senders request
+    /// WAIT_FOR_FINALITY, but retained for parity and future-proofing (M-17: keep
+    /// source-side finality; do not strip the outbound FTF path).
     fn set_rate_limit_config(
         env: &Env,
         remote_chain_selector: u64,

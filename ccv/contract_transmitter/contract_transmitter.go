@@ -91,7 +91,7 @@ func NewContractTransmitterWithClient(
 	}, nil
 }
 
-// convertVerifierBlobToEIP2098 converts a single verifier result blob from the
+// ConvertVerifierBlobToEIP2098 converts a single verifier result blob from the
 // CCV aggregator's v=27-normalized R||S format to EIP-2098 compact format.
 //
 // Blob layout: [4B version_tag][2B BE sig_len][N × 64B R||S pairs]
@@ -99,7 +99,7 @@ func NewContractTransmitterWithClient(
 // For each 64-byte signature, if the v=27-normalized S > n/2, the original
 // recovery ID was 1 and S was flipped (S_norm = n − S_orig). We undo the flip
 // and encode the recovery ID in bit 255 of the S word per EIP-2098.
-func convertVerifierBlobToEIP2098(blob []byte) ([]byte, error) {
+func ConvertVerifierBlobToEIP2098(blob []byte) ([]byte, error) {
 	const headerLen = 6 // 4 version + 2 sigLen
 	const sigSize = 64
 
@@ -177,7 +177,7 @@ func (ct *ContractTransmitter) ConvertAndWriteMessageToChain(ctx context.Context
 	// TODO: is this actually necessary for other chains or is this something specifically for EVM?
 	convertedCCVData := make([][]byte, len(report.CCVData))
 	for i, blob := range report.CCVData {
-		converted, convErr := convertVerifierBlobToEIP2098(blob)
+		converted, convErr := ConvertVerifierBlobToEIP2098(blob)
 		if convErr != nil {
 			ct.lggr.Error().Err(convErr).
 				Str("messageID", messageID.String()).

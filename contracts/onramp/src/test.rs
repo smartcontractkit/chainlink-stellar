@@ -1386,6 +1386,15 @@ struct TokenTransferLane {
     transfer_token: Address,
     transfer_token_sac: token::StellarAssetClient<'static>,
     fee_quoter_client: FeeQuoterContractClient<'static>,
+    /// Address of the token pool bound to this lane (the real lock-release pool
+    /// when `mock_pool_id` is `None`, otherwise the mock pool). Reconstructing a
+    /// `LockReleaseTokenPoolContractClient` over it lets tests reconfigure the
+    /// pool's source-side finality minimum (`set_allowed_finality_config`).
+    pool_id: Address,
+    /// Address of the lane's default executor, so tests can reconfigure its
+    /// `allowed_finality_config` (e.g. make it permissive to isolate the pool's
+    /// own finality minimum as the binding gate).
+    executor_id: Address,
     /// When set, the lane was wired with this mock pool (which captures
     /// `token_args` from `get_fee`) instead of the real lock-release pool.
     mock_pool_id: Option<Address>,
@@ -1492,6 +1501,33 @@ impl TokenTransferLane {
             .get(2)
             .expect("expected [CCV, Pool, Executor, NetworkFee]")
             .clone()
+    }
+
+    /// Reconstruct a client over the lane's real lock-release pool so a test can
+    /// reconfigure its source-side finality minimum. Only meaningful when the
+    /// lane was wired with the real pool (`mock_pool_id` is `None`).
+    fn pool_client(&self) -> LockReleaseTokenPoolContractClient<'_> {
+        LockReleaseTokenPoolContractClient::new(&self.env, &self.pool_id)
+    }
+
+    /// Set the pool-wide `allowed_finality_config` — the minimum source-chain
+    /// finality the token issuer considers sufficient for outbound transfers on
+    /// every lane from this source (EVM `TokenPool.setAllowedFinalityConfig`).
+    fn set_pool_allowed_finality_config(&self, allowed_finality: u32) {
+        self.pool_client()
+            .set_allowed_finality_config(&allowed_finality);
+    }
+
+    /// Reconfigure the executor's `allowed_finality_config` post-init, preserving
+    /// the rest of its dynamic config. Lets a test make the executor permissive
+    /// so the pool's own (stricter) finality minimum is the binding gate.
+    fn set_executor_allowed_finality_config(&self, allowed_finality: u32) {
+        let client = ExecutorContractClient::new(&self.env, &self.executor_id);
+        client.set_dynamic_config(&ExecDynamicConfig {
+            fee_aggregator: Some(Address::generate(&self.env)),
+            allowed_finality_config: allowed_finality,
+            ccv_allowlist_enabled: false,
+        });
     }
 }
 
@@ -1628,6 +1664,7 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
+    let executor_id = default_executor.clone();
 
     let dest_chain_config = OnrampDestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
@@ -1657,6 +1694,8 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
         transfer_token,
         transfer_token_sac,
         fee_quoter_client,
+        pool_id,
+        executor_id,
         mock_pool_id: mock_pool,
     }
 }
@@ -1692,6 +1731,236 @@ fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
          (EVM OnRamp.sol:1096 parity): got high={:?} low={:?}",
         executor_fee_high,
         executor_fee_low
+    );
+}
+
+/// INV-FEE-14 follow-up (§9.2 safe half; EVM `OnRamp.sol` L1066): EVM's
+/// `bytesOverheadSum` includes the executor receipt's `destBytesOverhead`, whose
+/// `executorArgs.length` portion is folded into the calldata size that
+/// `quote_gas_for_exec` prices. Stellar now adds `extra_args.executor_args.len()`
+/// to `calldata_size` in `compute_outbound_fee_breakdown`. This test proves the
+/// wiring: holding every other input fixed, a non-empty `executor_args` strictly
+/// raises the executor receipt's `fee_token_amount` over the empty-`executor_args`
+/// baseline — i.e. `executor_args.len()` is priced into the execution-gas cost.
+/// (The `BASE` portion of the executor `destBytesOverhead` is now ALSO added —
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 143; see
+/// `test_message_base_priced_into_calldata_size`. The delta here isolates only the
+/// `executor_args.len()` term because BASE is constant across both sends.) The
+/// executor's own `get_fee` returns a constant flat fee independent of
+/// `executor_args` (the param is `_extra_args`/unused, `Executor::get_fee` →
+/// `Ok(cfg.usd_cents_fee)`), so the entire delta is attributable to `calldata_size`.
+#[test]
+fn test_executor_args_len_priced_into_calldata_size() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    // Baseline: empty executor_args ⇒ smaller calldata_size.
+    let extra_args_empty = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts_empty, _) = lane.send_with_extra_args(extra_args_empty.to_xdr(env));
+    let executor_fee_empty = TokenTransferLane::executor_receipt(&receipts_empty).fee_token_amount;
+
+    // Identical message but with non-empty executor_args ⇒ calldata_size grows
+    // by exactly executor_args.len() (here 128), raising the priced exec-gas
+    // cost (dest_gas_per_payload_byte = 16 ⇒ +128*16 = +2048 gas → higher cost).
+    let executor_args = Bytes::from_array(env, &[0xaau8; 128]);
+    let extra_args_with = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: executor_args.clone(),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts_with, _) = lane.send_with_extra_args(extra_args_with.to_xdr(env));
+    let executor_fee_with = TokenTransferLane::executor_receipt(&receipts_with).fee_token_amount;
+
+    assert!(
+        executor_fee_with > executor_fee_empty,
+        "executor receipt fee must include executor_args.len() in calldata_size \
+         (EVM OnRamp.sol:1066 parity): got with_args={:?} empty={:?}",
+        executor_fee_with,
+        executor_fee_empty
+    );
+}
+
+/// INV-FEE-14 BASE (EVM `OnRamp.sol` L1134-1138 executor `destBytesOverhead`):
+/// EVM's `bytesOverheadSum` includes the fixed `MESSAGE_V1_EVM_SOURCE_BASE_SIZE`
+/// = 143 (79 framing + 32-byte sender + 32-byte onRamp). Stellar derives the
+/// identical 143 from its own wire encoding
+/// (`common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`) and bills it into
+/// `calldata_size`. This test proves the wiring in isolation.
+///
+/// EVM parity REQUIRES `base_execution_gas_cost != 0`: EVM `OnRamp.sol:633`
+/// rejects `baseExecutionGasCost == 0` with `InvalidDestChainConfig`, and the
+/// Stellar `DestChainConfigArgs::validate` mirrors that (types.rs #52). So BASE
+/// cannot be isolated by zeroing the base gas (the original sketch's premise).
+/// Instead we isolate it with a fee-quoter oracle: with executor flat fee 0,
+/// `gas_limit` 0, the zero-overhead mock CCV, no pool, and empty `data` and
+/// `executor_args`, the OnRamp's `calldata_size` is exactly
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (143), so its executor receipt exec
+/// cost must EQUAL the quoter's quote for `calldata_size = 143` and STRICTLY
+/// EXCEED the quote for `calldata_size = 0` (the no-BASE counterfactual, only
+/// reachable via a direct quoter call since the OnRamp always adds BASE). A
+/// second send adding 100 bytes of `data` raises the receipt by the 100-byte
+/// delta, confirming per-byte pricing on top of the constant base.
+#[test]
+fn test_message_base_priced_into_calldata_size() {
+    // Non-zero base_execution_gas_cost (parity-safe) + executor flat fee 0 +
+    // gas_limit 0 ⇒ execution_gas_limit == base_gas, and the executor receipt
+    // fee is the priced exec-gas cost alone (flat 0, exec cost NOT
+    // premium-discounted). Executor allows WAIT_FOR_FINALITY only.
+    let base_gas: u32 = 50_000;
+    let lane = setup_data_only_lane_with_base_gas(0, 0, base_gas);
+    let env = &lane.env;
+    let dest = lane.evm_chain_selector;
+    let fee_token = lane.fee_token.clone();
+    let default_executor = lane.default_executor.clone();
+
+    let mk_args = |block_confirmations: u32| GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    // Fee-quoter oracle: exec cost (USD cents) + fee-token price for the SAME
+    // gas budget the OnRamp will pass (`execution_gas_limit = base_gas`), at
+    // calldata_size = 0 (BASE not priced) vs. 143 (BASE priced in). Both use one
+    // `quote_gas_for_exec` call so the price is identical to the OnRamp's.
+    let oracle_zero = lane
+        .fee_quoter_client
+        .quote_gas_for_exec(&dest, &base_gas, &0, &fee_token);
+    let oracle_base = lane.fee_quoter_client.quote_gas_for_exec(
+        &dest,
+        &base_gas,
+        &MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE,
+        &fee_token,
+    );
+    assert!(
+        oracle_base.gas_cost_usd_cents > oracle_zero.gas_cost_usd_cents,
+        "MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) must add exec-gas cost at \
+         dest_gas_per_payload_byte=16: base={} zero={}",
+        oracle_base.gas_cost_usd_cents,
+        oracle_zero.gas_cost_usd_cents,
+    );
+
+    // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
+    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. Every
+    // receipt records its slice in USD cents (the Stellar receipt convention;
+    // see the executor/network receipt construction in lib.rs), and with executor
+    // flat fee 0 the executor receipt is exactly the priced execution-gas cost.
+    // So it must EQUAL the quoter's quote for calldata_size = 143 and STRICTLY
+    // EXCEED the quote for calldata_size = 0 (the no-BASE counterfactual) —
+    // proving the OnRamp bills BASE into calldata_size.
+    let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
+    assert_eq!(
+        receipts_base.len(),
+        3,
+        "data-only ⇒ [CCV, Executor, Network]"
+    );
+    let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
+    assert_eq!(
+        exec_fee_base, oracle_base.gas_cost_usd_cents as i128,
+        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) into \
+         calldata_size: executor receipt (USD cents, flat fee 0)={} must equal \
+         oracle(143)={}, and exceed oracle(0)={}",
+        exec_fee_base, oracle_base.gas_cost_usd_cents, oracle_zero.gas_cost_usd_cents,
+    );
+    assert!(
+        (exec_fee_base as u128) > oracle_zero.gas_cost_usd_cents,
+        "empty-data executor receipt must exceed the no-BASE (calldata_size = 0) \
+         counterfactual: receipt={} oracle(0)={}",
+        exec_fee_base,
+        oracle_zero.gas_cost_usd_cents,
+    );
+
+    // Adding 100 bytes of data grows calldata_size by 100 ⇒ fee strictly rises.
+    let receipts_with_data =
+        lane.send_data_only_custom(Bytes::from_array(env, &[0xbbu8; 100]), mk_args(0));
+    let exec_fee_with_data = receipts_with_data.get(1).unwrap().fee_token_amount;
+    assert!(
+        exec_fee_with_data > exec_fee_base,
+        "adding 100 bytes of data must raise the executor receipt fee by the \
+         100-byte calldata delta on top of BASE: with_data={} base={}",
+        exec_fee_with_data,
+        exec_fee_base,
+    );
+}
+
+/// M-17 (keep source-side finality for EVM parity): a Stellar-source message
+/// that requests FAST finality (non-zero `block_confirmations`, here
+/// `WAIT_FOR_SAFE` = bit 16) must be ADMITTED and priced through the outbound
+/// path when the executor's allowed-finality config permits it — not stripped or
+/// rejected. This is the positive complement of
+/// `test_disallowed_finality_reverts_end_to_end_via_executor` (which proves the
+/// executor-layer FTF gate rejects WAIT_FOR_SAFE when only WAIT_FOR_FINALITY is
+/// allowed). Together they pin the outbound FTF opt-in branch as reachable and
+/// enforced, preserving INV-FIN-POOL-3 and the spec's opt-in matrix.
+#[test]
+fn test_outbound_fast_finality_admitted_and_priced() {
+    // Executor ALLOWS WAIT_FOR_SAFE ⇒ the FTF request must be admitted.
+    let lane = setup_data_only_lane(25, EXEC_TEST_WAIT_FOR_SAFE);
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: EXEC_TEST_WAIT_FOR_SAFE, // FTF request, allowed here
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    // Admitted: send_data_only_custom panics on revert inside ccip_send, so
+    // reaching the assertions proves the FTF request was not rejected.
+    // Clone before the move: `extra_args` is consumed by the first send below,
+    // but we reuse a copy for the WAIT_FOR_FINALITY send later in this test.
+    let mut extra_args_finality = extra_args.clone();
+    let receipts = lane.send_data_only_custom(
+        Bytes::from_slice(env, b"fast finality admitted"),
+        extra_args,
+    );
+    assert_eq!(receipts.len(), 3, "data-only ⇒ [CCV, Executor, Network]");
+    let exec_receipt = receipts.get(1).unwrap();
+    assert_eq!(
+        exec_receipt.issuer, lane.default_executor,
+        "executor receipt issuer must be the lane's real default executor (auto-exec), \
+         not a stripped/simplified path",
+    );
+    assert!(
+        exec_receipt.fee_token_amount > 0,
+        "an admitted FTF outbound message must carry a priced executor fee, got={}",
+        exec_receipt.fee_token_amount,
+    );
+
+    // The same lane must still admit a WAIT_FOR_FINALITY (0) request — both
+    // finality modes are accepted on the outbound path.
+    extra_args_finality.block_confirmations = 0;
+    let receipts_finality = lane.send_data_only_custom(
+        Bytes::from_slice(env, b"wait for finality"),
+        extra_args_finality,
+    );
+    assert_eq!(
+        receipts_finality.len(),
+        3,
+        "WAIT_FOR_FINALITY outbound request must also be admitted",
     );
 }
 
@@ -3417,6 +3686,12 @@ struct DataOnlyLane {
     fee_token: Address,
     fee_token_sac: token::StellarAssetClient<'static>,
     default_executor: Address,
+    /// Fee-quoter client so tests can query the quoter directly as an oracle —
+    /// e.g. to obtain the `calldata_size = 0` counterfactual exec cost when
+    /// isolating the constant `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` contribution
+    /// (the OnRamp always adds BASE, so the no-BASE baseline is only reachable
+    /// via a direct quoter call).
+    fee_quoter_client: FeeQuoterContractClient<'static>,
 }
 
 impl DataOnlyLane {
@@ -3427,6 +3702,32 @@ impl DataOnlyLane {
     /// (e.g. a `balance` query) would wipe the event view.
     fn send_data_only(&self, extra_args: GenericExtraArgsV3) -> Vec<Receipt> {
         self.send_data_only_full(extra_args).0
+    }
+
+    /// Like `send_data_only` but with a caller-supplied `data` payload, so a test
+    /// can send an empty-data message (to isolate the constant
+    /// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` contribution to `calldata_size`).
+    fn send_data_only_custom(&self, data: Bytes, extra_args: GenericExtraArgsV3) -> Vec<Receipt> {
+        let env = &self.env;
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data,
+            token_amounts: Vec::new(env),
+            fee_token: self.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
     }
 
     /// Like `send_data_only` but also returns the `encoded_message` (canonical
@@ -3464,6 +3765,18 @@ impl DataOnlyLane {
 fn setup_data_only_lane(
     executor_usd_cents_fee: u32,
     executor_allowed_finality: u32,
+) -> DataOnlyLane {
+    setup_data_only_lane_with_base_gas(executor_usd_cents_fee, executor_allowed_finality, 200_000)
+}
+
+/// Same as `setup_data_only_lane` but with a configurable
+/// `base_execution_gas_cost`. Setting it to 0 (with executor flat fee 0 and the
+/// zero-overhead mock CCV) makes the executor receipt's priced exec-gas depend
+/// SOLELY on `calldata_size`, isolating the constant `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`.
+fn setup_data_only_lane_with_base_gas(
+    executor_usd_cents_fee: u32,
+    executor_allowed_finality: u32,
+    base_execution_gas_cost: u32,
 ) -> DataOnlyLane {
     let env = Env::default();
     env.mock_all_auths();
@@ -3503,6 +3816,7 @@ fn setup_data_only_lane(
         &fee_token,
         &transfer_token,
     );
+    let fee_quoter_client = FeeQuoterContractClient::new(&env, &fee_quoter_id);
 
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
@@ -3532,7 +3846,7 @@ fn setup_data_only_lane(
         token_receiver_allowed: true,
         message_network_fee_usd_cents: 50,
         token_network_fee_usd_cents: 100,
-        base_execution_gas_cost: 200_000,
+        base_execution_gas_cost,
         execution_fee_usd_cents: 25,
         default_executor: default_executor.clone(),
         lane_mandated_ccvs: Vec::new(&env),
@@ -3552,6 +3866,7 @@ fn setup_data_only_lane(
         fee_token,
         fee_token_sac,
         default_executor,
+        fee_quoter_client,
     }
 }
 
@@ -3825,6 +4140,105 @@ fn test_disallowed_finality_reverts_end_to_end_via_executor() {
 
     lane.onramp_client
         .get_fee(&lane.evm_chain_selector, &message);
+}
+
+// ================================================================
+// Source-side pool finality minimum — integration coverage via a real
+// OnRamp→lock-release-pool token lane (closes the gap where finality
+// tests were data-only / executor-layer only). The token issuer (pool
+// owner) sets `allowed_finality_config` to a block depth, the minimum
+// source-chain finality for outbound transfers on every lane from this
+// source (EVM `TokenPool.setAllowedFinalityConfig` parity). A user
+// requesting FASTER finality than that minimum reverts on source (#315);
+// a SLOWER request is admitted with the user's value honored verbatim.
+// ================================================================
+
+/// Shared setup: a real lock-release token-pool lane whose executor is made
+/// permissive (`allowed_finality_config = 1` ⇒ admits any block depth ≥ 1) so
+/// the executor is NOT the finality gate, and whose pool enforces a
+/// 10-confirmation source-side minimum. This isolates the POOL's minimum as the
+/// binding constraint — the property under test.
+fn setup_pool_finality_lane() -> TokenTransferLane {
+    let lane = setup_token_transfer_lane();
+    // Executor: admit any block depth ≥ 1. The default (0 = WAIT_FOR_FINALITY
+    // only) would reject every fast-finality request before the pool is
+    // consulted, masking the pool's own gate.
+    lane.set_executor_allowed_finality_config(1u32);
+    // Pool: issuer sets a 10-confirmation minimum for all lanes from this source.
+    lane.set_pool_allowed_finality_config(10u32);
+    lane
+}
+
+/// Claim (2) end-to-end via the OnRamp→pool path: a token transfer requesting
+/// finality FASTER than the pool's configured minimum (5 < 10) reverts on source
+/// with InvalidRequestedFinality (#315). The executor is permissive (admits
+/// depth ≥ 1), so the revert is attributable to the pool's minimum, not the
+/// executor's own gate. EVM `FinalityCodec._ensureRequestedFinalityAllowed` parity.
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")] // InvalidRequestedFinality
+fn test_outbound_pool_finality_faster_than_minimum_reverts_end_to_end() {
+    let lane = setup_pool_finality_lane();
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 5, // faster than the pool's 10-confirmation minimum
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::from_slice(env, b"pool min finality faster"),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    // Quoting routes through OnRamp.get_fee → pool.get_fee, which enforces the
+    // pool's allowed_finality_config and reverts with #315.
+    lane.router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+}
+
+/// Claim (3) end-to-end via the OnRamp→pool path: a token transfer requesting
+/// finality SLOWER than the pool's configured minimum (20 > 10) is admitted, and
+/// the user's (slower) value is honored verbatim in the emitted on-wire
+/// `CcipMessageV1.finality` — not clamped to the pool minimum. EVM `OnRamp`
+/// writes the user finality as-is (no clamping) parity.
+#[test]
+fn test_outbound_pool_finality_slower_than_minimum_admits_user_value_end_to_end() {
+    let lane = setup_pool_finality_lane();
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 20, // slower than the pool's 10-confirmation minimum
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let (_receipts, encoded) = lane.send_with_extra_args(extra_args.to_xdr(env));
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.finality, 20u32,
+        "user-requested finality slower than the pool minimum must be honored \
+         verbatim in the emitted message (no clamping to the pool minimum)"
+    );
+    let _ = env; // keep env alive
 }
 
 /// A lane's `default_executor` may not be the no-execution sentinel — the

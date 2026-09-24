@@ -2414,6 +2414,150 @@ fn test_ftf_outbound_rejected_when_finality_not_allowed() {
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
 }
 
+// ----------------------------------------------------------------
+// Source-side pool finality minimum — block-depth mode (burn-mint).
+//
+// Mirrors the lock-release tests: the token issuer (pool owner) sets
+// `allowed_finality_config` to a block depth, the minimum source-chain
+// finality for outbound transfers on every lane from this source. A user
+// requesting FASTER finality (fewer confirmations) reverts; a SLOWER one is
+// admitted with the user's value honored. EVM `FinalityCodec` parity.
+// ----------------------------------------------------------------
+
+#[test]
+fn test_outbound_block_depth_faster_than_minimum_reverts() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Issuer sets a minimum of 10 source-chain confirmations for all lanes from
+    // this source (pool-wide `allowed_finality_config`, EVM parity).
+    pool_client.set_allowed_finality_config(&10u32);
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &1000);
+
+    // User requests only 5 confirmations — faster than the 10-confirmation
+    // minimum ⇒ source revert with InvalidRequestedFinality (#315).
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender,
+        amount: 100,
+        local_token: token_address,
+    };
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &5u32, &Bytes::new(&env));
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
+}
+
+#[test]
+fn test_outbound_block_depth_slower_than_minimum_admitted() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Issuer sets a minimum of 10 source-chain confirmations.
+    pool_client.set_allowed_finality_config(&10u32);
+
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &1000);
+
+    // User requests 20 confirmations — slower than the 10-confirmation minimum
+    // ⇒ admitted; the user's (slower) value is honored, no revert.
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: remote_chain,
+        original_sender: sender,
+        amount: 100,
+        local_token: token_address,
+    };
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_input, &20u32, &Bytes::new(&env));
+    // No fee config ⇒ fee 0 ⇒ full amount is burned for the wire.
+    assert_eq!(out.dest_token_amount, 100);
+}
+
+#[test]
+fn test_set_and_get_allowed_finality_config_round_trip() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    // Default before any set is WAIT_FOR_FINALITY (0).
+    assert_eq!(pool_client.get_allowed_finality_config(), 0u32);
+
+    // Set + read back a flag-mode config.
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    assert_eq!(pool_client.get_allowed_finality_config(), WAIT_FOR_SAFE);
+
+    // Set + read back a block-depth-mode config.
+    pool_client.set_allowed_finality_config(&10u32);
+    assert_eq!(pool_client.get_allowed_finality_config(), 10u32);
+
+    // Re-setting overwrites the prior value (modify path).
+    pool_client.set_allowed_finality_config(&42u32);
+    assert_eq!(pool_client.get_allowed_finality_config(), 42u32);
+    let _ = &env; // keep env alive
+}
+
+#[test]
+fn test_set_allowed_finality_config_rejects_without_owner_auth() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        _token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    // With no auths mocked, the owner-gated setter must reject a non-owner
+    // caller (Ownable::require_owner panics, surfaced as an Err by try_).
+    env.mock_auths(&[]);
+    let r = pool_client.try_set_allowed_finality_config(&WAIT_FOR_SAFE);
+    assert!(r.is_err());
+    // The value must NOT have been persisted.
+    assert_eq!(pool_client.get_allowed_finality_config(), 0u32);
+}
+
 #[test]
 fn test_ftf_and_default_buckets_are_independent() {
     let (

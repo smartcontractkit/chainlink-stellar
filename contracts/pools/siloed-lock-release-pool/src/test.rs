@@ -1326,6 +1326,44 @@ fn get_fee_siloed_fast_finality_bps_selection() {
     assert!(fast.is_enabled);
 }
 
+// ----------------------------------------------------------------
+// Source-side pool finality minimum — siloed lock-release pool.
+//
+// The siloed pool enforces the same source-side finality minimum as the
+// canonical lock-release pool (`consume_outbound_rate_limit` →
+// `ensure_requested_finality_allowed`). This closes the gap where the siloed
+// pool had inbound/fee-selection coverage but no outbound reject test: a user
+// requesting FASTER finality (fewer confirmations) than the issuer-configured
+// minimum must revert on source with InvalidRequestedFinality (#315).
+// ----------------------------------------------------------------
+#[test]
+fn siloed_outbound_block_depth_faster_than_minimum_reverts() {
+    let t = setup();
+
+    // Issuer sets a minimum of 10 source-chain confirmations for all lanes
+    // from this source (pool-wide `allowed_finality_config`, EVM parity).
+    t.pool_client.set_allowed_finality_config(&10u32);
+
+    let sender = Address::generate(&t.env);
+    t.sac.mint(&sender, &(1_000 * SILOED_E18));
+
+    // User requests only 5 confirmations — faster than the 10-confirmation
+    // minimum ⇒ source revert with InvalidRequestedFinality (#315).
+    let r = t.pool_client.try_lock_or_burn(
+        &t.auth_onramp,
+        &LockOrBurnIn {
+            receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+            remote_chain_selector: REMOTE_CHAIN,
+            original_sender: sender,
+            amount: 100 * SILOED_E18,
+            local_token: t.token_addr.clone(),
+        },
+        &5u32,
+        &Bytes::new(&t.env),
+    );
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidRequestedFinality);
+}
+
 #[test]
 fn lock_or_burn_siloed_nonzero_bps_fee() {
     let t = setup();

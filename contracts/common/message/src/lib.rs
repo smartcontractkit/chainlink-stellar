@@ -318,6 +318,34 @@ pub struct AnyToStellarMessage {
 /// Current message format version for CCIP v1.7.
 pub const MESSAGE_V1_VERSION: u8 = 1;
 
+/// Fixed framing size of a `CcipMessageV1` excluding any variable-length field
+/// content. The wire layout is the chain-agnostic CCIP v1.7 format, byte-for-byte
+/// identical to EVM `MessageV1Codec.MESSAGE_V1_BASE_SIZE`:
+///   1 (version) + 8 (sourceChain) + 8 (destChain) + 8 (msgNum) +
+///   4 (executionGasLimit) + 4 (ccipReceiveGasLimit) + 4 (finality) +
+///   32 (ccvAndExecutorHash) + 1 (onRampLen) + 1 (offRampLen) +
+///   1 (senderLen) + 1 (receiverLen) + 2 (destBlobLen) + 2 (tokenTransferLen) +
+///   2 (dataLen) = 79.
+/// The length-prefix bytes are fixed; the field contents they prefix are
+/// variable (receiver/offRamp/destBlob are dest-chain-specific, data is
+/// user-specified, tokenTransfer is optional) and are billed separately.
+pub const MESSAGE_V1_BASE_SIZE: u32 = 1 + 8 + 8 + 8 + 4 + 4 + 4 + 32 + 1 + 1 + 1 + 1 + 2 + 2 + 2;
+
+/// Fixed on-wire byte overhead a Stellar-source `CcipMessageV1` always carries,
+/// mirroring EVM `MessageV1Codec.MESSAGE_V1_EVM_SOURCE_BASE_SIZE`. It is the
+/// framing above plus the fixed content of the two SOURCE-side address fields
+/// `sender` and `onramp`: each is a 32-byte raw Soroban address key
+/// (`CcipMessageV1::address_raw_bytes`). EVM reaches the same 32+32 by
+/// abi.encoding its 20-byte addresses to 32; Stellar addresses are natively 32.
+/// So 79 + 32 + 32 = 143, equal to EVM's constant by derivation rather than
+/// copy. The OnRamp bills this once into the executor receipt's `calldata_size`
+/// (EVM `OnRamp._getReceipts` executor `destBytesOverhead` parity).
+pub const MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE: u32 = MESSAGE_V1_BASE_SIZE + 32 + 32;
+
+// Compile-time guarantee that the derived Stellar source base matches the EVM
+// constant it mirrors (`MESSAGE_V1_EVM_SOURCE_BASE_SIZE == 143`).
+const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 143);
+
 /// Canonical token transfer encoding for CCIP v1.7.
 ///
 /// Matches protocol.TokenTransfer.Encode() byte layout:

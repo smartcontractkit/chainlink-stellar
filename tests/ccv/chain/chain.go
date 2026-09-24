@@ -49,6 +49,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
+	contracttransmitter "github.com/smartcontractkit/chainlink-stellar/ccv/contract_transmitter"
 	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
@@ -945,7 +946,26 @@ func (c *Chain) ManuallyExecuteMessage(ctx context.Context, message protocol.Mes
 		}
 		ccvStrs = append(ccvStrs, s)
 	}
-	if err := c.offRampClient.Execute(ctx, encoded, ccvStrs, verifierResults, uint32(gasLimit)); err != nil {
+	// The Stellar OffRamp / committee verifier expects EIP-2098 compact
+	// signatures: recovery id encoded in bit 255 of the S word, with S in its
+	// original (un-flipped) form. The CCV aggregator emits v=27-normalized
+	// R||S blobs instead, so every writer that calls offramp.execute must
+	// convert first — the DON executor does this in
+	// ContractTransmitter.ConvertAndWriteMessageToChain. Mirror it here so the
+	// permissionless manual-execute path feeds identical bytes to the chain;
+	// otherwise decode_compact_sig recovers the wrong signer and verify_message
+	// fails with UnexpectedSigner (#72).
+	convertedVerifierResults := make([][]byte, len(verifierResults))
+	for i, blob := range verifierResults {
+		converted, convErr := contracttransmitter.ConvertVerifierBlobToEIP2098(blob)
+		if convErr != nil {
+			return cciptestinterfaces.ExecutionStateChangedEvent{},
+				fmt.Errorf("convert verifier blob %d to EIP-2098: %w", i, convErr)
+		}
+		convertedVerifierResults[i] = converted
+	}
+
+	if err := c.offRampClient.Execute(ctx, encoded, ccvStrs, convertedVerifierResults, uint32(gasLimit)); err != nil {
 		return cciptestinterfaces.ExecutionStateChangedEvent{}, fmt.Errorf("offramp execute: %w", err)
 	}
 	latestLedger, err := c.rpcClient.GetLatestLedger(ctx)
