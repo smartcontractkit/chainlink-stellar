@@ -86,10 +86,10 @@ func statReleaseWasm(path, displayName string) error {
 // operations on the given bundle. It mirrors the phased devenv pipeline (foundation → verification/fees
 // → ramps → receiver + cross-family datastore refs).
 //
-// topology must be non-nil with a non-nil NOP graph: committee verifier signature quorum configuration
-// (ApplySignatureConfigs) is derived from offchain NOP/committee data. CCV supplies this via
-// RegisterStellarDeployOffchainTopologyForSelector → Take in [StellarDeployChainContracts], or
-// [RunStellarCCIPFullDeployForCCV] which converts CCV topology before calling this function.
+// topology is optional: committee verifier signature quorums are applied at lane-configuration
+// time, not during the deploy, so the deploy itself needs no NOP/committee data. It is kept as a
+// parameter for callers that hold one (CCV's stash → [StellarDeployChainContracts], or
+// [RunStellarCCIPFullDeployForCCV] which converts CCV topology) and for future deploy-time needs.
 func RunStellarCCIPFullDeploy(
 	ctx context.Context,
 	b cldf_ops.Bundle,
@@ -104,10 +104,7 @@ func RunStellarCCIPFullDeploy(
 	if deps.Deploy == nil || deps.Invoker == nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: incomplete StellarDeps")
 	}
-	if topology == nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("RunStellarCCIPFullDeploy: offchain EnvironmentTopology is nil (use CCV pre-deploy stash + StellarDeployChainContracts or RunStellarCCIPFullDeployForCCV with a non-nil CCV topology)")
-	}
-	// topology is retained for the stash contract and future deploy-time needs; committee
+	// topology (possibly nil) is retained for the stash contract and future deploy-time needs; committee
 	// signer quorums are applied later, at lane-configuration time (see the comment below).
 
 	ds := datastore.NewMemoryDataStore()
