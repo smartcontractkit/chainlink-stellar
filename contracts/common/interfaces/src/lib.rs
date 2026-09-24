@@ -17,6 +17,7 @@
 
 pub mod ccip_receiver;
 pub mod committee_verifier;
+pub mod cross_chain_verifier;
 pub mod executor;
 pub mod fee_quoter;
 pub mod offramp;

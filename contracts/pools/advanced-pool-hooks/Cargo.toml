@@ -1,0 +1,20 @@
+[package]
+name = "pools-advanced-pool-hooks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+common-authorization = { workspace = true }
+common-guard = { workspace = true }
+common-error = { workspace = true }
+common-helpers = { workspace = true }
+common-interfaces = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

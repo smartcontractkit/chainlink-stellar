@@ -352,6 +352,22 @@ fn test_apply_remote_chain_cfg_updates_is_owner_only() {
     );
 }
 
+// REQ (Claim 3): adding/configuring a CCV's signer set is owner-gated
+// (`require_owner` in `apply_signature_configs`, lib.rs:307). A non-owner must
+// be rejected — mirroring `test_apply_remote_chain_cfg_updates_is_owner_only`.
+// The args are intentionally empty so the only gate exercised is the auth check.
+#[test]
+fn test_apply_signature_configs_is_owner_only() {
+    let (env, client, ..) = setup();
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    env.mock_auths(&[]);
+    let r = client.try_apply_signature_configs(&vec![&env], &vec![&env]);
+    assert!(
+        r.is_err(),
+        "non-owner must be rejected from configuring a CCV's signer set"
+    );
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #48)")] // RemoteChainNotSupported
 fn test_get_remote_chain_config_fails_when_not_configured() {

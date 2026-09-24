@@ -1133,6 +1133,8 @@ dependencies = [
 name = "offramp"
 version = "0.0.0"
 dependencies = [
+ "ccvs-committee-verifier",
+ "ccvs-versioned-verifier-resolver",
  "common-authorization",
  "common-error",
  "common-guard",
@@ -1140,8 +1142,10 @@ dependencies = [
  "common-interfaces",
  "common-message",
  "common-pool",
+ "k256",
  "rmn_proxy",
  "rmn_remote",
+ "sha3",
  "soroban-sdk",
  "stellar-strkey 0.0.16",
 ]
@@ -1205,6 +1209,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pools-advanced-pool-hooks"
+version = "0.0.0"
+dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
+ "common-helpers",
+ "common-interfaces",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "pools-burn-mint-pool"
 version = "0.0.0"
 dependencies = [
@@ -1214,6 +1230,7 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "pools-advanced-pool-hooks",
  "rmn_proxy",
  "rmn_remote",
  "router",

@@ -70,6 +70,7 @@ CONTRACTS=(
   "pools_burn_mint_pool|burn_mint_pool|BurnMintPool|0|auth_,pool_"
   "pools_token_lock_box|token_lock_box|TokenLockBox|0|auth_,lockbox_"
   "pools_siloed_lock_release_pool|siloed_lock_release_pool|SiloedLockReleasePool|0|auth_,pool_"
+  "pools_advanced_pool_hooks|advanced_pool_hooks|AdvancedPoolHooks|0|auth_,aph_"
   "mcms|mcms|Mcms|0|auth_,mcms_"
   "timelock|timelock|Timelock|0|tl_"
   "forwarder|forwarder|cre|0|auth_,forwarder_"

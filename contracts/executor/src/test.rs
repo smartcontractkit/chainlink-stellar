@@ -257,6 +257,38 @@ fn test_get_fee_passes_allowlisted_ccv() {
     assert_eq!(fee, 42);
 }
 
+#[test]
+fn test_get_fee_allows_non_allowlisted_ccv_when_disabled() {
+    // OFF-positive (CCV-1 gap): with the CCV allowlist disabled, a CCV that is
+    // NOT on the (empty) allowlist is accepted — enforcement is skipped. This is
+    // the explicit counterpart to test_get_fee_reverts_on_non_allowlisted_ccv
+    // (ON-negative), closing the "no OFF-state positive test" coverage gap.
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(ExecutorContract, ());
+    let client = ExecutorContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    // allowlist OFF at init.
+    let dynamic_config = DynamicConfig {
+        fee_aggregator: Some(Address::generate(&env)),
+        allowed_finality_config: WAIT_FOR_FINALITY,
+        ccv_allowlist_enabled: false,
+    };
+    client.initialize(&owner, &2, &dynamic_config);
+    add_dest_chain(&client, 412, remote_chain(42, true));
+
+    // A CCV not on the (empty) allowlist — accepted because enforcement is off.
+    let ccvs = vec![&env, Address::generate(&env)];
+    let fee = client.get_fee(
+        &412,
+        &WAIT_FOR_FINALITY,
+        &ccvs,
+        &Bytes::new(&env),
+        &Address::generate(&env),
+    );
+    assert_eq!(fee, 42);
+}
+
 // ============================================================
 // CCV allowlist update Tests
 // ============================================================
@@ -284,6 +316,66 @@ fn test_apply_allowed_ccv_updates_toggles_enablement() {
     assert_eq!(client.get_allowed_ccvs(), vec![&client.env, ccv]);
     let cfg = client.get_dynamic_config();
     assert!(cfg.ccv_allowlist_enabled);
+}
+
+#[test]
+fn test_apply_allowed_ccv_updates_toggles_on_then_off() {
+    // ON→OFF toggle (CCV-1 gap): the allowlist can be turned off at runtime via
+    // `apply_allowed_ccv_updates(&..., &false)` (EVM `DisableAllowlist`). With
+    // the allowlist ON a non-allowed CCV is rejected; after toggling OFF, the
+    // SAME non-allowed CCV is accepted. The existing
+    // test_get_fee_reverts_on_non_allowlisted_ccv already proves ON rejects, so
+    // this test focuses on the toggle direction + the OFF-acceptance that follows.
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(ExecutorContract, ());
+    let client = ExecutorContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let allowed_ccv = Address::generate(&env);
+    // allowlist ON at init.
+    let dynamic_config = DynamicConfig {
+        fee_aggregator: Some(Address::generate(&env)),
+        allowed_finality_config: WAIT_FOR_FINALITY,
+        ccv_allowlist_enabled: true,
+    };
+    client.initialize(&owner, &2, &dynamic_config);
+    client.apply_allowed_ccv_updates(&Vec::new(&env), &vec![&env, allowed_ccv], &true);
+    add_dest_chain(&client, 413, remote_chain(42, true));
+
+    let stranger_ccv = Address::generate(&env);
+    let ccvs = vec![&env, stranger_ccv.clone()];
+
+    // ON: the stranger CCV (not on the allowlist) is rejected. `matches!(Ok(Ok(_)))`
+    // treats only a genuine success as passing, so this holds whether try_get_fee
+    // surfaces the returned Err as an outer Err (trap) or an inner Err.
+    let r = client.try_get_fee(
+        &413,
+        &WAIT_FOR_FINALITY,
+        &ccvs,
+        &Bytes::new(&env),
+        &Address::generate(&env),
+    );
+    assert!(
+        !matches!(r, Ok(Ok(_))),
+        "non-allowlisted CCV must be rejected while the allowlist is ON"
+    );
+
+    // Toggle the allowlist OFF (no list mutation, just the flag).
+    client.apply_allowed_ccv_updates(&Vec::new(&env), &Vec::new(&env), &false);
+    assert!(
+        !client.get_dynamic_config().ccv_allowlist_enabled,
+        "allowlist must be disabled after the toggle"
+    );
+
+    // OFF: the same stranger CCV is now accepted — enforcement is skipped.
+    let fee = client.get_fee(
+        &413,
+        &WAIT_FOR_FINALITY,
+        &ccvs,
+        &Bytes::new(&env),
+        &Address::generate(&env),
+    );
+    assert_eq!(fee, 42);
 }
 
 // ============================================================
@@ -602,4 +694,24 @@ fn test_apply_dest_chain_updates_remove_then_readd_same_selector_in_one_batch() 
         "re-add must install the new config"
     );
     assert!(after.enabled);
+}
+
+// ============================================================
+// apply_allowed_ccv_updates owner-gating (Claim 3)
+// ============================================================
+
+// REQ (Claim 3): the Executor's allowlist of accepted CCVs (which CCVs may
+// co-verify messages on this destination) is owner-gated at
+// `apply_allowed_ccv_updates` (lib.rs:251). A non-owner must be rejected. The
+// add/remove vectors are empty so the only gate exercised is the auth check.
+#[test]
+fn test_apply_allowed_ccv_updates_is_owner_only() {
+    let (env, client, _owner) = setup();
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    env.mock_auths(&[]);
+    let r = client.try_apply_allowed_ccv_updates(&Vec::new(&env), &Vec::new(&env), &false);
+    assert!(
+        r.is_err(),
+        "non-owner must be rejected from adding/removing the Executor's allowed CCVs"
+    );
 }

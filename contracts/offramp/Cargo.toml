@@ -23,3 +23,10 @@ common-pool = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 rmn_proxy = { workspace = true }
 rmn_remote = { workspace = true }
+# Real CCV stack for the OffRamp↔CommitteeVerifier integration tests — wires a live
+# VersionedVerifierResolver → CommitteeVerifier (real ecrecover quorum) behind OffRamp.execute,
+# closing the shared root gap of claims 4/5/6 in docs/claims-verification.md.
+ccvs-committee-verifier = { path = "../ccvs/committee-verifier" }
+ccvs-versioned-verifier-resolver = { workspace = true }
+k256 = { workspace = true }
+sha3 = { workspace = true }

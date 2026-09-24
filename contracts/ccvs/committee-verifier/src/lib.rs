@@ -7,7 +7,9 @@ use common_authorization::allowlist::{AllowListEntry, AllowListUpdate, AllowList
 use common_authorization::Ownable;
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_helpers::{curse_checkable::CurseCheckable, finality_codec, validation::Validatable};
+use common_helpers::{
+    curse_checkable::CurseCheckable, finality_codec, validation::Validatable, verifier_versioning,
+};
 use common_signature::config::{
     SignatureConfig, SignatureConfigManager, SignatureVerificationConfig,
 };
@@ -241,11 +243,9 @@ impl CommitteeVerifierContract {
             return Err(CCIPError::InvalidVerifierResults);
         }
 
-        let version = extract_version_tag(&env, &verifier_results)?;
+        let version = verifier_versioning::extract_version_tag(&env, &verifier_results)?;
         let expected_tag = Self::load_verifier_version_tag(&env)?;
-        if version != expected_tag {
-            return Err(CCIPError::InvalidCCVVersion);
-        }
+        verifier_versioning::ensure_version_tag_matches(&expected_tag, &version)?;
 
         let signature_len = extract_signature_len(&verifier_results)?;
         let expected = VERIFIER_VERSION_BYTES + SIGNATURE_LENGTH_BYTES + signature_len;
@@ -253,10 +253,11 @@ impl CommitteeVerifierContract {
             return Err(CCIPError::InvalidVerifierResults);
         }
 
-        let mut signed_payload = Bytes::new(&env);
-        signed_payload.append(&Bytes::from_slice(&env, &version.to_array()));
-        signed_payload.append(&Bytes::from_array(&env, &message_hash.to_array()));
-        let signed_hash: BytesN<32> = env.crypto().keccak256(&signed_payload).into();
+        // The signed payload is keccak256(version_tag || message_hash) — centralized in
+        // `verifier_versioning` so the #72-bug-class invariant (the version tag the resolver
+        // dispatches on is the same bytes signed over) cannot drift across verifiers.
+        let signed_hash: BytesN<32> =
+            verifier_versioning::signed_payload_hash(&env, &version, &message_hash);
 
         // Slice the raw signature blob into EIP-2098 compact 64-byte signatures.
         let sig_blob =
@@ -613,22 +614,6 @@ impl CommitteeVerifierContract {
 
         Ok(())
     }
-}
-
-/// Reads the leading `bytes4` version tag from the verifier-results blob.
-fn extract_version_tag(env: &Env, verifier_results: &Bytes) -> Result<BytesN<4>, CCIPError> {
-    if verifier_results.len() < VERIFIER_VERSION_BYTES {
-        return Err(CCIPError::InvalidVerifierResults);
-    }
-    let mut out = [0u8; VERIFIER_VERSION_BYTES as usize];
-    let mut i = 0u32;
-    while i < VERIFIER_VERSION_BYTES {
-        out[i as usize] = verifier_results
-            .get(i)
-            .ok_or(CCIPError::InvalidVerifierResults)?;
-        i += 1;
-    }
-    Ok(BytesN::from_array(env, &out))
 }
 
 /// Reads the big-endian `u16` signature-payload length that follows the version tag.

@@ -9,6 +9,7 @@ members = [
   "contracts/fee-quoter",
   "contracts/onramp",
   "contracts/offramp",
+  "contracts/pools/advanced-pool-hooks",
   "contracts/pools/burn-mint-pool",
   "contracts/pools/lock-release-pool",
   "contracts/pools/siloed-lock-release-pool",

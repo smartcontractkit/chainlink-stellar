@@ -6,6 +6,7 @@ pub mod finality_codec;
 pub mod map_updater;
 pub mod soroban_invoke;
 pub mod validation;
+pub mod verifier_versioning;
 
 pub use map_updater::{MapUpdate, MapUpdater, StorageKind};
 

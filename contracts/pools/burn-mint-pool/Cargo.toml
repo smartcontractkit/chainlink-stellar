@@ -22,3 +22,4 @@ ccip-ramp-registry = { workspace = true }
 router = { workspace = true }
 rmn_proxy = { workspace = true }
 rmn_remote = { workspace = true }
+pools-advanced-pool-hooks = { path = "../advanced-pool-hooks" }
