@@ -13,14 +13,23 @@ import (
 const stellarRootModule = "github.com/smartcontractkit/chainlink-stellar"
 
 // FindStellarRoot locates the chainlink-stellar project root — the directory whose
-// go.mod declares module github.com/smartcontractkit/chainlink-stellar — by walking
-// up from CWD. Matching by module path (rather than just "any go.mod") is required
+// go.mod declares module github.com/smartcontractkit/chainlink-stellar — first via
+// the CHAINLINK_STELLAR_ROOT environment variable, then by walking up from CWD.
+// Matching by module path (rather than just "any go.mod") is required
 // because tests/ and deployment/ are their own Go modules; a naive go.mod search
 // started from tests/ would stop there and return the wrong directory.
 //
-// This works whether the devenv CLI is run from the repo root directly or from a
-// subdirectory (e.g. `cd tests && …`).
+// The env override lets callers outside the repo (e.g. a chainlink-deployments
+// checkout) point at a chainlink-stellar checkout holding the release WASMs, for
+// parity with deployment/mcmsutil. The walk-up works whether the devenv CLI is run
+// from the repo root directly or from a subdirectory (e.g. `cd tests && …`).
 func FindStellarRoot() (string, error) {
+	if root := os.Getenv("CHAINLINK_STELLAR_ROOT"); root != "" {
+		if mp, ok := goModModulePath(root); ok && mp == stellarRootModule {
+			return root, nil
+		}
+		return "", fmt.Errorf("CHAINLINK_STELLAR_ROOT %s does not declare module %s", root, stellarRootModule)
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
