@@ -1799,36 +1799,74 @@ fn test_executor_args_len_priced_into_calldata_size() {
 /// = 143 (79 framing + 32-byte sender + 32-byte onRamp). Stellar derives the
 /// identical 143 from its own wire encoding
 /// (`common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`) and bills it into
-/// `calldata_size`. This test proves the wiring in isolation: a data-only send
-/// with executor flat fee 0 and `base_execution_gas_cost` 0 leaves the executor
-/// receipt fee equal to the priced calldata gas ALONE — and with the zero-
-/// overhead mock CCV, no pool, empty `data` and empty `executor_args`, the only
-/// calldata contributor is BASE. So a strictly positive executor receipt fee
-/// here is attributable solely to `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (143)
-/// priced at `dest_gas_per_payload_byte` (16). A second send adding 100 bytes of
-/// `data` raises the fee by exactly the 100-byte delta, confirming per-byte
-/// pricing on top of the constant base.
+/// `calldata_size`. This test proves the wiring in isolation.
+///
+/// EVM parity REQUIRES `base_execution_gas_cost != 0`: EVM `OnRamp.sol:633`
+/// rejects `baseExecutionGasCost == 0` with `InvalidDestChainConfig`, and the
+/// Stellar `DestChainConfigArgs::validate` mirrors that (types.rs #52). So BASE
+/// cannot be isolated by zeroing the base gas (the original sketch's premise).
+/// Instead we isolate it with a fee-quoter oracle: with executor flat fee 0,
+/// `gas_limit` 0, the zero-overhead mock CCV, no pool, and empty `data` and
+/// `executor_args`, the OnRamp's `calldata_size` is exactly
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (143), so its executor receipt exec
+/// cost must EQUAL the quoter's quote for `calldata_size = 143` and STRICTLY
+/// EXCEED the quote for `calldata_size = 0` (the no-BASE counterfactual, only
+/// reachable via a direct quoter call since the OnRamp always adds BASE). A
+/// second send adding 100 bytes of `data` raises the receipt by the 100-byte
+/// delta, confirming per-byte pricing on top of the constant base.
 #[test]
 fn test_message_base_priced_into_calldata_size() {
-    // base_execution_gas_cost 0 + executor flat fee 0 ⇒ executor receipt fee is
-    // purely the priced calldata gas. Executor allows WAIT_FOR_FINALITY only.
-    let lane = setup_data_only_lane_with_base_gas(0, 0, 0);
+    // Non-zero base_execution_gas_cost (parity-safe) + executor flat fee 0 +
+    // gas_limit 0 ⇒ execution_gas_limit == base_gas, and the executor receipt
+    // fee is the priced exec-gas cost alone (flat 0, exec cost NOT
+    // premium-discounted). Executor allows WAIT_FOR_FINALITY only.
+    let base_gas: u32 = 50_000;
+    let lane = setup_data_only_lane_with_base_gas(0, 0, base_gas);
     let env = &lane.env;
+    let dest = lane.evm_chain_selector;
+    let fee_token = lane.fee_token.clone();
+    let default_executor = lane.default_executor.clone();
 
     let mk_args = |block_confirmations: u32| GenericExtraArgsV3 {
         gas_limit: 0,
         block_confirmations,
         ccvs: Vec::new(env),
         ccv_args: Vec::new(env),
-        executor: lane.default_executor.clone(),
+        executor: default_executor.clone(),
         executor_args: Bytes::new(env),
         token_receiver: Bytes::new(env),
         token_args: Bytes::new(env),
     };
 
-    // Empty data + empty executor_args + zero CCV/pool overhead ⇒ calldata_size
-    // == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143). A positive executor receipt
-    // fee is therefore attributable solely to the BASE constant.
+    // Fee-quoter oracle: exec cost (USD cents) + fee-token price for the SAME
+    // gas budget the OnRamp will pass (`execution_gas_limit = base_gas`), at
+    // calldata_size = 0 (BASE not priced) vs. 143 (BASE priced in). Both use one
+    // `quote_gas_for_exec` call so the price is identical to the OnRamp's.
+    let oracle_zero = lane
+        .fee_quoter_client
+        .quote_gas_for_exec(&dest, &base_gas, &0, &fee_token);
+    let oracle_base = lane.fee_quoter_client.quote_gas_for_exec(
+        &dest,
+        &base_gas,
+        &MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE,
+        &fee_token,
+    );
+    assert!(
+        oracle_base.gas_cost_usd_cents > oracle_zero.gas_cost_usd_cents,
+        "MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) must add exec-gas cost at \
+         dest_gas_per_payload_byte=16: base={} zero={}",
+        oracle_base.gas_cost_usd_cents,
+        oracle_zero.gas_cost_usd_cents,
+    );
+
+    // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
+    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. Every
+    // receipt records its slice in USD cents (the Stellar receipt convention;
+    // see the executor/network receipt construction in lib.rs), and with executor
+    // flat fee 0 the executor receipt is exactly the priced execution-gas cost.
+    // So it must EQUAL the quoter's quote for calldata_size = 143 and STRICTLY
+    // EXCEED the quote for calldata_size = 0 (the no-BASE counterfactual) —
+    // proving the OnRamp bills BASE into calldata_size.
     let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
     assert_eq!(
         receipts_base.len(),
@@ -1836,12 +1874,19 @@ fn test_message_base_priced_into_calldata_size() {
         "data-only ⇒ [CCV, Executor, Network]"
     );
     let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
+    assert_eq!(
+        exec_fee_base, oracle_base.gas_cost_usd_cents as i128,
+        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) into \
+         calldata_size: executor receipt (USD cents, flat fee 0)={} must equal \
+         oracle(143)={}, and exceed oracle(0)={}",
+        exec_fee_base, oracle_base.gas_cost_usd_cents, oracle_zero.gas_cost_usd_cents,
+    );
     assert!(
-        exec_fee_base > 0,
-        "executor receipt fee must include MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE in \
-         calldata_size: with empty data/executor_args and zero base gas, a positive \
-         fee is solely the BASE (143) priced at dest_gas_per_payload_byte, got={}",
+        (exec_fee_base as u128) > oracle_zero.gas_cost_usd_cents,
+        "empty-data executor receipt must exceed the no-BASE (calldata_size = 0) \
+         counterfactual: receipt={} oracle(0)={}",
         exec_fee_base,
+        oracle_zero.gas_cost_usd_cents,
     );
 
     // Adding 100 bytes of data grows calldata_size by 100 ⇒ fee strictly rises.
@@ -3641,6 +3686,12 @@ struct DataOnlyLane {
     fee_token: Address,
     fee_token_sac: token::StellarAssetClient<'static>,
     default_executor: Address,
+    /// Fee-quoter client so tests can query the quoter directly as an oracle —
+    /// e.g. to obtain the `calldata_size = 0` counterfactual exec cost when
+    /// isolating the constant `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` contribution
+    /// (the OnRamp always adds BASE, so the no-BASE baseline is only reachable
+    /// via a direct quoter call).
+    fee_quoter_client: FeeQuoterContractClient<'static>,
 }
 
 impl DataOnlyLane {
@@ -3765,6 +3816,7 @@ fn setup_data_only_lane_with_base_gas(
         &fee_token,
         &transfer_token,
     );
+    let fee_quoter_client = FeeQuoterContractClient::new(&env, &fee_quoter_id);
 
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
@@ -3814,6 +3866,7 @@ fn setup_data_only_lane_with_base_gas(
         fee_token,
         fee_token_sac,
         default_executor,
+        fee_quoter_client,
     }
 }
 
