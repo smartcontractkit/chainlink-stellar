@@ -93,8 +93,9 @@ pub struct InboundRateLimitConsumedEvent {
     pub amount: i128,
 }
 
-/// TODO: Likely removable for Stellar — outbound FTF is not meaningful since
-/// Stellar has deterministic finality (no reorg risk). See `lock_or_burn` TODO.
+/// EVM parity for the outbound FTF rate-limit consumed event. Emitted only on
+/// the vacuous FTF-outbound path (Stellar-source senders normally request
+/// WAIT_FOR_FINALITY). Kept for parity, not stripped (M-17).
 #[contractevent(topics = ["pool_FtfOutboundConsumed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FtfOutboundConsumedEvent {

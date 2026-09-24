@@ -24,7 +24,7 @@ use common_helpers::{
 };
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
-    ToBytes, MESSAGE_V1_VERSION,
+    ToBytes, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, MESSAGE_V1_VERSION,
 };
 use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
@@ -374,17 +374,24 @@ impl OnRampContract {
         }
         calldata_size = calldata_size.saturating_add(pool_dest_bytes_overhead);
 
-        // INV-FEE-14 follow-up (§9.2 safe half; EVM `OnRamp.sol` L1066): EVM's
-        // `bytesOverheadSum` also includes the executor receipt's `destBytesOverhead =
-        // BASE + executorArgs.length`. `executor_args.length` is the unambiguous
-        // subset — EVM unconditionally adds `executorArgs.length` and
-        // `GenericExtraArgsV3.executor_args: Bytes` is in scope — so add it now. The
-        // `BASE` portion (EVM `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` = 139, whose `+32+32`
-        // is EVM-source-encoding-specific) is deliberately OMITTED: it is
-        // destination-chain-dependent (EVM dest vs Soroban dest) and a wrong constant
-        // changes fee *magnitudes* — design-gated, must be validated against EVM fee
-        // vectors before adding. See `docs/h-items-parity-followup.md` §2.
+        // INV-FEE-14 (EVM `OnRamp.sol` L1066 + L1134-1138): EVM's
+        // `bytesOverheadSum` includes the executor receipt's `destBytesOverhead =
+        // BASE + dataLength + executorArgs.length + numberOfTokens*(...token...)`.
+        // `dataLength` is already in `calldata_size` (the seed above); the CCV/pool
+        // overheads are added above; `executor_args.len()` is the unambiguous subset
+        // (EVM adds it unconditionally, `GenericExtraArgsV3.executor_args: Bytes` is
+        // in scope). The `BASE` portion is EVM `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` =
+        // the fixed MessageV1 framing (79) + the 32-byte `sender` + 32-byte `onramp`
+        // source-address content. Stellar encodes those two addresses as 32-byte raw
+        // Soroban keys (`CcipMessageV1::address_raw_bytes`), so its derived base is
+        // 79 + 32 + 32 = 143 — equal to EVM's constant by derivation, not copy (see
+        // `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`). Adding it bills the
+        // same fixed overhead EVM bills, preserving fee parity. The
+        // `numberOfTokens*(TOKEN_TRANSFER base + dest addr bytes)` term is a separate
+        // token-transfer-framing gap, still open — see
+        // `docs/h-items-parity-followup.md` §2.
         calldata_size = calldata_size.saturating_add(extra_args.executor_args.len() as u32);
+        calldata_size = calldata_size.saturating_add(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE);
 
         let gas_quote = fee_quoter.quote_gas_for_exec(
             &dest_chain_selector,
@@ -877,11 +884,12 @@ impl OnRampContract {
                 Self::get_pool_by_source_token_internal(&env, &static_config, &token_amount.token)?;
             let pool_client = TokenPoolClient::new(&env, &pool_address);
 
-            // TODO: On Stellar as the source chain, `block_confirmations` will
-            // always be 0 (WAIT_FOR_FINALITY) since Stellar has deterministic ~5s
-            // finality and no fast confirmation rules. The pool's FTF outbound
-            // branch is unreachable in practice. Consider asserting this invariant
-            // or hardcoding 0 instead of threading the extra_args value.
+            // Outbound finality is threaded into `lock_or_burn` for EVM `OnRamp`
+            // parity. On a Stellar source `block_confirmations` is normally 0
+            // (WAIT_FOR_FINALITY, ~5s deterministic finality), but the path is
+            // intentionally retained so a non-zero / FTF request is admitted and
+            // priced rather than rejected — preserving INV-FIN-POOL-3 and the spec's
+            // FTF opt-in matrix (M-17: keep source-side finality for EVM parity).
             let lock_result = pool_client.lock_or_burn(
                 &env.current_contract_address(),
                 &LockOrBurnIn {

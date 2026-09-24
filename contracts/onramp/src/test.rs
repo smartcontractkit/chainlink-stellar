@@ -1703,11 +1703,13 @@ fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
 /// wiring: holding every other input fixed, a non-empty `executor_args` strictly
 /// raises the executor receipt's `fee_token_amount` over the empty-`executor_args`
 /// baseline — i.e. `executor_args.len()` is priced into the execution-gas cost.
-/// (The `BASE` portion of the executor `destBytesOverhead` is deliberately NOT
-/// added — design-gated; see `docs/h-items-parity-followup.md` §2.) The executor's
-/// own `get_fee` returns a constant flat fee independent of `executor_args` (the
-/// param is `_extra_args`/unused, `Executor::get_fee` → `Ok(cfg.usd_cents_fee)`),
-/// so the entire delta is attributable to `calldata_size`.
+/// (The `BASE` portion of the executor `destBytesOverhead` is now ALSO added —
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 143; see
+/// `test_message_base_priced_into_calldata_size`. The delta here isolates only the
+/// `executor_args.len()` term because BASE is constant across both sends.) The
+/// executor's own `get_fee` returns a constant flat fee independent of
+/// `executor_args` (the param is `_extra_args`/unused, `Executor::get_fee` →
+/// `Ok(cfg.usd_cents_fee)`), so the entire delta is attributable to `calldata_size`.
 #[test]
 fn test_executor_args_len_priced_into_calldata_size() {
     let lane = setup_token_transfer_lane();
@@ -1750,6 +1752,129 @@ fn test_executor_args_len_priced_into_calldata_size() {
          (EVM OnRamp.sol:1066 parity): got with_args={:?} empty={:?}",
         executor_fee_with,
         executor_fee_empty
+    );
+}
+
+/// INV-FEE-14 BASE (EVM `OnRamp.sol` L1134-1138 executor `destBytesOverhead`):
+/// EVM's `bytesOverheadSum` includes the fixed `MESSAGE_V1_EVM_SOURCE_BASE_SIZE`
+/// = 143 (79 framing + 32-byte sender + 32-byte onRamp). Stellar derives the
+/// identical 143 from its own wire encoding
+/// (`common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`) and bills it into
+/// `calldata_size`. This test proves the wiring in isolation: a data-only send
+/// with executor flat fee 0 and `base_execution_gas_cost` 0 leaves the executor
+/// receipt fee equal to the priced calldata gas ALONE — and with the zero-
+/// overhead mock CCV, no pool, empty `data` and empty `executor_args`, the only
+/// calldata contributor is BASE. So a strictly positive executor receipt fee
+/// here is attributable solely to `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (143)
+/// priced at `dest_gas_per_payload_byte` (16). A second send adding 100 bytes of
+/// `data` raises the fee by exactly the 100-byte delta, confirming per-byte
+/// pricing on top of the constant base.
+#[test]
+fn test_message_base_priced_into_calldata_size() {
+    // base_execution_gas_cost 0 + executor flat fee 0 ⇒ executor receipt fee is
+    // purely the priced calldata gas. Executor allows WAIT_FOR_FINALITY only.
+    let lane = setup_data_only_lane_with_base_gas(0, 0, 0);
+    let env = &lane.env;
+
+    let mk_args = |block_confirmations: u32| GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    // Empty data + empty executor_args + zero CCV/pool overhead ⇒ calldata_size
+    // == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143). A positive executor receipt
+    // fee is therefore attributable solely to the BASE constant.
+    let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
+    assert_eq!(
+        receipts_base.len(),
+        3,
+        "data-only ⇒ [CCV, Executor, Network]"
+    );
+    let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
+    assert!(
+        exec_fee_base > 0,
+        "executor receipt fee must include MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE in \
+         calldata_size: with empty data/executor_args and zero base gas, a positive \
+         fee is solely the BASE (143) priced at dest_gas_per_payload_byte, got={}",
+        exec_fee_base,
+    );
+
+    // Adding 100 bytes of data grows calldata_size by 100 ⇒ fee strictly rises.
+    let receipts_with_data =
+        lane.send_data_only_custom(Bytes::from_array(env, &[0xbbu8; 100]), mk_args(0));
+    let exec_fee_with_data = receipts_with_data.get(1).unwrap().fee_token_amount;
+    assert!(
+        exec_fee_with_data > exec_fee_base,
+        "adding 100 bytes of data must raise the executor receipt fee by the \
+         100-byte calldata delta on top of BASE: with_data={} base={}",
+        exec_fee_with_data,
+        exec_fee_base,
+    );
+}
+
+/// M-17 (keep source-side finality for EVM parity): a Stellar-source message
+/// that requests FAST finality (non-zero `block_confirmations`, here
+/// `WAIT_FOR_SAFE` = bit 16) must be ADMITTED and priced through the outbound
+/// path when the executor's allowed-finality config permits it — not stripped or
+/// rejected. This is the positive complement of
+/// `test_disallowed_finality_reverts_end_to_end_via_executor` (which proves the
+/// executor-layer FTF gate rejects WAIT_FOR_SAFE when only WAIT_FOR_FINALITY is
+/// allowed). Together they pin the outbound FTF opt-in branch as reachable and
+/// enforced, preserving INV-FIN-POOL-3 and the spec's opt-in matrix.
+#[test]
+fn test_outbound_fast_finality_admitted_and_priced() {
+    // Executor ALLOWS WAIT_FOR_SAFE ⇒ the FTF request must be admitted.
+    let lane = setup_data_only_lane(25, EXEC_TEST_WAIT_FOR_SAFE);
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: EXEC_TEST_WAIT_FOR_SAFE, // FTF request, allowed here
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: lane.default_executor.clone(),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    // Admitted: send_data_only_custom panics on revert inside ccip_send, so
+    // reaching the assertions proves the FTF request was not rejected.
+    let receipts = lane.send_data_only_custom(
+        Bytes::from_slice(env, b"fast finality admitted"),
+        extra_args,
+    );
+    assert_eq!(receipts.len(), 3, "data-only ⇒ [CCV, Executor, Network]");
+    let exec_receipt = receipts.get(1).unwrap();
+    assert_eq!(
+        exec_receipt.issuer, lane.default_executor,
+        "executor receipt issuer must be the lane's real default executor (auto-exec), \
+         not a stripped/simplified path",
+    );
+    assert!(
+        exec_receipt.fee_token_amount > 0,
+        "an admitted FTF outbound message must carry a priced executor fee, got={}",
+        exec_receipt.fee_token_amount,
+    );
+
+    // The same lane must still admit a WAIT_FOR_FINALITY (0) request — both
+    // finality modes are accepted on the outbound path.
+    let mut extra_args_finality = extra_args.clone();
+    extra_args_finality.block_confirmations = 0;
+    let receipts_finality = lane.send_data_only_custom(
+        Bytes::from_slice(env, b"wait for finality"),
+        extra_args_finality,
+    );
+    assert_eq!(
+        receipts_finality.len(),
+        3,
+        "WAIT_FOR_FINALITY outbound request must also be admitted",
     );
 }
 
@@ -3487,6 +3612,32 @@ impl DataOnlyLane {
         self.send_data_only_full(extra_args).0
     }
 
+    /// Like `send_data_only` but with a caller-supplied `data` payload, so a test
+    /// can send an empty-data message (to isolate the constant
+    /// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` contribution to `calldata_size`).
+    fn send_data_only_custom(&self, data: Bytes, extra_args: GenericExtraArgsV3) -> Vec<Receipt> {
+        let env = &self.env;
+        let message = StellarToAnyMessage {
+            receiver: Bytes::from_array(env, &[0x33u8; 20]),
+            data,
+            token_amounts: Vec::new(env),
+            fee_token: self.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = self
+            .router_client
+            .get_fee(&self.evm_chain_selector, &message);
+        assert!(required_fee > 0, "quoted fee must be positive");
+        self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
+        self.router_client.ccip_send(
+            &self.sender,
+            &self.evm_chain_selector,
+            &message,
+            &required_fee,
+        );
+        receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
+    }
+
     /// Like `send_data_only` but also returns the `encoded_message` (canonical
     /// `CcipMessageV1` bytes) from the same `CCIPMessageSent` event, so callers
     /// can inspect fields committed to the message ID (e.g. the
@@ -3522,6 +3673,18 @@ impl DataOnlyLane {
 fn setup_data_only_lane(
     executor_usd_cents_fee: u32,
     executor_allowed_finality: u32,
+) -> DataOnlyLane {
+    setup_data_only_lane_with_base_gas(executor_usd_cents_fee, executor_allowed_finality, 200_000)
+}
+
+/// Same as `setup_data_only_lane` but with a configurable
+/// `base_execution_gas_cost`. Setting it to 0 (with executor flat fee 0 and the
+/// zero-overhead mock CCV) makes the executor receipt's priced exec-gas depend
+/// SOLELY on `calldata_size`, isolating the constant `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`.
+fn setup_data_only_lane_with_base_gas(
+    executor_usd_cents_fee: u32,
+    executor_allowed_finality: u32,
+    base_execution_gas_cost: u32,
 ) -> DataOnlyLane {
     let env = Env::default();
     env.mock_all_auths();
@@ -3590,7 +3753,7 @@ fn setup_data_only_lane(
         token_receiver_allowed: true,
         message_network_fee_usd_cents: 50,
         token_network_fee_usd_cents: 100,
-        base_execution_gas_cost: 200_000,
+        base_execution_gas_cost,
         execution_fee_usd_cents: 25,
         default_executor: default_executor.clone(),
         lane_mandated_ccvs: Vec::new(&env),

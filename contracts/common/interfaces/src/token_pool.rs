@@ -1,10 +1,10 @@
-/// TODO: `lock_or_burn`'s `requested_finality` parameter is kept for interface
-/// parity with EVM but will always be 0 (WAIT_FOR_FINALITY) when Stellar is the
-/// source chain, since Stellar has no reorg risk and no fast confirmation rules.
-/// The FTF outbound rate limiting branch in `lock_or_burn` should be simplified
-/// to always use the default bucket. For `release_or_mint`, `requested_finality`
-/// is meaningful — messages from EVM sources may carry FTF flags, and Stellar as
-/// the destination should respect them for inbound rate limiting.
+/// `lock_or_burn`'s `requested_finality` parameter is kept for interface parity
+/// with EVM. On a Stellar source it is normally 0 (WAIT_FOR_FINALITY), but the
+/// FTF outbound branch in `lock_or_burn` is retained for parity and spec
+/// compliance rather than simplified away (M-17: keep source-side finality).
+/// For `release_or_mint`, `requested_finality` is meaningful — messages from
+/// EVM sources may carry FTF flags, and Stellar as the destination must respect
+/// them for inbound rate limiting.
 #[soroban_sdk::contractclient(name = "TokenPoolClient")]
 pub trait TokenPoolInterface {
     fn initialize(
