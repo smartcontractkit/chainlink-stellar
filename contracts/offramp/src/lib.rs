@@ -502,7 +502,16 @@ impl OffRampContract {
 
         let mut flattened: Vec<Address> = required.ccvs.clone();
 
-        if required.include_defaults {
+        // M-13 / INV-DST-9: an empty pool-returned CCV list is a request to use the lane
+        // defaults (EVM `OffRamp._getCCVsForMessage` treats an empty required list as
+        // "use defaults"), NOT a request to verify nothing. Without this, a token-only
+        // inbound message whose pool returns `{ccvs:[], include_defaults:false}` would
+        // yield an empty `flattened` set and — combined with no lane-mandated CCVs — be
+        // executed with ZERO verifier checks (verification bypass). Inbound
+        // `SourceChainConfigArgs::validate` always configures non-empty `default_ccvs`,
+        // so upgrading the empty pool list to defaults guarantees a non-empty verify set.
+        // The `include_defaults` flag only layers defaults ON TOP of a non-empty pool list.
+        if required.include_defaults || required.ccvs.is_empty() {
             for i in 0..default_ccvs.len() {
                 if let Some(ccv) = default_ccvs.get(i) {
                     if !Self::is_in_list(&ccv, &flattened) {
@@ -834,6 +843,93 @@ impl OffRampContract {
         Ok(())
     }
 
+    /// Build the indices into the executor-supplied `ccvs` array that must actually be
+    /// verified — mirroring EVM `_ensureCCVQuorumIsReached`'s `ccvsToQuery`/`dataIndexes`
+    /// (OffRamp.sol:624-683). Only the required CCVs and the first `optional_threshold`
+    /// present optional CCVs are queued; any other supplied CCV (an extra) is dropped and
+    /// never forwarded to a verifier, so a reverting/slow extra CCV cannot grief or block
+    /// delivery even when every required CCV attested correctly (INV-DST-20 / M-12 parity
+    /// with EVM).
+    ///
+    /// Reuses `ensure_quorum_present` for the presence checks (`RequiredCCVMissing` /
+    /// `OptionalCCVQuorumNotReached`), then records the matching supplied indices.
+    /// `required` and `optional` are disjoint and deduped (see `get_ccvs_for_message`),
+    /// and the supplied `ccvs` is deduped upstream, so each queued index is unique.
+    fn build_verify_indices(
+        env: &Env,
+        required: &Vec<Address>,
+        optional: &Vec<Address>,
+        optional_threshold: u32,
+        ccvs: &Vec<Address>,
+    ) -> Result<Vec<u32>, CCIPError> {
+        Self::ensure_quorum_present(required, optional, optional_threshold, ccvs)?;
+
+        let mut indices: Vec<u32> = Vec::new(env);
+
+        // Required: each is guaranteed present above; record its first index in `ccvs`.
+        for i in 0..required.len() {
+            if let Some(req) = required.get(i) {
+                if let Some(idx) = Self::index_in_list(&req, ccvs) {
+                    indices.push_back(idx);
+                }
+            }
+        }
+
+        // Optional: collect first matches only up to `optional_threshold` (EVM L658-669),
+        // so once the threshold is met an over-supplied optional that would revert is not
+        // queried and cannot grief delivery.
+        let mut optional_present: u32 = 0;
+        for i in 0..optional.len() {
+            if optional_present >= optional_threshold {
+                break;
+            }
+            if let Some(opt) = optional.get(i) {
+                if let Some(idx) = Self::index_in_list(&opt, ccvs) {
+                    indices.push_back(idx);
+                    optional_present += 1;
+                }
+            }
+        }
+
+        Ok(indices)
+    }
+
+    /// Verify exactly the CCVs at `indices` into the supplied `ccvs`/`verifier_results`
+    /// (EVM `executeSingleMessage` iterates only `ccvsToQuery`, OffRamp.sol:342-351).
+    /// `indices` is produced by `build_verify_indices`, so extras are already excluded.
+    fn verify_ccvs_at(
+        env: &Env,
+        source_chain_selector: u64,
+        message_id: &BytesN<32>,
+        ccvs: &Vec<Address>,
+        verifier_results: &Vec<Bytes>,
+        indices: &Vec<u32>,
+    ) -> Result<(), CCIPError> {
+        for n in 0..indices.len() {
+            let i = indices.get(n).ok_or(CCIPError::CCVLengthMismatch)?;
+            let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
+            let result = verifier_results
+                .get(i)
+                .ok_or(CCIPError::CCVLengthMismatch)?;
+
+            let vvr = VersionedVerifierResolverClient::new(env, &ccv);
+            let verifier_address = vvr.get_inbound_implementation(&result);
+
+            let message_hash: BytesN<32> = message_id.clone();
+            let mut verify_args = soroban_sdk::Vec::new(env);
+            verify_args.push_back(source_chain_selector.into_val(env));
+            verify_args.push_back(message_hash.into_val(env));
+            verify_args.push_back(result.into_val(env));
+
+            env.invoke_contract::<Result<(), CCIPError>>(
+                &verifier_address,
+                &Symbol::new(env, "verify_message"),
+                verify_args,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Verify that the CCV quorum is met for a message (EVM `OffRamp._getCCVsForMessage` +
     /// `_ensureCCVQuorumIsReached`).
     ///
@@ -844,14 +940,15 @@ impl OffRampContract {
     /// `get_inbound_pool_required_ccvs` already folds in). A no-token no-op (no data, no gas, no
     /// tokens) seeds `required` with the lane defaults — EVM achieves this via the receiver arm's
     /// `address(0)` marker. Optional/threshold are zero. Every required CCV must be supplied
-    /// (`RequiredCCVMissing`); then every attested CCV is verified. (M-12 — verifying only the
-    /// required set and ignoring extras — remains deferred, consistent with the non-token-only
-    /// path.)
+    /// (`RequiredCCVMissing`); then ONLY the required CCVs are verified — extras supplied by
+    /// the executor are dropped via `build_verify_indices`, so a reverting/slow extra cannot
+    /// grief delivery (M-12 / INV-DST-20).
     ///
     /// **Non-token-only** messages consult the receiver (`get_ccvs_for_message`, C-1) for
     /// required/optional/threshold + allowed-finality, enforce the receiver's finality config
     /// (H-7), require every required CCV present (`RequiredCCVMissing`), require ≥`optional_threshold`
-    /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify every attested CCV. A
+    /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify ONLY the required set
+    /// plus the first `optional_threshold` present optionals — extras are dropped (M-12 / INV-DST-20). A
     /// non-contract receiver, or a Wasm receiver whose consult fails (missing symbol / trap / typed
     /// error), is rejected up front with `ReceiverDoesNotExist` / `ReceiverNotWasmContract` /
     /// `ReceiverError` (recorded as `Failure`, retryable) — there is **no** defaults fallback (see
@@ -904,33 +1001,20 @@ impl OffRampContract {
             Self::dedup_append(&mut required, &pool_required);
             Self::dedup_append(&mut required, &source_config.lane_mandated_ccvs);
 
-            // Every required CCV must be supplied (`RequiredCCVMissing`); no optional/threshold.
-            Self::ensure_quorum_present(&required, &Vec::new(env), 0, ccvs)?;
-
-            // Verify every attested CCV. (M-12 — verifying only required and ignoring extras —
-            // remains deferred; an extra CCV that fails `verify_message` still rejects,
-            // consistent with the non-token-only path.)
-            for i in 0..ccvs.len() {
-                let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
-                let result = verifier_results
-                    .get(i)
-                    .ok_or(CCIPError::CCVLengthMismatch)?;
-
-                let vvr = VersionedVerifierResolverClient::new(env, &ccv);
-                let verifier_address = vvr.get_inbound_implementation(&result);
-
-                let message_hash: BytesN<32> = message_id.clone();
-                let mut verify_args = soroban_sdk::Vec::new(env);
-                verify_args.push_back(source_chain_selector.into_val(env));
-                verify_args.push_back(message_hash.into_val(env));
-                verify_args.push_back(result.into_val(env));
-
-                env.invoke_contract::<Result<(), CCIPError>>(
-                    &verifier_address,
-                    &Symbol::new(env, "verify_message"),
-                    verify_args,
-                )?;
-            }
+            // Build the exact set to verify (required only; no optional/threshold) and
+            // verify ONLY those — extras supplied by the executor are dropped, so a
+            // reverting/slow extra CCV cannot grief delivery (M-12 / INV-DST-20, EVM
+            // `_ensureCCVQuorumIsReached` ccvsToQuery parity).
+            let verify_indices =
+                Self::build_verify_indices(env, &required, &Vec::new(env), 0, ccvs)?;
+            Self::verify_ccvs_at(
+                env,
+                source_chain_selector,
+                message_id,
+                ccvs,
+                verifier_results,
+                &verify_indices,
+            )?;
 
             return Ok(());
         }
@@ -943,33 +1027,20 @@ impl OffRampContract {
         // not a contract, `get_ccvs_for_message` returned `WAIT_FOR_FINALITY_FLAG` (always allowed).
         finality_codec::ensure_requested_finality_allowed(message.finality, allowed_finality)?;
 
-        // Every required CCV present (`RequiredCCVMissing`); ≥`optional_threshold` optional
-        // present (`OptionalCCVQuorumNotReached`).
-        Self::ensure_quorum_present(&required, &optional, optional_threshold, ccvs)?;
-
-        // Verify every attested CCV. (M-12 — verifying only required + counted-optional and
-        // ignoring extras — is deferred; an extra CCV that fails `verify_message` still rejects.)
-        for i in 0..ccvs.len() {
-            let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
-            let result = verifier_results
-                .get(i)
-                .ok_or(CCIPError::CCVLengthMismatch)?;
-
-            let vvr = VersionedVerifierResolverClient::new(env, &ccv);
-            let verifier_address = vvr.get_inbound_implementation(&result);
-
-            let message_hash: BytesN<32> = message_id.clone();
-            let mut verify_args = soroban_sdk::Vec::new(env);
-            verify_args.push_back(source_chain_selector.into_val(env));
-            verify_args.push_back(message_hash.into_val(env));
-            verify_args.push_back(result.into_val(env));
-
-            env.invoke_contract::<Result<(), CCIPError>>(
-                &verifier_address,
-                &Symbol::new(env, "verify_message"),
-                verify_args,
-            )?;
-        }
+        // Build the exact set to verify (required + the first `optional_threshold` present
+        // optionals) and verify ONLY those — extras supplied by the executor are dropped, so
+        // a reverting/slow extra CCV cannot grief delivery (M-12 / INV-DST-20, EVM
+        // `_ensureCCVQuorumIsReached` ccvsToQuery parity).
+        let verify_indices =
+            Self::build_verify_indices(env, &required, &optional, optional_threshold, ccvs)?;
+        Self::verify_ccvs_at(
+            env,
+            source_chain_selector,
+            message_id,
+            ccvs,
+            verifier_results,
+            &verify_indices,
+        )?;
 
         Ok(())
     }
@@ -1196,6 +1267,21 @@ impl OffRampContract {
             }
         }
         false
+    }
+
+    /// Index of the first list entry equal to `addr`, if any (EVM
+    /// `_ensureCCVQuorumIsReached` builds the same kind of `dataIndexes` mapping from required
+    /// CCV addresses to their supplied positions). Used by `build_verify_indices` to queue
+    /// only the required + counted-optional CCVs for verification (M-12 / INV-DST-20).
+    fn index_in_list(addr: &Address, list: &Vec<Address>) -> Option<u32> {
+        let mut i: u32 = 0;
+        for item in list.iter() {
+            if &item == addr {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
     }
 }
 

@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -10,8 +11,11 @@ import (
 	"time"
 
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
+	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
+	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
 func TestOnRamp(t *testing.T) {
@@ -240,4 +244,274 @@ func TestOnRamp(t *testing.T) {
 			t.Logf("Got expected error for unconfigured chain: %v", err)
 		})
 	})
+}
+
+// sentinelContractStrkey returns the VersionByteContract strkey of a 32-byte sentinel
+// (NO_EXECUTION / USE_DEFAULT), i.e. exactly what the OnRamp places in the executor
+// receipt `Issuer` when it leaves a no-execution sentinel in place. Mirrors the helper
+// in tests/e2e/stellar_executor_sentinel_test.go so the integration and e2e layers
+// assert the same issuer.
+func sentinelContractStrkey(t *testing.T, raw []byte) string {
+	t.Helper()
+	sk, err := strkey.Encode(strkey.VersionByteContract, raw)
+	if err != nil {
+		t.Fatalf("encode sentinel %x: %v", raw, err)
+	}
+	return sk
+}
+
+// findReceiptByIssuer returns the first receipt whose Issuer matches wantIssuer, or
+// fatals listing every issuer seen. Receipts are keyed by (possibly resolved) issuer,
+// so this isolates one layer's receipt (executor / CCV / pool / network) regardless of
+// the on-wire ordering.
+func findReceiptByIssuer(t *testing.T, receipts []onrampbindings.Receipt, wantIssuer string) onrampbindings.Receipt {
+	t.Helper()
+	for _, r := range receipts {
+		if r.Issuer == wantIssuer {
+			return r
+		}
+	}
+	for i, r := range receipts {
+		t.Errorf("receipt[%d] issuer seen: %s", i, r.Issuer)
+	}
+	t.Fatalf("no receipt with issuer %q among %d receipts", wantIssuer, len(receipts))
+	return onrampbindings.Receipt{}
+}
+
+// TestOnRampNoExecutionSentinelZeroExecutorFee is the H-8 / M-7 high-stakes regression
+// guard at the integration layer (the e2e layer already covers it in
+// tests/e2e/stellar_executor_sentinel_test.go).
+//
+// PROVES-WORKS:  a Stellar→EVM message whose GenericExtraArgsV3.executor is the
+// no-execution sentinel (0xeba517d2…) is ACCEPTED by the OnRamp, which leaves the
+// sentinel in place and emits an executor receipt issued by the sentinel strkey.
+//
+// PROVES-DOESN'T-HAPPEN: that executor receipt's FeeTokenAmount is EXACTLY ZERO — the
+// executor flat fee AND the execution-gas cost are both zeroed, so a sender who opts out
+// of auto-execution is never charged for execution and the executor is never paid. A
+// non-zero value here would mean either an unintended executor payout or execution gas
+// being charged to a message that will not be executed — both severe economic bugs.
+func TestOnRampNoExecutionSentinelZeroExecutorFee(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
+
+	const localSourceChain = uint64(11111)
+	const remoteDestChain = uint64(22222)
+	const saltPrefix = "h8-noexec"
+
+	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localSourceChain, saltPrefix, false)
+	feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-fee")
+
+	// Data-only wire (no transfer tokens); the default executor is the real Executor
+	// deployed inside deployOutboundSendWire. We override the per-message executor with
+	// the no-execution sentinel below.
+	wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
+		localSourceChain, remoteDestChain, feeToken, nil)
+
+	noExecIssuer := sentinelContractStrkey(t, common.NoExecutionAddressRaw)
+
+	buildNoExecExtraArgs := func() []byte {
+		extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
+			Ccvs:               []string{stack.VvrID},
+			CcvArgs:            [][]byte{{}},
+			Executor:           noExecIssuer, // ← no-execution sentinel
+			ExecutorArgs:       []byte{},
+			GasLimit:           0,
+			BlockConfirmations: 0,
+			TokenReceiver:      []byte{},
+			TokenArgs:          []byte{},
+		})
+		if err != nil {
+			t.Fatalf("encode no-exec extra args: %v", err)
+		}
+		return extraArgs
+	}
+
+	evmReceiver := make([]byte, 20)
+	for i := range evmReceiver {
+		evmReceiver[i] = 0x33
+	}
+
+	msg := routerbindings.StellarToAnyMessage{
+		Receiver:  evmReceiver,
+		Data:      []byte("no-exec sentinel integration guard"),
+		FeeToken:  feeToken,
+		ExtraArgs: buildNoExecExtraArgs(),
+	}
+
+	requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
+	if err != nil {
+		t.Fatalf("Router GetFee (no-exec): %v", err)
+	}
+	// The total fee is still positive (CCV + network), only the executor slice is zero.
+	if requiredFee.Sign() <= 0 {
+		t.Fatalf("expected positive total fee (CCV+network), got %s", requiredFee.String())
+	}
+
+	latest, err := rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestLedger: %v", err)
+	}
+	startLedger := latest.Sequence
+
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	if err != nil {
+		t.Fatalf("Router CcipSend (no-exec sentinel should be accepted): %v", err)
+	}
+	if msgID == ([32]byte{}) {
+		t.Fatal("CcipSend returned empty message_id")
+	}
+
+	sentEvt, err := wire.OnRampClient.WaitForCCIPMessageSentEvent(ctx, startLedger, 30*time.Second,
+		func(e *onrampbindings.CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == remoteDestChain && bytes.Equal(e.MessageId[:], msgID[:])
+		})
+	if err != nil {
+		t.Fatalf("WaitForCCIPMessageSentEvent: %v", err)
+	}
+
+	execReceipt := findReceiptByIssuer(t, sentEvt.Receipts, noExecIssuer)
+	if execReceipt.FeeTokenAmount == nil {
+		t.Fatal("no-exec executor receipt FeeTokenAmount is nil")
+	}
+	if execReceipt.FeeTokenAmount.Sign() != 0 {
+		t.Fatalf("no-exec sentinel must yield a ZERO executor fee (flat + exec-gas), got %s",
+			execReceipt.FeeTokenAmount.String())
+	}
+	t.Logf("✅ no-execution sentinel: executor receipt issued by sentinel %s with fee 0", noExecIssuer)
+}
+
+// TestOnRampFunctionalExecutorChargesExecutionFee is the FUNCTIONAL complement to
+// TestOnRampNoExecutionSentinelZeroExecutorFee — together they pin the two ends of
+// the executor fee behavior (H-8 / M-5 / M-7) at the integration layer.
+//
+// PROVES-WORKS (M-5 resolution): a Stellar→EVM message whose
+// GenericExtraArgsV3.executor is the "use default" sentinel (0x72068b37…) is
+// resolved by the OnRamp to the lane's concrete default_executor BEFORE receipt
+// emission, so the executor receipt is issued by the REAL Executor contract strkey
+// (stack.ExecutorID), NOT by the sentinel strkey. This is the address(0)→default
+// parity at the Go-binding layer.
+//
+// PROVES-WORKS (H-8 functional executor): that resolved-default (functional)
+// executor receipt's FeeTokenAmount is STRICTLY POSITIVE. The executor flat fee
+// (Executor::get_fee = USDCentsFee) is 0 in the devenv, but the execution-gas-cost
+// slice (gas_quote.gas_cost_usd_cents) is non-zero for any destination with a set
+// gas price — so a functional executor MUST charge a positive fee. This is the
+// distinction the no-exec test can't make by itself (it only proves the zero side):
+// a functional executor charging exactly 0 would be indistinguishable from the
+// no-exec sentinel and would mean the executor layer is economically vacuous.
+//
+// Safety note: this >0 assertion is sound in this harness because the integration
+// devenv sets a non-zero dest gas price (FeeQuoter UpdatePrices) and a non-zero
+// base execution gas cost, and fee_distribution_test.go already asserts a non-zero
+// executor fee delta on main using the same harness. A zero here would indicate
+// either the resolution path collapsed to no-exec behaviour or the gas price was
+// mis-seeded (L-12).
+func TestOnRampFunctionalExecutorChargesExecutionFee(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
+
+	const localSourceChain = uint64(11111)
+	const remoteDestChain = uint64(22222)
+	const saltPrefix = "h8-funcexec"
+
+	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localSourceChain, saltPrefix, false)
+	feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-fee")
+
+	// deployOutboundSendWire deploys a real Executor and wires it as the OnRamp
+	// default_executor (stack.ExecutorID), with UsdCentsFee:0 and a non-zero dest
+	// gas price. The use-default sentinel below resolves to it.
+	wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
+		localSourceChain, remoteDestChain, feeToken, nil)
+
+	if stack.ExecutorID == "" {
+		t.Fatal("default_executor must be deployed and wired by deployOutboundSendWire")
+	}
+
+	// Sanity: the concrete default_executor must NOT equal the use-default sentinel
+	// strkey — that would mean resolution never happens.
+	useDefaultIssuer := sentinelContractStrkey(t, common.UseDefaultExecutorAddressRaw)
+	if useDefaultIssuer == stack.ExecutorID {
+		t.Fatal("default_executor must be a concrete contract, not the use-default sentinel itself")
+	}
+
+	buildUseDefaultExtraArgs := func() []byte {
+		extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
+			Ccvs:               []string{stack.VvrID},
+			CcvArgs:            [][]byte{{}},
+			Executor:           useDefaultIssuer, // ← use-default sentinel, resolves to real Executor
+			ExecutorArgs:       []byte{},
+			GasLimit:           0,
+			BlockConfirmations: 0,
+			TokenReceiver:      []byte{},
+			TokenArgs:          []byte{},
+		})
+		if err != nil {
+			t.Fatalf("encode use-default extra args: %v", err)
+		}
+		return extraArgs
+	}
+
+	evmReceiver := make([]byte, 20)
+	for i := range evmReceiver {
+		evmReceiver[i] = 0x33
+	}
+
+	msg := routerbindings.StellarToAnyMessage{
+		Receiver:  evmReceiver,
+		Data:      []byte("functional executor integration guard"),
+		FeeToken:  feeToken,
+		ExtraArgs: buildUseDefaultExtraArgs(),
+	}
+
+	requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
+	if err != nil {
+		t.Fatalf("Router GetFee (use-default): %v", err)
+	}
+	if requiredFee.Sign() <= 0 {
+		t.Fatalf("expected positive total fee, got %s", requiredFee.String())
+	}
+
+	latest, err := rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestLedger: %v", err)
+	}
+	startLedger := latest.Sequence
+
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	if err != nil {
+		t.Fatalf("Router CcipSend (use-default sentinel should be accepted): %v", err)
+	}
+	if msgID == ([32]byte{}) {
+		t.Fatal("CcipSend returned empty message_id")
+	}
+
+	sentEvt, err := wire.OnRampClient.WaitForCCIPMessageSentEvent(ctx, startLedger, 30*time.Second,
+		func(e *onrampbindings.CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == remoteDestChain && bytes.Equal(e.MessageId[:], msgID[:])
+		})
+	if err != nil {
+		t.Fatalf("WaitForCCIPMessageSentEvent: %v", err)
+	}
+
+	// PROVES-WORKS (M-5): the receipt is issued by the resolved concrete
+	// default_executor, not by the sentinel strkey.
+	execReceipt := findReceiptByIssuer(t, sentEvt.Receipts, stack.ExecutorID)
+	if execReceipt.FeeTokenAmount == nil {
+		t.Fatal("functional executor receipt FeeTokenAmount is nil")
+	}
+	// PROVES-WORKS (H-8): a functional executor charges a strictly positive fee
+	// (the execution-gas-cost slice), unlike the no-exec sentinel's exact zero.
+	if execReceipt.FeeTokenAmount.Sign() <= 0 {
+		t.Fatalf("functional (resolved-default) executor fee must be > 0 — exec-gas cost charged; got %s",
+			execReceipt.FeeTokenAmount.String())
+	}
+	t.Logf("✅ functional executor: receipt issued by concrete %s with fee %s (>0, exec-gas charged)",
+		stack.ExecutorID, execReceipt.FeeTokenAmount.String())
 }

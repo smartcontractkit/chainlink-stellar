@@ -71,6 +71,20 @@ struct FeeBreakdown {
     /// `percentMultiplier` (`FeeQuoter.sol` L337). Carried for the per-receipt
     /// distribution conversions in `forward_from_router`.
     premium_multiplier: u32,
+    /// Network-fee USD cents selected from the OnRamp's own split
+    /// (`message_network_fee_usd_cents` when there is no token transfer,
+    /// `token_network_fee_usd_cents` otherwise) — the SAME source field the network
+    /// fee receipt records (M-11 / INV-FEE-11/12 parity with EVM
+    /// `OnRamp.forwardFromRouter`, which selects the split once and uses it for both
+    /// charge and receipt). Carried so `forward_from_router` builds the receipt from
+    /// the identical value the charge premium-converted.
+    network_fee_usd_cents: u32,
+    /// Network fee in fee-token smallest units = `network_fee_usd_cents`
+    /// premium-converted (EVM applies `feeMultiplier` to the network-fee receipt,
+    /// `OnRamp.sol:1089-1090`). The charged total adds this to the additional slice,
+    /// so charge == premium_convert(receipt network field), matching the CCV/pool
+    /// slices (receipt in USD cents, charge premium-converted from the same field).
+    network_fee_tokens: i128,
 }
 
 /// True iff `addr` is the zero Stellar account (EVM `address(0)` parity).
@@ -367,6 +381,28 @@ impl OnRampContract {
         );
         let premium_multiplier = gas_quote.premium_multiplier;
 
+        // M-11 / INV-FEE-11/12: the network fee is selected from the OnRamp's OWN split
+        // (`message_network_fee_usd_cents` / `token_network_fee_usd_cents`, by token
+        // presence) — the same field the network fee receipt records — and
+        // premium-converted into fee-token units. EVM `OnRamp.forwardFromRouter`
+        // selects this split once (OnRamp.sol:286-288) and `_getReceipts` applies the
+        // same `feeMultiplier` to the network-fee receipt and to the charged sum
+        // (OnRamp.sol:1089-1100), so charge == receipt by construction. The fee-quoter's
+        // standalone `network_fee_usd_cents` (returned by `get_message_fee`) is a
+        // legacy single-field quote view (EVM's `FeeQuoter.networkFeeUSDCents` is
+        // likewise legacy and unused by the send path) and is NOT the charge source;
+        // `get_message_fee` is still called above for `fee_token_price`.
+        let network_fee_usd_cents = if message.token_amounts.is_empty() {
+            dest_config.message_network_fee_usd_cents
+        } else {
+            dest_config.token_network_fee_usd_cents
+        };
+        let network_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
+            network_fee_usd_cents as u128,
+            premium_multiplier,
+            message_fee.fee_token_price,
+        )?;
+
         let (executor_flat_usd_cents, exec_cost_usd_cents) = if is_no_exec {
             // No-execution sentinel: zero executor fee, zero exec-gas cost. The
             // sentinel is left in place (EVM leaves `NO_EXECUTION_ADDRESS`).
@@ -420,8 +456,14 @@ impl OnRampContract {
         .checked_add(exec_cost_in_fee_token)
         .ok_or(CCIPError::InvalidFeeCalculation)?;
 
-        let total_fee = message_fee
-            .fee_token_amount
+        // M-11 / INV-FEE-11/12: the charged total is the network fee (from the OnRamp
+        // split, premium-converted above) + the additional slice (CCV + pool +
+        // executor flat, premium-converted; + exec cost, bare). Sourcing the network
+        // component from the OnRamp split — the same field the receipt records — makes
+        // charge == premium_convert(receipt network field), matching EVM's one-source
+        // design and the CCV/pool slice convention. (Was `message_fee.fee_token_amount`
+        // = fee-quoter single × premium, a different config source than the receipt.)
+        let total_fee = network_fee_tokens
             .checked_add(additional_in_fee_token)
             .ok_or(CCIPError::InvalidFeeCalculation)?;
 
@@ -458,6 +500,8 @@ impl OnRampContract {
             pool_dest_bytes_overhead,
             pool_fee_usd_cents,
             premium_multiplier,
+            network_fee_usd_cents,
+            network_fee_tokens,
         })
     }
 
@@ -556,7 +600,15 @@ impl OnRampContract {
             // in the pool-returned CCV list: it asks the OnRamp to append lane defaults on top
             // of the pool's custom CCVs. Dedup naturally avoids double-listing defaults if they
             // were already pulled in by the user-fallback path.
-            if pool_req.include_defaults {
+            //
+            // M-13 / INV-SRC-12: an EMPTY pool-returned CCV list is — like EVM's
+            // `if (requiredCCVs.length == 0) return defaultCCVs;` (OnRamp.sol:888-890) — a
+            // request to use the lane defaults, NOT a request to send a zero-CCV message. So
+            // fold in defaults whenever the pool list is empty, regardless of the flag (the
+            // `include_defaults` flag only governs layering defaults ON TOP of a non-empty pool
+            // list). `include_defaults = false` + non-empty ccvs keeps the pool-only set; only
+            // the empty case is upgraded to defaults.
+            if pool_req.include_defaults || pool_req.ccvs.is_empty() {
                 Self::append_unique_pool_ccvs(
                     env,
                     &mut merged_ccvs,
@@ -566,18 +618,13 @@ impl OnRampContract {
             }
         }
 
-        // H-1 / INV-CC-1: an outbound message must carry at least one CCV. EVM
-        // `OnRamp.forwardFromRouter` guarantees this by construction: an empty
-        // pool-returned CCV list is treated as "use lane defaults", so the merged
-        // set is never empty when the lane has defaults. Stellar pools instead
-        // return an explicit `include_defaults` flag, and token-only transfers
-        // skip the user-fallback defaults path (`user_fallback_defaults` above) —
-        // so a token-only message on a lane whose pool returns
-        // `{ccvs:[], include_defaults:false}` (with no lane-mandated CCVs) would
-        // otherwise be emitted with zero CCVs, bypassing verification entirely.
-        // Reject that here, at the single merge point both `get_fee` and
-        // `forward_from_router` route through. Reuses `CCVQuorumNotMet` (#108) —
-        // no new error variant, no schema break.
+        // H-1 / INV-CC-1 defense-in-depth: an outbound message must carry at least one CCV.
+        // With the M-13 empty-pool⇒defaults short-circuit above and `DestChainConfigArgs::
+        // validate` requiring at least one of {defaults, lane-mandated} to be non-empty, a
+        // valid lane always supplies ≥1 CCV for a token-only transfer, so this guard is not
+        // reached for valid configs. It remains as a safety net against a misconfigured lane
+        // (both sets empty slipped past `validate`) emitting an unverified message. Reuses
+        // `CCVQuorumNotMet` (#108) — no new error variant, no schema break.
         if merged_ccvs.is_empty() {
             return Err(CCIPError::CCVQuorumNotMet);
         }
@@ -610,7 +657,10 @@ impl OnRampContract {
         message: StellarToAnyMessage,
     ) -> Result<i128, CCIPError> {
         Self::require_initialized(&env)?;
-        <Self as CurseCheckable>::require_not_cursed(&env)?;
+        // Per-destination RMN curse gate, symmetric with forward_from_router: quoting also
+        // reverts when the dest lane is cursed (EVM getFee performs no curse check, so this
+        // is intentionally stricter than EVM — a safe defensive divergence, not a parity gap).
+        <Self as CurseCheckable>::require_chain_not_cursed(&env, dest_chain_selector)?;
 
         message.validate()?;
 
@@ -712,7 +762,12 @@ impl OnRampContract {
         original_sender: Address,
     ) -> Result<BytesN<32>, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as CurseCheckable>::require_not_cursed(&env)?;
+        // Per-destination RMN curse gate (global OR destChainSelector cursed), mirroring
+        // EVM OnRamp.forwardFromRouter `i_rmnRemote.isCursed(bytes16(uint128(destChainSelector)))`
+        // (OnRamp.sol). The Router already enforces per-dest curse, but the OnRamp-level
+        // defense-in-depth check is required for INV-RMN-2 parity — `require_chain_not_cursed`
+        // checks global then the dest subject (curse_checkable.rs).
+        <Self as CurseCheckable>::require_chain_not_cursed(&env, dest_chain_selector)?;
         message.validate()?;
 
         // Enter reentrancy guard (uses temporary storage)
@@ -964,14 +1019,18 @@ impl OnRampContract {
             extra_args: extra_args.executor_args.clone(),
         });
 
-        // TODO: Confirm with EVM reference whether message vs token network fees
-        // are mutually exclusive or additive (base + surcharge). Currently treated
-        // as mutually exclusive.
-        let network_fee_usd_cents = if message.token_amounts.is_empty() {
-            dest_config.message_network_fee_usd_cents
-        } else {
-            dest_config.token_network_fee_usd_cents
-        };
+        // M-11 / INV-FEE-11/12: the network fee receipt records the SAME OnRamp-split
+        // value the charge premium-converted (`breakdown.network_fee_usd_cents`), so
+        // charge == premium_convert(receipt network field) — matching EVM
+        // `OnRamp.forwardFromRouter`, which selects the split once and uses it for both
+        // (OnRamp.sol:286-288 → `_getReceipts`:1089-1100). EVM selects by token presence
+        // (mutually exclusive: message-only vs token), not additive — confirmed against
+        // the EVM reference, resolving the prior TODO. The receipt stores USD cents by
+        // the Stellar receipt convention (shared with the CCV/pool/executor receipts,
+        // which are premium-converted at distribution); the network fee is left on the
+        // OnRamp for sweep, so it is never re-converted — its raw-USD-cent value is
+        // reconciled with the charged `network_fee_tokens` via this shared source field.
+        let network_fee_usd_cents = breakdown.network_fee_usd_cents;
 
         // Network fee receipt (always last)
         receipts.push_back(Receipt {
