@@ -1386,6 +1386,15 @@ struct TokenTransferLane {
     transfer_token: Address,
     transfer_token_sac: token::StellarAssetClient<'static>,
     fee_quoter_client: FeeQuoterContractClient<'static>,
+    /// Address of the token pool bound to this lane (the real lock-release pool
+    /// when `mock_pool_id` is `None`, otherwise the mock pool). Reconstructing a
+    /// `LockReleaseTokenPoolContractClient` over it lets tests reconfigure the
+    /// pool's source-side finality minimum (`set_allowed_finality_config`).
+    pool_id: Address,
+    /// Address of the lane's default executor, so tests can reconfigure its
+    /// `allowed_finality_config` (e.g. make it permissive to isolate the pool's
+    /// own finality minimum as the binding gate).
+    executor_id: Address,
     /// When set, the lane was wired with this mock pool (which captures
     /// `token_args` from `get_fee`) instead of the real lock-release pool.
     mock_pool_id: Option<Address>,
@@ -1492,6 +1501,33 @@ impl TokenTransferLane {
             .get(2)
             .expect("expected [CCV, Pool, Executor, NetworkFee]")
             .clone()
+    }
+
+    /// Reconstruct a client over the lane's real lock-release pool so a test can
+    /// reconfigure its source-side finality minimum. Only meaningful when the
+    /// lane was wired with the real pool (`mock_pool_id` is `None`).
+    fn pool_client(&self) -> LockReleaseTokenPoolContractClient<'_> {
+        LockReleaseTokenPoolContractClient::new(&self.env, &self.pool_id)
+    }
+
+    /// Set the pool-wide `allowed_finality_config` — the minimum source-chain
+    /// finality the token issuer considers sufficient for outbound transfers on
+    /// every lane from this source (EVM `TokenPool.setAllowedFinalityConfig`).
+    fn set_pool_allowed_finality_config(&self, allowed_finality: u32) {
+        self.pool_client()
+            .set_allowed_finality_config(&allowed_finality);
+    }
+
+    /// Reconfigure the executor's `allowed_finality_config` post-init, preserving
+    /// the rest of its dynamic config. Lets a test make the executor permissive
+    /// so the pool's own (stricter) finality minimum is the binding gate.
+    fn set_executor_allowed_finality_config(&self, allowed_finality: u32) {
+        let client = ExecutorContractClient::new(&self.env, &self.executor_id);
+        client.set_dynamic_config(&ExecDynamicConfig {
+            fee_aggregator: Some(Address::generate(&self.env)),
+            allowed_finality_config: allowed_finality,
+            ccv_allowlist_enabled: false,
+        });
     }
 }
 
@@ -1628,6 +1664,7 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
+    let executor_id = default_executor.clone();
 
     let dest_chain_config = OnrampDestChainConfigArgs {
         dest_chain_selector: evm_chain_selector,
@@ -1657,6 +1694,8 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
         transfer_token,
         transfer_token_sac,
         fee_quoter_client,
+        pool_id,
+        executor_id,
         mock_pool_id: mock_pool,
     }
 }
@@ -1846,6 +1885,9 @@ fn test_outbound_fast_finality_admitted_and_priced() {
 
     // Admitted: send_data_only_custom panics on revert inside ccip_send, so
     // reaching the assertions proves the FTF request was not rejected.
+    // Clone before the move: `extra_args` is consumed by the first send below,
+    // but we reuse a copy for the WAIT_FOR_FINALITY send later in this test.
+    let mut extra_args_finality = extra_args.clone();
     let receipts = lane.send_data_only_custom(
         Bytes::from_slice(env, b"fast finality admitted"),
         extra_args,
@@ -1865,7 +1907,6 @@ fn test_outbound_fast_finality_admitted_and_priced() {
 
     // The same lane must still admit a WAIT_FOR_FINALITY (0) request — both
     // finality modes are accepted on the outbound path.
-    let mut extra_args_finality = extra_args.clone();
     extra_args_finality.block_confirmations = 0;
     let receipts_finality = lane.send_data_only_custom(
         Bytes::from_slice(env, b"wait for finality"),
@@ -4046,6 +4087,105 @@ fn test_disallowed_finality_reverts_end_to_end_via_executor() {
 
     lane.onramp_client
         .get_fee(&lane.evm_chain_selector, &message);
+}
+
+// ================================================================
+// Source-side pool finality minimum — integration coverage via a real
+// OnRamp→lock-release-pool token lane (closes the gap where finality
+// tests were data-only / executor-layer only). The token issuer (pool
+// owner) sets `allowed_finality_config` to a block depth, the minimum
+// source-chain finality for outbound transfers on every lane from this
+// source (EVM `TokenPool.setAllowedFinalityConfig` parity). A user
+// requesting FASTER finality than that minimum reverts on source (#315);
+// a SLOWER request is admitted with the user's value honored verbatim.
+// ================================================================
+
+/// Shared setup: a real lock-release token-pool lane whose executor is made
+/// permissive (`allowed_finality_config = 1` ⇒ admits any block depth ≥ 1) so
+/// the executor is NOT the finality gate, and whose pool enforces a
+/// 10-confirmation source-side minimum. This isolates the POOL's minimum as the
+/// binding constraint — the property under test.
+fn setup_pool_finality_lane() -> TokenTransferLane {
+    let lane = setup_token_transfer_lane();
+    // Executor: admit any block depth ≥ 1. The default (0 = WAIT_FOR_FINALITY
+    // only) would reject every fast-finality request before the pool is
+    // consulted, masking the pool's own gate.
+    lane.set_executor_allowed_finality_config(1u32);
+    // Pool: issuer sets a 10-confirmation minimum for all lanes from this source.
+    lane.set_pool_allowed_finality_config(10u32);
+    lane
+}
+
+/// Claim (2) end-to-end via the OnRamp→pool path: a token transfer requesting
+/// finality FASTER than the pool's configured minimum (5 < 10) reverts on source
+/// with InvalidRequestedFinality (#315). The executor is permissive (admits
+/// depth ≥ 1), so the revert is attributable to the pool's minimum, not the
+/// executor's own gate. EVM `FinalityCodec._ensureRequestedFinalityAllowed` parity.
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")] // InvalidRequestedFinality
+fn test_outbound_pool_finality_faster_than_minimum_reverts_end_to_end() {
+    let lane = setup_pool_finality_lane();
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 5, // faster than the pool's 10-confirmation minimum
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::from_slice(env, b"pool min finality faster"),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    // Quoting routes through OnRamp.get_fee → pool.get_fee, which enforces the
+    // pool's allowed_finality_config and reverts with #315.
+    lane.router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+}
+
+/// Claim (3) end-to-end via the OnRamp→pool path: a token transfer requesting
+/// finality SLOWER than the pool's configured minimum (20 > 10) is admitted, and
+/// the user's (slower) value is honored verbatim in the emitted on-wire
+/// `CcipMessageV1.finality` — not clamped to the pool minimum. EVM `OnRamp`
+/// writes the user finality as-is (no clamping) parity.
+#[test]
+fn test_outbound_pool_finality_slower_than_minimum_admits_user_value_end_to_end() {
+    let lane = setup_pool_finality_lane();
+    let env = &lane.env;
+
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 20, // slower than the pool's 10-confirmation minimum
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+
+    let (_receipts, encoded) = lane.send_with_extra_args(extra_args.to_xdr(env));
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.finality, 20u32,
+        "user-requested finality slower than the pool minimum must be honored \
+         verbatim in the emitted message (no clamping to the pool minimum)"
+    );
+    let _ = env; // keep env alive
 }
 
 /// A lane's `default_executor` may not be the no-execution sentinel — the
