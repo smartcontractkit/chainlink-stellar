@@ -21,42 +21,38 @@ func TestGenerateTypes_eventsOnlyNoImports(t *testing.T) {
 	mustContain(t, out, "type CursedEvent struct")
 }
 
-// TestGenerateEnum_UnitOnly is a regression guard: pre-existing unit-only
-// enums (CCIPError, MessageDirection, ...) must keep emitting the legacy
-// `type X uint32` newtype shape so existing call sites continue to compile.
-func TestGenerateEnum_UnitOnly(t *testing.T) {
+// TestGenerateEnum_IntReprEmitsU32 is a regression guard: a #[contracttype]
+// enum whose every variant is a unit with an EXPLICIT `= N` discriminant (the
+// soroban-sdk derive_type_enum_int path) must emit the `type X uint32` newtype
+// shape with ScVal::U32 wire encoding. Real examples: MessageExecutionState,
+// TransmissionState, Bound.
+func TestGenerateEnum_IntReprEmitsU32(t *testing.T) {
 	c := &Contract{Enums: []Enum{
-		{Name: "MessageDirection", Variants: []EnumVariant{
-			{Name: "Outbound", Kind: EnumVariantUnit, Value: 0},
-			{Name: "Inbound", Kind: EnumVariantUnit, Value: 1},
+		{Name: "Bound", Variants: []EnumVariant{
+			{Name: "AtOrBefore", Kind: EnumVariantUnit, Value: 0, Explicit: true},
+			{Name: "AtOrAfter", Kind: EnumVariantUnit, Value: 1, Explicit: true},
 		}},
 	}}
 	out := GenerateTypes("test", c)
 	mustContain(t, out,
-		"type MessageDirection uint32",
-		"MessageDirectionOutbound MessageDirection = 0",
-		"MessageDirectionInbound MessageDirection = 1",
+		"type Bound uint32",
+		"BoundAtOrBefore Bound = 0",
+		"BoundAtOrAfter Bound = 1",
 		"return scval.Uint32ToScVal(uint32(e)), nil",
 	)
-	mustNotContain(t, out, "type MessageDirection struct")
+	mustNotContain(t, out, "type Bound struct")
 }
 
-// TestGenerateEnum_BareUnitsHaveDistinctDiscriminants is the end-to-end
-// regression test for the MessageDirection bug:
-//
-//	const (
-//	    MessageDirectionOutbound MessageDirection = 0
-//	    MessageDirectionInbound  MessageDirection = 0  // <- BUG
-//	)
-//
-// The bug was that bare-identifier unit variants (no explicit `= N`) all
-// got Go's zero value 0, so MessageDirectionInbound serialised as the
-// same on-chain ScVal::U32 as MessageDirectionOutbound. The fix tracks an
-// auto-incrementing counter in parseEnumVariants. This test runs the
-// real parser then runs codegen, so a future regression in either step
-// would be caught here even if the unit test of codegen above still
-// passes (because that one bypasses the parser).
-func TestGenerateEnum_BareUnitsHaveDistinctDiscriminants(t *testing.T) {
+// TestGenerateEnum_BareUnitsEmitUnion is the end-to-end regression test for the
+// MessageDirection wire-encoding bug. A #[contracttype] enum with bare unit
+// variants (no explicit `= N`) is encoded by soroban-sdk as
+// ScVal::Vec([Symbol(<VariantName>)]) (derive_type_enum), NOT ScVal::U32. The
+// old generator emitted U32, so the contract decoded the argument as a Vec<Val>
+// and trapped (HostError WasmVm InvalidAction / UnreachableCodeReached). This
+// test runs the real parser then codegen, so a regression in either step is
+// caught here. The "distinct encoding per variant" intent is now satisfied by
+// distinct discriminant Symbols, not numeric values.
+func TestGenerateEnum_BareUnitsEmitUnion(t *testing.T) {
 	src := `
 #[soroban_sdk::contracttype]
 pub enum MessageDirection {
@@ -67,12 +63,20 @@ pub enum MessageDirection {
 	c := &Contract{Enums: parseEnums(src)}
 	out := GenerateTypes("test", c)
 	mustContain(t, out,
-		"MessageDirectionOutbound MessageDirection = 0",
-		"MessageDirectionInbound MessageDirection = 1",
+		"type MessageDirection struct {",
+		"Outbound *MessageDirectionOutbound",
+		"Inbound *MessageDirectionInbound",
+		"type MessageDirectionOutbound struct{}",
+		"type MessageDirectionInbound struct{}",
+		// Each variant encodes as a one-element vec holding its name Symbol.
+		`scval.SymbolToScVal("Outbound")`,
+		`scval.SymbolToScVal("Inbound")`,
+		"scval.VecToScVal(items)",
 	)
-	// The exact symptom of the bug: Inbound = 0. Refuse to accept it.
+	// The broken U32 encoding must be gone.
 	mustNotContain(t, out,
-		"MessageDirectionInbound MessageDirection = 0",
+		"type MessageDirection uint32",
+		"return scval.Uint32ToScVal(uint32(e)), nil",
 	)
 }
 
@@ -182,16 +186,21 @@ func TestGenerateEnum_StructVariant(t *testing.T) {
 }
 
 // TestGenerateEnum_ZeroValue makes sure tuple/return-position uses pick the
-// correct Go zero literal: `0` for unit-only, `T{}` for unions. Without
-// this, a tuple-returning function whose tuple contains a discriminated
-// union would emit `return 0, ...` and fail to compile.
+// correct Go zero literal: `0` for int-repr (U32 newtype) enums, `T{}` for
+// discriminated-union enums. Without this, a tuple-returning function whose
+// tuple contains a discriminated union would emit `return 0, ...` and fail to
+// compile.
 func TestGenerateEnum_ZeroValue(t *testing.T) {
 	knownEnumNames = map[string]bool{
-		"MessageDirection": true,  // unit-only
-		"ReplayKey":        false, // union
+		"Bound":            true,  // int-repr (U32 newtype)
+		"MessageDirection": false, // bare unit -> union (struct)
+		"ReplayKey":        false, // tuple-variant -> union (struct)
 	}
-	if got := zeroValue("MessageDirection"); got != "0" {
-		t.Errorf("unit enum zero: got %q want \"0\"", got)
+	if got := zeroValue("Bound"); got != "0" {
+		t.Errorf("int-repr enum zero: got %q want \"0\"", got)
+	}
+	if got := zeroValue("MessageDirection"); got != "MessageDirection{}" {
+		t.Errorf("bare-unit union enum zero: got %q want \"MessageDirection{}\"", got)
 	}
 	if got := zeroValue("ReplayKey"); got != "ReplayKey{}" {
 		t.Errorf("union enum zero: got %q want \"ReplayKey{}\"", got)

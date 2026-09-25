@@ -1,17 +1,34 @@
 #![cfg(test)]
 
+extern crate alloc;
+
+use alloc::vec::Vec as HostVec;
+use ccvs_committee_verifier::{
+    types::{DynamicConfig, SignatureQuorumConfig},
+    CommitteeVerifierContract, CommitteeVerifierContractClient, DEFAULT_VERIFIER_VERSION_TAG,
+};
+use ccvs_versioned_verifier_resolver::{
+    InboundImplementationUpdate, VersionedVerifierResolverContract,
+    VersionedVerifierResolverContractClient,
+};
+use common_helpers::finality_codec::{WAIT_FOR_FINALITY_FLAG, WAIT_FOR_SAFE_FLAG};
+use common_interfaces::ccip_receiver::CcvsAndFinalityConfig;
+use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
+use sha3::{Digest, Keccak256};
+
 use common_error::CCIPError;
 use common_interfaces::token_pool::{
     MessageDirection, PoolRequiredCCVs, ReleaseOrMintIn, ReleaseOrMintOut,
 };
 use common_message::{
-    CcipMessageV1, CcipTokenTransferV1, MessageIdCompute, ToBytes, MESSAGE_V1_VERSION,
+    AnyToStellarMessage, CcipMessageV1, CcipTokenTransferV1, MessageIdCompute, ToBytes,
+    MESSAGE_V1_VERSION,
 };
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use soroban_sdk::{
     contract, contractimpl, testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env,
-    Symbol, Vec,
+    IntoVal, InvokeError, Symbol, Vec,
 };
 
 use crate::types::{DataKey, MessageExecutionState, SourceChainConfigArgs, StaticConfig};
@@ -137,6 +154,24 @@ fn test_apply_source_chain_config() {
     let config = client.get_source_chain_config(&5678);
     assert_eq!(config.is_enabled, true);
     assert_eq!(config.router, router);
+}
+
+// REQ (Claim 3): setting a source chain's `default_ccvs` /
+// `lane_mandated_ccvs` (i.e. which CCVs a destination accepts from that source)
+// is owner-gated at `apply_source_chain_cfg_updates` (lib.rs:328). A non-owner
+// must be rejected. Args are empty so the only gate exercised is the auth check.
+#[test]
+fn test_apply_source_chain_cfg_updates_is_owner_only() {
+    let (env, owner, client) = setup_env();
+    let static_config = default_static_config(&env);
+    client.initialize(&owner, &static_config);
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    env.mock_auths(&[]);
+    let r = client.try_apply_source_chain_cfg_updates(&Vec::new(&env));
+    assert!(
+        r.is_err(),
+        "non-owner must be rejected from setting default/lane-mandated CCVs for a source chain"
+    );
 }
 
 #[test]
@@ -1517,4 +1552,500 @@ fn test_source_chain_config_accepts_unique_ccv_set() {
     let config = client.get_source_chain_config(&5678);
     assert_eq!(config.default_ccvs, args.default_ccvs);
     assert_eq!(config.lane_mandated_ccvs, args.lane_mandated_ccvs);
+}
+
+// ============================================================
+// Real-CCV OffRamp↔CommitteeVerifier integration tests
+//
+// Closes the SHARED ROOT GAP of claims 4/5/6 in docs/claims-verification.md:
+// the only tests that wire a REAL CommitteeVerifier (live ecrecover quorum) behind a
+// REAL OffRamp.execute, signing the attestation over a real `CcipMessageV1`-
+// `compute_message_id` and reaching it through the real execute → verify_ccv_quorum →
+// VersionedVerifierResolver → verify_message path. Offramp tests otherwise use
+// blob-agnostic MockVerifier/RevertingVerifier; committee-verifier crypto is otherwise
+// exercised only in isolation over an arbitrary BytesN<32> hash.
+// ============================================================
+
+// ---- host-side signing helpers (mirror of committee-verifier/src/test.rs:20-114) ----
+// Copied verbatim so the offramp crate can drive a real CommitteeVerifier without a shared
+// dev-helper crate. Phase B will centralize the keccak256(version_tag‖messageID) signed-
+// payload / version-tag invariant behind a shared trait + helper.
+
+fn make_signing_key(seed: u8) -> SigningKey {
+    let mut bytes = [0u8; 32];
+    bytes[0] = seed;
+    SigningKey::from_slice(&bytes).expect("valid secp256k1 secret key")
+}
+
+/// Left-zero-padded 32-byte Ethereum address derived from a secp256k1 signing key.
+fn eth_address_padded(sk: &SigningKey) -> [u8; 32] {
+    let vk = sk.verifying_key();
+    let uncompressed = vk.to_encoded_point(false);
+    let hash = Keccak256::digest(&uncompressed.as_bytes()[1..]);
+    let mut padded = [0u8; 32];
+    padded[12..].copy_from_slice(&hash[12..]);
+    padded
+}
+
+/// Deterministic secp256k1 keys from seeds, sorted by Ethereum address (ascending) — the
+/// wire order `verify_message` requires (OutOfOrderSignatures otherwise).
+fn sorted_signers_from_seeds(seeds: &[u8]) -> HostVec<(SigningKey, [u8; 32])> {
+    let mut v: HostVec<(SigningKey, [u8; 32])> = seeds
+        .iter()
+        .copied()
+        .map(|s| {
+            let sk = make_signing_key(s);
+            let addr = eth_address_padded(&sk);
+            (sk, addr)
+        })
+        .collect();
+    v.sort_by(|a, b| a.1.cmp(&b.1));
+    v
+}
+
+fn signers_to_soroban_vec(env: &Env, pairs: &HostVec<(SigningKey, [u8; 32])>) -> Vec<BytesN<32>> {
+    let mut out = Vec::new(env);
+    for (_, addr) in pairs {
+        out.push_back(BytesN::from_array(env, addr));
+    }
+    out
+}
+
+/// `keccak256(version_tag ‖ message_hash)` — must match CommitteeVerifier::verify_message.
+fn keccak_signed_hash_with_tag(env: &Env, tag: &[u8; 4], message_hash: &BytesN<32>) -> BytesN<32> {
+    let mut signed_payload = Bytes::new(env);
+    signed_payload.append(&Bytes::from_array(env, tag));
+    signed_payload.append(&Bytes::from_array(env, &message_hash.to_array()));
+    env.crypto().keccak256(&signed_payload).into()
+}
+
+/// Blob layout consumed by CommitteeVerifier::verify_message:
+/// `version_tag(4) ‖ u16_len(2, big-endian) ‖ sig_payload(len)`, where sig_payload is the
+/// concatenation of EIP-2098 compact signatures in ascending-signer wire order.
+fn build_verifier_results_with_tag(env: &Env, tag: &[u8; 4], sig_payload: &[u8]) -> Bytes {
+    let len = sig_payload.len();
+    assert!(len <= u16::MAX as usize);
+    let b0 = ((len >> 8) & 0xff) as u8;
+    let b1 = (len & 0xff) as u8;
+    let mut raw: HostVec<u8> = HostVec::with_capacity(6 + len);
+    raw.extend_from_slice(tag);
+    raw.push(b0);
+    raw.push(b1);
+    raw.extend_from_slice(sig_payload);
+    Bytes::from_slice(env, &raw)
+}
+
+/// EIP-2098 compact ECDSA signature (64 bytes): r(32) ‖ yParityAndS(32), recovery id in
+/// bit 255 of S — matches `decode_compact_sig` (common/signature quorum.rs:17-22).
+fn sign_compact(sk: &SigningKey, prehash: &[u8; 32]) -> [u8; 64] {
+    let (sig, recid) = sk.sign_prehash(prehash).expect("signing must succeed");
+    let sig_bytes = sig.to_bytes();
+    let mut compact = [0u8; 64];
+    compact[..32].copy_from_slice(&sig_bytes[..32]); // r
+    compact[32..].copy_from_slice(&sig_bytes[32..]); // s
+    compact[32] |= (recid.to_byte() & 1) << 7; // recovery id → bit 255 of S
+    compact
+}
+
+/// Concatenate compact signatures for the given (wire-ordered) signers over `signed_hash`.
+fn signature_payload_valid(
+    pairs_in_wire_order: &[(SigningKey, [u8; 32])],
+    signed_hash: &[u8; 32],
+) -> HostVec<u8> {
+    let mut out = HostVec::with_capacity(pairs_in_wire_order.len() * 64);
+    for (sk, _addr) in pairs_in_wire_order {
+        let compact = sign_compact(sk, signed_hash);
+        out.extend_from_slice(&compact);
+    }
+    out
+}
+
+/// Minimal test Router: forwards a verified message to `receiver.ccip_receive(message)`,
+/// mirroring the real Router's single-arg forwarding (router/src/lib.rs:256-263) without its
+/// RMN-curse / offramp-registration machinery — the router is not the seam under test here.
+#[contract]
+pub struct TestRouter;
+
+#[contractimpl]
+impl TestRouter {
+    pub fn route_message(
+        env: Env,
+        _offramp: Address,
+        _source_chain_selector: u64,
+        receiver: Address,
+        message: AnyToStellarMessage,
+    ) -> Result<(), CCIPError> {
+        let mut recv_args = Vec::new(&env);
+        recv_args.push_back(message.into_val(&env));
+        match env.try_invoke_contract::<Result<(), CCIPError>, InvokeError>(
+            &receiver,
+            &Symbol::new(&env, "ccip_receive"),
+            recv_args,
+        ) {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => Err(CCIPError::ReceiverError),
+            Err(_) => Err(CCIPError::ReceiverError),
+        }
+    }
+}
+
+/// Configurable test receiver implementing the V2 CCIP receiver surface by symbol —
+/// `get_ccvs_and_finality_config` (offramp consult, lib.rs:701-704) and `ccip_receive`
+/// (delivery via the router, lib.rs:1059-1068). A settable allowed-finality policy and
+/// required-CCV set drive the on-chain finality gate (H-7) and the real-verifier dispatch;
+/// `ccip_receive` records the delivered `message_id` so tests assert end-to-end delivery
+/// (proving CCVs attest to the whole message via messageID, not a Burn event — claim 6).
+#[contract]
+pub struct TestReceiver;
+
+#[contractimpl]
+impl TestReceiver {
+    pub fn set_allowed_finality(env: Env, allowed_finality_config: u32) {
+        env.storage().instance().set(
+            &Symbol::new(&env, "allowed_finality"),
+            &allowed_finality_config,
+        );
+    }
+
+    pub fn set_required_ccvs(env: Env, required_ccvs: Vec<Address>) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "required_ccvs"), &required_ccvs);
+    }
+
+    pub fn get_ccvs_and_finality_config(
+        env: Env,
+        _source_chain_selector: u64,
+        _sender: Bytes,
+    ) -> Result<CcvsAndFinalityConfig, CCIPError> {
+        let allowed_finality_config: u32 = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "allowed_finality"))
+            .unwrap_or(WAIT_FOR_FINALITY_FLAG);
+        let required_ccvs: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "required_ccvs"))
+            .unwrap_or_else(|| Vec::new(&env));
+        Ok(CcvsAndFinalityConfig {
+            allowed_finality_config,
+            optional_ccvs: Vec::new(&env),
+            optional_threshold: 0,
+            required_ccvs,
+        })
+    }
+
+    pub fn ccip_receive(env: Env, message: AnyToStellarMessage) -> Result<(), CCIPError> {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "last_msg_id"), &message.message_id);
+        Ok(())
+    }
+
+    pub fn last_received_message_id(env: Env) -> BytesN<32> {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "last_msg_id"))
+            .expect("no message delivered")
+    }
+}
+
+/// Wire a REAL CommitteeVerifier behind a REAL VersionedVerifierResolver behind a REAL
+/// OffRamp, plus a minimal TestRouter + configurable TestReceiver. 3 signers, threshold 2,
+/// configured for `EXEC_TEST_SRC_CHAIN` under the default 2.0 version tag.
+///
+/// Returns everything an integration test needs to build a signed `verifier_results` blob
+/// and call `execute`. The receiver is configured with `allowed_finality` and required-CCV
+/// = [vvr_id] (so the real VVR is in the required verify set).
+#[allow(clippy::type_complexity)]
+fn setup_real_verifier_execute_harness(
+    allowed_finality: u32,
+) -> (
+    Env,
+    OffRampContractClient<'static>,
+    Address, // vvr_id
+    Address, // committee_verifier_id
+    TestReceiverClient<'static>,
+    HostVec<(SigningKey, [u8; 32])>, // sorted signer pairs
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    // RMN stack (required by CommitteeVerifier::initialize / require_not_cursed).
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    // REAL CommitteeVerifier: init with the default 2.0 tag, then configure a 3-signer /
+    // threshold-2 quorum for the test source chain.
+    let committee_verifier_id = env.register(CommitteeVerifierContract, ());
+    let cv_client = CommitteeVerifierContractClient::new(&env, &committee_verifier_id);
+    let pairs = sorted_signers_from_seeds(&[3, 7, 11]);
+    let cfg = SignatureQuorumConfig {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        threshold: 2,
+        signers: signers_to_soroban_vec(&env, &pairs),
+    };
+    cv_client.initialize(
+        &owner,
+        &DynamicConfig {
+            fee_aggregator: Some(Address::generate(&env)),
+            allowlist_admin: None,
+        },
+        &vec![&env], // storage_locations
+        &rmn_proxy_id,
+        &BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG),
+    );
+    cv_client.apply_signature_configs(&vec![&env], &vec![&env, cfg]);
+
+    // REAL VVR: map the version tag → CommitteeVerifier so OffRamp's verify_ccvs_at
+    // dispatches to the real ecrecover quorum.
+    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr_client = VersionedVerifierResolverContractClient::new(&env, &vvr_id);
+    vvr_client.initialize(&owner, &Address::generate(&env));
+    vvr_client.apply_inbound_impl_updates(&vec![
+        &env,
+        InboundImplementationUpdate {
+            version: BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG),
+            verifier: Some(committee_verifier_id.clone()),
+        },
+    ]);
+
+    // TestRouter + configurable TestReceiver.
+    let router_id = env.register(TestRouter, ());
+    let receiver_id = env.register(TestReceiver, ());
+    let receiver_client = TestReceiverClient::new(&env, &receiver_id);
+    receiver_client.set_required_ccvs(&vec![&env, vvr_id.clone()]);
+    receiver_client.set_allowed_finality(&allowed_finality);
+
+    // REAL OffRamp; source lane's default CCV = the real VVR, router = the test router.
+    let offramp_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &offramp_id);
+    client.initialize(
+        &owner,
+        &StaticConfig {
+            chain_selector: EXEC_TEST_DEST_CHAIN,
+            rmn_proxy: rmn_proxy_id,
+            token_admin_registry: Address::generate(&env),
+        },
+    );
+    apply_source_lane(
+        &env,
+        &client,
+        router_id,
+        vvr_id.clone(),
+        sample_onramp_bytes(&env),
+        true,
+    );
+
+    (
+        env,
+        client,
+        vvr_id,
+        committee_verifier_id,
+        receiver_client,
+        pairs,
+    )
+}
+
+/// A data-only inbound message (no token transfer) with `ccip_receive_gas_limit > 0` and
+/// non-empty `data` ⇒ non-token-only ⇒ receiver consult (C-1) + finality gate (H-7) +
+/// routing to `receiver.ccip_receive` all run. `finality` is caller-controlled.
+fn data_message(
+    env: &Env,
+    offramp_contract: &Address,
+    onramp: Bytes,
+    receiver_contract: &Address,
+    finality: u32,
+) -> CcipMessageV1 {
+    CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 100_000,
+        finality,
+        ccv_and_executor_hash: BytesN::from_array(env, &[0u8; 32]),
+        onramp_address: onramp,
+        offramp_address: offramp_address_field_from_contract(env, offramp_contract),
+        sender: Bytes::from_array(env, &[2u8; 20]),
+        receiver: offramp_address_field_from_contract(env, receiver_contract),
+        dest_blob: Bytes::new(env),
+        token_transfer: Bytes::new(env),
+        data: Bytes::from_array(env, &[0xde, 0xad, 0xbe, 0xef]),
+    }
+}
+
+/// Build a valid `verifier_results` blob: `threshold` (2) compact signatures over
+/// `keccak256(version_tag ‖ message_id)`, in ascending-signer wire order.
+fn signed_verifier_results(
+    env: &Env,
+    pairs: &HostVec<(SigningKey, [u8; 32])>,
+    message_id: &BytesN<32>,
+) -> Bytes {
+    let signed_hash = keccak_signed_hash_with_tag(env, &DEFAULT_VERIFIER_VERSION_TAG, message_id);
+    let signed_bytes: [u8; 32] = signed_hash.to_array();
+    let wire_subset = [pairs[0].clone(), pairs[1].clone()]; // 2 sigs == threshold
+    let sig_payload = signature_payload_valid(&wire_subset, &signed_bytes);
+    build_verifier_results_with_tag(env, &DEFAULT_VERIFIER_VERSION_TAG, &sig_payload)
+}
+
+/// Claims 4/6 POSITIVE: a REAL CommitteeVerifier ecrecover quorum verifies an attestation
+/// signed over a real `compute_message_id`, reached end-to-end through
+/// OffRamp.execute → verify_ccv_quorum → VVR → verify_message, and the verified message is
+/// delivered to the receiver (`ccip_receive` records the exact on-wire messageID — proving
+/// CCVs attest to the whole message via messageID, not a Burn event). Closes the shared
+/// root gap of claims 4/5/6.
+#[test]
+fn test_real_verifier_e2e_execute_delivers_to_receiver() {
+    let (env, client, vvr_id, _cv_id, receiver_client, pairs) =
+        setup_real_verifier_execute_harness(WAIT_FOR_SAFE_FLAG);
+
+    let onramp = sample_onramp_bytes(&env);
+    let receiver_contract = receiver_client.address.clone();
+    let msg = data_message(
+        &env,
+        &client.address,
+        onramp,
+        &receiver_contract,
+        WAIT_FOR_SAFE_FLAG,
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let verifier_results = signed_verifier_results(&env, &pairs, &message_id);
+    let ccvs = vec![&env, vvr_id.clone()];
+
+    let res = client.try_execute(&encoded, &ccvs, &vec![&env, verifier_results], &0u32);
+    assert!(
+        res.is_ok(),
+        "execute must not trap on a real-CCV-verified message: {:?}",
+        res.err()
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "real-CCV-verified data message must execute successfully"
+    );
+    assert_eq!(
+        receiver_client.last_received_message_id(),
+        message_id,
+        "ccip_receive must be reached with the exact on-wire messageID"
+    );
+}
+
+/// Claim 2 gap-1 (Rust, previously directive-blocked Go-e2e-only): the receiver-consulted
+/// allowed-finality policy is enforced on-chain. The receiver admits only WAIT_FOR_FINALITY
+/// (0); the message requests WAIT_FOR_SAFE ⇒ `ensure_requested_finality_allowed` rejects
+/// with #315 (InvalidRequestedFinality) inside verify_ccv_quorum, BEFORE routing. `execute`
+/// catches the per-message error and records `Failure` (returns Ok, no trap) — the
+/// established offramp pattern (cf. M-12 test). The receiver is never reached.
+#[test]
+fn test_real_verifier_receiver_finality_gate_rejects_disallowed_finality() {
+    let (env, client, vvr_id, _cv_id, receiver_client, pairs) =
+        setup_real_verifier_execute_harness(WAIT_FOR_FINALITY_FLAG); // receiver admits only final
+
+    let onramp = sample_onramp_bytes(&env);
+    let receiver_contract = receiver_client.address.clone();
+    // Message requests WAIT_FOR_SAFE, which the receiver's WAIT_FOR_FINALITY policy disallows.
+    let msg = data_message(
+        &env,
+        &client.address,
+        onramp,
+        &receiver_contract,
+        WAIT_FOR_SAFE_FLAG,
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let verifier_results = signed_verifier_results(&env, &pairs, &message_id);
+    let ccvs = vec![&env, vvr_id.clone()];
+
+    let res = client.try_execute(&encoded, &ccvs, &vec![&env, verifier_results], &0u32);
+    assert!(
+        res.is_ok(),
+        "execute must not trap on a finality-gate failure: {:?}",
+        res.err()
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure,
+        "disallowed requested finality (#315) must record Failure, not deliver"
+    );
+    assert!(
+        receiver_client.try_last_received_message_id().is_err(),
+        "receiver must NOT be reached when the finality gate rejects"
+    );
+}
+
+/// Claims 4/6 NEGATIVE: a tampered attestation (one signature byte flipped) must NOT pass
+/// the real CommitteeVerifier ecrecover quorum — the recovered signer falls outside the
+/// configured set ⇒ quorum not met ⇒ execute records Failure and the receiver is never
+/// reached. Proves the REAL verifier (not a blob-agnostic mock) is on the execute path and
+/// that it binds the attestation to the real messageID.
+#[test]
+fn test_real_verifier_tampered_signature_is_rejected() {
+    let (env, client, vvr_id, _cv_id, receiver_client, pairs) =
+        setup_real_verifier_execute_harness(WAIT_FOR_SAFE_FLAG);
+
+    let onramp = sample_onramp_bytes(&env);
+    let receiver_contract = receiver_client.address.clone();
+    let msg = data_message(
+        &env,
+        &client.address,
+        onramp,
+        &receiver_contract,
+        WAIT_FOR_SAFE_FLAG,
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // Sign over a DIFFERENT hash than the real messageID the OffRamp will pass to
+    // verify_message. The signatures stay cryptographically valid (ecrecover yields a real,
+    // wrong pubkey) so the verifier returns a typed quorum-not-met Err — caught by execute
+    // as `Failure` — rather than trapping on a malformed signature. The recovered signers
+    // fall outside the configured set ⇒ quorum not met ⇒ no delivery.
+    let mut tampered_id = message_id.to_array();
+    tampered_id[0] ^= 0x01;
+    let tampered_hash = BytesN::from_array(&env, &tampered_id);
+    let signed_hash =
+        keccak_signed_hash_with_tag(&env, &DEFAULT_VERIFIER_VERSION_TAG, &tampered_hash);
+    let signed_bytes: [u8; 32] = signed_hash.to_array();
+    let wire_subset = [pairs[0].clone(), pairs[1].clone()];
+    let sig_payload: HostVec<u8> = signature_payload_valid(&wire_subset, &signed_bytes);
+    let verifier_results =
+        build_verifier_results_with_tag(&env, &DEFAULT_VERIFIER_VERSION_TAG, &sig_payload);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+
+    let res = client.try_execute(&encoded, &ccvs, &vec![&env, verifier_results], &0u32);
+    let state = client.get_execution_state(&message_id);
+    // The attestation is signed over the wrong hash, so the recovered signers fall outside
+    // the configured set ⇒ the message must NOT be successfully executed and the receiver
+    // must NOT be reached. The real CommitteeVerifier traps via `secp256k1_recover`
+    // [common/signature scheme.rs:62] on the non-matching signature. `verify_ccvs_at` now
+    // dispatches through `CrossChainVerifierClient::try_verify_message` (EVM
+    // `executeSingleMessage` try/catch parity), so that trap is caught and `execute` records
+    // a retryable `Failure` (state == Failure) rather than reverting the whole tx. (Earlier,
+    // when `verify_ccvs_at` used `env.invoke_contract`, the trap propagated and left state
+    // `Untouched`; we assert the outcome — not Success, receiver unreached — which holds under
+    // either surfacing, so the test stays robust to further dispatch changes.)
+    assert_ne!(
+        state,
+        MessageExecutionState::Success,
+        "tampered attestation must not execute successfully (state={:?}, res={:?})",
+        state,
+        res,
+    );
+    assert!(
+        receiver_client.try_last_received_message_id().is_err(),
+        "receiver must NOT be reached when the attestation fails verification (state={:?})",
+        state,
+    );
 }

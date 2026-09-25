@@ -8,6 +8,19 @@ publish = false
 crate-type = ["lib", "cdylib"]
 doctest = false
 
+# Off-by-default feature that makes `forward_from_router` emit an extra
+# `E2EUpgradeMarker` event. Used ONLY by the integration upgrade test
+# (tests/integration/onramp_upgrade_test.go)
+# to prove an in-place `upgrade` swapped the executable to a feature-enabled
+# Wasm: the default (feature-off) shipped Wasm never emits this event, so its
+# presence after a send is unambiguous evidence the upgraded code path ran.
+# The feature adds one event publish and touches no storage, fees, receipts,
+# or message-id derivation, so storage layout stays identical across the
+# upgrade (the discipline a real upgrade must follow). Build the feature-on
+# Wasm with `make build-onramp-e2e-upgrade` (isolated target dir).
+[features]
+e2e-upgrade-marker = []
+
 [dependencies]
 soroban-sdk = { workspace = true }
 common-message = { workspace = true }
@@ -28,5 +41,6 @@ ccip-ramp-registry = { workspace = true }
 token-admin-registry = { path = "../token-admin-registry" }
 pools-lock-release-pool = { path = "../pools/lock-release-pool" }
 pools-token-lock-box = { path = "../pools/token-lock-box" }
+pools-advanced-pool-hooks = { path = "../pools/advanced-pool-hooks" }
 common-pool = { workspace = true }
 executor = { path = "../executor" }

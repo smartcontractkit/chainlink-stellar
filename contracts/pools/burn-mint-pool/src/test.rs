@@ -18,6 +18,9 @@ use common_pool::{
     encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
     ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
+use pools_advanced_pool_hooks::{
+    AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
+};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use router::{RouterContract, RouterContractClient};
@@ -38,6 +41,7 @@ mod mock_hooks {
     impl MockPreflightRejects {
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -49,6 +53,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -80,6 +85,7 @@ mod mock_hooks {
     impl MockPostflightRejects {
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -91,6 +97,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -128,6 +135,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -139,6 +147,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -188,6 +197,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -202,6 +212,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -2890,6 +2901,244 @@ fn test_get_required_ccvs_delegates_to_hooks() {
     assert!(!v.include_defaults);
 }
 
+#[test]
+fn test_get_required_ccvs_real_advanced_pool_hooks() {
+    // Closes CCV-7: a real AdvancedPoolHooks contract (not a mock) stores an
+    // issuer-configured per-chain CCV choice, and the pool's get_required_ccvs
+    // delegates to it end-to-end.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let ccv_a = Address::generate(&env);
+    let ccv_b = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: vec![&env, ccv_a.clone(), ccv_b.clone()],
+        threshold_outbound_ccvs: Vec::new(&env),
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: false,
+        inbound_include_defaults: true,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    let v = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &100i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(v.ccvs.len(), 2);
+    assert_eq!(v.ccvs.get(0).unwrap(), ccv_a);
+    assert_eq!(v.ccvs.get(1).unwrap(), ccv_b);
+    assert!(
+        !v.include_defaults,
+        "issuer set include_defaults=false; pool must relay it"
+    );
+}
+
+#[test]
+fn test_get_required_ccvs_threshold_through_pool() {
+    // Integration: threshold-amount CCV resolution is exercised through the
+    // real pool->hooks delegation, not just on the hooks in isolation.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    // threshold_amount = 1_000 configured up front.
+    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &1_000i128, &Vec::new(&env));
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let base = Address::generate(&env);
+    let extra = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: vec![&env, base.clone()],
+        threshold_outbound_ccvs: vec![&env, extra.clone()],
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: false,
+        inbound_include_defaults: true,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    // Below threshold -> base only, through the pool.
+    let below = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &500i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(below.ccvs.len(), 1);
+    assert_eq!(below.ccvs.get(0).unwrap(), base);
+
+    // At threshold -> base + extra, through the pool.
+    let above = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &1_000i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(above.ccvs.len(), 2);
+    assert_eq!(above.ccvs.get(0).unwrap(), base);
+    assert_eq!(above.ccvs.get(1).unwrap(), extra);
+}
+
+#[test]
+fn test_get_required_ccvs_inbound_through_pool() {
+    // Integration: the inbound-direction CCV list resolves through the real
+    // pool->hooks delegation (Outbound would return the empty outbound list).
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let inc = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: Vec::new(&env),
+        threshold_outbound_ccvs: Vec::new(&env),
+        inbound_ccvs: vec![&env, inc.clone()],
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: true,
+        inbound_include_defaults: false,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    let v = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &100i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Inbound,
+    );
+    assert_eq!(v.ccvs.len(), 1);
+    assert_eq!(v.ccvs.get(0).unwrap(), inc);
+    assert!(
+        !v.include_defaults,
+        "issuer set inbound include_defaults=false; pool must relay it"
+    );
+}
+
+#[test]
+fn test_lock_or_burn_gated_by_real_hooks_allowlist() {
+    // Integration (end-to-end behavior): a real AdvancedPoolHooks sender
+    // allowlist wired to the pool gates `lock_or_burn`. The hooks
+    // `preflight_check` is reached inside `lock_or_burn` via
+    // `BaseTokenPool::preflight_check`; a non-allowlisted `original_sender`
+    // aborts the host invocation, while an allowlisted one burns.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // Wire real hooks with a one-sender allowlist.
+    let allowed = Address::generate(&env);
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    // Authorize the pool itself so its `preflight_check(caller=pool)` call
+    // passes the EVM `_validateCaller` analogue (only authorized pools may invoke
+    // the hooks).
+    hooks_client.initialize(
+        &hooks_owner,
+        &vec![&env, allowed.clone()],
+        &0i128,
+        &vec![&env, pool_client.address.clone()],
+    );
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let amount: i128 = 1_000_000_000;
+    let sac_client = token::StellarAssetClient::new(&env, &token_address);
+    sac_client.mint(&allowed, &amount);
+    let stranger = Address::generate(&env);
+    sac_client.mint(&stranger, &amount);
+
+    // Non-allowlisted original_sender -> preflight aborts -> try_ returns Err.
+    let lock_stranger = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: stranger.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let r = pool_client.try_lock_or_burn(&auth_onramp, &lock_stranger, &0u32, &Bytes::new(&env));
+    assert!(r.is_err(), "non-allowlisted sender must be rejected");
+    // The stranger was NOT burned.
+    assert_eq!(token_client.balance(&stranger), amount);
+
+    // Allowlisted original_sender -> succeeds; balance burned (fee=0).
+    let lock_allowed = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: allowed.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let out = pool_client.lock_or_burn(&auth_onramp, &lock_allowed, &0u32, &Bytes::new(&env));
+    assert_eq!(out.dest_token_amount, amount);
+    assert_eq!(token_client.balance(&allowed), 0);
+}
+
 // ================================================================
 // Source-side bps fee (H-13, EVM `TokenPool._getFee` / `applyFee` parity)
 //
@@ -3068,6 +3317,95 @@ fn test_lock_or_burn_deducts_bps_fee_and_accrues() {
     // dest is burned; fee accrues on the pool balance; sender is fully debited.
     assert_eq!(token_client.balance(&pool_address), fee);
     assert_eq!(token_client.balance(&sender), 0);
+}
+
+/// TPF-1 (execution path): an FTF (`WAIT_FOR_SAFE`) `lock_or_burn` is charged the
+/// `fast_finality_transfer_fee_bps` tier, while a default-finality `lock_or_burn` of
+/// the SAME amount is charged the `finality_transfer_fee_bps` tier — so the resulting
+/// `dest_token_amount` DIFFERS by requested finality. The `get_fee` view-layer
+/// selection (`test_get_fee_fast_finality_selects_fast_bps`) already proves the rate
+/// is resolved per finality; this proves the `lock_or_burn` → `_get_fee` execution
+/// path actually deducts the selected tier and yields a different destination amount.
+/// Distinct bps: finality = 100 (1%), fast_finality = 500 (5%).
+#[test]
+fn test_lock_or_burn_ftf_fee_differs_from_finality_fee() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Permit WAIT_FOR_SAFE for the FTF burn. Default finality (0) is always allowed
+    // (`ensure_requested_finality_allowed` short-circuits on WAIT_FOR_FINALITY_FLAG),
+    // so the default-finality burn below is unaffected by this setting.
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    // Distinct bps per finality tier; USD-cent fees left at 0 so only the bps slice
+    // differentiates the two burns: finality = 100 bps, fast_finality = 500 bps.
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 500);
+
+    let amount: i128 = 1_000 * E18;
+
+    // --- Default finality: fee = 1000e18 * 100 / 10000 = 10e18; dest = 990e18. ---
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &amount);
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let out_default = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(
+        out_default.dest_token_amount,
+        990 * E18,
+        "default-finality lock_or_burn must deduct the finality_transfer_fee_bps (100) tier"
+    );
+
+    // --- FTF (WAIT_FOR_SAFE): fee = 1000e18 * 500 / 10000 = 50e18; dest = 950e18. ---
+    let sender_ftf = Address::generate(&env);
+    token_admin_client.mint(&sender_ftf, &amount);
+    let lock_input_ftf = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender_ftf.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let out_ftf = pool_client.lock_or_burn(
+        &auth_onramp,
+        &lock_input_ftf,
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
+    assert_eq!(
+        out_ftf.dest_token_amount,
+        950 * E18,
+        "FTF lock_or_burn must deduct the fast_finality_transfer_fee_bps (500) tier"
+    );
+
+    // The load-bearing assertion: the destination amount differs by finality.
+    assert_ne!(
+        out_default.dest_token_amount, out_ftf.dest_token_amount,
+        "FTF and default-finality sends of the same amount must produce DIFFERENT dest \
+         amounts — proves the pool differentiates fees for faster-than-finality transfers"
+    );
+
+    // Fee accrual: default 10e18 + FTF 50e18 = 60e18 on the pool; both senders fully debited.
+    let pool_address = pool_client.address.clone();
+    assert_eq!(token_client.balance(&pool_address), 60 * E18);
+    assert_eq!(token_client.balance(&sender), 0);
+    assert_eq!(token_client.balance(&sender_ftf), 0);
 }
 
 #[test]
@@ -3635,4 +3973,47 @@ fn test_set_pool_fee_unsupported_chain_rejected() {
     let unsupported_chain: u64 = 99999;
     let adds = Vec::from_array(&env, [fee_config_args(&env, unsupported_chain, |_| {})]);
     pool_client.apply_token_fee_config_updates(&adds, &Vec::new(&env));
+}
+
+// ================================================================
+// Claim 1: FTF rate-limit bucket auth gating.
+// The FTF (fast-transfer-finality) rate-limit bucket is set via the SAME
+// `set_rate_limit_config` entrypoint with `fast_finality = true`, gated by
+// `require_owner_or_rate_limit_admin` (lib.rs:367) just like the default
+// bucket. The existing positive test (`..._rate_limit_admin_can_set_precise_auth`)
+// covers the `fast_finality = false` (default) path with a rate-limit admin;
+// this asserts an *unauthorized* caller is rejected on the `fast_finality = true`
+// branch — closing the gap that no test gated the FTF branch specifically.
+// ================================================================
+
+#[test]
+fn test_set_rate_limit_config_rejects_unauthorized_on_fast_finality_branch() {
+    let (env, pool_client, _owner, ..) = setup_env();
+    env.ledger().with_mut(|li| li.timestamp = 100);
+
+    let remote_chain: u64 = 5009297550715157269;
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, remote_chain, 1, 2)]),
+        &Vec::new(&env),
+    );
+
+    // A caller that is neither owner nor the configured rate-limit admin.
+    let caller = Address::generate(&env);
+    // Turn off mock_all_auths so require_auth() is not satisfied for `caller`.
+    env.mock_auths(&[]);
+    let r = pool_client.try_set_rate_limit_config(
+        &caller,
+        &remote_chain,
+        &RateLimitConfig {
+            is_enabled: true,
+            capacity: 100,
+            rate: 1,
+        },
+        &RateLimitConfig::disabled(),
+        &true, // fast_finality branch
+    );
+    assert!(
+        r.is_err(),
+        "non-owner/non-admin must be rejected from setting the FTF rate-limit bucket"
+    );
 }

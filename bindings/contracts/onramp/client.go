@@ -90,6 +90,21 @@ func (c *OnRampClient) GetFee(ctx context.Context, destChainSelector uint64, mes
 	return v, nil
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *OnRampClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(newWasmHash),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // IsOwner calls the is_owner function on the contract.
 func (c *OnRampClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{

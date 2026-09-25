@@ -26,7 +26,9 @@ use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
     ToBytes, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, MESSAGE_V1_VERSION,
 };
-use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
+#[cfg(feature = "e2e-upgrade-marker")]
+use events::E2EUpgradeMarker;
+use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent, Upgraded};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
 
 // ============================================================
@@ -208,6 +210,30 @@ impl OnRampContract {
         soroban_sdk::String::from_str(&_env, "OnRamp-dev 2.0.0")
     }
 
+    /// Upgrades the OnRamp's executable to the Wasm identified by `new_wasm_hash`.
+    ///
+    /// Only the current owner may upgrade. `require_owner` enforces
+    /// `owner.require_auth()`, so the upgrade is authorized by whoever `owner()`
+    /// returns: an EOA when the owner is an externally owned account, or MCMS
+    /// (through the MCMS→timelock execute path) once ownership has been
+    /// transferred there. No other path can swap the code.
+    ///
+    /// The new Wasm must already be installed on-chain via
+    /// `env.deployer().upload_contract_wasm`. The contract address and all
+    /// instance/persistent storage are preserved across the swap, so the new
+    /// code MUST keep storage keys and value types compatible with the previous
+    /// version (same constraint as EVM storage-layout discipline across
+    /// `upgradeTo`). EVM parity: this is the Stellar analogue of the EVM proxy's
+    /// `upgradeTo` — same owner-gated, address-stable, state-preserving upgrade,
+    /// without the proxy indirection (Soroban contracts self-upgrade in place).
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), CCIPError> {
+        <Self as Ownable>::require_owner(&env)?;
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        Upgraded { new_wasm_hash }.publish(&env);
+        Ok(())
+    }
+
     // ========================================
     // Core Messaging Functions
     // ========================================
@@ -267,6 +293,7 @@ impl OnRampContract {
                 &message_bytes,
                 &ccv_args,
                 extra_args,
+                &message.fee_token,
             )?;
             ccv_fees_usd_cents = ccv_fees_usd_cents
                 .checked_add(ccv_fee_response.fee as u128)
@@ -1171,6 +1198,19 @@ impl OnRampContract {
         }
         .publish(&env);
 
+        // E2E upgrade marker: emitted ONLY under the `e2e-upgrade-marker` cargo
+        // feature. The default (shipped) Wasm never emits this, so its presence
+        // after a send proves the executable was swapped to a feature-enabled
+        // Wasm via `upgrade` and that this upgraded code path ran. See
+        // docs/upgradeability.md and tests/integration/onramp_upgrade_test.go.
+        #[cfg(feature = "e2e-upgrade-marker")]
+        {
+            E2EUpgradeMarker {
+                marker: 0xE2E0_0001,
+            }
+            .publish(&env);
+        }
+
         // Exit reentrancy guard
         ReentrancyGuard::exit(&env);
 
@@ -1674,12 +1714,17 @@ impl OnRampContract {
         message_bytes: &Bytes,
         ccv_args: &Bytes,
         extra_args: &GenericExtraArgsV3,
+        fee_token: &Address,
     ) -> Result<FeeResponse, CCIPError> {
         let mut fee_args = Vec::new(env);
         fee_args.push_back(dest_chain_selector.into_val(env));
         fee_args.push_back(message_bytes.clone().into_val(env));
         fee_args.push_back(ccv_args.clone().into_val(env));
         fee_args.push_back(extra_args.block_confirmations.into_val(env));
+        // Thread the sender-chosen fee token so a verifier may reject tokens it does not accept
+        // at quote-time (fail-fast), mirroring EVM's virtual `getFee` reading `message.feeToken`.
+        // Matches the executor's `get_executor_fee_internal` fee_token-last convention.
+        fee_args.push_back(fee_token.clone().into_val(env));
 
         env.invoke_contract::<Result<FeeResponse, CCIPError>>(
             ccv_address,

@@ -1,132 +1,125 @@
-use common_message::StellarToAnyMessage;
-
-#[soroban_sdk::contractargs(name = "OnRampArgs")]
-#[soroban_sdk::contractclient(name = "OnRampClient")]
-pub trait OnRampInterface {
-    fn init(env: soroban_sdk::Env, rmn_proxy: soroban_sdk::Address) -> Result<(), CCIPError>;
+#[soroban_sdk::contractargs(name = "AdvancedPoolHooksArgs")]
+#[soroban_sdk::contractclient(name = "AdvancedPoolHooksClient")]
+pub trait AdvancedPoolHooksInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_fee(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        message: StellarToAnyMessage,
-    ) -> Result<i128, CCIPError>;
-    fn upgrade(
-        env: soroban_sdk::Env,
-        new_wasm_hash: soroban_sdk::BytesN<32>,
-    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
-        static_config: StaticConfig,
-        dynamic_config: DynamicConfig,
+        allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
+        threshold_amount: i128,
+        authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
+    fn get_allowlist(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
+    fn get_ccv_config(env: soroban_sdk::Env, remote_chain_selector: u64) -> Option<CCVConfig>;
+    fn preflight_check(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        lock_or_burn_in: LockOrBurnIn,
+        requested_finality: u32,
+        token_args: soroban_sdk::Bytes,
+        amount: i128,
+    ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn postflight_check(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        release_or_mint_in: ReleaseOrMintIn,
+        local_amount: i128,
+        requested_finality: u32,
+    ) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
-    fn is_subject_cursed(
+    fn get_required_ccvs(
         env: soroban_sdk::Env,
-        subject: soroban_sdk::BytesN<16>,
-    ) -> Result<bool, CCIPError>;
-    fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
-    fn require_not_cursed(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn set_dynamic_config(
-        env: soroban_sdk::Env,
-        dynamic_config: DynamicConfig,
-    ) -> Result<(), CCIPError>;
+        local_token: soroban_sdk::Address,
+        remote_chain_selector: u64,
+        amount: i128,
+        requested_finality: u32,
+        extra_data: soroban_sdk::Bytes,
+        direction: MessageDirection,
+    ) -> PoolRequiredCCVs;
     fn transfer_ownership(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn forward_from_router(
+    fn get_all_ccv_configs(env: soroban_sdk::Env) -> soroban_sdk::Vec<CCVConfigArg>;
+    fn get_threshold_amount(env: soroban_sdk::Env) -> i128;
+    fn set_threshold_amount(env: soroban_sdk::Env, threshold_amount: i128)
+        -> Result<(), CCIPError>;
+    fn get_allowlist_enabled(env: soroban_sdk::Env) -> bool;
+    fn apply_allowlist_updates(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-        message: StellarToAnyMessage,
-        fee_token_amount: i128,
-        original_sender: soroban_sdk::Address,
-    ) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
-    fn withdraw_fee_tokens(
-        env: soroban_sdk::Env,
-        fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
+        removes: soroban_sdk::Vec<soroban_sdk::Address>,
+        adds: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn get_dest_chain_config(
+    fn apply_ccv_config_updates(
         env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-    ) -> Result<DestChainConfig, CCIPError>;
-    fn get_pool_by_source_token(
-        env: soroban_sdk::Env,
-        source_token: soroban_sdk::Address,
-    ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn require_chain_not_cursed(
-        env: soroban_sdk::Env,
-        chain_selector: u64,
+        configs: soroban_sdk::Vec<CCVConfigArg>,
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
-    fn get_all_dest_chain_configs(
+    fn get_all_authorized_callers(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
+    fn apply_authorized_callers_updates(
         env: soroban_sdk::Env,
-    ) -> Result<(soroban_sdk::Vec<u64>, soroban_sdk::Vec<DestChainConfig>), CCIPError>;
-    fn require_subject_not_cursed(
-        env: soroban_sdk::Env,
-        subject: soroban_sdk::BytesN<16>,
+        removes: soroban_sdk::Vec<soroban_sdk::Address>,
+        adds: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn apply_dest_chain_config_updates(
-        env: soroban_sdk::Env,
-        dest_chain_config_args: soroban_sdk::Vec<DestChainConfigArgs>,
-    ) -> Result<(), CCIPError>;
-    fn get_expected_next_message_number(
-        env: soroban_sdk::Env,
-        dest_chain_selector: u64,
-    ) -> Result<u64, CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct StaticConfig {
-    pub chain_selector: u64,
-    pub max_usd_cents_per_message: u32,
-    pub rmn_proxy: soroban_sdk::Address,
-    pub token_admin_registry: soroban_sdk::Address,
+pub struct PoolRequiredCCVs {
+    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub include_defaults: bool,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DynamicConfig {
-    pub fee_aggregator: soroban_sdk::Address,
-    pub fee_quoter: soroban_sdk::Address,
+pub struct LockOrBurnIn {
+    pub receiver: soroban_sdk::Bytes,
+    pub remote_chain_selector: u64,
+    pub original_sender: soroban_sdk::Address,
+    pub amount: i128,
+    pub local_token: soroban_sdk::Address,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DestChainConfig {
-    pub address_bytes_length: u32,
-    pub base_execution_gas_cost: u32,
-    pub default_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub default_executor: soroban_sdk::Address,
-    pub execution_fee_usd_cents: u32,
-    pub lane_mandated_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub message_network_fee_usd_cents: u32,
-    pub message_number: u64,
-    pub off_ramp: soroban_sdk::Bytes,
-    pub router: soroban_sdk::Address,
-    pub token_network_fee_usd_cents: u32,
-    pub token_receiver_allowed: bool,
+pub struct ReleaseOrMintIn {
+    pub original_sender: soroban_sdk::Bytes,
+    pub remote_chain_selector: u64,
+    pub receiver: soroban_sdk::Address,
+    /// Source-denominated amount (EVM `sourceDenominatedAmount`).
+    pub amount: i128,
+    pub local_token: soroban_sdk::Address,
+    pub source_pool_address: soroban_sdk::Bytes,
+    pub source_pool_data: soroban_sdk::Bytes,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DestChainConfigArgs {
-    pub address_bytes_length: u32,
-    pub base_execution_gas_cost: u32,
-    pub default_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub default_executor: soroban_sdk::Address,
-    pub dest_chain_selector: u64,
-    pub execution_fee_usd_cents: u32,
-    pub lane_mandated_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub message_network_fee_usd_cents: u32,
-    pub off_ramp: soroban_sdk::Bytes,
-    pub router: soroban_sdk::Address,
-    pub token_network_fee_usd_cents: u32,
-    pub token_receiver_allowed: bool,
+pub enum MessageDirection {
+    Outbound,
+    Inbound,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CCVConfig {
+    pub inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub inbound_include_defaults: bool,
+    pub outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub outbound_include_defaults: bool,
+    pub threshold_inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub threshold_outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CCVConfigArg {
+    pub inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub inbound_include_defaults: bool,
+    pub outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub outbound_include_defaults: bool,
+    pub remote_chain_selector: u64,
+    pub threshold_inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub threshold_outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -285,4 +278,25 @@ pub struct AuthorizedCallerRemovedEvent {
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["aph_AllowListAdd"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListAddEvent {
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["aph_AllowListRemove"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AllowListRemoveEvent {
+    pub sender: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["aph_CCVConfigUpdated"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CCVConfigUpdatedEvent {
+    pub remote_chain_selector: u64,
+    pub config: CCVConfig,
+}
+#[soroban_sdk::contractevent(topics = ["aph_ThresholdAmountSet"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ThresholdAmountSetEvent {
+    pub threshold_amount: i128,
 }
