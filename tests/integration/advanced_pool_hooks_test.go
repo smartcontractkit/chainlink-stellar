@@ -78,7 +78,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 	t.Run("deploy, initialize, and verify readers", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "readers")
 		// No allowlist, no threshold.
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0)); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -110,7 +110,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 
 	t.Run("apply ccv config and read back through get_required_ccvs", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "ccv-config")
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0)); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -161,7 +161,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 	t.Run("threshold amount appends additional ccvs at or above threshold", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "threshold")
 		// threshold_amount = 1000 configured up front.
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(1000)); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(1000), nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -200,8 +200,12 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "allowlist")
 		allowed := helpers.GenerateMockContractID(t, deployerAddr, "aph-allowed-sender")
 		stranger := helpers.GenerateMockContractID(t, deployerAddr, "aph-stranger-sender")
-		// Non-empty allowlist at init -> enabled (immutable thereafter).
-		if err := client.Initialize(ctx, deployerAddr, []string{allowed}, big.NewInt(0)); err != nil {
+		// Non-empty allowlist at init -> enabled (immutable thereafter). The
+		// deployer is authorized as a hook caller so the direct PreflightCheck
+		// calls below pass the EVM `_validateCaller` analogue (in production the
+		// authorized caller would be the wired pool; here we exercise preflight
+		// directly, so the tx invoker is the caller).
+		if err := client.Initialize(ctx, deployerAddr, []string{allowed}, big.NewInt(0), []string{deployerAddr}); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -222,8 +226,9 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		// contract address satisfies the encoder.
 		localToken := helpers.GenerateMockContractID(t, deployerAddr, "aph-local-token")
 
-		// Allowlisted original_sender -> preflight passes.
-		if err := client.PreflightCheck(ctx, advancedpoolhooksbindings.LockOrBurnIn{
+		// Allowlisted original_sender -> preflight passes. `caller` is the
+		// deployer (authorized above); the allowlist gate then admits `allowed`.
+		if err := client.PreflightCheck(ctx, deployerAddr, advancedpoolhooksbindings.LockOrBurnIn{
 			OriginalSender:      allowed,
 			RemoteChainSelector: aphRemoteChain,
 			Amount:              big.NewInt(100),
@@ -233,7 +238,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		}
 
 		// Non-allowlisted original_sender -> preflight aborts (#49 SenderNotAllowed).
-		if err := client.PreflightCheck(ctx, advancedpoolhooksbindings.LockOrBurnIn{
+		if err := client.PreflightCheck(ctx, deployerAddr, advancedpoolhooksbindings.LockOrBurnIn{
 			OriginalSender:      stranger,
 			RemoteChainSelector: aphRemoteChain,
 			Amount:              big.NewInt(100),
@@ -262,7 +267,8 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		}
 
 		hooksClient, hooksID := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "wired")
-		if err := hooksClient.Initialize(ctx, deployerAddr, nil, big.NewInt(0)); err != nil {
+		// Authorize the wired pool as a hook caller (EVM `_validateCaller` parity).
+		if err := hooksClient.Initialize(ctx, deployerAddr, nil, big.NewInt(0), []string{poolID}); err != nil {
 			t.Fatalf("Initialize hooks: %v", err)
 		}
 		if err := pool.SetAdvancedPoolHooks(ctx, hooksID); err != nil {

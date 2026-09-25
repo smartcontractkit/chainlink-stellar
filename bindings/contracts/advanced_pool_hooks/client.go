@@ -90,11 +90,12 @@ func (c *AdvancedPoolHooksClient) InitOwner(ctx context.Context, owner string) e
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *AdvancedPoolHooksClient) Initialize(ctx context.Context, owner string, allowlist []string, thresholdAmount *big.Int) error {
+func (c *AdvancedPoolHooksClient) Initialize(ctx context.Context, owner string, allowlist []string, thresholdAmount *big.Int, authorizedCallers []string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressSliceToScVal(allowlist),
 		scval.I128ToScVal(thresholdAmount),
+		scval.AddressSliceToScVal(authorizedCallers),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -180,8 +181,9 @@ func (c *AdvancedPoolHooksClient) GetCcvConfig(ctx context.Context, remoteChainS
 }
 
 // PreflightCheck calls the preflight_check function on the contract.
-func (c *AdvancedPoolHooksClient) PreflightCheck(ctx context.Context, lockOrBurnIn LockOrBurnIn, requestedFinality uint32, tokenArgs []byte, amount *big.Int) error {
+func (c *AdvancedPoolHooksClient) PreflightCheck(ctx context.Context, caller string, lockOrBurnIn LockOrBurnIn, requestedFinality uint32, tokenArgs []byte, amount *big.Int) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.MustToScVal(lockOrBurnIn.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
 		scval.BytesToScVal(tokenArgs),
@@ -211,8 +213,9 @@ func (c *AdvancedPoolHooksClient) AcceptOwnership(ctx context.Context) error {
 }
 
 // PostflightCheck calls the postflight_check function on the contract.
-func (c *AdvancedPoolHooksClient) PostflightCheck(ctx context.Context, releaseOrMintIn ReleaseOrMintIn, localAmount *big.Int, requestedFinality uint32) error {
+func (c *AdvancedPoolHooksClient) PostflightCheck(ctx context.Context, caller string, releaseOrMintIn ReleaseOrMintIn, localAmount *big.Int, requestedFinality uint32) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.MustToScVal(releaseOrMintIn.ToScVal()),
 		scval.I128ToScVal(localAmount),
 		scval.Uint32ToScVal(requestedFinality),
@@ -422,6 +425,50 @@ func (c *AdvancedPoolHooksClient) CancelOwnershipTransfer(ctx context.Context) e
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
 	if err != nil {
 		return fmt.Errorf("failed to call cancel_ownership_transfer: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// GetAllAuthorizedCallers calls the get_all_authorized_callers function on the contract.
+func (c *AdvancedPoolHooksClient) GetAllAuthorizedCallers(ctx context.Context) ([]string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_authorized_callers", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_all_authorized_callers: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_all_authorized_callers")
+	}
+
+	vec, ok := result.GetVec()
+	if !ok || vec == nil {
+		return nil, fmt.Errorf("expected vec return type")
+	}
+	out := make([]string, len(*vec))
+	for i, item := range *vec {
+		v, err := scval.AddressFromScVal(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// ApplyAuthorizedCallersUpdates calls the apply_authorized_callers_updates function on the contract.
+func (c *AdvancedPoolHooksClient) ApplyAuthorizedCallersUpdates(ctx context.Context, removes []string, adds []string) error {
+	args := []xdr.ScVal{
+		scval.AddressSliceToScVal(removes),
+		scval.AddressSliceToScVal(adds),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_authorized_callers_updates", args)
+	if err != nil {
+		return fmt.Errorf("failed to call apply_authorized_callers_updates: %w", err)
 	}
 
 	_ = result // void return

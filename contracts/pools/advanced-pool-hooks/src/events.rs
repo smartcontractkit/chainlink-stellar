@@ -5,6 +5,20 @@ use soroban_sdk::{contractevent, Address};
 
 use crate::types::CCVConfig;
 
+/// Mirrors `AuthorizedCallerAdded(address caller)` (EVM `AuthorizedCallers`).
+#[contractevent(topics = ["auth_CallerAdded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: Address,
+}
+
+/// Mirrors `AuthorizedCallerRemoved(address caller)` (EVM `AuthorizedCallers`).
+#[contractevent(topics = ["auth_CallerRemoved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: Address,
+}
+
 /// Mirrors `AllowListAdd(address sender)`.
 #[contractevent(topics = ["aph_AllowListAdd"])]
 #[derive(Clone, Debug, Eq, PartialEq)]

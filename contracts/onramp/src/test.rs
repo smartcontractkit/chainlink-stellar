@@ -3182,7 +3182,15 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
     // They deploy + own an AdvancedPoolHooks contract.
     let hooks_id = env.register(AdvancedPoolHooksContract, ());
     let hooks_client = AdvancedPoolHooksContractClient::new(env, &hooks_id);
-    hooks_client.initialize(&lane.owner, &Vec::new(env), &0i128);
+    // Authorize the issuer's token pool as a hook caller so its
+    // `preflight_check(caller=pool)` call passes the EVM `_validateCaller`
+    // analogue (only authorized pools may invoke the hooks).
+    hooks_client.initialize(
+        &lane.owner,
+        &Vec::new(env),
+        &0i128,
+        &vec![env, lane.pool_id.clone()],
+    );
 
     // Wire the issuer-owned hooks to their token pool (pool-owner-gated; auth is
     // mocked and the issuer IS the pool owner).

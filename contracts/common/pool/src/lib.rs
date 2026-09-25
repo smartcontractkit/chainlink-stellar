@@ -790,8 +790,18 @@ pub trait BaseTokenPool {
         {
             let client = PoolHooksClient::new(env, &hooks_addr);
             let input = lock_or_burn_in_to_iface(lock_or_burn_in);
+            // The pool identifies itself as the caller so the hooks can run the
+            // EVM `_validateCaller` analogue (`caller.require_auth()` + membership
+            // in the hooks' `authorized_callers` set). The pool is in the call
+            // chain, so `require_auth` succeeds for a genuine pool invocation.
             // Hook failures abort the invocation at the host; the client returns `()`.
-            client.preflight_check(&input, &requested_finality, token_args, &amount);
+            client.preflight_check(
+                &env.current_contract_address(),
+                &input,
+                &requested_finality,
+                token_args,
+                &amount,
+            );
         }
         Ok(())
     }
@@ -811,8 +821,15 @@ pub trait BaseTokenPool {
         {
             let client = PoolHooksClient::new(env, &hooks_addr);
             let input = release_or_mint_in_to_iface(release_or_mint_in);
+            // The pool identifies itself as the caller (EVM `_validateCaller`
+            // analogue — see `preflight_check` above).
             // Hook failures abort the invocation at the host; the client returns `()`.
-            client.postflight_check(&input, &local_amount, &requested_finality);
+            client.postflight_check(
+                &env.current_contract_address(),
+                &input,
+                &local_amount,
+                &requested_finality,
+            );
         }
         Ok(())
     }

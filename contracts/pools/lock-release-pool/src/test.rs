@@ -38,6 +38,7 @@ mod mock_hooks {
     impl MockPreflightRejects {
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -49,6 +50,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -80,6 +82,7 @@ mod mock_hooks {
     impl MockPostflightRejects {
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -91,6 +94,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -128,6 +132,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -139,6 +144,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -188,6 +194,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -202,6 +209,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,

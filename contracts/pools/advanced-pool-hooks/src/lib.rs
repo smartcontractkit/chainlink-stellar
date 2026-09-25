@@ -34,15 +34,24 @@
 //!   postflight. `preflight_check` is allowlist-only and `postflight_check` is
 //!   a no-op here; there is no `set_policy_engine` surface yet.
 //!
-//! Diverged (Soroban cannot support faithfully):
+//! Shipped (EVM parity):
 //! - **Authorized-callers invocation gating** — EVM `AdvancedPoolHooks extends
 //!   AuthorizedCallers` and calls `_validateCaller()` at the top of preflight
 //!   and postflight so only the configured pools may invoke them. Soroban has no
-//!   `msg.sender`: a callee cannot natively identify which contract called it,
-//!   so this access control cannot be replicated. The three hook methods are
-//!   ungated. (This does not affect `get_required_ccvs`, which EVM also leaves
-//!   ungated.) `include_defaults: bool` replaces EVM's `address(0)` sentinel
-//!   throughout, since Soroban `Address` has no zero form.
+//!   `msg.sender`, so the caller is passed explicitly as the first argument of
+//!   `preflight_check`/`postflight_check`: the hooks call `caller.require_auth()`
+//!   (proving `caller` is in the call chain) and then check membership in the
+//!   stored `authorized_callers` set, reverting `CallerNotAuthorized` otherwise.
+//!   This mirrors the pool's own `require_authorized_onramp`/`require_authorized_offramp`
+//!   pattern. The pool passes its own address (`env.current_contract_address()`)
+//!   as `caller`; a direct unconfigured caller cannot satisfy both the auth and
+//!   the set check. `get_required_ccvs` stays ungated, as on EVM. The
+//!   `authorized_callers` set is seeded at `initialize` and edited owner-only via
+//!   `apply_authorized_callers_updates` (EVM `applyAuthorizedCallerUpdates`).
+//!
+//! Diverged (Soroban cannot support faithfully):
+//! - **`address(0)` sentinel** — `include_defaults: bool` replaces EVM's
+//!   `address(0)` sentinel throughout, since Soroban `Address` has no zero form.
 #![no_std]
 
 mod events;
@@ -76,6 +85,9 @@ const ALLOWLIST_ENABLED: Symbol = symbol_short!("ALWENBL");
 const THRESHOLD_AMOUNT: Symbol = symbol_short!("THRESH");
 /// Per-remote-chain CCV config (EVM `s_verifierConfig`).
 const VERIFIER_CONFIG: Symbol = symbol_short!("VRFCONF");
+/// Authorized hook invokers — the set of pools allowed to call
+/// `preflight_check`/`postflight_check` (EVM `AuthorizedCallers.s_authorizedCallers`).
+const AUTHORIZED_CALLERS: Symbol = symbol_short!("AUTHCALL");
 
 // ============================================================
 // Contract
@@ -97,16 +109,20 @@ impl Ownable for AdvancedPoolHooksContract {
 
 #[contractimpl]
 impl AdvancedPoolHooksContract {
-    /// Initializes the hooks with `owner`, an optional sender `allowlist`, and
-    /// the initial `threshold_amount`. The allowlist is enabled iff a non-empty
-    /// list is supplied (EVM constructor `i_allowlistEnabled = allowlist.length >
-    /// 0`); the flag is immutable thereafter. Zero-account entries are skipped
-    /// and duplicates collapsed, matching EVM `_applyAllowListUpdates`.
+    /// Initializes the hooks with `owner`, an optional sender `allowlist`, the
+    /// initial `threshold_amount`, and the initial `authorized_callers` set (EVM
+    /// constructor `AuthorizedCallers(authorizedCallers)`). The allowlist is
+    /// enabled iff a non-empty list is supplied (EVM constructor
+    /// `i_allowlistEnabled = allowlist.length > 0`); the flag is immutable
+    /// thereafter. Zero-account entries are skipped and duplicates collapsed in
+    /// both the allowlist and the authorized-callers set, matching EVM
+    /// `_applyAllowListUpdates` / `_applyAuthorizedCallerUpdates` bookkeeping.
     pub fn initialize(
         env: Env,
         owner: Address,
         allowlist: Vec<Address>,
         threshold_amount: i128,
+        authorized_callers: Vec<Address>,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
@@ -141,6 +157,25 @@ impl AdvancedPoolHooksContract {
         env.storage()
             .instance()
             .set(&VERIFIER_CONFIG, &Map::<u64, CCVConfig>::new(&env));
+
+        // Seed the authorized-callers set (EVM constructor →
+        // `_applyAuthorizedCallerUpdates({added: authorizedCallers, removed: []})`).
+        let mut auth: Vec<Address> = Vec::new(&env);
+        for i in 0..authorized_callers.len() {
+            if let Some(caller) = authorized_callers.get(i) {
+                if is_zero_account(&env, &caller) {
+                    continue;
+                }
+                if !contains(&auth, &caller) {
+                    auth.push_back(caller.clone());
+                    events::AuthorizedCallerAddedEvent {
+                        caller: caller.clone(),
+                    }
+                    .publish(&env);
+                }
+            }
+        }
+        env.storage().instance().set(&AUTHORIZED_CALLERS, &auth);
 
         events::ThresholdAmountSetEvent { threshold_amount }.publish(&env);
         Ok(())
@@ -182,14 +217,19 @@ impl AdvancedPoolHooksContract {
                 let has_base = !cfg.outbound_ccvs.is_empty() || !cfg.inbound_ccvs.is_empty();
                 if has_base {
                     map.set(arg.remote_chain_selector, cfg.clone());
-                    events::CCVConfigUpdatedEvent {
-                        remote_chain_selector: arg.remote_chain_selector,
-                        config: cfg,
-                    }
-                    .publish(&env);
                 } else {
                     map.remove(arg.remote_chain_selector);
                 }
+
+                // EVM emits `CCVConfigUpdated` unconditionally — outside the
+                // add/remove branch (AdvancedPoolHooks.sol#L291) — so a removal
+                // (empty base) emits too, carrying the emptied config. Mirrored
+                // here: the event fires for both the set and the remove.
+                events::CCVConfigUpdatedEvent {
+                    remote_chain_selector: arg.remote_chain_selector,
+                    config: cfg,
+                }
+                .publish(&env);
             }
         }
 
@@ -334,6 +374,79 @@ impl AdvancedPoolHooksContract {
     }
 
     // ========================================
+    // Authorized callers (EVM `AuthorizedCallers`)
+    // ========================================
+
+    /// Returns all authorized callers (EVM `getAllAuthorizedCallers`).
+    pub fn get_all_authorized_callers(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&AUTHORIZED_CALLERS)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Owner-only batch update of the authorized-callers set (EVM
+    /// `applyAuthorizedCallerUpdates`). Removals are applied first, then adds.
+    /// Zero-account adds are skipped and duplicate adds collapse (no-op), as the
+    /// stored set is membership-based; removals of absent callers are no-ops.
+    /// `AuthorizedCallerAdded`/`AuthorizedCallerRemoved` fire only for entries
+    /// actually added/removed.
+    pub fn apply_authorized_callers_updates(
+        env: Env,
+        removes: Vec<Address>,
+        adds: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as Ownable>::require_owner(&env)?;
+
+        let mut auth: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&AUTHORIZED_CALLERS)
+            .unwrap_or(Vec::new(&env));
+
+        for i in 0..removes.len() {
+            if let Some(to_remove) = removes.get(i) {
+                let mut filtered = Vec::new(&env);
+                let mut removed = false;
+                for j in 0..auth.len() {
+                    if let Some(addr) = auth.get(j) {
+                        if addr == to_remove {
+                            removed = true;
+                        } else {
+                            filtered.push_back(addr);
+                        }
+                    }
+                }
+                if removed {
+                    events::AuthorizedCallerRemovedEvent {
+                        caller: to_remove.clone(),
+                    }
+                    .publish(&env);
+                }
+                auth = filtered;
+            }
+        }
+
+        for i in 0..adds.len() {
+            if let Some(to_add) = adds.get(i) {
+                if is_zero_account(&env, &to_add) {
+                    continue;
+                }
+                if !contains(&auth, &to_add) {
+                    auth.push_back(to_add.clone());
+                    events::AuthorizedCallerAddedEvent {
+                        caller: to_add.clone(),
+                    }
+                    .publish(&env);
+                }
+            }
+        }
+
+        env.storage().instance().set(&AUTHORIZED_CALLERS, &auth);
+        Ok(())
+    }
+
+    // ========================================
     // PoolHooksInterface (ABI-matched free functions)
     // ========================================
 
@@ -385,16 +498,20 @@ impl AdvancedPoolHooksContract {
         }
     }
 
-    /// Outbound preflight (EVM `preflightCheck`). Performs the sender allowlist
-    /// check only; policy-engine validation is deferred. The EVM
-    /// `_validateCaller` access control is diverged away (no `msg.sender`).
+    /// Outbound preflight (EVM `preflightCheck`). First validates the caller
+    /// against the `authorized_callers` set (EVM `_validateCaller`), then performs
+    /// the sender allowlist check; policy-engine validation is deferred. `caller`
+    /// is the invoking pool's address — the hooks require it to authenticate and
+    /// be a member of the authorized set.
     pub fn preflight_check(
         env: Env,
+        caller: Address,
         lock_or_burn_in: LockOrBurnIn,
         _requested_finality: u32,
         _token_args: soroban_sdk::Bytes,
         _amount: i128,
     ) -> Result<(), CCIPError> {
+        Self::require_authorized_caller(&env, &caller)?;
         if Self::get_allowlist_enabled(env.clone()) {
             let allow: Vec<Address> = env
                 .storage()
@@ -408,14 +525,17 @@ impl AdvancedPoolHooksContract {
         Ok(())
     }
 
-    /// Inbound postflight (EVM `postflightCheck`). No-op; policy-engine
-    /// validation is deferred. EVM `_validateCaller` is diverged away.
+    /// Inbound postflight (EVM `postflightCheck`). First validates the caller
+    /// against the `authorized_callers` set (EVM `_validateCaller`); the body is a
+    /// no-op (policy-engine validation deferred).
     pub fn postflight_check(
-        _env: Env,
+        env: Env,
+        caller: Address,
         _release_or_mint_in: ReleaseOrMintIn,
         _local_amount: i128,
         _requested_finality: u32,
     ) -> Result<(), CCIPError> {
+        Self::require_authorized_caller(&env, &caller)?;
         Ok(())
     }
 }
@@ -423,6 +543,28 @@ impl AdvancedPoolHooksContract {
 // ============================================================
 // Helpers
 // ============================================================
+
+impl AdvancedPoolHooksContract {
+    /// EVM `AuthorizedCallers._validateCaller` analogue. `caller.require_auth()`
+    /// proves `caller` authenticated (is in the call chain — the invoking pool
+    /// passes its own address, so this succeeds for a genuine pool call and
+    /// fails for a forged direct caller that cannot authorize the pool's
+    /// address). Membership in the stored `authorized_callers` set is then
+    /// required, reverting `CallerNotAuthorized` otherwise. Mirrors the pool's
+    /// own `require_authorized_onramp`/`require_authorized_offramp` pattern.
+    fn require_authorized_caller(env: &Env, caller: &Address) -> Result<(), CCIPError> {
+        caller.require_auth();
+        let auth: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&AUTHORIZED_CALLERS)
+            .unwrap_or(Vec::new(env));
+        if !contains(&auth, caller) {
+            return Err(CCIPError::CallerNotAuthorized);
+        }
+        Ok(())
+    }
+}
 
 /// True iff `addr` is the zero Stellar account (EVM `address(0)` parity for
 /// allowlist-entry rejection). Mirrors `executor::is_zero_fee_recipient`.

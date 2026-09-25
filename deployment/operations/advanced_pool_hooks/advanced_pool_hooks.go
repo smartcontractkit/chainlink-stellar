@@ -25,31 +25,37 @@ const ContractType = "AdvancedPoolHooks"
 var Deploy = stellarops.NewDeployOperation("advanced-pool-hooks:deploy", "Deploys the Advanced Pool Hooks Soroban contract from WASM")
 
 // InitializeInput configures an Advanced Pool Hooks contract: its owner (the
-// token issuer), the allowlist of senders permitted to use the pool, and the
-// per-message threshold amount above which the hook applies enhanced checks.
+// token issuer), the allowlist of senders permitted to use the pool, the
+// per-message threshold amount above which the hook applies enhanced checks, and
+// the initial set of authorized callers — the pools permitted to invoke
+// `preflight_check`/`postflight_check` (EVM `AuthorizedCallers`).
 type InitializeInput struct {
-	ContractID      string   `json:"contract_id"`
-	Owner           string   `json:"owner"`
-	Allowlist       []string `json:"allowlist"`
-	ThresholdAmount *big.Int `json:"threshold_amount"` // i128; defaults to 0 (hook applies to all amounts)
+	ContractID        string   `json:"contract_id"`
+	Owner             string   `json:"owner"`
+	Allowlist         []string `json:"allowlist"`
+	ThresholdAmount   *big.Int `json:"threshold_amount"`   // i128; defaults to 0 (hook applies to all amounts)
+	AuthorizedCallers []string `json:"authorized_callers"` // pool addresses allowed to invoke the hooks (EVM `_validateCaller`)
 }
 
 // Initialize calls Advanced Pool Hooks `initialize` with the issuer as owner.
 //
 // The owner set here is the HOOKS owner — the only principal permitted to call
-// apply_ccv_config_updates / apply_allowlist_updates. For the issuer-driven CCV
-// flow this MUST be the token issuer (who is typically also the pool owner).
+// apply_ccv_config_updates / apply_allowlist_updates / apply_authorized_callers_updates.
+// For the issuer-driven CCV flow this MUST be the token issuer (who is typically
+// also the pool owner). `AuthorizedCallers` should include the pool(s) that will
+// be wired to these hooks via `token_pool.SetAdvancedPoolHooks`, since only
+// authorized callers can pass the hooks' `_validateCaller` gate at invocation.
 var Initialize = cldfops.NewOperation(
 	"advanced-pool-hooks:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes Advanced Pool Hooks with an issuer owner, allowlist, and threshold amount",
+	"Initializes Advanced Pool Hooks with an issuer owner, allowlist, threshold amount, and authorized callers",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
 		threshold := in.ThresholdAmount
 		if threshold == nil {
 			threshold = big.NewInt(0) // scval.I128ToScVal panics on nil; 0 = hook applies to every amount
 		}
 		c := aphbindings.NewAdvancedPoolHooksClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Allowlist, threshold); err != nil {
+		if err := c.Initialize(b.GetContext(), in.Owner, in.Allowlist, threshold, in.AuthorizedCallers); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil
@@ -98,6 +104,31 @@ var ApplyAllowlistUpdates = cldfops.NewOperation(
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyAllowlistUpdatesInput) (stellarops.Void, error) {
 		c := aphbindings.NewAdvancedPoolHooksClient(d.Invoker, in.ContractID)
 		if err := c.ApplyAllowlistUpdates(b.GetContext(), in.Removes, in.Adds); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// ApplyAuthorizedCallersUpdatesInput updates the authorized-callers set on an
+// Advanced Pool Hooks contract (hooks-owner-gated) — the pools permitted to
+// invoke `preflight_check`/`postflight_check` (EVM `AuthorizedCallers`).
+// Removals are applied first, then adds.
+type ApplyAuthorizedCallersUpdatesInput struct {
+	ContractID string   `json:"contract_id"`
+	Removes    []string `json:"removes"`
+	Adds       []string `json:"adds"`
+}
+
+// ApplyAuthorizedCallersUpdates calls Advanced Pool Hooks
+// `apply_authorized_callers_updates`.
+var ApplyAuthorizedCallersUpdates = cldfops.NewOperation(
+	"advanced-pool-hooks:apply-authorized-callers-updates",
+	stellarops.ContractDeploymentVersion,
+	"Updates the authorized pool callers (EVM AuthorizedCallers) on Advanced Pool Hooks",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyAuthorizedCallersUpdatesInput) (stellarops.Void, error) {
+		c := aphbindings.NewAdvancedPoolHooksClient(d.Invoker, in.ContractID)
+		if err := c.ApplyAuthorizedCallersUpdates(b.GetContext(), in.Removes, in.Adds); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

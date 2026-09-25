@@ -9,12 +9,14 @@ pub trait AdvancedPoolHooksInterface {
         owner: soroban_sdk::Address,
         allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
         threshold_amount: i128,
+        authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn get_allowlist(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_ccv_config(env: soroban_sdk::Env, remote_chain_selector: u64) -> Option<CCVConfig>;
     fn preflight_check(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         lock_or_burn_in: LockOrBurnIn,
         requested_finality: u32,
         token_args: soroban_sdk::Bytes,
@@ -23,6 +25,7 @@ pub trait AdvancedPoolHooksInterface {
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn postflight_check(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         release_or_mint_in: ReleaseOrMintIn,
         local_amount: i128,
         requested_finality: u32,
@@ -57,6 +60,12 @@ pub trait AdvancedPoolHooksInterface {
         configs: soroban_sdk::Vec<CCVConfigArg>,
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn get_all_authorized_callers(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
+    fn apply_authorized_callers_updates(
+        env: soroban_sdk::Env,
+        removes: soroban_sdk::Vec<soroban_sdk::Address>,
+        adds: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

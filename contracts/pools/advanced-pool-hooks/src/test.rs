@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, Env, Vec};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, vec, Address, Bytes, Env, Vec};
 
 use crate::types::CCVConfigArg;
 use crate::{AdvancedPoolHooksContract, AdvancedPoolHooksContractClient};
@@ -16,8 +16,8 @@ fn setup() -> (Env, AdvancedPoolHooksContractClient<'static>, Address) {
     let owner = Address::generate(&env);
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    // No allowlist, no threshold by default.
-    client.initialize(&owner, &Vec::new(&env), &0i128);
+    // No allowlist, no threshold, no authorized callers by default.
+    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env));
 
     (env, client, owner)
 }
@@ -43,7 +43,7 @@ fn setup_with_allowlist(
     }
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    client.initialize(&owner, &allowlist, &0i128);
+    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env));
 
     (env, client, owner, allowlist)
 }
@@ -82,6 +82,18 @@ fn zero_addr(env: &Env) -> Address {
         env,
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     )
+}
+
+/// Adds one authorized caller to `client` (owner-gated; auths mocked) and
+/// returns it, so preflight/postflight tests can pass it as the `caller` arg
+/// (EVM `_validateCaller` — only authorized pools may invoke the hooks).
+fn authorize_caller(client: &AdvancedPoolHooksContractClient<'static>) -> Address {
+    let caller = Address::generate(&client.env);
+    client.apply_authorized_callers_updates(
+        &Vec::new(&client.env),
+        &vec![&client.env, caller.clone()],
+    );
+    caller
 }
 
 // ============================================================
@@ -167,6 +179,40 @@ fn test_apply_ccv_config_updates_removes_empty_config() {
     client.apply_ccv_config_updates(&vec![&env, empty]);
     assert!(client.get_ccv_config(&REMOTE_CHAIN).is_none());
     assert_eq!(client.get_all_ccv_configs().len(), 0);
+}
+
+#[test]
+fn test_apply_ccv_config_updates_emits_on_removal() {
+    // EVM emits `CCVConfigUpdated` outside the add/remove branch
+    // (AdvancedPoolHooks.sol#L291), so an all-empty (removal) config ALSO emits
+    // — carrying the emptied config. The Stellar port mirrors that: the removal
+    // call must emit exactly one `CCVConfigUpdated` event (parity with EVM's
+    // unconditional emit), not zero.
+    let (env, client, _owner) = setup();
+    let a = Address::generate(&env);
+    client.apply_ccv_config_updates(&vec![
+        &env,
+        outbound_arg(&env, REMOTE_CHAIN, vec![&env, a], false),
+    ]);
+    assert!(client.get_ccv_config(&REMOTE_CHAIN).is_some());
+
+    let empty = CCVConfigArg {
+        remote_chain_selector: REMOTE_CHAIN,
+        outbound_ccvs: Vec::new(&env),
+        threshold_outbound_ccvs: Vec::new(&env),
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: true,
+        inbound_include_defaults: true,
+    };
+    client.apply_ccv_config_updates(&vec![&env, empty]);
+    // Read events before any later contract call clears the test-env event view.
+    assert_eq!(
+        env.events().all().events().len(),
+        1,
+        "removal must emit CCVConfigUpdated (EVM emits unconditionally)"
+    );
+    assert!(client.get_ccv_config(&REMOTE_CHAIN).is_none());
 }
 
 // ============================================================
@@ -294,25 +340,28 @@ fn test_allowlist_enabled_iff_supplied() {
 #[should_panic(expected = "Error(Contract, #49)")] // SenderNotAllowed
 fn test_preflight_rejects_non_allowlisted_sender() {
     let (env, client, _owner, _allowlist) = setup_with_allowlist(1);
+    let caller = authorize_caller(&client);
     let stranger = Address::generate(&env);
     let lob = lock_or_burn(&env, stranger);
-    client.preflight_check(&lob, &0u32, &Bytes::new(&env), &0i128);
+    client.preflight_check(&caller, &lob, &0u32, &Bytes::new(&env), &0i128);
 }
 
 #[test]
 fn test_preflight_allows_allowlisted_sender() {
     let (env, client, _owner, allowlist) = setup_with_allowlist(1);
+    let caller = authorize_caller(&client);
     let allowed = allowlist.get(0).unwrap();
     let lob = lock_or_burn(&env, allowed);
     // Non-try call panics on Err; reaching the end means Ok.
-    client.preflight_check(&lob, &0u32, &Bytes::new(&env), &0i128);
+    client.preflight_check(&caller, &lob, &0u32, &Bytes::new(&env), &0i128);
 }
 
 #[test]
 fn test_preflight_noop_when_allowlist_disabled() {
     let (env, client, _owner) = setup(); // allowlist off
+    let caller = authorize_caller(&client);
     let lob = lock_or_burn(&env, Address::generate(&env));
-    client.preflight_check(&lob, &0u32, &Bytes::new(&env), &0i128);
+    client.preflight_check(&caller, &lob, &0u32, &Bytes::new(&env), &0i128);
 }
 
 #[test]
@@ -343,8 +392,10 @@ fn test_apply_allowlist_updates_adds_and_removes() {
 #[test]
 fn test_postflight_is_noop() {
     let (env, client, _owner) = setup();
+    let caller = authorize_caller(&client);
     // Non-try call panics on Err; reaching the end means Ok (no-op).
     client.postflight_check(
+        &caller,
         &ReleaseOrMintIn {
             original_sender: Bytes::new(&env),
             remote_chain_selector: REMOTE_CHAIN,
@@ -357,6 +408,96 @@ fn test_postflight_is_noop() {
         &100i128,
         &0u32,
     );
+}
+
+// ============================================================
+// Authorized-callers invocation gating (EVM `_validateCaller`)
+// ============================================================
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")] // CallerNotAuthorized
+fn test_preflight_rejects_unauthorized_caller() {
+    let (env, client, _owner) = setup(); // no authorized callers seeded
+    let stranger = Address::generate(&env); // not in the authorized set
+    let lob = lock_or_burn(&env, Address::generate(&env));
+    client.preflight_check(&stranger, &lob, &0u32, &Bytes::new(&env), &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")] // CallerNotAuthorized
+fn test_postflight_rejects_unauthorized_caller() {
+    let (env, client, _owner) = setup(); // no authorized callers seeded
+    let stranger = Address::generate(&env);
+    client.postflight_check(
+        &stranger,
+        &ReleaseOrMintIn {
+            original_sender: Bytes::new(&env),
+            remote_chain_selector: REMOTE_CHAIN,
+            receiver: Address::generate(&env),
+            amount: 100,
+            local_token: Address::generate(&env),
+            source_pool_address: Bytes::new(&env),
+            source_pool_data: Bytes::new(&env),
+        },
+        &100i128,
+        &0u32,
+    );
+}
+
+#[test]
+fn test_apply_authorized_callers_updates_is_owner_only() {
+    let (env, client, _owner) = setup();
+    let extra = Address::generate(&env);
+    env.mock_auths(&[]);
+    let r = client.try_apply_authorized_callers_updates(&Vec::new(&env), &vec![&env, extra]);
+    assert!(r.is_err(), "non-owner / unauthed call must fail");
+}
+
+#[test]
+fn test_apply_authorized_callers_updates_adds_and_removes() {
+    let (_env, client, _owner) = setup();
+    assert_eq!(client.get_all_authorized_callers().len(), 0);
+
+    let a = Address::generate(&client.env);
+    let b = Address::generate(&client.env);
+    client.apply_authorized_callers_updates(
+        &Vec::new(&client.env),
+        &vec![&client.env, a.clone(), b.clone()],
+    );
+    let stored = client.get_all_authorized_callers();
+    assert_eq!(stored.len(), 2);
+
+    // Removal of `a` only; `b` remains.
+    client.apply_authorized_callers_updates(&vec![&client.env, a], &Vec::new(&client.env));
+    let stored = client.get_all_authorized_callers();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored.get(0).unwrap(), b);
+}
+
+#[test]
+fn test_initialize_seeds_authorized_callers_with_dedup_and_zero_skip() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let real = Address::generate(&env);
+    let pool = Address::generate(&env);
+    // [zero, real, real, pool] -> stored = [real, pool] (zero skipped, dup collapsed).
+    let authorized = vec![
+        &env,
+        zero_addr(&env),
+        real.clone(),
+        real.clone(),
+        pool.clone(),
+    ];
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized);
+
+    let stored = client.get_all_authorized_callers();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored.get(0).unwrap(), real);
+    assert_eq!(stored.get(1).unwrap(), pool);
 }
 
 #[test]
@@ -589,7 +730,7 @@ fn test_initialize_skips_zero_and_dedups_allowlist() {
     let allowlist = vec![&env, zero_addr(&env), real.clone(), real.clone()];
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    client.initialize(&owner, &allowlist, &0i128);
+    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env));
 
     assert!(client.get_allowlist_enabled());
     let stored = client.get_allowlist();
