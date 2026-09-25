@@ -46,7 +46,10 @@ impl Validatable for CCVConfigArg {
     ///   `CCVConfigValidation._assertNoDuplicates` +
     ///   `_assertNoDuplicatedBetweenLists`) via `assert_ccv_set_valid`;
     /// - base CCVs must be specified whenever above-threshold CCVs are (EVM
-    ///   `MustSpecifyUnderThresholdCCVsForThresholdCCVs`).
+    ///   `MustSpecifyUnderThresholdCCVsForThresholdCCVs`). EVM's `address(0)`
+    ///   sentinel counts as a base entry, so a threshold list is allowed with an
+    ///   empty base list as long as the defaults are included; `include_defaults`
+    ///   is Stellar's `address(0)` analogue and counts the same way here.
     fn validate(&self) -> Result<(), CCIPError> {
         assert_ccv_set_valid(
             &self.outbound_ccvs,
@@ -59,10 +62,20 @@ impl Validatable for CCVConfigArg {
             CCIPError::DuplicateCCVNotAllowed,
         )?;
 
-        if !self.threshold_outbound_ccvs.is_empty() && self.outbound_ccvs.is_empty() {
+        // EVM rejects only when the base list is empty AND no `address(0)` is
+        // present (AdvancedPoolHooks.sol#L258). `include_defaults` stands in for
+        // `address(0)`, so a non-empty threshold list requires a non-empty base
+        // list OR `include_defaults`, not a non-empty base list alone.
+        if !self.threshold_outbound_ccvs.is_empty()
+            && self.outbound_ccvs.is_empty()
+            && !self.outbound_include_defaults
+        {
             return Err(CCIPError::InvalidConfig);
         }
-        if !self.threshold_inbound_ccvs.is_empty() && self.inbound_ccvs.is_empty() {
+        if !self.threshold_inbound_ccvs.is_empty()
+            && self.inbound_ccvs.is_empty()
+            && !self.inbound_include_defaults
+        {
             return Err(CCIPError::InvalidConfig);
         }
         Ok(())

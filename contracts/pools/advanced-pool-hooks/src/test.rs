@@ -150,7 +150,9 @@ fn test_apply_ccv_config_updates_rejects_threshold_without_base() {
         threshold_outbound_ccvs: vec![&env, threshold],
         inbound_ccvs: vec![&env, base],
         threshold_inbound_ccvs: Vec::new(&env),
-        outbound_include_defaults: true,
+        // include_defaults counts as a base entry (EVM address(0)); to exercise
+        // the genuine "threshold without ANY base" reject, defaults must be off.
+        outbound_include_defaults: false,
         inbound_include_defaults: true,
     };
     client.apply_ccv_config_updates(&vec![&env, arg]);
@@ -167,14 +169,16 @@ fn test_apply_ccv_config_updates_removes_empty_config() {
     assert!(client.get_ccv_config(&REMOTE_CHAIN).is_some());
 
     // Re-apply an all-empty config -> entry removed (EVM s_configuredChainSelectors bookkeeping).
+    // include_defaults counts as a base contribution, so a defaults-only config is
+    // KEPT, not removed; to exercise the genuine removal path, defaults must be off.
     let empty = CCVConfigArg {
         remote_chain_selector: REMOTE_CHAIN,
         outbound_ccvs: Vec::new(&env),
         threshold_outbound_ccvs: Vec::new(&env),
         inbound_ccvs: Vec::new(&env),
         threshold_inbound_ccvs: Vec::new(&env),
-        outbound_include_defaults: true,
-        inbound_include_defaults: true,
+        outbound_include_defaults: false,
+        inbound_include_defaults: false,
     };
     client.apply_ccv_config_updates(&vec![&env, empty]);
     assert!(client.get_ccv_config(&REMOTE_CHAIN).is_none());
@@ -202,8 +206,11 @@ fn test_apply_ccv_config_updates_emits_on_removal() {
         threshold_outbound_ccvs: Vec::new(&env),
         inbound_ccvs: Vec::new(&env),
         threshold_inbound_ccvs: Vec::new(&env),
-        outbound_include_defaults: true,
-        inbound_include_defaults: true,
+        // include_defaults counts as a base contribution, so defaults-only is KEPT;
+        // to exercise the genuine removal path (which the emit-on-removal parity
+        // asserts), defaults must be off here.
+        outbound_include_defaults: false,
+        inbound_include_defaults: false,
     };
     client.apply_ccv_config_updates(&vec![&env, empty]);
     // Read events before any later contract call clears the test-env event view.
@@ -213,6 +220,70 @@ fn test_apply_ccv_config_updates_emits_on_removal() {
         "removal must emit CCVConfigUpdated (EVM emits unconditionally)"
     );
     assert!(client.get_ccv_config(&REMOTE_CHAIN).is_none());
+}
+
+#[test]
+fn test_apply_ccv_config_updates_accepts_threshold_with_defaults_only() {
+    // EVM parity: `outboundCCVs = [address(0)]` (defaults) + a threshold list is
+    // VALID — `address(0)` satisfies the "must specify base if threshold" check
+    // (AdvancedPoolHooks.sol#L258). The Stellar analogue is an empty base list
+    // with `outbound_include_defaults: true`. Before the fix, validate() rejected
+    // this (threshold without base, defaults not counted); now it is accepted.
+    let (env, client, _owner) = setup();
+    let threshold = Address::generate(&env);
+    let arg = CCVConfigArg {
+        remote_chain_selector: REMOTE_CHAIN,
+        outbound_ccvs: Vec::new(&env), // no explicit base — defaults stand in
+        threshold_outbound_ccvs: vec![&env, threshold.clone()],
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: true,
+        inbound_include_defaults: false,
+    };
+    client.apply_ccv_config_updates(&vec![&env, arg]);
+
+    let stored = client.get_ccv_config(&REMOTE_CHAIN);
+    assert!(
+        stored.is_some(),
+        "defaults-only base + threshold must be kept"
+    );
+    let cfg = stored.unwrap();
+    assert!(cfg.outbound_ccvs.is_empty());
+    assert!(cfg.outbound_include_defaults);
+    assert_eq!(cfg.threshold_outbound_ccvs.len(), 1);
+    assert_eq!(cfg.threshold_outbound_ccvs.get(0).unwrap(), threshold);
+}
+
+#[test]
+fn test_apply_ccv_config_updates_keeps_defaults_only_config() {
+    // EVM parity: `outboundCCVs = [address(0)]` with no threshold list is a real,
+    // keepable config ("use the lane defaults, nothing extra") and must NOT be
+    // dropped by the s_configuredChainSelectors bookkeeping
+    // (AdvancedPoolHooks.sol#L285). The Stellar analogue is an all-empty config
+    // with `outbound_include_defaults: true`. Before the fix, has_base was false
+    // and map.remove silently dropped it; now include_defaults counts as a base
+    // contribution and the entry is kept.
+    let (env, client, _owner) = setup();
+    let arg = CCVConfigArg {
+        remote_chain_selector: REMOTE_CHAIN,
+        outbound_ccvs: Vec::new(&env),
+        threshold_outbound_ccvs: Vec::new(&env),
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: true,
+        inbound_include_defaults: false,
+    };
+    client.apply_ccv_config_updates(&vec![&env, arg]);
+
+    let stored = client.get_ccv_config(&REMOTE_CHAIN);
+    assert!(
+        stored.is_some(),
+        "defaults-only config must be kept, not removed"
+    );
+    let cfg = stored.unwrap();
+    assert!(cfg.outbound_ccvs.is_empty());
+    assert!(cfg.outbound_include_defaults);
+    assert_eq!(client.get_all_ccv_configs().len(), 1);
 }
 
 // ============================================================
@@ -710,7 +781,10 @@ fn test_apply_ccv_config_updates_rejects_inbound_threshold_without_base() {
         inbound_ccvs: Vec::new(&env), // no inbound base
         threshold_inbound_ccvs: vec![&env, Address::generate(&env)],
         outbound_include_defaults: false,
-        inbound_include_defaults: true,
+        // include_defaults counts as a base entry (EVM address(0)); to exercise
+        // the genuine "inbound threshold without ANY base" reject, defaults must
+        // be off.
+        inbound_include_defaults: false,
     };
     client.apply_ccv_config_updates(&vec![&env, arg]);
 }

@@ -214,8 +214,16 @@ impl AdvancedPoolHooksContract {
                     inbound_include_defaults: arg.inbound_include_defaults,
                 };
 
-                let has_base = !cfg.outbound_ccvs.is_empty() || !cfg.inbound_ccvs.is_empty();
-                if has_base {
+                // EVM keeps the entry when the per-chain config has any base
+                // contribution in either direction, where `address(0)` counts as a
+                // base contribution (AdvancedPoolHooks.sol#L285). `include_defaults`
+                // is Stellar's `address(0)` analogue, so a direction with
+                // `include_defaults: true` and an empty list still counts as having
+                // a base — without this, a defaults-only config would be silently
+                // dropped by `map.remove`.
+                let has_outbound = !cfg.outbound_ccvs.is_empty() || cfg.outbound_include_defaults;
+                let has_inbound = !cfg.inbound_ccvs.is_empty() || cfg.inbound_include_defaults;
+                if has_outbound || has_inbound {
                     map.set(arg.remote_chain_selector, cfg.clone());
                 } else {
                     map.remove(arg.remote_chain_selector);
