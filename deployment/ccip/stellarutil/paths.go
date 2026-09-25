@@ -13,8 +13,9 @@ import (
 const stellarRootModule = "github.com/smartcontractkit/chainlink-stellar"
 
 // FindStellarRoot locates the chainlink-stellar project root — the directory whose
-// go.mod declares module github.com/smartcontractkit/chainlink-stellar — by walking
-// up from CWD. Matching by module path (rather than just "any go.mod") is required
+// go.mod declares module github.com/smartcontractkit/chainlink-stellar — first via
+// the CHAINLINK_STELLAR_ROOT environment variable, then by walking up from CWD.
+// Matching by module path (rather than just "any go.mod") is required
 // because tests/ and deployment/ are their own Go modules; a naive go.mod search
 // started from tests/ would stop there and return the wrong directory.
 //

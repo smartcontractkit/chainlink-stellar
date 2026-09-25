@@ -17,7 +17,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/executor"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
-	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 )
 
 func testLogger() *zerolog.Logger {

@@ -16,7 +16,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/rs/zerolog"
-	"github.com/smartcontractkit/chainlink-stellar/internal/mocks"
+	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 )
 
 func TestNewSourceReaderWithClient(t *testing.T) {

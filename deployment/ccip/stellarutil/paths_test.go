@@ -8,22 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// realStellarRoot discovers the chainlink-stellar repo root via the CWD-walk fallback
-// (CHAINLINK_STELLAR_ROOT unset). The stellarutil tests live under that checkout, so the
-// walk reaches the root. Used to seed the override-valid assertion without hard-coding a
-// host-specific absolute path.
-func realStellarRoot(t *testing.T) string {
+// writeRootGoMod writes a go.mod declaring the given module path in dir.
+func writeRootGoMod(t *testing.T, dir, modulePath string) {
 	t.Helper()
-	t.Setenv("CHAINLINK_STELLAR_ROOT", "")
-	root, err := FindStellarRoot()
-	require.NoError(t, err, "CWD-walk fallback should find the chainlink-stellar root from the test checkout")
-	return root
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+modulePath+"\n"), 0o644))
 }
 
-// t.Setenv cannot be used in t.Parallel tests, so these are intentionally non-parallel.
-
-func TestFindStellarRoot_OverrideValid(t *testing.T) {
-	root := realStellarRoot(t)
+func TestFindStellarRoot_EnvOverrideReturnsValidRoot(t *testing.T) {
+	// Not parallel: t.Setenv.
+	root := t.TempDir()
+	writeRootGoMod(t, root, "github.com/smartcontractkit/chainlink-stellar")
 	t.Setenv("CHAINLINK_STELLAR_ROOT", root)
 
 	got, err := FindStellarRoot()
@@ -31,28 +25,41 @@ func TestFindStellarRoot_OverrideValid(t *testing.T) {
 	require.Equal(t, root, got)
 }
 
-func TestFindStellarRoot_OverrideNonexistentPath(t *testing.T) {
-	t.Setenv("CHAINLINK_STELLAR_ROOT", "/this/path/does/not/exist/xyz")
+func TestFindStellarRoot_EnvOverrideRejectsOtherModule(t *testing.T) {
+	// Not parallel: t.Setenv.
+	root := t.TempDir()
+	writeRootGoMod(t, root, "github.com/smartcontractkit/some-other-module")
+	t.Setenv("CHAINLINK_STELLAR_ROOT", root)
 
 	_, err := FindStellarRoot()
-	require.Error(t, err)
+	require.ErrorContains(t, err, "CHAINLINK_STELLAR_ROOT")
+	require.ErrorContains(t, err, root)
 }
 
-func TestFindStellarRoot_OverrideWrongModule(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/not-stellar\n\ngo 1.21\n"), 0o644))
-	t.Setenv("CHAINLINK_STELLAR_ROOT", dir)
+func TestFindStellarRoot_EnvOverrideRejectsMissingGoMod(t *testing.T) {
+	// Not parallel: t.Setenv.
+	root := t.TempDir() // no go.mod
+	t.Setenv("CHAINLINK_STELLAR_ROOT", root)
 
 	_, err := FindStellarRoot()
-	require.Error(t, err)
+	require.ErrorContains(t, err, "CHAINLINK_STELLAR_ROOT")
 }
 
-func TestFindStellarRoot_FallbackWalk(t *testing.T) {
-	t.Setenv("CHAINLINK_STELLAR_ROOT", "")
+func TestFindStellarRoot_EnvUnsetWalksUpToRepoRoot(t *testing.T) {
+	// Not parallel: mutates the process environment.
+	if prev, ok := os.LookupEnv("CHAINLINK_STELLAR_ROOT"); ok {
+		require.NoError(t, os.Unsetenv("CHAINLINK_STELLAR_ROOT"))
+		t.Cleanup(func() {
+			require.NoError(t, os.Setenv("CHAINLINK_STELLAR_ROOT", prev))
+		})
+	}
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	// This package lives at <root>/deployment/ccip/stellarutil.
+	expected := filepath.Dir(filepath.Dir(filepath.Dir(wd)))
 
 	got, err := FindStellarRoot()
 	require.NoError(t, err)
-	mp, ok := goModModulePath(got)
-	require.True(t, ok, "resolved root %q has no go.mod", got)
-	require.Equal(t, stellarRootModule, mp)
+	require.Equal(t, expected, got)
 }
