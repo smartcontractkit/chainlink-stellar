@@ -174,7 +174,11 @@ func TestCommitteeVerifier(t *testing.T) {
 		}
 		t.Logf("Remote chain config verified: %+v", remoteCfg)
 
-		feeResp, err := client.GetFee(ctx, destChainSelector, []byte{}, []byte{}, 0)
+		// fee_token is threaded into get_fee so a verifier may reject tokens it does not accept
+		// at quote-time (V3 Layer 2 capability, EVM parity). The default committee-verifier
+		// ignores it, so any valid strkey suffices here.
+		feeToken := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-token")
+		feeResp, err := client.GetFee(ctx, destChainSelector, []byte{}, []byte{}, 0, feeToken)
 		if err != nil {
 			t.Fatalf("Failed to get fee: %v", err)
 		}

@@ -10,6 +10,10 @@ pub trait OnRampInterface {
         dest_chain_selector: u64,
         message: StellarToAnyMessage,
     ) -> Result<i128, CCIPError>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;

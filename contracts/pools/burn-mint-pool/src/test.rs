@@ -3303,6 +3303,95 @@ fn test_lock_or_burn_deducts_bps_fee_and_accrues() {
     assert_eq!(token_client.balance(&sender), 0);
 }
 
+/// TPF-1 (execution path): an FTF (`WAIT_FOR_SAFE`) `lock_or_burn` is charged the
+/// `fast_finality_transfer_fee_bps` tier, while a default-finality `lock_or_burn` of
+/// the SAME amount is charged the `finality_transfer_fee_bps` tier — so the resulting
+/// `dest_token_amount` DIFFERS by requested finality. The `get_fee` view-layer
+/// selection (`test_get_fee_fast_finality_selects_fast_bps`) already proves the rate
+/// is resolved per finality; this proves the `lock_or_burn` → `_get_fee` execution
+/// path actually deducts the selected tier and yields a different destination amount.
+/// Distinct bps: finality = 100 (1%), fast_finality = 500 (5%).
+#[test]
+fn test_lock_or_burn_ftf_fee_differs_from_finality_fee() {
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry_client,
+        _stub_client,
+        auth_onramp,
+    ) = setup_env();
+
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    // Permit WAIT_FOR_SAFE for the FTF burn. Default finality (0) is always allowed
+    // (`ensure_requested_finality_allowed` short-circuits on WAIT_FOR_FINALITY_FLAG),
+    // so the default-finality burn below is unaffected by this setting.
+    pool_client.set_allowed_finality_config(&WAIT_FOR_SAFE);
+    // Distinct bps per finality tier; USD-cent fees left at 0 so only the bps slice
+    // differentiates the two burns: finality = 100 bps, fast_finality = 500 bps.
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 500);
+
+    let amount: i128 = 1_000 * E18;
+
+    // --- Default finality: fee = 1000e18 * 100 / 10000 = 10e18; dest = 990e18. ---
+    let sender = Address::generate(&env);
+    token_admin_client.mint(&sender, &amount);
+    let lock_input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let out_default = pool_client.lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
+    assert_eq!(
+        out_default.dest_token_amount,
+        990 * E18,
+        "default-finality lock_or_burn must deduct the finality_transfer_fee_bps (100) tier"
+    );
+
+    // --- FTF (WAIT_FOR_SAFE): fee = 1000e18 * 500 / 10000 = 50e18; dest = 950e18. ---
+    let sender_ftf = Address::generate(&env);
+    token_admin_client.mint(&sender_ftf, &amount);
+    let lock_input_ftf = LockOrBurnIn {
+        receiver: Bytes::from_slice(&env, &[3u8; 20]),
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        original_sender: sender_ftf.clone(),
+        amount,
+        local_token: token_address.clone(),
+    };
+    let out_ftf = pool_client.lock_or_burn(
+        &auth_onramp,
+        &lock_input_ftf,
+        &WAIT_FOR_SAFE,
+        &Bytes::new(&env),
+    );
+    assert_eq!(
+        out_ftf.dest_token_amount,
+        950 * E18,
+        "FTF lock_or_burn must deduct the fast_finality_transfer_fee_bps (500) tier"
+    );
+
+    // The load-bearing assertion: the destination amount differs by finality.
+    assert_ne!(
+        out_default.dest_token_amount, out_ftf.dest_token_amount,
+        "FTF and default-finality sends of the same amount must produce DIFFERENT dest \
+         amounts — proves the pool differentiates fees for faster-than-finality transfers"
+    );
+
+    // Fee accrual: default 10e18 + FTF 50e18 = 60e18 on the pool; both senders fully debited.
+    let pool_address = pool_client.address.clone();
+    assert_eq!(token_client.balance(&pool_address), 60 * E18);
+    assert_eq!(token_client.balance(&sender), 0);
+    assert_eq!(token_client.balance(&sender_ftf), 0);
+}
+
 #[test]
 fn test_lock_or_burn_dust_amount_rounds_fee_to_zero() {
     let (

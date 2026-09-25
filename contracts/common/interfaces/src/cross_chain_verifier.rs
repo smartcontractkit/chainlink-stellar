@@ -35,12 +35,16 @@ pub trait CrossChainVerifierInterface {
     /// Quotes the fee for a message to `dest_chain_selector`.
     ///
     /// EVM `ICrossChainVerifierV1.getFee(destChainSelector, message, extraArgs, requestedFinality)`.
+    /// `fee_token` is the sender-chosen fee token, threaded in so a verifier may reject tokens it
+    /// does not accept at quote-time (fail-fast) — mirroring EVM's virtual `getFee` reading
+    /// `message.feeToken`. The default implementation ignores it (EVM `BaseVerifier` parity).
     fn get_fee(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
         message: soroban_sdk::Bytes,
         extra_args: soroban_sdk::Bytes,
         requested_finality: u32,
+        fee_token: soroban_sdk::Address,
     ) -> Result<FeeResponse, CCIPError>;
 
     /// Source-side sending hook; returns CCV-specific data (e.g. the version tag) appended to the

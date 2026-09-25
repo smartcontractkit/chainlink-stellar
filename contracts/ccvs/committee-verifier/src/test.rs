@@ -292,7 +292,13 @@ fn test_apply_remote_chain_config_and_get_fee() {
         fee,
         dest_gas_limit,
         dest_bytes_overhead,
-    } = client.get_fee(&dest_chain, &Bytes::new(&env), &Bytes::new(&env), &0u32);
+    } = client.get_fee(
+        &dest_chain,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &0u32,
+        &Address::generate(&env),
+    );
     assert_eq!(fee, 10);
     assert_eq!(dest_gas_limit, 100_000);
     assert_eq!(dest_bytes_overhead, 256);
@@ -314,7 +320,13 @@ fn test_apply_remote_chain_cfg_updates_modifies_existing_lane_fee() {
     client.apply_remote_chain_cfg_updates(&vec![&env, config.clone()]);
     let FeeResponse {
         fee: fee_before, ..
-    } = client.get_fee(&dest_chain, &Bytes::new(&env), &Bytes::new(&env), &0u32);
+    } = client.get_fee(
+        &dest_chain,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &0u32,
+        &Address::generate(&env),
+    );
     assert_eq!(fee_before, 10);
 
     // Owner modifies ONLY the per-lane fee for the same lane (10 → 20).
@@ -327,8 +339,13 @@ fn test_apply_remote_chain_cfg_updates_modifies_existing_lane_fee() {
         "lane fee must reflect the modification, not the initial value"
     );
 
-    let FeeResponse { fee: fee_after, .. } =
-        client.get_fee(&dest_chain, &Bytes::new(&env), &Bytes::new(&env), &0u32);
+    let FeeResponse { fee: fee_after, .. } = client.get_fee(
+        &dest_chain,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &0u32,
+        &Address::generate(&env),
+    );
     assert_eq!(
         fee_after, 20,
         "get_fee must return the modified per-lane fee"
@@ -381,7 +398,13 @@ fn test_get_remote_chain_config_fails_when_not_configured() {
 fn test_get_fee_fails_when_chain_not_configured() {
     let (env, client, ..) = setup();
 
-    client.get_fee(&99999, &Bytes::new(&env), &Bytes::new(&env), &0u32);
+    client.get_fee(
+        &99999,
+        &Bytes::new(&env),
+        &Bytes::new(&env),
+        &0u32,
+        &Address::generate(&env),
+    );
 }
 
 // ============================================================
@@ -424,6 +447,7 @@ fn test_get_fee_accepts_wait_for_finality_under_default_policy() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &0u32,
+        &Address::generate(&env),
     );
     assert_eq!(fee, 10);
 }
@@ -439,6 +463,7 @@ fn test_get_fee_rejects_fast_finality_under_default_policy() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &5u32,
+        &Address::generate(&env),
     );
 }
 
@@ -453,6 +478,7 @@ fn test_get_fee_rejects_malformed_finality_two_modes() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &malformed,
+        &Address::generate(&env),
     );
 }
 
@@ -468,6 +494,7 @@ fn test_set_allowed_finality_config_allows_matching_flag_request() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &WAIT_FOR_SAFE,
+        &Address::generate(&env),
     );
     assert_eq!(fee, 10);
 }
@@ -483,6 +510,7 @@ fn test_get_fee_allows_depth_meeting_allowed_minimum() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &10u32,
+        &Address::generate(&env),
     );
     assert_eq!(fee, 10);
 }
@@ -498,6 +526,7 @@ fn test_get_fee_rejects_depth_below_allowed_minimum() {
         &Bytes::new(&env),
         &Bytes::new(&env),
         &5u32,
+        &Address::generate(&env),
     );
 }
 

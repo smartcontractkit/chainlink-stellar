@@ -1171,6 +1171,7 @@ dependencies = [
  "common-pool",
  "executor",
  "fee-quoter",
+ "pools-advanced-pool-hooks",
  "pools-lock-release-pool",
  "pools-token-lock-box",
  "rmn_proxy",

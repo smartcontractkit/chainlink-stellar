@@ -458,6 +458,7 @@ impl CommitteeVerifierContract {
         _message: Bytes,
         _extra_args: Bytes,
         requested_finality: u32,
+        _fee_token: Address,
     ) -> Result<FeeResponse, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
 

@@ -6,10 +6,22 @@ WASM_DIR := target/wasm32v1-none/release
 # lives elsewhere, e.g. `make docker-ccv-dev CCV_REPO=$HOME/code/chainlink-ccv`.
 CCV_REPO ?= ../chainlink-ccv
 
-.PHONY: build test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts update-data-feeds-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
+.PHONY: build build-onramp-e2e-upgrade test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts update-data-feeds-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
 
 build:
 	stellar contract build
+
+# Build the OnRamp Wasm with the `e2e-upgrade-marker` feature enabled, into an
+# ISOLATED target dir (target/e2e-upgrade) so the default
+# target/wasm32v1-none/release/onramp.wasm used by every other test is left
+# untouched. The feature makes forward_from_router emit an extra E2EUpgradeMarker
+# event; the integration upgrade test (tests/integration/onramp_upgrade_test.go)
+# upgrades an OnRamp to this Wasm and asserts the marker appears after a send.
+# Mirrors `make build`'s profile (workspace [profile.release]: opt-level=z,
+# panic=abort, lto=thin) via cargo, since the stellar CLI has no per-crate
+# --features passthrough. Requires the wasm32v1-none rustup target.
+build-onramp-e2e-upgrade:
+	CARGO_TARGET_DIR=target/e2e-upgrade cargo build --release -p onramp --target wasm32v1-none --features e2e-upgrade-marker
 
 # Rebuild the embedded CRE contract WASM committed under deployment/cre/artifacts/
 # (served to Go consumers via deployment/cre.Artifact). CI fails if these are
