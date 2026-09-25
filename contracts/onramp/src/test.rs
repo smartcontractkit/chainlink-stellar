@@ -38,6 +38,9 @@ use fee_quoter::{
     },
     FeeQuoterContract, FeeQuoterContractClient,
 };
+use pools_advanced_pool_hooks::{
+    AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
+};
 use pools_lock_release_pool::{LockReleaseTokenPoolContract, LockReleaseTokenPoolContractClient};
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
@@ -235,6 +238,99 @@ fn test_transfer_ownership() {
     // Verify new owner
     let stored_owner = client.owner();
     assert_eq!(stored_owner, Some(new_owner));
+}
+
+// Real, committed Wasm fixture (built once, checked into data-feeds-common) that
+// exposes a `peek() -> u32` reader. OnRamp has no `peek`, so a successful `peek`
+// call at the OnRamp address after `upgrade` proves the executable was swapped
+// in place. We cannot rebuild a fixture here (no `stellar` CLI in this env), so
+// we reuse this one instead of adding a new fixture crate.
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `onramp`. Mirrors the `*_from_last_onramp_event` helpers above: `#[contractevent]`
+/// serializes the struct as a `Map<Symbol, Val>` keyed by field name.
+fn upgraded_event_hash(env: &Env, onramp: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(onramp);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from onramp");
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    // Upload the fixture Wasm and upgrade OnRamp to it. `mock_all_auths`
+    // authorizes the owner, so `require_owner` -> `owner.require_auth()` passes.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    // The Upgraded event was published carrying the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &contract_id), hash);
+
+    // OnRamp has no `peek`; the fixture does. A successful `peek` at the OnRamp
+    // address proves the executable was swapped in place (same address, new code).
+    // Instance storage is preserved by `update_current_contract_wasm` (host-level
+    // guarantee, covered by the data-feeds Upgradeable tests), and OnRamp never
+    // wrote the fixture's "slot" key, so peek reads back 0.
+    let peeked: u32 =
+        env.invoke_contract(&contract_id, &symbol_short!("peek"), Vec::<Val>::new(&env));
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the onramp address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
+    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
+    // against double-init), so the contract is set up with the owner stored.
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    client.initialize(
+        &owner,
+        &create_test_static_config(&env),
+        &create_test_dynamic_config(&env),
+    );
+
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    // Caller is not the owner and the owner does not authorize -> reject.
+    // `require_owner` fails at `owner.require_auth()` before the executable is
+    // touched, so the hash need not correspond to a real upgrade target here.
+    client.upgrade(&hash);
 }
 
 #[test]
@@ -748,6 +844,7 @@ impl MockOutboundCcvVerifier {
         _message: Bytes,
         _extra_args: Bytes,
         _block_confirmations: u32,
+        _fee_token: Address,
     ) -> Result<FeeResponse, CCIPError> {
         Ok(FeeResponse {
             dest_bytes_overhead: 0,
@@ -824,6 +921,7 @@ impl MockOutboundCcvVerifierFee {
         _message: Bytes,
         _extra_args: Bytes,
         _block_confirmations: u32,
+        _fee_token: Address,
     ) -> Result<FeeResponse, CCIPError> {
         let fee: u32 = env
             .storage()
@@ -860,6 +958,91 @@ fn deploy_fee_charging_ccv(
     let verifier_id = env.register(MockOutboundCcvVerifierFee, ());
     let verifier = MockOutboundCcvVerifierFeeClient::new(env, &verifier_id);
     verifier.set_fee(&fee_usd_cents);
+    deploy_ccv_resolver_with_verifier(env, owner, dest_chain_selector, &verifier_id)
+}
+
+/// Mock outbound CCV verifier that exercises the V3 Layer 2 capability: its
+/// `get_fee` inspects the `fee_token` threaded in by the OnRamp and rejects
+/// (fail-fast, at quote-time) any token other than its configured
+/// `allowed_fee_token` — mirroring an EVM custom verifier that overrides
+/// `BaseVerifier.getFee` to revert on a `message.feeToken` it does not accept.
+/// The default `MockOutboundCcvVerifierFee` ignores the arg (EVM `BaseVerifier`
+/// parity); this mock is the proof that the arg actually flows through and that
+/// a verifier *can* gate on it.
+#[contract]
+pub struct MockOutboundCcvVerifierFeeTokenGate;
+
+#[contractimpl]
+impl MockOutboundCcvVerifierFeeTokenGate {
+    pub fn set_fee(env: Env, fee: u32) {
+        env.storage().instance().set(&symbol_short!("fee"), &fee);
+    }
+    /// The single fee token this verifier accepts. A custom verifier would
+    /// hardcode its accept set (as on EVM, where there is no on-chain allowlist
+    /// config — Layer 1 is out of scope); the setter just lets tests parameterize it.
+    pub fn set_allowed_fee_token(env: Env, token: Address) {
+        env.storage()
+            .instance()
+            .set(&symbol_short!("alwtok"), &token);
+    }
+    pub fn get_fee(
+        env: Env,
+        _dest_chain_selector: u64,
+        _message: Bytes,
+        _extra_args: Bytes,
+        _block_confirmations: u32,
+        fee_token: Address,
+    ) -> Result<FeeResponse, CCIPError> {
+        let allowed: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("alwtok"))
+            .unwrap_or_else(|| Address::generate(&env));
+        if fee_token != allowed {
+            // Quote-time reject — surfaces from OnRamp::get_ccv_fee_internal via
+            // the `?` in compute_outbound_fee_breakdown, before any fee transfer.
+            return Err(CCIPError::FeeTokenNotSupported);
+        }
+        let fee: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("fee"))
+            .unwrap_or(0);
+        Ok(FeeResponse {
+            dest_bytes_overhead: 0,
+            dest_gas_limit: 0,
+            fee,
+        })
+    }
+    pub fn forward_to_verifier(
+        env: Env,
+        _dest_chain_selector: u64,
+        _sender: Address,
+        _message_id: BytesN<32>,
+        _fee_token: Address,
+        _fee_token_amount: i128,
+        _verifier_args: Bytes,
+    ) -> Result<Bytes, CCIPError> {
+        // Pay-time path is not gated (EVM reject is at quote-time via getFee);
+        // the reject test never reaches here, and the accept test must complete.
+        Ok(Bytes::new(&env))
+    }
+}
+
+/// Deploy a fee-token-gated CCV (VVR → `MockOutboundCcvVerifierFeeTokenGate`
+/// with `fee` cents, accepting only `allowed_fee_token`). Returns the VVR
+/// address (the CCV fee recipient / receipt issuer).
+fn deploy_fee_token_gated_ccv(
+    env: &Env,
+    owner: &Address,
+    dest_chain_selector: u64,
+    fee_usd_cents: u32,
+    allowed_fee_token: &Address,
+) -> Address {
+    let verifier_id = env.register(MockOutboundCcvVerifierFeeTokenGate, ());
+    let verifier = MockOutboundCcvVerifierFeeTokenGateClient::new(env, &verifier_id);
+    verifier.set_fee(&fee_usd_cents);
+    verifier.set_allowed_fee_token(&allowed_fee_token);
     deploy_ccv_resolver_with_verifier(env, owner, dest_chain_selector, &verifier_id)
 }
 
@@ -2559,6 +2742,7 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
 struct FeeDistLane {
     env: Env,
+    owner: Address,
     sender: Address,
     evm_chain_selector: u64,
     router_client: RouterContractClient<'static>,
@@ -2645,7 +2829,16 @@ impl FeeDistLane {
     }
 }
 
-fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) -> FeeDistLane {
+fn setup_fee_dist_lane_with_ccv_factory<F>(
+    fee_token_is_link: bool,
+    link_premium_percent: u32,
+    message_network_fee_usd_cents: u32,
+    token_network_fee_usd_cents: u32,
+    ccv_factory: F,
+) -> FeeDistLane
+where
+    F: Fn(&Env, &Address, u64, u32, &Address) -> Address,
+{
     let env = Env::default();
     env.mock_all_auths();
     // This lane wires two fee-charging CCVs (extra cross-contract get_fee /
@@ -2779,9 +2972,13 @@ fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) 
     };
     onramp_client.initialize(&owner, &static_config, &dynamic_config);
 
-    // Two fee-charging CCVs (30 & 70 USD-cent fees) as the lane defaults.
-    let ccv_a = deploy_fee_charging_ccv(&env, &owner, evm_chain_selector, 30);
-    let ccv_b = deploy_fee_charging_ccv(&env, &owner, evm_chain_selector, 70);
+    // Two fee-charging CCVs (30 & 70 USD-cent fees) as the lane defaults. The
+    // `ccv_factory` lets a test swap in a different verifier impl (e.g. the
+    // fee-token-gated mock for the V3 Layer 2 capability tests) without
+    // duplicating the lane scaffold; it receives the lane fee token so a gated
+    // verifier can be configured to accept or reject it.
+    let ccv_a = ccv_factory(&env, &owner, evm_chain_selector, 30, &fee_token);
+    let ccv_b = ccv_factory(&env, &owner, evm_chain_selector, 70, &fee_token);
     let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
 
     let dest_chain_config = OnrampDestChainConfigArgs {
@@ -2789,8 +2986,8 @@ fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) 
         router: router_id.clone(),
         address_bytes_length: 20,
         token_receiver_allowed: true,
-        message_network_fee_usd_cents: 50,
-        token_network_fee_usd_cents: 100,
+        message_network_fee_usd_cents,
+        token_network_fee_usd_cents,
         base_execution_gas_cost: 200_000,
         execution_fee_usd_cents: 25,
         default_executor: default_executor.clone(),
@@ -2803,6 +3000,7 @@ fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) 
 
     FeeDistLane {
         env,
+        owner,
         sender,
         evm_chain_selector,
         router_client,
@@ -2824,8 +3022,50 @@ fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) 
 /// Non-LINK lane (the H-3 default): a generic SAC fee token, `premium_multiplier`
 /// is 100, so the premium helper is bit-identical to the bare conversion. All H-3
 /// distribution tests build on this and stay unchanged.
+/// Back-compat wrapper: existing callers use the historical 50/100 USD-cent
+/// network fees. New tests that need to vary the per-lane network fee call
+/// `setup_fee_dist_lane_impl_with_fees` directly.
+fn setup_fee_dist_lane_impl(fee_token_is_link: bool, link_premium_percent: u32) -> FeeDistLane {
+    setup_fee_dist_lane_impl_with_fees(fee_token_is_link, link_premium_percent, 50, 100)
+}
+
 fn setup_fee_dist_lane() -> FeeDistLane {
     setup_fee_dist_lane_impl(false, 90)
+}
+
+/// Full fee-distribution lane scaffold (identical to `setup_fee_dist_lane_impl`)
+/// built with the fee-token-gated CCV mock. The default CCVs ignore `fee_token`
+/// (EVM `BaseVerifier` parity); this lane wires verifiers that gate on it. When
+/// `allow_lane_fee_token` is true both CCVs accept the lane fee token (accept
+/// path); when false they accept a random token ≠ the lane fee token, so any
+/// send whose `fee_token` is the lane token is rejected at quote-time (reject
+/// path) — proving the V3 Layer 2 capability end-to-end through a real send.
+fn setup_fee_token_gated_lane(allow_lane_fee_token: bool) -> FeeDistLane {
+    setup_fee_dist_lane_with_ccv_factory(false, 90, 50, 100, |env, owner, dcs, fee, fee_token| {
+        let allowed = if allow_lane_fee_token {
+            fee_token.clone()
+        } else {
+            Address::generate(env)
+        };
+        deploy_fee_token_gated_ccv(env, owner, dcs, fee, &allowed)
+    })
+}
+
+/// Back-compat wrapper preserved: full fee-distribution lane with the default
+/// (fee-token-ignoring) CCV mock and historical 50/100 USD-cent network fees.
+fn setup_fee_dist_lane_impl_with_fees(
+    fee_token_is_link: bool,
+    link_premium_percent: u32,
+    message_network_fee_usd_cents: u32,
+    token_network_fee_usd_cents: u32,
+) -> FeeDistLane {
+    setup_fee_dist_lane_with_ccv_factory(
+        fee_token_is_link,
+        link_premium_percent,
+        message_network_fee_usd_cents,
+        token_network_fee_usd_cents,
+        |env, owner, dcs, fee, _fee_token| deploy_fee_charging_ccv(env, owner, dcs, fee),
+    )
 }
 
 /// H-3 / INV-FEE-18: each CCV fee is transferred at send time to that CCV's VVR
@@ -2862,6 +3102,157 @@ fn test_send_distributes_ccv_fees_to_resolvers() {
         expected_b,
         "ccv_b fee must be transferred to its VVR at send time (H-3)"
     );
+}
+
+/// V3 Layer 2 (EVM parity): a verifier can reject a fee token it does not
+/// accept at *quote-time*, fail-fast, before any fee is charged — mirroring an
+/// EVM custom verifier that overrides the virtual `BaseVerifier.getFee` to
+/// revert on `message.feeToken`. The lane's CCVs gate on a token that is NOT
+/// the lane fee token, so the standard data-only send (whose `fee_token` is the
+/// lane token) reverts with `FeeTokenNotSupported` (#23) inside
+/// `compute_outbound_fee_breakdown` → `get_ccv_fee_internal` → the verifier's
+/// `get_fee`. The revert surfaces at the `router.get_fee` quote that `send`
+/// issues first, proving the reject happens at quote-time, not pay-time.
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")] // FeeTokenNotSupported
+fn test_ccv_rejects_disallowed_fee_token_at_quote_time() {
+    let lane = setup_fee_token_gated_lane(false);
+    lane.send_data_only();
+}
+
+/// V3 Layer 2 (EVM parity): the same gated CCVs, now configured to accept the
+/// lane fee token, let the send proceed and distribute each CCV's fee to its
+/// own VVR at send time — identical to `test_send_distributes_ccv_fees_to_resolvers`,
+/// but through a verifier that actually inspects `fee_token` (not the
+/// fee-token-ignoring default). Proves the threaded arg is usable, not a no-op.
+#[test]
+fn test_ccv_accepts_allowed_fee_token_and_distributes() {
+    let lane = setup_fee_token_gated_lane(true);
+    let env = &lane.env;
+
+    let (receipts, message, _required_fee) = lane.send_data_only();
+    // Data-only: [CCV_a, CCV_b, Executor, NetworkFee] (no pool row).
+    assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
+    assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
+    assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
+    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
+
+    let price = lane.fee_token_price(&message);
+    let expected_a = fee_math::usd_cents_to_fee_token(30_u128, price).expect("convert ccv_a fee");
+    let expected_b = fee_math::usd_cents_to_fee_token(70_u128, price).expect("convert ccv_b fee");
+
+    let fee_token_client = token::Client::new(env, &lane.fee_token);
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_a),
+        expected_a,
+        "ccv_a fee must transfer to its VVR at send time even through a fee-token-gating verifier"
+    );
+    assert_eq!(
+        fee_token_client.balance(&lane.ccv_b),
+        expected_b,
+        "ccv_b fee must transfer to its VVR at send time even through a fee-token-gating verifier"
+    );
+}
+
+/// CCV-7 / issuer-driven CCV selection, end-to-end through a real OnRamp send.
+///
+/// A token issuer (who is also the pool owner) deploys and owns an
+/// `AdvancedPoolHooks` contract, wires it to their lock-release token pool, and
+/// configures it to require THEIR OWN chosen CCV (a VVR they stand up) for
+/// outbound transfers of their token — opting OUT of the lane default CCVs
+/// (`include_defaults = false`). A real token-only `ccip_send` then requires
+/// exactly the issuer's CCV: it appears in the send receipts (with its fee),
+/// while the Chainlink-controlled lane defaults (`ccv_a`/`ccv_b`) are NOT
+/// required for this issuer's token.
+///
+/// This proves the issuer — not Chainlink — controls the CCV set for their own
+/// token/pool, exercised through the full Router→OnRamp→pool→hooks→merge→
+/// receipts path (not just `get_required_ccvs` in isolation). The token-only
+/// message (empty `data`, `gas_limit` 0) is what lets the pool-required CCVs
+/// *replace* the lane defaults: with non-empty `data` the user-fallback path
+/// would pull in the defaults regardless of the pool's `include_defaults`.
+#[test]
+fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
+    let lane = setup_fee_dist_lane();
+    let env = &lane.env;
+    let evm = lane.evm_chain_selector;
+
+    // The issuer == the pool owner (the principal that initialized the pool).
+    // They deploy + own an AdvancedPoolHooks contract.
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(env, &hooks_id);
+    // Authorize the issuer's token pool as a hook caller so its
+    // `preflight_check(caller=pool)` call passes the EVM `_validateCaller`
+    // analogue (only authorized pools may invoke the hooks).
+    hooks_client.initialize(
+        &lane.owner,
+        &Vec::new(env),
+        &0i128,
+        &vec![env, lane.pool_id.clone()],
+    );
+
+    // Wire the issuer-owned hooks to their token pool (pool-owner-gated; auth is
+    // mocked and the issuer IS the pool owner).
+    let pool_client = LockReleaseTokenPoolContractClient::new(env, &lane.pool_id);
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    // The issuer's OWN CCV: a VVR charging 40 USD-cents — distinct from the lane
+    // defaults ccv_a(30)/ccv_b(70), which Chainlink controls.
+    let issuer_ccv = deploy_fee_charging_ccv(env, &lane.owner, evm, 40);
+
+    // Require exactly the issuer's CCV for outbound transfers of their token to
+    // the EVM lane, opting OUT of lane defaults.
+    let config = CCVConfigArg {
+        remote_chain_selector: evm,
+        outbound_ccvs: vec![env, issuer_ccv.clone()],
+        threshold_outbound_ccvs: Vec::new(env),
+        inbound_ccvs: Vec::new(env),
+        threshold_inbound_ccvs: Vec::new(env),
+        outbound_include_defaults: false,
+        inbound_include_defaults: true,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![env, config]);
+
+    // Token-only transfer (empty data, gas_limit 0): the pool-required CCVs
+    // replace the lane defaults for this issuer's token.
+    let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+    token_amounts.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env),
+        token_amounts,
+        fee_token: lane.fee_token.clone(),
+        extra_args: Bytes::new(env),
+    };
+    let (receipts, _message, _required_fee) = lane.send(message);
+
+    // [issuer_ccv, Pool, Executor, Network] — the lane default CCVs are NOT
+    // required for the issuer's token.
+    assert_eq!(
+        receipts.len(),
+        4,
+        "expected issuer-ccv + pool + executor + network (lane defaults excluded)"
+    );
+    assert_eq!(receipts.get(0).unwrap().issuer, issuer_ccv);
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 40);
+    assert_eq!(receipts.get(1).unwrap().issuer, lane.pool_id);
+
+    // The Chainlink-controlled lane defaults must not be required for the
+    // issuer's token: the issuer's hooks replaced them.
+    for r in receipts.iter() {
+        assert_ne!(
+            r.issuer, lane.ccv_a,
+            "lane default ccv_a must not be required for the issuer's token"
+        );
+        assert_ne!(
+            r.issuer, lane.ccv_b,
+            "lane default ccv_b must not be required for the issuer's token"
+        );
+    }
 }
 
 /// H-3 / INV-FEE-20: the token-pool fee is transferred at send time to the pool
@@ -3330,6 +3721,43 @@ fn test_network_fee_source_selected_by_token_presence() {
         token_network.fee_token_amount, 100,
         "token-transfer network receipt must carry token_network_fee_usd_cents (100), \
          not message_network_fee_usd_cents (50) — source selected by token PRESENCE"
+    );
+}
+
+/// PF-1(b): the protocol (network) fee is variable BY LANE. Two lanes with
+/// different per-destination `message_network_fee_usd_cents` (50 vs 200) charge
+/// different network fees for an identical data-only send — proving the protocol
+/// fee is sourced per-destination-chain, not a single global constant. The TT-vs-
+/// messaging axis is covered by `test_network_fee_source_selected_by_token_presence`;
+/// this isolates the per-lane axis. Non-LINK fee token ⇒ premium multiplier 100,
+/// so the network receipt's `fee_token_amount` equals the configured USD-cents value
+/// (matching the assertion style of the TT-vs-messaging test above).
+#[test]
+fn test_protocol_network_fee_is_variable_by_lane() {
+    // Lane A: message network fee = 50 (the historical default-lane value).
+    let lane_a = setup_fee_dist_lane_impl_with_fees(false, 90, 50, 100);
+    // Lane B: identical to A EXCEPT a higher per-lane message network fee = 200.
+    let lane_b = setup_fee_dist_lane_impl_with_fees(false, 90, 200, 100);
+
+    // Data-only isolates the network slice — receipts are [ccv_a, ccv_b, executor,
+    // network]; the network receipt is the last (index 3).
+    let (receipts_a, _, _) = lane_a.send_data_only();
+    let (receipts_b, _, _) = lane_b.send_data_only();
+
+    let net_a = receipts_a.get(3).unwrap().fee_token_amount;
+    let net_b = receipts_b.get(3).unwrap().fee_token_amount;
+
+    assert_eq!(
+        net_a, 50,
+        "lane A network receipt must carry its per-lane message_network_fee_usd_cents (50)"
+    );
+    assert_eq!(
+        net_b, 200,
+        "lane B network receipt must carry its per-lane message_network_fee_usd_cents (200)"
+    );
+    assert_ne!(
+        net_a, net_b,
+        "the protocol fee MUST differ across lanes with different per-lane network-fee configs"
     );
 }
 

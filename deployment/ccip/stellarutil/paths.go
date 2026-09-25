@@ -19,16 +19,23 @@ const stellarRootModule = "github.com/smartcontractkit/chainlink-stellar"
 // because tests/ and deployment/ are their own Go modules; a naive go.mod search
 // started from tests/ would stop there and return the wrong directory.
 //
-// The env override lets callers outside the repo (e.g. a chainlink-deployments
-// checkout) point at a chainlink-stellar checkout holding the release WASMs, for
-// parity with deployment/mcmsutil. The walk-up works whether the devenv CLI is run
-// from the repo root directly or from a subdirectory (e.g. `cd tests && …`).
+// This works whether the devenv CLI is run from the repo root directly or from a
+// subdirectory (e.g. `cd tests && …`).
+//
+// Cross-repo consumers whose process CWD is NOT a descendant of the chainlink-stellar
+// checkout (notably the chainlink-deployments ccv staging pipelines, whose CWD is the
+// chainlink-deployments repo — a SIBLING of chainlink-stellar) cannot reach the root by
+// walking up. Such consumers set CHAINLINK_STELLAR_ROOT to the absolute path of a
+// chainlink-stellar checkout (with its WASMs already built via `stellar contract build` /
+// `make build`) to bypass the walk. The override is validated to declare the expected
+// root module path. This matches the override convention already used by
+// ResolveMCMSWasmPath / ResolveTimelockWasmPath / ResolveCREForwarderWasmPath.
 func FindStellarRoot() (string, error) {
 	if root := os.Getenv("CHAINLINK_STELLAR_ROOT"); root != "" {
 		if mp, ok := goModModulePath(root); ok && mp == stellarRootModule {
 			return root, nil
 		}
-		return "", fmt.Errorf("CHAINLINK_STELLAR_ROOT %s does not declare module %s", root, stellarRootModule)
+		return "", fmt.Errorf("CHAINLINK_STELLAR_ROOT=%q does not point at the chainlink-stellar root (expected go.mod module %s)", root, stellarRootModule)
 	}
 	dir, err := os.Getwd()
 	if err != nil {

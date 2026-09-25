@@ -51,3 +51,31 @@ var Initialize = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// SetAdvancedPoolHooksInput wires an issuer-owned Advanced Pool Hooks contract
+// to a token pool. The pool then relays the hooks' required CCVs
+// (get_required_ccvs) to the OnRamp/OffRamp, so the token issuer's chosen CCV
+// set is enforced for transfers of their token (CCV-7).
+type SetAdvancedPoolHooksInput struct {
+	ContractID string `json:"contract_id"` // the token pool contract id
+	Hooks      string `json:"hooks"`       // the Advanced Pool Hooks contract id (issuer-owned)
+}
+
+// SetAdvancedPoolHooks calls the pool's `set_advanced_pool_hooks`. Pool-owner-gated:
+// only the pool owner may wire hooks; for the issuer-driven flow the pool owner
+// and the hooks owner are typically the same principal (the token issuer).
+var SetAdvancedPoolHooks = cldfops.NewOperation(
+	"token-pool:set-advanced-pool-hooks",
+	stellarops.ContractDeploymentVersion,
+	"Wires an issuer-owned Advanced Pool Hooks contract to a token pool (pool-owner-gated)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetAdvancedPoolHooksInput) (stellarops.Void, error) {
+		if in.Hooks == "" {
+			return stellarops.Void{}, fmt.Errorf("token pool set_advanced_pool_hooks: hooks contract id is required")
+		}
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetAdvancedPoolHooks(b.GetContext(), in.Hooks); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

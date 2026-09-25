@@ -103,6 +103,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -114,6 +115,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -163,6 +165,7 @@ mod mock_hooks {
 
         pub fn preflight_check(
             env: Env,
+            _caller: Address,
             lock_or_burn_in: IfaceLockOrBurnIn,
             requested_finality: u32,
             token_args: Bytes,
@@ -177,6 +180,7 @@ mod mock_hooks {
 
         pub fn postflight_check(
             env: Env,
+            _caller: Address,
             release_or_mint_in: IfaceReleaseOrMintIn,
             local_amount: i128,
             requested_finality: u32,
@@ -231,6 +235,7 @@ fn add_chain(env: &Env, pool: &SiloedLockReleaseTokenPoolContractClient, selecto
 
 struct TestEnv<'a> {
     env: Env,
+    owner: Address,
     token_addr: Address,
     pool_client: SiloedLockReleaseTokenPoolContractClient<'a>,
     lockbox_client: TokenLockBoxClient<'a>,
@@ -314,6 +319,7 @@ fn setup() -> TestEnv<'static> {
 
     TestEnv {
         env,
+        owner,
         token_addr,
         pool_client,
         lockbox_client,
@@ -1526,6 +1532,49 @@ fn test_withdraw_fee_tokens_rejects_unauthorized_caller() {
     );
     assert!(r.is_err(), "unauthorized caller must be rejected");
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::Unauthorized);
+}
+
+/// Positive sweep — parity with burn-mint's `test_withdraw_fee_tokens_sweeps_accrued`.
+/// After a bps fee accrues on the siloed pool's own balance during `lock_or_burn`
+/// (the full amount is pulled to the pool; the post-fee `dest` is escrowed in the
+/// siloed lockbox, leaving only the fee on the pool), the owner sweeps the full
+/// accrued balance to a recipient via `withdraw_fee_tokens`. The recipient receives
+/// the fee and the pool balance drops to 0. Gate is `require_owner_or_fee_admin`
+/// (EVM `TokenPool.onlyOwnerOrFeeAdmin`). Closes the siloed-side coverage gap where
+/// only the unauthorized-caller rejection was previously tested.
+#[test]
+fn test_withdraw_fee_tokens_sweeps_accrued() {
+    let t = setup();
+    apply_siloed_bps_fee_config(&t, 100, 0);
+
+    let sender = Address::generate(&t.env);
+    let amount: i128 = 1_000 * SILOED_E18; // 1000e18 (EVM parity)
+    t.sac.mint(&sender, &amount);
+
+    let input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount,
+        local_token: t.token_addr.clone(),
+    };
+    t.pool_client
+        .lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
+
+    // fee = 1000e18 * 100 / 10000 = 10e18; dest (990e18) is in the lockbox.
+    let fee: i128 = 10 * SILOED_E18;
+    let pool_addr = t.pool_client.address.clone();
+    assert_eq!(t.tc.balance(&pool_addr), fee);
+
+    // Owner sweeps the accrued fee to a recipient.
+    let recipient = Address::generate(&t.env);
+    t.pool_client.withdraw_fee_tokens(
+        &t.owner,
+        &Vec::from_array(&t.env, [t.token_addr.clone()]),
+        &recipient,
+    );
+    assert_eq!(t.tc.balance(&recipient), fee);
+    assert_eq!(t.tc.balance(&pool_addr), 0);
 }
 
 #[test]

@@ -39,6 +39,7 @@ mod mock_outbound_ccv {
             _message: Bytes,
             _extra_args: Bytes,
             _block_confirmations: u32,
+            _fee_token: Address,
         ) -> Result<FeeResponse, CCIPError> {
             Ok(FeeResponse {
                 dest_bytes_overhead: 0,

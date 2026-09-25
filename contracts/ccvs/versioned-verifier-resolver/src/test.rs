@@ -274,6 +274,22 @@ fn test_get_inbound_implementation_too_short() {
     client.get_inbound_implementation(&short_data);
 }
 
+// REQ (Claim 3): the literal "add a CCV to the destination's reachable set"
+// op is `apply_inbound_impl_updates` (maps a verifier version-tag → CCV
+// address), owner-gated at lib.rs:278. A non-owner must be rejected. Args are
+// empty so the only gate exercised is `require_owner`.
+#[test]
+fn test_apply_inbound_impl_updates_is_owner_only() {
+    let (env, client, _owner) = setup();
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    env.mock_auths(&[]);
+    let r = client.try_apply_inbound_impl_updates(&vec![&env]);
+    assert!(
+        r.is_err(),
+        "non-owner must be rejected from adding a CCV to the inbound reachable set"
+    );
+}
+
 // ============================================================
 // Outbound Implementation Tests
 // ============================================================
@@ -448,6 +464,21 @@ fn test_apply_outbound_zero_chain_selector_fails() {
             verifier: Some(verifier),
         },
     ]);
+}
+
+// REQ (Claim 3): `apply_outbound_impl_updates` maps a dest chain → CCV
+// address (outbound routing), owner-gated at lib.rs:311. A non-owner must be
+// rejected. Args are empty so the only gate exercised is `require_owner`.
+#[test]
+fn test_apply_outbound_impl_updates_is_owner_only() {
+    let (env, client, _owner) = setup();
+    // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
+    env.mock_auths(&[]);
+    let r = client.try_apply_outbound_impl_updates(&vec![&env]);
+    assert!(
+        r.is_err(),
+        "non-owner must be rejected from configuring outbound CCV routing"
+    );
 }
 
 // ============================================================

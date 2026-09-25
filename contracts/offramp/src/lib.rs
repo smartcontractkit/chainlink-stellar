@@ -5,6 +5,7 @@ pub mod types;
 
 use common_interfaces::{
     ccip_receiver::CcvsAndFinalityConfig,
+    cross_chain_verifier::CrossChainVerifierClient,
     token_admin_registry::TokenAdminRegistryClient,
     token_pool::{MessageDirection, ReleaseOrMintIn, TokenPoolClient},
     versioned_verifier_resolver::VersionedVerifierResolverClient,
@@ -915,17 +916,30 @@ impl OffRampContract {
             let vvr = VersionedVerifierResolverClient::new(env, &ccv);
             let verifier_address = vvr.get_inbound_implementation(&result);
 
-            let message_hash: BytesN<32> = message_id.clone();
-            let mut verify_args = soroban_sdk::Vec::new(env);
-            verify_args.push_back(source_chain_selector.into_val(env));
-            verify_args.push_back(message_hash.into_val(env));
-            verify_args.push_back(result.into_val(env));
-
-            env.invoke_contract::<Result<(), CCIPError>>(
-                &verifier_address,
-                &Symbol::new(env, "verify_message"),
-                verify_args,
-            )?;
+            // Typed, compile-time-checked dispatch to the resolved verifier — EVM-parity with
+            // `ICrossChainVerifierV1(implAddress).verifyMessage(...)`. Retires the prior
+            // magic-string `env.invoke_contract(.., &Symbol::new(env, "verify_message"), ..)`.
+            //
+            // `try_verify_message` catches BOTH a typed CCIPError returned by the verifier (e.g.
+            // #71 ThresholdNotMet / #72 UnexpectedSigner) AND a host trap (e.g. secp256k1_recover
+            // trapping on a non-matching signature). This mirrors EVM `OffRamp.executeSingleMessage`'s
+            // per-message try/catch: any verifier failure becomes a retryable `Failure` (recorded by
+            // `execute`'s per-message catch, lib.rs:216-224) rather than reverting the whole tx — the
+            // prior `invoke_contract` only surfaced returned errors and let host traps revert.
+            let verifier = CrossChainVerifierClient::new(env, &verifier_address);
+            match verifier.try_verify_message(&source_chain_selector, message_id, &result) {
+                Ok(Ok(())) => {}
+                // The verifier returned a CCIPError (its error code cannot decode to `()`) or a
+                // non-convertible value ⇒ it rejected the message. The specific code is not
+                // recoverable through the typed client (EVM `try/catch` likewise drops the revert
+                // reason); we surface a generic verification-failure code as a retryable `Failure`.
+                Ok(Err(_decode)) => return Err(CCIPError::CCVQuorumNotMet),
+                // Host trap (e.g. `secp256k1_recover` trapping on a non-matching signature) ⇒ the
+                // verifier failed to verify this message. Caught here (rather than reverting the
+                // whole tx) so `execute` records a retryable `Failure` — EVM `executeSingleMessage`
+                // try/catch parity.
+                Err(_invoke) => return Err(CCIPError::CCVQuorumNotMet),
+            }
         }
         Ok(())
     }

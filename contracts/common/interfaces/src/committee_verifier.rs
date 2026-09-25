@@ -8,6 +8,7 @@ pub trait CommitteeVerifierInterface {
         message: soroban_sdk::Bytes,
         extra_args: soroban_sdk::Bytes,
         requested_finality: u32,
+        fee_token: soroban_sdk::Address,
     ) -> Result<FeeResponse, CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;

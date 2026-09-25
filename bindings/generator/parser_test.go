@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-// TestParseEnums_PureUnit covers the historical (pre-fix) C-style enum case
-// that we must keep emitting as a Go `uint32` newtype.
+// TestParseEnums_PureUnit covers a bare unit-only enum (no explicit `= N`).
+// This shape is NOT int-repr: soroban-sdk encodes it as
+// ScVal::Vec([Symbol(name)]), so IsIntRepr must be false (and codegen emits the
+// union shape). IsUnit stays true since every variant is unit.
 //
-// It also pins the Rust auto-numbering rule: bare unit variants get
-// sequential values starting at 0 in declaration order, matching the
-// on-chain ScVal::U32 Soroban emits. The previous implementation left
-// every bare-variant value at 0, which collapsed Outbound and Inbound to
-// the same wire value.
+// It also pins the Rust auto-numbering rule: bare unit variants get sequential
+// values starting at 0 in declaration order. The previous implementation left
+// every bare-variant value at 0, which collapsed Outbound and Inbound.
 func TestParseEnums_PureUnit(t *testing.T) {
 	src := `
 #[soroban_sdk::contracttype]
@@ -33,6 +33,9 @@ pub enum MessageDirection {
 	if !got.IsUnit() {
 		t.Fatalf("expected IsUnit=true")
 	}
+	if got.IsIntRepr() {
+		t.Fatalf("bare unit enum must NOT be int-repr (encodes as Vec<Symbol>, not U32)")
+	}
 	want := []EnumVariant{
 		{Name: "Outbound", Kind: EnumVariantUnit, Value: 0},
 		{Name: "Inbound", Kind: EnumVariantUnit, Value: 1},
@@ -47,9 +50,12 @@ pub enum MessageDirection {
 //   - bare variants get +1 from the previous variant
 //   - an explicit `= N` resets the counter so the next bare gets `N+1`
 //
-// This is the exact behaviour Soroban's #[contracttype] derive uses for
-// the on-chain wire value, so anything that diverges from this leaks
-// wrong discriminants into Go bindings.
+// These implicit/explicit values are tracked for ordinal stability; note they
+// are only used as the on-chain ScVal::U32 wire value for an int-repr enum,
+// which by definition has explicit discriminants on every variant. A bare
+// unit enum (no explicit `= N`) encodes as Vec<Symbol>, not U32 — see
+// TestParseEnums_IntRepr. Anything that diverges from the Rust rule leaks
+// wrong discriminants into Go bindings for the int-repr case.
 func TestParseEnums_ImplicitDiscriminants(t *testing.T) {
 	src := `
 #[soroban_sdk::contracttype]
@@ -69,13 +75,49 @@ pub enum E {
 	want := []EnumVariant{
 		{Name: "A", Kind: EnumVariantUnit, Value: 0},
 		{Name: "B", Kind: EnumVariantUnit, Value: 1},
-		{Name: "C", Kind: EnumVariantUnit, Value: 10},
+		{Name: "C", Kind: EnumVariantUnit, Value: 10, Explicit: true},
 		{Name: "D", Kind: EnumVariantUnit, Value: 11},
-		{Name: "Reset", Kind: EnumVariantUnit, Value: 0},
+		{Name: "Reset", Kind: EnumVariantUnit, Value: 0, Explicit: true},
 		{Name: "F", Kind: EnumVariantUnit, Value: 1},
 	}
 	if !reflect.DeepEqual(enums[0].Variants, want) {
 		t.Fatalf("variants:\n  got %+v\n  want %+v", enums[0].Variants, want)
+	}
+}
+
+// TestParseEnums_IntRepr pins the IsIntRepr predicate: an enum is int-repr
+// (ScVal::U32, soroban-sdk derive_type_enum_int) iff every variant is a unit
+// variant with an explicit `= N` discriminant. Any bare variant (even among
+// explicit ones) or any tuple/struct variant makes it a union (Vec<Symbol>).
+func TestParseEnums_IntRepr(t *testing.T) {
+	allExplicit := `
+#[soroban_sdk::contracttype]
+pub enum Bound {
+    AtOrBefore = 0,
+    AtOrAfter = 1,
+}
+`
+	if e := parseEnums(allExplicit)[0]; !e.IsIntRepr() {
+		t.Fatalf("all-explicit unit enum must be int-repr: %+v", e)
+	}
+	bareAmongExplicit := `
+#[soroban_sdk::contracttype]
+pub enum Mixed {
+    A = 5,
+    B,
+}
+`
+	if e := parseEnums(bareAmongExplicit)[0]; e.IsIntRepr() {
+		t.Fatalf("enum with a bare variant among explicit ones must NOT be int-repr: %+v", e)
+	}
+	tuple := `
+#[soroban_sdk::contracttype]
+pub enum ReplayKey {
+    SeenHash(soroban_sdk::BytesN<32>),
+}
+`
+	if e := parseEnums(tuple)[0]; e.IsIntRepr() {
+		t.Fatalf("tuple-variant enum must NOT be int-repr: %+v", e)
 	}
 }
 

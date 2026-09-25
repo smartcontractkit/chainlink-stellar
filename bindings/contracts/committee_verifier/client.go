@@ -53,12 +53,13 @@ func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 }
 
 // GetFee calls the get_fee function on the contract.
-func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, requestedFinality uint32) (*FeeResponse, error) {
+func (c *CommitteeVerifierClient) GetFee(ctx context.Context, destChainSelector uint64, message []byte, extraArgs []byte, requestedFinality uint32, feeToken string) (*FeeResponse, error) {
 	args := []xdr.ScVal{
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(message),
 		scval.BytesToScVal(extraArgs),
 		scval.Uint32ToScVal(requestedFinality),
+		scval.AddressToScVal(feeToken),
 	}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee", args)

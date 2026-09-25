@@ -50,11 +50,23 @@ type ErrorEnum struct {
 
 // EnumVariantKind describes the shape of a Soroban #[contracttype] enum variant.
 //
-// Soroban encodes a unit-only ("C-style") enum as ScVal::U32. Any enum that
-// contains at least one tuple or struct variant is encoded as
-// ScVal::Vec([ ScVal::Symbol(<VariantName>), <payload-fields...> ]) — the
-// variant identifier is used verbatim (no case conversion) as the discriminant
-// symbol. We track per-variant kind so codegen can branch correctly.
+// Soroban's #[contracttype] enum macro dispatches on whether variants carry an
+// explicit integer discriminant (see soroban-sdk-macros derive_enum vs
+// derive_enum_int):
+//   - If EVERY variant has an explicit `= N` literal, the enum is encoded as
+//     ScVal::U32 (the integer discriminant). This is the only U32 case.
+//   - Otherwise — bare unit variants (`Outbound`, no `= N`) OR any tuple/struct
+//     variant — the enum is encoded as
+//     ScVal::Vec([ ScVal::Symbol(<VariantName>), <payload-fields...> ]), with
+//     the variant identifier used verbatim (no case conversion) as the
+//     discriminant symbol. A bare unit variant is Vec([Symbol(name)]) (a
+//     one-element vector).
+//
+// Emitting U32 for a bare unit enum is a wire mismatch: the contract decodes
+// the argument as a Vec<Val> and traps (HostError WasmVm InvalidAction /
+// UnreachableCodeReached) when handed a U32. We track per-variant kind AND
+// whether the discriminant was explicit so codegen can branch on IsIntRepr,
+// matching the SDK dispatch exactly.
 type EnumVariantKind int
 
 const (
@@ -79,11 +91,35 @@ func (e Enum) IsUnit() bool {
 	return true
 }
 
+// IsIntRepr reports whether the enum uses Soroban's integer-discriminant
+// encoding (ScVal::U32): every variant is a unit variant that carries an
+// EXPLICIT `= N` discriminant. This mirrors the soroban-sdk-macros dispatch
+// (derive_type_enum_int is chosen only when every variant has an explicit
+// integer literal; otherwise derive_type_enum → Vec<Symbol>). A unit enum with
+// bare variants (e.g. `MessageDirection { Outbound, Inbound }`) is NOT int-repr
+// and must use the Vec<Symbol> union encoding.
+func (e Enum) IsIntRepr() bool {
+	if len(e.Variants) == 0 {
+		return false
+	}
+	for _, v := range e.Variants {
+		if v.Kind != EnumVariantUnit || !v.Explicit {
+			return false
+		}
+	}
+	return true
+}
+
 type EnumVariant struct {
 	Name string
 	Kind EnumVariantKind
 	// Value is the C-style discriminant (only meaningful for EnumVariantUnit).
 	Value int
+	// Explicit reports whether the variant carried an explicit `= N`
+	// discriminant (vs an implicit sequential value assigned to bare unit
+	// variants). Only an enum whose variants are ALL explicit unit variants is
+	// encoded as ScVal::U32 (see IsIntRepr).
+	Explicit bool
 	// Payload holds positional fields for tuple variants (Field.Name == "")
 	// and named fields for struct variants. Empty for unit variants.
 	Payload []Field
@@ -199,10 +235,13 @@ func parseEnumVariants(body string) []EnumVariant {
 	// Rust semantics: bare variants without an explicit `= N` get sequential
 	// values starting at 0 in declaration order, and an explicit discriminant
 	// resets the counter so the next bare variant is `discriminant + 1`.
-	// This must match the on-chain ScVal::U32 wire value Soroban emits for
-	// `#[contracttype]` unit-only enums; otherwise named Go constants
-	// collide on the wire (e.g. MessageDirection::{Outbound,Inbound} both
-	// serialising as 0).
+	// NOTE: these implicit values are NOT used as the on-chain wire value for
+	// bare unit enums — those encode as ScVal::Vec([Symbol(name)]), not U32.
+	// The implicit Value is only meaningful for an int-repr enum, which by
+	// definition has explicit discriminants on every variant anyway. We still
+	// track it so the parsed EnumVariant carries a stable ordinal, and so a
+	// hypothetical mixed explicit/bare enum (a Rust compile error) degrades
+	// predictably. See IsIntRepr / EnumVariant.Explicit.
 	nextImplicit := 0
 
 	var variants []EnumVariant
@@ -253,9 +292,10 @@ func parseEnumVariants(body string) []EnumVariant {
 			val := 0
 			fmt.Sscanf(um[2], "%d", &val)
 			variants = append(variants, EnumVariant{
-				Name:  um[1],
-				Kind:  EnumVariantUnit,
-				Value: val,
+				Name:     um[1],
+				Kind:     EnumVariantUnit,
+				Value:    val,
+				Explicit: true,
 			})
 			nextImplicit = val + 1
 		case unitBareRe.MatchString(v):
