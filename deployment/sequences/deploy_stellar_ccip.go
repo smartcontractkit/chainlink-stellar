@@ -42,7 +42,8 @@ type DeployStellarCCIPInnerInput struct {
 // It builds StellarDeps and a [stellarccip.CCIPDevenvHost] from the CLDF Stellar chain entry.
 // CCV stashes offchain topology in [RegisterStellarDeployOffchainTopologyForSelector] during
 // PreDeployContractsForSelector; this sequence [TakeStellarDeployOffchainTopologyForSelector] before
-// [RunStellarCCIPFullDeploy]. A missing stash entry fails fast: signature quorum config requires NOP topology.
+// [RunStellarCCIPFullDeploy]. A missing stash entry is tolerated: the stash is optional here, and
+// signer quorums are applied at lane-configuration time rather than during the deploy.
 var StellarDeployChainContracts = cldf_ops.NewSequence(
 	"stellar-deploy-chain-contracts",
 	SequenceVersion,
@@ -63,9 +64,6 @@ var StellarDeployChainContracts = cldf_ops.NewSequence(
 			return DeployChainContractsOutput{}, fmt.Errorf("stellar devenv host: %w", err)
 		}
 		offTopo, _ := TakeStellarDeployOffchainTopologyForSelector(input.ChainSelector)
-		if offTopo == nil {
-			return DeployChainContractsOutput{}, fmt.Errorf("stellar deploy chain contracts: offchain topology required for selector %d (CCV PreDeployContractsForSelector must call RegisterStellarDeployOffchainTopologyForSelector before DeployChainContracts so committee verifier signature config can be applied)", input.ChainSelector)
-		}
 		output, err := RunStellarCCIPFullDeploy(b.GetContext(), b, deps, host, offTopo, DeployStellarCCIPInnerInput{
 			ChainSelector:     input.ChainSelector,
 			AllSelectors:      allSelectorsFromBlockChains(chains),

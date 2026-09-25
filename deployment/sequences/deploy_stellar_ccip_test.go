@@ -2,6 +2,8 @@ package sequences
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
@@ -104,8 +106,15 @@ func TestRunStellarCCIPFullDeployForCCV_ErrorsWhenTopologyNil(t *testing.T) {
 	require.Contains(t, err.Error(), "EnvironmentTopology is nil")
 }
 
-func TestStellarDeployChainContracts_RejectsMissingStashedTopology(t *testing.T) {
-	t.Parallel()
+func TestStellarDeployChainContracts_RunsWithoutStashedTopology(t *testing.T) {
+	// A missing stash entry must not fail the sequence: signer quorums are applied at
+	// lane-configuration time, so the deploy runs on and stops at the first real
+	// prerequisite — the release WASMs under the resolved chainlink-stellar root.
+	// Not parallel: t.Setenv.
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/smartcontractkit/chainlink-stellar\n\ngo 1.24\n"), 0o644))
+	t.Setenv("CHAINLINK_STELLAR_ROOT", root)
+
 	b := newTestBundle(t)
 	sel := uint64(424242420098)
 	kp := keypair.MustRandom()
@@ -120,7 +129,8 @@ func TestStellarDeployChainContracts_RejectsMissingStashedTopology(t *testing.T)
 		ChainSelector: sel,
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "topology")
+	require.Contains(t, err.Error(), "OnRamp WASM not found at "+filepath.Join(root, "target", "wasm32v1-none", "release", "onramp.wasm"))
+	require.NotContains(t, err.Error(), "topology")
 }
 
 func TestRunStellarCCIPFullDeploy_ErrorsWhenCCIPDevenvHostNil(t *testing.T) {
