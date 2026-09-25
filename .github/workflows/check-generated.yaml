@@ -81,6 +81,9 @@ jobs:
         with:
           go-version-file: bindings/go.mod
 
+      - name: Tidy Modules
+        run: make tidy
+
       - name: Regenerate interfaces and bindings
         run: make generate-bindings
 
@@ -94,6 +97,8 @@ jobs:
 
       - name: Check for uncommitted changes
         run: |
+          git diff --exit-code -- **/go.* || \
+            (echo "Modules are not tidy. Run 'make tidy' and commit the result." && exit 1)
           # --intent-to-add so a brand-new, untracked blob is a diff rather than
           # invisible to git diff --exit-code.
           git add --intent-to-add \

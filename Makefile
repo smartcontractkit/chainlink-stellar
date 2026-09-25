@@ -6,7 +6,7 @@ WASM_DIR := target/wasm32v1-none/release
 # lives elsewhere, e.g. `make docker-ccv-dev CCV_REPO=$HOME/code/chainlink-ccv`.
 CCV_REPO ?= ../chainlink-ccv
 
-.PHONY: build build-onramp-e2e-upgrade test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts update-data-feeds-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor
+.PHONY: build build-onramp-e2e-upgrade test test-e2e check fmt clean generate-interfaces generate-bindings update-cre-artifacts update-data-feeds-artifacts docker-verifier docker-executor docker-ccv-dev restart-verifier restart-executor restart-verifier-executor modgraph
 
 build:
 	stellar contract build
@@ -110,3 +110,9 @@ up:
 
 down:
 	cd tests && CTF_CONFIGS=env/env-stellar-evm.toml go run ./testutils/cmd/devenv down env/env-stellar-evm.toml
+
+tidy:
+	go install github.com/jmank88/gomods@v0.1.7
+	gomods tidy
+	go install github.com/jmank88/modgraph@v0.1.4
+	./scripts/modgraph.sh > go.md
