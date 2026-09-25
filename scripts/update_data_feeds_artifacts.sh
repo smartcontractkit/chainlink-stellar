@@ -11,6 +11,9 @@ PACKAGES="data-feeds-cache data-feeds-proxy"
 IMAGE="rust:1.96.0@sha256:58fe97504a0e4cbba5d85599619a589923d3e779472a6fb0840d58d1c4ba99d7"
 STELLAR_CLI_VERSION="27.0.0"
 STELLAR_CLI_SHA256="357bf712f6353c28cd33c794402a3c87231757a5b305e6ef1604365af4fdd556"
+# SEP-55 build verification: explorers read source_repo from the WASM and look up
+# the GitHub attestation for its hash (published by data-feeds-attest.yaml).
+SOURCE_REPO="github:smartcontractkit/chainlink-stellar"
 
 MOUNTS=()
 if [[ -n "${CRE_CARGO_REGISTRY_DIR:-}" ]]; then
@@ -29,6 +32,7 @@ docker run --rm --platform linux/amd64 \
   -e PACKAGES="$PACKAGES" \
   -e STELLAR_CLI_VERSION="$STELLAR_CLI_VERSION" \
   -e STELLAR_CLI_SHA256="$STELLAR_CLI_SHA256" \
+  -e SOURCE_REPO="$SOURCE_REPO" \
   "$IMAGE" bash -c '
     set -euo pipefail
     apt-get update -qq >/dev/null && apt-get install -y -qq libdbus-1-3 >/dev/null
@@ -40,7 +44,7 @@ docker run --rm --platform linux/amd64 \
     echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum --check --quiet
     tar -xzf /tmp/stellar-cli.tar.gz -C /usr/local/bin
     for pkg in $PACKAGES; do
-      stellar contract build --manifest-path Cargo.toml --package "$pkg"
+      stellar contract build --manifest-path Cargo.toml --package "$pkg" --meta source_repo="$SOURCE_REPO"
       cp "/build/wasm32v1-none/release/${pkg//-/_}.wasm" /out/
     done
   '
