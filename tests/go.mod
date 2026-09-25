@@ -17,8 +17,8 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260910195529-801eb99e80b2
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.0
 	github.com/smartcontractkit/chainlink-deployments-framework v0.120.1-0.20260828145648-3e1bcd2ac1da
-	github.com/smartcontractkit/chainlink-stellar v0.0.7-0.20260911111026-5780af9ad0c1
 	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260909180436-ad98b0a6d8b7
+	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.7
 	github.com/stellar/go-stellar-sdk v0.7.3
@@ -539,8 +539,18 @@ replace (
 	// dskit's kv/memberlist. replace directives do not propagate to consumers,
 	// so mirror it here to keep dskit compiling.
 	github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20251126142931-6f9f62ab6f86
+	// mcms (pulled transitively via chainlink-ccip) requires the root
+	// chainlink-stellar module at a published pseudo-version whose tree still
+	// contains relayer/* (predating the relayer/ submodule split). Redirect that
+	// require to the local root, whose module excludes relayer/ (it is its own
+	// module), so relayer/* resolves only from the relayer submodule above and
+	// there is no ambiguous-import collision. tests/ itself does not import the
+	// root module (go mod why confirms), so this replace only neutralizes the
+	// stale published version.
 	github.com/smartcontractkit/chainlink-stellar => ../
+	github.com/smartcontractkit/chainlink-stellar/ccv => ../ccv
 	github.com/smartcontractkit/chainlink-stellar/deployment => ../deployment
+	github.com/smartcontractkit/chainlink-stellar/relayer => ../relayer
 	// chainlink-evm's generated codec code (internal_types_codecgen.go) uses
 	// codec1978.GenVersion and codec1978.GenHelper which exist in v1.2.12 but
 	// were removed in v1.3.0.  chainlink-ccv/build/devenv transitively requires

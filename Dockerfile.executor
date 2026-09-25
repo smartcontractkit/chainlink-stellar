@@ -6,12 +6,15 @@ WORKDIR /build
 RUN apk --no-cache add git
 
 # Copy module files first to maximise cache reuse.
-# Include bindings/ and deployment/ so the local replace directives
-# (chainlink-stellar/bindings => ./bindings, chainlink-stellar/deployment => ./deployment)
-# can resolve at `go mod download` time, before the full source tree is copied in.
+# Include every locally-replaced sibling module so the replace directives in
+# go.mod (chainlink-stellar/{bindings,deployment,ccv,relayer} => ./...) can
+# resolve at `go mod download` time, before the full source tree is copied in.
+# ccv/ and relayer/ were added when those subtrees became their own modules.
 COPY go.mod go.sum ./
 COPY bindings/go.mod bindings/go.sum ./bindings/
+COPY ccv/go.mod ccv/go.sum ./ccv/
 COPY deployment/go.mod deployment/go.sum ./deployment/
+COPY relayer/go.mod relayer/go.sum ./relayer/
 
 RUN --mount=type=cache,target=/go/pkg/mod,id=stellar-go-mod \
     go mod download

@@ -3,7 +3,7 @@ resolve-type-alias: false
 disable-version-string: true
 issue-845-fix: true
 
-dir: ./internal/mocks
+dir: ./mocks
 outpkg: mocks
 
 packages:
@@ -14,7 +14,6 @@ packages:
   github.com/smartcontractkit/chainlink-stellar/relayer/chain:
     interfaces:
       RPCClient:
-      Chain:
       SorobanClient:
 
   github.com/smartcontractkit/chainlink-stellar/relayer:
@@ -23,12 +22,12 @@ packages:
 
   github.com/smartcontractkit/chainlink-common/pkg/types/core:
     config:
-      dir: ./relayer/monitor/mocks
+      dir: ./monitor/mocks
     interfaces:
       Keystore:
 
   github.com/smartcontractkit/chainlink-stellar/relayer/monitor:
     config:
-      dir: ./relayer/monitor/mocks
+      dir: ./monitor/mocks
     interfaces:
       BalanceMonitorRPCClient:

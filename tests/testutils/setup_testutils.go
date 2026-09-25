@@ -27,7 +27,6 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfdeployment "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	"github.com/smartcontractkit/chainlink-deployments-framework/operations"
-	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
@@ -411,7 +410,7 @@ func fundStellarExecutorTransmitters(
 		require.NotNil(t, exec.Out, "stellar executor %q must have output", exec.ContainerName)
 		require.NotEmpty(t, exec.Out.BootstrapDBURL, "stellar executor %q must expose bootstrap URL", exec.ContainerName)
 
-		pubKey, err := fetchBootstrapPublicKey(ctx, exec.Out.BootstrapDBURL, stellarcommon.StellarTransmitterKeyName)
+		pubKey, err := fetchBootstrapPublicKey(ctx, exec.Out.BootstrapDBURL, stellardeployment.StellarTransmitterKeyName)
 		require.NoError(t, err, "fetch Stellar transmitter key for executor %q", exec.ContainerName)
 		require.Len(t, pubKey, 32, "stellar executor %q transmitter public key must be 32 bytes", exec.ContainerName)
 

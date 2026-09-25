@@ -23,7 +23,6 @@ import (
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	"github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
@@ -86,7 +85,7 @@ func (f *ImplFactory) SupportsFunding() bool {
 // ExecutorTransmitterKeyName implements [chainreg.ExecutorInfo].
 // The executor declares this Ed25519 key via bootstrap.WithKey (see cmd/executor).
 func (f *ImplFactory) ExecutorTransmitterKeyName() string {
-	return common.StellarTransmitterKeyName
+	return stellardeployment.StellarTransmitterKeyName
 }
 
 // ExecutorTransmitterAddress implements [chainreg.ExecutorInfo].
@@ -94,7 +93,7 @@ func (f *ImplFactory) ExecutorTransmitterKeyName() string {
 // BootstrapKeys.PublicKeys already carries it as hex-encoded raw bytes — the exact
 // hex form devenv expects before decoding into a protocol.UnknownAddress for funding.
 func (f *ImplFactory) ExecutorTransmitterAddress(keys ccvservices.BootstrapKeys) string {
-	return keys.PublicKeyHex(common.StellarTransmitterKeyName)
+	return keys.PublicKeyHex(stellardeployment.StellarTransmitterKeyName)
 }
 
 // NewEmpty implements [chainreg.ImplFactory].
