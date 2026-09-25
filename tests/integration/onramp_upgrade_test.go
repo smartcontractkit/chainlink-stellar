@@ -15,6 +15,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,7 @@ type markerInfo struct {
 // deployOutboundSendWire.
 func sendAndScanMarker(
 	t *testing.T, ctx context.Context,
-	deployer *deployment.Deployer, rpcClient *protocolrpc.Client,
+	deployer *deployment.Deployer, rpcClient *rpcclient.Client,
 	stack *fullStack, wire *outboundSendWire,
 	deployerAddr string, remoteDestChain uint64, msg routerbindings.StellarToAnyMessage,
 ) (*onrampbindings.CCIPMessageSentEvent, markerInfo) {
@@ -110,7 +111,7 @@ func decodeE2EUpgradeMarker(t *testing.T, e protocolrpc.EventInfo) uint32 {
 // newWasmHash, confirming the `upgrade` call ran and published.
 func requireUpgradedEvent(
 	t *testing.T, ctx context.Context,
-	deployer *deployment.Deployer, rpcClient *protocolrpc.Client,
+	deployer *deployment.Deployer, rpcClient *rpcclient.Client,
 	onrampID string, newWasmHash [32]byte,
 ) {
 	t.Helper()
