@@ -27,3 +27,4 @@ contracts/**/test_snapshots
 
 # up command log
 uplog.txt
+.idea/
