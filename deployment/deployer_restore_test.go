@@ -667,8 +667,16 @@ func TestWithFeeBumpFactor_NonFiniteClampedToOne(t *testing.T) {
 }
 
 func TestBuildAndSubmitTransaction_FeeBumpApplied(t *testing.T) {
-	sorobanB64 := testSorobanDataB64(t)
 	const minResourceFee = int64(100_000)
+	// Realistic fixture: the RPC returns a non-zero ResourceFee alongside
+	// MinResourceFee (the shared testSorobanDataB64 fixture carries 0, which
+	// the RPC never returns in practice).
+	sorobanData := xdr.SorobanTransactionData{
+		Resources:   xdr.SorobanResources{},
+		ResourceFee: xdr.Int64(minResourceFee),
+	}
+	sorobanB64, err := xdr.MarshalBase64(sorobanData)
+	require.NoError(t, err)
 
 	var capturedFee int64
 	mock := &mockRPC{
@@ -697,8 +705,10 @@ func TestBuildAndSubmitTransaction_FeeBumpApplied(t *testing.T) {
 	_, err = d.buildAndSubmitTransaction(context.Background(), src, testInvokeOp(d.signer.Address()))
 	require.NoError(t, err)
 
-	// Default factor 1.25: bump = ceil(100000 * 0.25) = 25000 > minFeeBuffer(10000).
-	expectedFee := minResourceFee + 25_000 + 25_000
+	// Fee rule: the Soroban resource fee (with its bump) is paid once, via
+	// SorobanData.ResourceFee; the envelope fee adds only the per-operation
+	// inclusion base fee. Fixture resource fee 100_000, bump 25_000, base 100.
+	expectedFee := int64(minResourceFee + 25_000 + txnbuild.MinBaseFee)
 	assert.Equal(t, expectedFee, capturedFee)
 }
 
