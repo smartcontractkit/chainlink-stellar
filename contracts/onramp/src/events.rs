@@ -47,17 +47,6 @@ pub struct OwnershipTransferredEvent {
     pub new_owner: Address,
 }
 
-/// Emitted when the OnRamp's executable is swapped in place via `upgrade`.
-/// The contract address and all instance/persistent storage are unchanged;
-/// only the Wasm code backing the contract is replaced.
-#[contractevent(topics = ["onramp_1_7_Upgraded"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Upgraded {
-    /// Hash of the new Wasm the contract now runs (uploaded beforehand via
-    /// `env.deployer().upload_contract_wasm`).
-    pub new_wasm_hash: BytesN<32>,
-}
-
 /// Emitted by `forward_from_router` ONLY when the `e2e-upgrade-marker` cargo
 /// feature is enabled. The default (feature-off) shipped Wasm never emits this,
 /// so the event's presence after a send is unambiguous evidence that the

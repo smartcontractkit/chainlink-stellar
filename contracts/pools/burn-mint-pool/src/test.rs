@@ -1,8 +1,10 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
-    token, vec, Address, Bytes, BytesN, Env, IntoVal, Val, Vec,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke},
+    token, vec, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val,
+    Vec,
 };
 
 use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
@@ -4016,4 +4018,103 @@ fn test_set_rate_limit_config_rejects_unauthorized_on_fast_finality_branch() {
         r.is_err(),
         "non-owner/non-admin must be rejected from setting the FTF rate-limit bucket"
     );
+}
+
+// ============================================================
+// Upgrade tests (shared `common_authorization::Upgradeable` opt-in)
+// ============================================================
+
+// Reuse the checked-in data-feeds fixture that exposes `peek() -> u32`.
+// BurnMintTokenPool has no `peek`, so a successful `peek` at the pool address
+// after `upgrade` proves the executable was swapped in place. No `stellar` CLI
+// in this env, so we reuse this fixture instead of adding one.
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
+/// keyed by field name.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from contract");
+}
+
+/// Minimal initialized pool: `initialize` only stores its address args (it does
+/// not call into the token/router/ramp/registry/rmn at init), so dummy
+/// `Address::generate` values suffice for an upgrade test.
+fn setup_pool_for_upgrade(env: &Env) -> BurnMintTokenPoolContractClient<'static> {
+    let contract_id = env.register(BurnMintTokenPoolContract, ());
+    let client = BurnMintTokenPoolContractClient::new(env, &contract_id);
+    let owner = Address::generate(env);
+    client.initialize(
+        &owner,
+        &Address::generate(env),
+        &18,
+        &Address::generate(env),
+        &Address::generate(env),
+        &Address::generate(env),
+    );
+    client
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup_pool_for_upgrade(&env);
+
+    // `mock_all_auths` authorizes the owner, so `require_owner` ->
+    // `owner.require_auth()` passes.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    // The Upgraded event carries the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // BurnMintTokenPool has no `peek`; the fixture does. A successful `peek` at
+    // the pool address proves the executable was swapped in place. Instance
+    // storage is preserved by `update_current_contract_wasm` (host guarantee),
+    // and the pool never wrote the fixture's "slot" key, so peek reads back 0.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the burn-mint pool address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
+    // `owner.require_auth()` fails. `initialize` needs no auth (it only stores
+    // its args + guards against double-init), so the contract is set up with
+    // the owner stored.
+    let client = setup_pool_for_upgrade(&env);
+
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    // Caller is not the owner and the owner does not authorize -> reject before
+    // the executable is touched.
+    client.upgrade(&hash);
 }

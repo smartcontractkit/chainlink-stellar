@@ -241,3 +241,22 @@ func TestOperationInputs_areCLDFSerializable(t *testing.T) {
 	require.True(t, cldfops.IsSerializable(lg, offramp.AcceptOwnershipInput{ContractID: "C1"}))
 	require.True(t, cldfops.IsSerializable(lg, stellarops.Void{}))
 }
+
+func TestUpgrade_operation(t *testing.T) {
+	t.Parallel()
+	inv := &recordingInvoker{}
+	deps := stellardeps.StellarDeps{Deploy: &fakeDeployer{}, Invoker: inv}
+
+	cid := "COFFRAMPUPGRADE0000000000000000000000000000000000"
+	var hash [32]byte
+	hash[0] = 0xAB
+	_, err := cldfops.ExecuteOperation(testBundle(t), offramp.Upgrade, deps, offramp.UpgradeInput{
+		ContractID:  cid,
+		NewWasmHash: hash,
+	})
+	require.NoError(t, err)
+	rec := inv.last()
+	require.Equal(t, "upgrade", rec.fn)
+	require.Equal(t, cid, rec.contractID)
+	require.Equal(t, 1, rec.argLen)
+}

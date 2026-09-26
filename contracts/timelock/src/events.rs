@@ -74,3 +74,13 @@ pub struct RoleRevokedEvent {
     pub account: Address,
     pub sender: Address,
 }
+
+/// Emitted when the timelock's executable is swapped in place via `upgrade`.
+/// Address and all instance/persistent storage are unchanged; only the Wasm
+/// backing the contract is replaced. Admin-gated (ADMIN_ROLE), not
+/// owner-gated, because the timelock is role-based rather than `Ownable`.
+#[contractevent(topics = ["tl_Upgraded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradedEvent {
+    pub new_wasm_hash: BytesN<32>,
+}

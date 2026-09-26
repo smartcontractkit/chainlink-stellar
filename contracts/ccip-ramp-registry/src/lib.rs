@@ -16,9 +16,9 @@ mod events;
 mod types;
 
 use common_helpers::map_updater::MapUpdater;
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use types::OffRampKey;
@@ -45,6 +45,9 @@ impl Ownable for RampRegistryContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for RampRegistryContract {}
 
 #[contractimpl]
 impl RampRegistryContract {

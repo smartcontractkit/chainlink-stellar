@@ -2,6 +2,10 @@
 #[soroban_sdk::contractclient(name = "McmsClient")]
 pub trait McmsInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn execute(env: soroban_sdk::Env, op: StellarOp, proof: MerkleProof) -> Result<(), McmsError>;
     fn get_root(env: soroban_sdk::Env) -> Result<(soroban_sdk::BytesN<32>, u32), McmsError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;

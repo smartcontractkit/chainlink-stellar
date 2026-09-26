@@ -3,9 +3,9 @@
 mod events;
 
 use common_interfaces::rmn_remote::RmnRemoteClient;
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Symbol};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use events::RmnSetEvent;
@@ -44,6 +44,9 @@ impl Ownable for RmnProxyContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for RmnProxyContract {}
 
 #[contractimpl]
 impl RmnProxyContract {

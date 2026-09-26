@@ -25,7 +25,7 @@ use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use events::FeeAggregatorSetEvent;
@@ -64,6 +64,9 @@ impl Ownable for VersionedVerifierResolverContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for VersionedVerifierResolverContract {}
 
 #[contractimpl]
 impl VersionedVerifierResolverContract {

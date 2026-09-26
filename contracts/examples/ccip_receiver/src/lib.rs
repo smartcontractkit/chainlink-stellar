@@ -27,7 +27,7 @@ use soroban_sdk::{
     contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_interfaces::router::{RouterClient, StellarToAnyMessage};
@@ -92,6 +92,13 @@ impl Ownable for ExampleCcipReceiver {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+// Owner-gated in-place self-upgrade via the shared `Upgradeable` trait
+// (`common_authorization::Upgradeable`): reuses the trait default body, which
+// gates on `<Self as Ownable>::require_owner` → `owner.require_auth()`,
+// swaps the Wasm with `update_current_contract_wasm`, and emits `Upgraded`.
+#[contractimpl(contracttrait)]
+impl Upgradeable for ExampleCcipReceiver {}
 
 #[contractimpl]
 impl ExampleCcipReceiver {

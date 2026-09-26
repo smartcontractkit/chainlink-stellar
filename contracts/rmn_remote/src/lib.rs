@@ -4,7 +4,9 @@ mod events;
 
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
 
-use common_authorization::{AuthorizedCallerAddedEvent, AuthorizedCallerRemovedEvent, Ownable};
+use common_authorization::{
+    AuthorizedCallerAddedEvent, AuthorizedCallerRemovedEvent, Ownable, Upgradeable,
+};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 
@@ -51,6 +53,9 @@ impl Ownable for RmnRemoteContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for RmnRemoteContract {}
 
 impl RmnRemoteContract {
     fn load_curse_admins(env: &Env) -> Vec<Address> {
