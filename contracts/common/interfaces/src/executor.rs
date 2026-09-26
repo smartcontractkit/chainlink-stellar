@@ -10,6 +10,10 @@ pub trait ExecutorInterface {
         extra_args: soroban_sdk::Bytes,
         fee_token: soroban_sdk::Address,
     ) -> Result<u32, CCIPError>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(

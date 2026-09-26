@@ -9,11 +9,12 @@ use alloc::vec::Vec;
 use k256::ecdsa::SigningKey;
 use sha3::{Digest, Keccak256};
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Events as _;
 use soroban_sdk::testutils::Ledger;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
-    Symbol, Val, Vec as SorobanVec,
+    contract, contracterror, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Map,
+    Symbol, TryFromVal, TryIntoVal, Val, Vec as SorobanVec,
 };
 
 use crate::constants::ENCODING_VERSION;
@@ -1530,4 +1531,91 @@ fn test_mcms_execute_timelock_schedule_batch_proposer_self_auth() {
     assert!(tl_client.is_operation(&id));
     assert!(tl_client.is_operation_pending(&id));
     assert_eq!(tl_client.get_timestamp(&id), 2_100u64);
+}
+
+// ===========================================================================
+// In-place upgradeability (shared `common_authorization::Upgradeable` trait)
+// ===========================================================================
+//
+// Reuses the checked-in data-feeds fixture whose only entrypoint is
+// `peek() -> u32`. MCMS has no `peek`, so a successful `peek` call at the MCMS
+// address after `upgrade` proves the executable was swapped in place (address +
+// storage preserved, only the Wasm backing replaced).
+//
+// MCMS is `Ownable` but its owner is typically a parent MCMS/root (not itself);
+// here the owner is a generated EOA. `upgrade` is owner-gated via the shared
+// trait's `require_owner` -> `owner.require_auth()`.
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
+/// keyed by field name.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from mcms");
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &zero_chain_id(&env));
+
+    // Upload the fixture Wasm and upgrade MCMS to it. `mock_all_auths` satisfies
+    // `require_owner` -> `owner.require_auth()`.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    // The `Upgraded` event was published carrying the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // MCMS has no `peek`; the fixture does. A successful `peek` at the MCMS
+    // address proves the executable was swapped in place.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        SorobanVec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the mcms address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    // No `mock_all_auths`: `require_owner` -> `owner.require_auth()` fails before
+    // the executable is touched. `initialize` needs no auth (only
+    // `require_not_initialized` + `init_owner`), so setup succeeds.
+    let owner = Address::generate(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &zero_chain_id(&env));
+
+    // A hash need not correspond to a real uploaded Wasm here — the auth check
+    // runs first and panics, so `update_current_contract_wasm` is never reached.
+    let hash = BytesN::<32>::from_array(&env, &[0u8; 32]);
+    client.upgrade(&hash);
 }

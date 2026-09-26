@@ -2,7 +2,10 @@
 
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, BytesN, Env};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events as _, vec, Address, Bytes, BytesN,
+    Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+};
 
 use crate::{CcvChainConfig, CcvConfigUpdate, ExampleCcipReceiver, ExampleCcipReceiverClient};
 
@@ -272,4 +275,88 @@ fn get_ccv_config_returns_empty_when_unset() {
         optional_threshold: 0,
     };
     assert_eq!(cfg, empty);
+}
+
+// --- in-place upgradeability (shared `common_authorization::Upgradeable` trait) ---
+//
+// Reuses the checked-in data-feeds fixture whose only entrypoint is `peek() -> u32`.
+// The fixture lives three levels up from this test file
+// (contracts/examples/ccip_receiver/src -> ccip_receiver -> examples -> contracts).
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
+/// keyed by field name, so the lookup is topic-agnostic.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from ccip_receiver");
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
+    client.initialize(&owner, &router);
+
+    // Upload the fixture Wasm and upgrade the receiver to it. `mock_all_auths`
+    // satisfies `require_owner` -> `owner.require_auth()`.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    // The `Upgraded` event was published carrying the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // The receiver has no `peek`; the fixture does. A successful `peek` at the
+    // receiver address proves the executable was swapped in place.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the receiver address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    // No `mock_all_auths`: `require_owner` -> `owner.require_auth()` fails before
+    // the executable is touched. `initialize` needs no auth (only
+    // `require_not_initialized` + `init_owner`), so setup succeeds.
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
+    client.initialize(&owner, &router);
+
+    // A hash need not correspond to a real uploaded Wasm here — the auth check
+    // runs first and panics, so `update_current_contract_wasm` is never reached.
+    let hash = BytesN::<32>::from_array(&env, &[0u8; 32]);
+    client.upgrade(&hash);
 }

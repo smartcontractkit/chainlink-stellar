@@ -163,3 +163,23 @@ var SetFeeAdmin = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// UpgradeInput upgrades the burn-mint pool contract in place to a new Wasm hash.
+type UpgradeInput struct {
+	ContractID  string   `json:"contract_id"`
+	NewWasmHash [32]byte `json:"new_wasm_hash"`
+}
+
+// Upgrade calls `upgrade` on burn-mint pool (owner-gated in-place self-upgrade).
+var Upgrade = cldfops.NewOperation(
+	"burn-mint-pool:upgrade",
+	stellarops.ContractDeploymentVersion,
+	"Upgrades the burn-mint pool Soroban contract in place to a new WASM hash",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in UpgradeInput) (stellarops.Void, error) {
+		c := bmpbindings.NewBurnMintPoolClient(d.Invoker, in.ContractID)
+		if err := c.Upgrade(b.GetContext(), in.NewWasmHash); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

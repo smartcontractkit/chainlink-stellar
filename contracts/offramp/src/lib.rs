@@ -19,7 +19,7 @@ use soroban_sdk::{
 };
 use stellar_strkey::Contract as StrkeyContract;
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
 use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
@@ -65,6 +65,9 @@ impl Ownable for OffRampContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for OffRampContract {}
 
 #[contractimpl(contracttrait)]
 impl CurseCheckable for OffRampContract {

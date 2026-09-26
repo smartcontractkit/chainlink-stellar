@@ -3,9 +3,9 @@
 mod events;
 pub mod types;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
 
-use common_authorization::{AuthorizedCallers, Ownable};
+use common_authorization::{AuthorizedCallers, Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
 use common_message::StellarToAnyMessage;
@@ -56,6 +56,9 @@ impl Ownable for FeeQuoterContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for FeeQuoterContract {}
 
 #[contractimpl]
 impl FeeQuoterContract {

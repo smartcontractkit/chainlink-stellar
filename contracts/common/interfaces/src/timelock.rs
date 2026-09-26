@@ -6,6 +6,11 @@ pub trait TimelockInterface {
         caller: soroban_sdk::Address,
         id: soroban_sdk::BytesN<32>,
     ) -> Result<(), TimelockError>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), TimelockError>;
     fn has_role(
         env: soroban_sdk::Env,
         role: soroban_sdk::Symbol,
@@ -147,6 +152,11 @@ pub enum TimelockError {
     InvalidArgsXdr = 54,
     EmptyBatch = 55,
     UnsupportedSelfCall = 56,
+}
+#[soroban_sdk::contractevent(topics = ["tl_Upgraded"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct UpgradedEvent {
+    pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
 #[soroban_sdk::contractevent(topics = ["tl_Cancelled"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

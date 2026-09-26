@@ -30,7 +30,10 @@ const (
 	// (the binding is generated from the feature-off Wasm), so hardcoded here.
 	e2eUpgradeMarkerEventTopic        = "onramp_1_7_E2EUpgradeMarker"
 	e2eUpgradeMarkerValue      uint32 = 0xE2E0_0001
-	e2eUpgradedEventTopic             = "onramp_1_7_Upgraded"
+	// OnRamp now upgrades via the shared `common_authorization::Upgradeable`
+	// trait, whose `Upgraded` event uses the fleet-wide topic `Upgraded`
+	// (previously the onramp-local `onramp_1_7_Upgraded`).
+	e2eUpgradedEventTopic = "Upgraded"
 
 	// Feature-enabled OnRamp Wasm, built by `make build-onramp-e2e-upgrade` into
 	// an isolated target dir so the default onramp.wasm is left untouched.

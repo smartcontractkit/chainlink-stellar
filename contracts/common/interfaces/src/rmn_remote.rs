@@ -15,6 +15,10 @@ pub trait RmnRemoteInterface {
         env: soroban_sdk::Env,
         subjects: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
     ) -> Result<(), CCIPError>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn is_cursed(env: soroban_sdk::Env) -> bool;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;

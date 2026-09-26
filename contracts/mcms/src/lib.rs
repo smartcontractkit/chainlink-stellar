@@ -13,7 +13,7 @@ pub use types::{
     SignerGroups, StellarOp, StellarRootMetadata, MAX_NUM_SIGNERS, NUM_GROUPS,
 };
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::soroban_invoke::decode_invoke_args;
@@ -58,6 +58,9 @@ impl Ownable for McmsContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for McmsContract {}
 
 #[contractimpl]
 impl McmsContract {

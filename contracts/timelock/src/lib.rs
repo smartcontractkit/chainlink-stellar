@@ -18,7 +18,7 @@ use common_helpers::soroban_invoke::decode_invoke_args;
 use encoding::{hash_args, hash_operation_batch as hash_batch, validate_call};
 use events::{
     BypasserCallExecutedEvent, CallExecutedEvent, CallScheduledEvent, CancelledEvent,
-    FunctionBlockedEvent, FunctionUnblockedEvent, MinDelayChangeEvent,
+    FunctionBlockedEvent, FunctionUnblockedEvent, MinDelayChangeEvent, UpgradedEvent,
 };
 use roles::{
     get_role_members, grant_role_internal, has_role, require_admin, require_role,
@@ -280,6 +280,31 @@ impl TimelockContract {
         }
         .publish(&env);
         bump_ttls(&env);
+        Ok(())
+    }
+
+    /// Admin-gated in-place self-upgrade — the role-based analogue of EVM
+    /// `upgradeTo` for a contract that is not `Ownable`. Gated on `require_admin`
+    /// (ADMIN_ROLE) rather than a single owner: the timelock grants ADMIN to
+    /// itself at `initialize`, so in production an upgrade is performed by
+    /// scheduling and executing an `upgrade` call through the timelock itself
+    /// (the EVM governance pattern), or by an external ADMIN member (e.g.
+    /// MCMS). The new Wasm must already be uploaded via
+    /// `env.deployer().upload_contract_wasm`. The contract address and all
+    /// instance/persistent storage are preserved across the swap, so the new
+    /// code MUST keep storage keys and value types compatible with the previous
+    /// version (same constraint as EVM storage-layout discipline across
+    /// `upgradeTo`).
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), TimelockError> {
+        require_initialized(&env)?;
+        require_admin(&env, &caller)?;
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        UpgradedEvent { new_wasm_hash }.publish(&env);
         Ok(())
     }
 

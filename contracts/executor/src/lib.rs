@@ -3,11 +3,13 @@
 mod events;
 pub mod types;
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::{finality_codec, validation::Validatable};
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, token, Address, BytesN, Env, Map, Symbol, Vec,
+};
 use types::{DynamicConfig, RemoteChainConfig, RemoteChainConfigArgs};
 
 // ============================================================
@@ -57,6 +59,9 @@ impl Ownable for ExecutorContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for ExecutorContract {}
 
 #[contractimpl]
 impl ExecutorContract {

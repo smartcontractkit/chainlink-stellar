@@ -27,8 +27,9 @@ use common_message::{
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env,
-    IntoVal, InvokeError, Symbol, Vec,
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Events as _, vec,
+    xdr::ToXdr, Address, Bytes, BytesN, Env, IntoVal, InvokeError, Map, Symbol, TryFromVal,
+    TryIntoVal, Val, Vec,
 };
 
 use crate::types::{DataKey, MessageExecutionState, SourceChainConfigArgs, StaticConfig};
@@ -2048,4 +2049,88 @@ fn test_real_verifier_tampered_signature_is_rejected() {
         "receiver must NOT be reached when the attestation fails verification (state={:?})",
         state,
     );
+}
+
+// ============================================================
+// Upgradeability (shared `common_authorization::Upgradeable` trait)
+// ============================================================
+
+// Real, committed Wasm fixture (checked into data-feeds-common) that exposes a
+// `peek() -> u32` reader. OffRamp has no `peek`, so a successful `peek` call at
+// the OffRamp address after `upgrade` proves the executable was swapped in
+// place. Reused instead of adding a new fixture crate (no `stellar` CLI here).
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
+/// keyed by field name.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from contract");
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    // `mock_all_auths` (set in `setup_env`) authorizes the owner, so
+    // `require_owner` -> `owner.require_auth()` passes.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    // The `Upgraded` event was published carrying the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // OffRamp has no `peek`; the fixture does. A successful `peek` at the
+    // OffRamp address proves the executable was swapped in place (same address,
+    // new code). Instance storage is preserved by `update_current_contract_wasm`
+    // (host-level guarantee), and OffRamp never wrote the fixture's "slot" key,
+    // so peek reads back 0.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the offramp address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
+    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
+    // against double-init), so the contract is set up with the owner stored.
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    client.initialize(&owner, &default_static_config(&env));
+
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    // Caller is not the owner and the owner does not authorize -> reject.
+    // `require_owner` fails at `owner.require_auth()` before the executable is
+    // touched, so the hash need not correspond to a real upgrade target here.
+    client.upgrade(&hash);
 }

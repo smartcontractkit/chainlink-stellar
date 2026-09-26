@@ -31,6 +31,20 @@ func (c *McmsClient) ContractID() string {
 	return c.contractID
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *McmsClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(newWasmHash),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+	_ = result
+	return nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *McmsClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
