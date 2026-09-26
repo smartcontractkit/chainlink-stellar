@@ -45,25 +45,3 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: deployment/data-feeds/artifacts/data_feeds_proxy.wasm
-
-      # StellarExpert queues validation from this notification; the attestation
-      # above is the actual proof, so a failure here must not fail the job.
-      - name: Notify StellarExpert
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          for wasm in deployment/data-feeds/artifacts/*.wasm; do
-            jq -n \
-              --arg repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-              --arg commitHash "$GITHUB_SHA" \
-              --arg jobId "$GITHUB_JOB" \
-              --arg runId "$GITHUB_RUN_ID" \
-              --arg contractHash "$(sha256sum "$wasm" | cut -d' ' -f1)" \
-              --arg packageName "$(basename "$wasm" .wasm | tr _ -)" \
-              --arg relativePath "contracts/data-feeds" \
-              '$ARGS.named' |
-            curl --fail-with-body --silent --show-error --max-time 15 \
-              -X POST -H 'Content-Type: application/json' --data-binary @- \
-              https://api.stellar.expert/explorer/public/contract-validation/match
-            echo
-          done
