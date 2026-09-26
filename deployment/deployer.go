@@ -868,6 +868,15 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 		return fmt.Errorf("failed to decode restore preamble soroban data: %w", err)
 	}
 
+	bump := feeBumpExtra(preamble.MinResourceFee, d.feeBumpFactor)
+	if bump < minFeeBuffer {
+		bump = minFeeBuffer
+	}
+	// Same rule as assembleTransaction: the resource fee (with its bump) is paid
+	// once, via SorobanData.ResourceFee; BaseFee stays at the inclusion minimum.
+	// Putting MinResourceFee+bump in BaseFee as well double-counts it.
+	sorobanData.ResourceFee += xdr.Int64(bump)
+
 	restoreOp := &txnbuild.RestoreFootprint{
 		SourceAccount: d.signer.Address(),
 		Ext: xdr.TransactionExt{
@@ -876,18 +885,12 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 		},
 	}
 
-	bump := feeBumpExtra(preamble.MinResourceFee, d.feeBumpFactor)
-	if bump < minFeeBuffer {
-		bump = minFeeBuffer
-	}
-	baseFee := preamble.MinResourceFee + bump
-
 	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
 			SourceAccount:        sourceAccount,
 			IncrementSequenceNum: true,
 			Operations:           []txnbuild.Operation{restoreOp},
-			BaseFee:              baseFee,
+			BaseFee:              txnbuild.MinBaseFee,
 			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, restoreDeadline.Unix())},
 		},
 	)
@@ -976,19 +979,21 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 	}
 
 	if sim.MinResourceFee > 0 {
-		newFee := sim.MinResourceFee + bump
-
 		sourceAccount, err := d.getSourceAccount(ctx)
 		if err != nil {
 			return nil, err
 		}
 
+		// BaseFee is the per-operation inclusion fee only. The Soroban resource
+		// fee (already bumped above, in SorobanData.ResourceFee) is added on top
+		// by txnbuild; passing MinResourceFee+bump here as well double-counts it
+		// and can overflow the uint32 max fee for large simulations.
 		return txnbuild.NewTransaction(
 			txnbuild.TransactionParams{
 				SourceAccount:        sourceAccount,
 				IncrementSequenceNum: true,
 				Operations:           ops,
-				BaseFee:              newFee,
+				BaseFee:              txnbuild.MinBaseFee,
 				Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, deadline.Unix())},
 			},
 		)
