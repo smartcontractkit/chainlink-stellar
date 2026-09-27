@@ -36,7 +36,12 @@ jobs:
         uses: ./.github/actions/setup-stellar-cli
 
       - name: Build contracts
-        run: make build
+        # `make build` produces the standard release WASMs every integration
+        # test deploys from; `build-onramp-e2e-upgrade` builds the OnRamp
+        # e2e-upgrade-marker feature Wasm into an isolated target/e2e-upgrade
+        # dir, which TestOnRampUpgradeSwapsExecutableObservedViaSend upgrades
+        # to (see tests/integration/onramp_upgrade_test.go). Both are required.
+        run: make build build-onramp-e2e-upgrade
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
