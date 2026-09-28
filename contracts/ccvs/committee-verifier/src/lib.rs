@@ -8,7 +8,10 @@ use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::{
-    curse_checkable::CurseCheckable, finality_codec, validation::Validatable, verifier_versioning,
+    curse_checkable::CurseCheckable,
+    finality_codec,
+    validation::{is_zero_address, Validatable},
+    verifier_versioning,
 };
 use common_signature::config::{
     SignatureConfig, SignatureConfigManager, SignatureVerificationConfig,
@@ -601,7 +604,7 @@ impl CommitteeVerifierContract {
         let fee_agg = dynamic
             .fee_aggregator
             .ok_or(CCIPError::ZeroFeeAggregatorNotAllowed)?;
-        if is_zero_fee_recipient(&env, &fee_agg) {
+        if is_zero_address(&env, &fee_agg) {
             return Err(CCIPError::ZeroFeeAggregatorNotAllowed);
         }
 
@@ -632,13 +635,6 @@ fn extract_signature_len(verifier_results: &Bytes) -> Result<u32, CCIPError> {
         .get(VERIFIER_VERSION_BYTES + 1)
         .ok_or(CCIPError::InvalidVerifierResults)?;
     Ok(((b0 as u32) << 8) | (b1 as u32))
-}
-
-fn is_zero_fee_recipient(env: &Env, addr: &Address) -> bool {
-    addr == &Address::from_str(
-        env,
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    )
 }
 
 /// Reads the verifier-global allowed finality config from instance storage,

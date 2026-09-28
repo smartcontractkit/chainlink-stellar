@@ -62,7 +62,7 @@ pub use types::{CCVConfig, CCVConfigArg};
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_helpers::validation::Validatable;
+use common_helpers::validation::{is_zero_address, Validatable};
 use common_interfaces::policy_engine::{Payload, PolicyData, PolicyEngineClient};
 use common_interfaces::pool_hooks::{PoolHooksPayloadData, PostflightPayload, PreflightPayload};
 use common_interfaces::token_pool::{
@@ -148,7 +148,7 @@ impl AdvancedPoolHooksContract {
         if allowlist_enabled {
             for i in 0..allowlist.len() {
                 if let Some(sender) = allowlist.get(i) {
-                    if is_zero_account(&env, &sender) {
+                    if is_zero_address(&env, &sender) {
                         continue;
                     }
                     if !contains(&stored, &sender) {
@@ -181,7 +181,7 @@ impl AdvancedPoolHooksContract {
         let mut auth: Vec<Address> = Vec::new(&env);
         for i in 0..authorized_callers.len() {
             if let Some(caller) = authorized_callers.get(i) {
-                if is_zero_account(&env, &caller) {
+                if is_zero_address(&env, &caller) {
                     return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &caller) {
@@ -395,7 +395,7 @@ impl AdvancedPoolHooksContract {
 
         for i in 0..adds.len() {
             if let Some(to_add) = adds.get(i) {
-                if is_zero_account(&env, &to_add) {
+                if is_zero_address(&env, &to_add) {
                     continue;
                 }
                 if !contains(&allow, &to_add) {
@@ -470,7 +470,7 @@ impl AdvancedPoolHooksContract {
 
         for i in 0..adds.len() {
             if let Some(to_add) = adds.get(i) {
-                if is_zero_account(&env, &to_add) {
+                if is_zero_address(&env, &to_add) {
                     return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &to_add) {
@@ -770,15 +770,6 @@ impl AdvancedPoolHooksContract {
         client.run(&payload);
         Ok(())
     }
-}
-
-/// True iff `addr` is the zero Stellar account (EVM `address(0)` parity for
-/// allowlist-entry rejection). Mirrors `executor::is_zero_fee_recipient`.
-fn is_zero_account(env: &Env, addr: &Address) -> bool {
-    addr == &Address::from_str(
-        env,
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    )
 }
 
 /// Linear membership test (Soroban `Vec` has no `contains`).

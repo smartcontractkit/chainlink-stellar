@@ -90,6 +90,18 @@ fn zero_addr(env: &Env) -> Address {
     )
 }
 
+/// The zero Stellar contract — contract hash `0^32`, strkey `C…`. EVM
+/// `address(0)` is type-agnostic, so the role-2 guards must reject a zero
+/// *contract* too, not only a zero account. This exercises the parity gap the
+/// shared `is_zero_address` helper closes (the old `is_zero_account` only
+/// matched the account strkey).
+fn zero_contract_addr(env: &Env) -> Address {
+    Address::from_str(
+        env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    )
+}
+
 /// Adds one authorized caller to `client` (owner-gated; auths mocked) and
 /// returns it, so preflight/postflight tests can pass it as the `caller` arg
 /// (EVM `_validateCaller` — only authorized pools may invoke the hooks).
@@ -619,6 +631,33 @@ fn test_apply_authorized_callers_updates_rejects_zero_add() {
     // zero add; Stellar matches.
     let (_env, client, _owner) = setup();
     let zero = zero_addr(&client.env);
+    client.apply_authorized_callers_updates(&Vec::new(&client.env), &vec![&client.env, zero]);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_initialize_rejects_zero_contract_authorized_caller() {
+    // EVM `address(0)` is type-agnostic — a zero is a zero whether the slot
+    // expects an EOA or a contract. The shared `is_zero_address` helper checks
+    // both strkey kinds, so a zero *contract* hash is rejected just like a zero
+    // account. This is the gap the old account-only `is_zero_account` left open.
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let real = Address::generate(&env);
+    let authorized = vec![&env, zero_contract_addr(&env), real.clone()];
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_apply_authorized_callers_updates_rejects_zero_contract_add() {
+    // Same type-agnostic parity as the initialize variant, via the update path.
+    let (_env, client, _owner) = setup();
+    let zero = zero_contract_addr(&client.env);
     client.apply_authorized_callers_updates(&Vec::new(&client.env), &vec![&client.env, zero]);
 }
 
