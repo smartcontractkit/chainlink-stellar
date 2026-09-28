@@ -228,6 +228,21 @@ func (c *AdvancedPoolHooksClient) AcceptOwnership(ctx context.Context) error {
 	return nil
 }
 
+// CheckAllowList calls the check_allow_list function on the contract.
+func (c *AdvancedPoolHooksClient) CheckAllowList(ctx context.Context, sender string) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(sender),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "check_allow_list", args)
+	if err != nil {
+		return fmt.Errorf("failed to call check_allow_list: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // PostflightCheck calls the postflight_check function on the contract.
 func (c *AdvancedPoolHooksClient) PostflightCheck(ctx context.Context, caller string, releaseOrMintIn ReleaseOrMintIn, localAmount *big.Int, requestedFinality uint32) error {
 	args := []xdr.ScVal{

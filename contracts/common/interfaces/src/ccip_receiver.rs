@@ -252,6 +252,7 @@ pub enum CCIPError {
     CCVNotAllowed = 805,
     PolicyEngineDetachReverted = 806,
     UnsupportedSelector = 807,
+    ZeroAddressNotAllowed = 808,
 }
 #[soroban_sdk::contractevent(topics = ["example_CcvCfg"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

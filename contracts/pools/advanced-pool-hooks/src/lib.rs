@@ -175,11 +175,14 @@ impl AdvancedPoolHooksContract {
 
         // Seed the authorized-callers set (EVM constructor →
         // `_applyAuthorizedCallerUpdates({added: authorizedCallers, removed: []})`).
+        // A zero-account entry reverts `ZeroAddressNotAllowed`, matching EVM's
+        // `_applyAuthorizedCallerUpdates` (unlike the allowlist seeding above,
+        // which skips zeros per `_applyAllowListUpdates`). Duplicates collapse.
         let mut auth: Vec<Address> = Vec::new(&env);
         for i in 0..authorized_callers.len() {
             if let Some(caller) = authorized_callers.get(i) {
                 if is_zero_account(&env, &caller) {
-                    continue;
+                    return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &caller) {
                     auth.push_back(caller.clone());
@@ -337,6 +340,15 @@ impl AdvancedPoolHooksContract {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Checks if `sender` is allowed to perform an operation (EVM `checkAllowList`).
+    /// A no-op when the allowlist is disabled; otherwise reverts `SenderNotAllowed`
+    /// iff `sender` is not in the stored allowlist. This is the same check
+    /// `preflight_check` applies to `lock_or_burn_in.original_sender`, exposed as a
+    /// public view so callers can pre-validate a sender without invoking preflight.
+    pub fn check_allow_list(env: Env, sender: Address) -> Result<(), CCIPError> {
+        Self::require_allowlisted(&env, &sender)
+    }
+
     /// Owner-only update of the allowlist contents (EVM `applyAllowListUpdates`).
     /// Reverts `FeatureNotEnabled` if the allowlist was disabled at `initialize`,
     /// matching EVM `AllowListNotEnabled`. Removals first, then validated adds
@@ -414,10 +426,12 @@ impl AdvancedPoolHooksContract {
 
     /// Owner-only batch update of the authorized-callers set (EVM
     /// `applyAuthorizedCallerUpdates`). Removals are applied first, then adds.
-    /// Zero-account adds are skipped and duplicate adds collapse (no-op), as the
-    /// stored set is membership-based; removals of absent callers are no-ops.
-    /// `AuthorizedCallerAdded`/`AuthorizedCallerRemoved` fire only for entries
-    /// actually added/removed.
+    /// A zero-account add reverts `ZeroAddressNotAllowed` (EVM
+    /// `_applyAuthorizedCallerUpdates` reverts `ZeroAddressNotAllowed` on a zero
+    /// add — unlike the allowlist path, which skips zeros). Duplicate adds
+    /// collapse (no-op), as the stored set is membership-based; removals of
+    /// absent callers are no-ops. `AuthorizedCallerAdded`/`AuthorizedCallerRemoved`
+    /// fire only for entries actually added/removed.
     pub fn apply_authorized_callers_updates(
         env: Env,
         removes: Vec<Address>,
@@ -457,7 +471,7 @@ impl AdvancedPoolHooksContract {
         for i in 0..adds.len() {
             if let Some(to_add) = adds.get(i) {
                 if is_zero_account(&env, &to_add) {
-                    continue;
+                    return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &to_add) {
                     auth.push_back(to_add.clone());
@@ -631,16 +645,7 @@ impl AdvancedPoolHooksContract {
         amount_post_fee: i128,
     ) -> Result<(), CCIPError> {
         Self::require_authorized_caller(&env, &caller)?;
-        if Self::get_allowlist_enabled(env.clone()) {
-            let allow: Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&ALLOWLIST)
-                .unwrap_or(Vec::new(&env));
-            if !contains(&allow, &lock_or_burn_in.original_sender) {
-                return Err(CCIPError::SenderNotAllowed);
-            }
-        }
+        Self::require_allowlisted(&env, &lock_or_burn_in.original_sender)?;
         Self::run_policy_engine(
             &env,
             &caller,
@@ -706,6 +711,24 @@ impl AdvancedPoolHooksContract {
             .unwrap_or(Vec::new(env));
         if !contains(&auth, caller) {
             return Err(CCIPError::CallerNotAuthorized);
+        }
+        Ok(())
+    }
+
+    /// EVM `checkAllowList` analogue. A no-op when the allowlist is disabled
+    /// (`i_allowlistEnabled == false`); otherwise reverts `SenderNotAllowed` iff
+    /// `sender` is absent from the stored allowlist. Shared by the public
+    /// `check_allow_list` view and `preflight_check`.
+    fn require_allowlisted(env: &Env, sender: &Address) -> Result<(), CCIPError> {
+        if Self::get_allowlist_enabled(env.clone()) {
+            let allow: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&ALLOWLIST)
+                .unwrap_or(Vec::new(env));
+            if !contains(&allow, sender) {
+                return Err(CCIPError::SenderNotAllowed);
+            }
         }
         Ok(())
     }

@@ -1274,6 +1274,7 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "common-pool",
+ "pools-advanced-pool-hooks",
  "pools-token-lock-box",
  "rmn_proxy",
  "rmn_remote",

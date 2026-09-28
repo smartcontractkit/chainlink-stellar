@@ -442,6 +442,30 @@ fn test_preflight_noop_when_allowlist_disabled() {
 }
 
 #[test]
+fn test_check_allow_list_noop_when_disabled() {
+    // EVM `checkAllowList` is a no-op when `i_allowlistEnabled == false`: any
+    // sender (even a stranger) passes.
+    let (env, client, _owner) = setup(); // allowlist off
+    let stranger = Address::generate(&env);
+    client.check_allow_list(&stranger);
+}
+
+#[test]
+fn test_check_allow_list_accepts_allowlisted_sender() {
+    let (_env, client, _owner, allowlist) = setup_with_allowlist(1);
+    let allowed = allowlist.get(0).unwrap();
+    client.check_allow_list(&allowed);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #49)")] // SenderNotAllowed
+fn test_check_allow_list_rejects_non_allowlisted_sender() {
+    let (env, client, _owner, _allowlist) = setup_with_allowlist(1);
+    let stranger = Address::generate(&env);
+    client.check_allow_list(&stranger);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #10)")] // FeatureNotEnabled (AllowListNotEnabled)
 fn test_apply_allowlist_updates_rejected_when_disabled() {
     let (env, client, _owner) = setup(); // allowlist disabled at init
@@ -552,21 +576,15 @@ fn test_apply_authorized_callers_updates_adds_and_removes() {
 }
 
 #[test]
-fn test_initialize_seeds_authorized_callers_with_dedup_and_zero_skip() {
+fn test_initialize_seeds_authorized_callers_with_dedup() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
     let real = Address::generate(&env);
     let pool = Address::generate(&env);
-    // [zero, real, real, pool] -> stored = [real, pool] (zero skipped, dup collapsed).
-    let authorized = vec![
-        &env,
-        zero_addr(&env),
-        real.clone(),
-        real.clone(),
-        pool.clone(),
-    ];
+    // [real, real, pool] -> stored = [real, pool] (dup collapsed; no zero entry).
+    let authorized = vec![&env, real.clone(), real.clone(), pool.clone()];
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
     client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
@@ -575,6 +593,33 @@ fn test_initialize_seeds_authorized_callers_with_dedup_and_zero_skip() {
     assert_eq!(stored.len(), 2);
     assert_eq!(stored.get(0).unwrap(), real);
     assert_eq!(stored.get(1).unwrap(), pool);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_initialize_rejects_zero_authorized_caller() {
+    // EVM constructor → `_applyAuthorizedCallerUpdates` reverts
+    // `ZeroAddressNotAllowed` on a zero add; Stellar matches (unlike the
+    // allowlist seeding, which skips zeros per `_applyAllowListUpdates`).
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let real = Address::generate(&env);
+    let authorized = vec![&env, zero_addr(&env), real.clone()];
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_apply_authorized_callers_updates_rejects_zero_add() {
+    // EVM `_applyAuthorizedCallerUpdates` reverts `ZeroAddressNotAllowed` on a
+    // zero add; Stellar matches.
+    let (_env, client, _owner) = setup();
+    let zero = zero_addr(&client.env);
+    client.apply_authorized_callers_updates(&Vec::new(&client.env), &vec![&client.env, zero]);
 }
 
 #[test]

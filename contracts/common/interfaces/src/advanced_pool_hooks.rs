@@ -28,6 +28,10 @@ pub trait AdvancedPoolHooksInterface {
         amount_post_fee: i128,
     ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn check_allow_list(
+        env: soroban_sdk::Env,
+        sender: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn postflight_check(
         env: soroban_sdk::Env,
         caller: soroban_sdk::Address,
@@ -264,6 +268,7 @@ pub enum CCIPError {
     CCVNotAllowed = 805,
     PolicyEngineDetachReverted = 806,
     UnsupportedSelector = 807,
+    ZeroAddressNotAllowed = 808,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

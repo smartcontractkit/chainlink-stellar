@@ -510,6 +510,7 @@ const (
 	CCIPErrorCCVNotAllowed                       = 805
 	CCIPErrorPolicyEngineDetachReverted          = 806
 	CCIPErrorUnsupportedSelector                 = 807
+	CCIPErrorZeroAddressNotAllowed               = 808
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
@@ -640,6 +641,7 @@ var CCIPErrorMessage = map[int]string{
 	805: "c c v not allowed",
 	806: "policy engine detach reverted",
 	807: "unsupported selector",
+	808: "zero address not allowed",
 }
 
 // ConfigSetEvent represents the ConfigSetEvent event.
