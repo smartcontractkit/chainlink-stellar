@@ -757,38 +757,45 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		return nil, fmt.Errorf("failed to assemble transaction: %w", err)
 	}
 
-	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, assembledTx)
+	return d.signSubmitAndWait(ctx, assembledTx, txnDeadline, "")
+}
+
+// signSubmitAndWait signs tx, submits it, and waits for confirmation until
+// deadline, which must match the transaction's MaxTime. label prefixes the
+// word "transaction" in errors (e.g. "restore ").
+func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transaction, deadline time.Time, label string) (*xdr.TransactionMeta, error) {
+	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, tx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign transaction: %w", err)
+		return nil, fmt.Errorf("failed to sign %stransaction: %w", label, err)
 	}
 
 	signedXDR, err := signedTx.Base64()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signed transaction XDR: %w", err)
+		return nil, fmt.Errorf("failed to get signed %stransaction XDR: %w", label, err)
 	}
 
 	submitResult, err := d.rpcClient.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
 		Transaction: signedXDR,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to submit transaction: %w", err)
+		return nil, fmt.Errorf("failed to submit %stransaction: %w", label, err)
 	}
 
 	switch submitResult.Status {
 	case "PENDING", "DUPLICATE":
 		// Transaction was accepted, continue to wait for confirmation
 	case "TRY_AGAIN_LATER":
-		return nil, fmt.Errorf("transaction submission failed: server overloaded, try again later")
+		return nil, fmt.Errorf("%stransaction submission failed: server overloaded, try again later", label)
 	case "ERROR":
 		if submitResult.ErrorResultXDR != "" {
-			return nil, fmt.Errorf("transaction rejected: %v (diagnostics: %v)", submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
+			return nil, fmt.Errorf("%stransaction rejected: %v (diagnostics: %v)", label, submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
 		}
-		return nil, fmt.Errorf("transaction rejected with status ERROR")
+		return nil, fmt.Errorf("%stransaction rejected with status ERROR", label)
 	default:
-		return nil, fmt.Errorf("unexpected transaction status: %s", submitResult.Status)
+		return nil, fmt.Errorf("unexpected %stransaction status: %s", label, submitResult.Status)
 	}
 
-	return d.waitForTransaction(ctx, submitResult.Hash, txnDeadline)
+	return d.waitForTransaction(ctx, submitResult.Hash, deadline)
 }
 
 // waitForTransaction polls until the transaction is confirmed or the deadline expires.
@@ -868,14 +875,10 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 		return fmt.Errorf("failed to decode restore preamble soroban data: %w", err)
 	}
 
-	bump := feeBumpExtra(preamble.MinResourceFee, d.feeBumpFactor)
-	if bump < minFeeBuffer {
-		bump = minFeeBuffer
-	}
 	// Same rule as assembleTransaction: the resource fee (with its bump) is paid
 	// once, via SorobanData.ResourceFee; BaseFee stays at the inclusion minimum.
 	// Putting MinResourceFee+bump in BaseFee as well double-counts it.
-	sorobanData.ResourceFee += xdr.Int64(bump)
+	sorobanData.ResourceFee += xdr.Int64(d.resourceFeeBump(preamble.MinResourceFee))
 
 	restoreOp := &txnbuild.RestoreFootprint{
 		SourceAccount: d.signer.Address(),
@@ -898,43 +901,20 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 		return fmt.Errorf("failed to build restore transaction: %w", err)
 	}
 
-	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, tx)
-	if err != nil {
-		return fmt.Errorf("failed to sign restore transaction: %w", err)
-	}
-
-	signedXDR, err := signedTx.Base64()
-	if err != nil {
-		return fmt.Errorf("failed to get signed restore transaction XDR: %w", err)
-	}
-
-	submitResult, err := d.rpcClient.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
-		Transaction: signedXDR,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to submit restore transaction: %w", err)
-	}
-
-	switch submitResult.Status {
-	case "PENDING", "DUPLICATE":
-		// Transaction was accepted
-	case "TRY_AGAIN_LATER":
-		return fmt.Errorf("restore transaction submission failed: server overloaded, try again later")
-	case "ERROR":
-		if submitResult.ErrorResultXDR != "" {
-			return fmt.Errorf("restore transaction rejected: %v (diagnostics: %v)", submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
-		}
-		return fmt.Errorf("restore transaction rejected with status ERROR")
-	default:
-		return fmt.Errorf("unexpected restore transaction status: %s", submitResult.Status)
-	}
-
-	_, err = d.waitForTransaction(ctx, submitResult.Hash, restoreDeadline)
-	if err != nil {
+	if _, err := d.signSubmitAndWait(ctx, tx, restoreDeadline, "restore "); err != nil {
 		return fmt.Errorf("restore transaction failed: %w", err)
 	}
-
 	return nil
+}
+
+// resourceFeeBump returns the stroops added on top of a simulated resource fee:
+// the feeBumpFactor percentage, floored at minFeeBuffer.
+func (d *Deployer) resourceFeeBump(minResourceFee int64) int64 {
+	bump := feeBumpExtra(minResourceFee, d.feeBumpFactor)
+	if bump < minFeeBuffer {
+		bump = minFeeBuffer
+	}
+	return bump
 }
 
 // assembleTransaction injects simulation results (Soroban data, auth, fee) into the
@@ -947,10 +927,7 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 
 	var bump int64
 	if sim.MinResourceFee > 0 {
-		bump = feeBumpExtra(sim.MinResourceFee, d.feeBumpFactor)
-		if bump < minFeeBuffer {
-			bump = minFeeBuffer
-		}
+		bump = d.resourceFeeBump(sim.MinResourceFee)
 	}
 
 	if sim.TransactionDataXDR != "" {
