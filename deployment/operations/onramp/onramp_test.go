@@ -100,3 +100,26 @@ func TestWithdrawFeeTokens_operation(t *testing.T) {
 		require.Equal(t, want, got)
 	}
 }
+
+func TestUpgrade_operation(t *testing.T) {
+	t.Parallel()
+	inv := &recordingInvoker{}
+	deps := stellardeps.StellarDeps{Invoker: inv}
+	cid := "CONRAMPUPGRADE00000000000000000000000000000000000"
+	var hash [32]byte
+	hash[0] = 0xAB
+
+	_, err := cldfops.ExecuteOperation(testBundle(t), onramp.Upgrade, deps, onramp.UpgradeInput{
+		ContractID:  cid,
+		NewWasmHash: hash,
+	})
+	require.NoError(t, err)
+
+	rec := inv.last()
+	require.Equal(t, cid, rec.contractID)
+	require.Equal(t, "upgrade", rec.fn)
+	require.Len(t, rec.args, 1)
+	got, err := scval.Bytes32FromScVal(rec.args[0])
+	require.NoError(t, err)
+	require.Equal(t, hash, got)
+}

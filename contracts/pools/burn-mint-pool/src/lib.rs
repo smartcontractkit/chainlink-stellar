@@ -2,9 +2,11 @@
 
 mod events;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_pool::{
@@ -34,6 +36,9 @@ impl Ownable for BurnMintTokenPoolContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for BurnMintTokenPoolContract {}
 
 #[contractimpl]
 impl BaseTokenPool for BurnMintTokenPoolContract {}

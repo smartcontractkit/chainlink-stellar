@@ -16,7 +16,7 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
 use common_helpers::{
@@ -28,7 +28,7 @@ use common_message::{
 };
 #[cfg(feature = "e2e-upgrade-marker")]
 use events::E2EUpgradeMarker;
-use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent, Upgraded};
+use events::{CCIPMessageSentEvent, ConfigSetEvent, DestChainConfigSetEvent};
 use types::{DestChainConfig, DestChainConfigArgs, DynamicConfig, Receipt, StaticConfig};
 
 // ============================================================
@@ -142,6 +142,14 @@ impl Ownable for OnRampContract {
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
 
+// In-place self-upgrade via the shared `common_authorization::Upgradeable`
+// trait (owner-gated, address + storage preserved, emits `Upgraded` with topic
+// `["Upgraded"]`). Replaces the former inline `upgrade`; behaviour is identical
+// except the event topic changed from `onramp_1_7_Upgraded` to the fleet-wide
+// `Upgraded` (see tests/integration/onramp_upgrade_test.go).
+#[contractimpl(contracttrait)]
+impl Upgradeable for OnRampContract {}
+
 #[contractimpl(contracttrait)]
 impl CurseCheckable for OnRampContract {
     const RMN_PROXY: Symbol = RMN_PROXY;
@@ -208,30 +216,6 @@ impl OnRampContract {
 
     pub fn type_and_version(_env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&_env, "OnRamp-dev 2.0.0")
-    }
-
-    /// Upgrades the OnRamp's executable to the Wasm identified by `new_wasm_hash`.
-    ///
-    /// Only the current owner may upgrade. `require_owner` enforces
-    /// `owner.require_auth()`, so the upgrade is authorized by whoever `owner()`
-    /// returns: an EOA when the owner is an externally owned account, or MCMS
-    /// (through the MCMS→timelock execute path) once ownership has been
-    /// transferred there. No other path can swap the code.
-    ///
-    /// The new Wasm must already be installed on-chain via
-    /// `env.deployer().upload_contract_wasm`. The contract address and all
-    /// instance/persistent storage are preserved across the swap, so the new
-    /// code MUST keep storage keys and value types compatible with the previous
-    /// version (same constraint as EVM storage-layout discipline across
-    /// `upgradeTo`). EVM parity: this is the Stellar analogue of the EVM proxy's
-    /// `upgradeTo` — same owner-gated, address-stable, state-preserving upgrade,
-    /// without the proxy indirection (Soroban contracts self-upgrade in place).
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), CCIPError> {
-        <Self as Ownable>::require_owner(&env)?;
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        Upgraded { new_wasm_hash }.publish(&env);
-        Ok(())
     }
 
     // ========================================

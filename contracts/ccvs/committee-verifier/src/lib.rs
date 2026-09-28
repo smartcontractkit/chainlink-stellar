@@ -4,7 +4,7 @@ mod events;
 pub mod types;
 
 use common_authorization::allowlist::{AllowListEntry, AllowListUpdate, AllowListable};
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::{
@@ -71,6 +71,9 @@ impl Ownable for CommitteeVerifierContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for CommitteeVerifierContract {}
 
 #[contractimpl]
 impl CurseCheckable for CommitteeVerifierContract {

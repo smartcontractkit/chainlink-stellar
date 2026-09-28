@@ -52,6 +52,21 @@ func (c *FeeQuoterClient) Owner(ctx context.Context) (*string, error) {
 	return v, nil
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *FeeQuoterClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(newWasmHash),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // IsOwner calls the is_owner function on the contract.
 func (c *FeeQuoterClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 	args := []xdr.ScVal{

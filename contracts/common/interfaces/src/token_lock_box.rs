@@ -7,6 +7,10 @@ pub trait TokenLockBoxInterface {
         caller: soroban_sdk::Address,
         amount: i128,
     ) -> Result<(), CCIPError>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn withdraw(
         env: soroban_sdk::Env,

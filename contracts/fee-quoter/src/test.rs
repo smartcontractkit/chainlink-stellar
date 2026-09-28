@@ -4,8 +4,9 @@ use super::*;
 use common_error::CCIPError;
 use common_message::{StellarToAnyMessage, TokenAmount};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, Bytes, Env, Vec,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger},
+    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::{
     DestChainConfig, DestChainConfigArgs, GasPriceUpdate, PriceUpdates, StaticConfig,
@@ -929,4 +930,93 @@ fn test_get_message_fee_excludes_token_transfer() {
         fee_with_token.fee_usd_cents, fee_no_token.fee_usd_cents,
         "get_message_fee USD-cents must not include the token-transfer fee"
     );
+}
+
+// ============================================================
+// Upgradeability (shared `common_authorization::Upgradeable` trait)
+// ============================================================
+
+// Real, committed Wasm fixture (checked into data-feeds-common) that exposes a
+// `peek() -> u32` reader. FeeQuoter has no `peek`, so a successful `peek` call
+// at the FeeQuoter address after `upgrade` proves the executable was swapped in
+// place. Reused instead of adding a new fixture crate (no `stellar` CLI here).
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
+/// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
+/// keyed by field name.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected Upgraded event with new_wasm_hash from contract");
+}
+
+#[test]
+fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // `mock_all_auths` (set in `setup_env`) authorizes the owner, so
+    // `require_owner` -> `owner.require_auth()` passes.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&hash);
+
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // FeeQuoter has no `peek`; the fixture does. A successful `peek` at the
+    // FeeQuoter address proves the executable was swapped in place.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the fee-quoter address after upgrade"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_upgrade_by_non_owner_rejected() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
+    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
+    // against double-init), so the contract is set up with the owner stored.
+    let owner = Address::generate(&env);
+    let link_token = Address::generate(&env);
+    let price_updater = Address::generate(&env);
+    let contract_id = env.register(FeeQuoterContract, ());
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater);
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    // Caller is not the owner and the owner does not authorize -> reject before
+    // the executable is touched.
+    client.upgrade(&hash);
 }

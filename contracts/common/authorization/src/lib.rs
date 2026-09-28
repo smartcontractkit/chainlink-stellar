@@ -27,9 +27,11 @@
 pub mod allowlist;
 pub mod events;
 pub mod ownable;
+pub mod upgradeable;
 
 pub use events::*;
 pub use ownable::{DefaultOwnable, Ownable};
+pub use upgradeable::{Upgradeable, Upgraded};
 
 use common_error::CCIPError;
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};

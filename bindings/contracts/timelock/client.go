@@ -47,6 +47,22 @@ func (c *TimelockClient) Cancel(ctx context.Context, caller string, id [32]byte)
 	return nil
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *TimelockClient) Upgrade(ctx context.Context, caller string, newWasmHash [32]byte) error {
+	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
+		scval.Bytes32ToScVal(newWasmHash),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // HasRole calls the has_role function on the contract.
 func (c *TimelockClient) HasRole(ctx context.Context, role string, account string) (bool, error) {
 	args := []xdr.ScVal{
@@ -526,6 +542,73 @@ func (c *TimelockClient) GetBlockedFunctionCount(ctx context.Context) (uint32, e
 		return 0, fmt.Errorf("expected u32 return type")
 	}
 	return uint32(v), nil
+}
+
+// WaitForUpgradedEvent waits for a UpgradedEvent event.
+func (c *TimelockClient) WaitForUpgradedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*UpgradedEvent) bool) (*UpgradedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{UpgradedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseUpgradedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseUpgradedEvent(e protocolrpc.EventInfo) (*UpgradedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &UpgradedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "new_wasm_hash":
+			v, err := scval.Bytes32FromScVal(entry.Val)
+			if err == nil {
+				result.NewWasmHash = v
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // WaitForCancelledEvent waits for a CancelledEvent event.

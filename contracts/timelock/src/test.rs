@@ -1,10 +1,10 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
-    Symbol, Val, Vec,
+    contract, contracterror, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Map,
+    Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
 use crate::{
@@ -406,4 +406,98 @@ fn aborted_call_is_distinct_and_rolls_back_done() {
         Err(Ok(TimelockError::CallAborted))
     ));
     assert!(!client.is_operation_done(&id));
+}
+
+// ===========================================================================
+// In-place upgradeability (admin-gated; timelock is role-based, not Ownable)
+// ===========================================================================
+//
+// Reuses the checked-in data-feeds fixture whose only entrypoint is
+// `peek() -> u32`. The timelock has no `peek`, so a successful `peek` call at
+// the timelock address after `upgrade` proves the executable was swapped in
+// place (address + storage preserved, only the Wasm backing replaced).
+//
+// The timelock grants ADMIN only to itself at `initialize`, so the admin caller
+// is the timelock's own address (`client.address`). In production an upgrade is
+// performed by scheduling+executing an `upgrade` call through the timelock
+// itself (the EVM governance pattern), or by an external ADMIN member (MCMS).
+const UPGRADE_TARGET_WASM: &[u8] =
+    include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `new_wasm_hash` field from the last `tl_Upgraded` event emitted
+/// by `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol,
+/// Val>` keyed by field name.
+fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(hval) = map.get(Symbol::new(env, "new_wasm_hash")) else {
+            continue;
+        };
+        if let Ok(hash) = BytesN::<32>::try_from_val(env, &hval) {
+            return hash;
+        }
+    }
+    panic!("expected tl_Upgraded event with new_wasm_hash from timelock");
+}
+
+#[test]
+fn test_upgrade_by_admin_swaps_executable_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let proposer = Address::generate(&env);
+    let canceller = Address::generate(&env);
+    let bypasser = Address::generate(&env);
+    let client = initialize(&env, 0, &proposer, &canceller, &bypasser);
+
+    // The timelock's own address is the sole ADMIN member.
+    assert!(client.has_role(&ADMIN_ROLE, &client.address));
+
+    // Upload the fixture Wasm and upgrade the timelock to it, invoked by the
+    // timelock's own (admin) address. `mock_all_auths` satisfies require_auth.
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    client.upgrade(&client.address, &hash);
+
+    // The `tl_Upgraded` event was published carrying the new Wasm hash.
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+
+    // The timelock has no `peek`; the fixture does. A successful `peek` at the
+    // timelock address proves the executable was swapped in place.
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(
+        peeked, 0,
+        "fixture peek must run at the timelock address after upgrade"
+    );
+}
+
+#[test]
+fn test_upgrade_by_non_admin_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let proposer = Address::generate(&env);
+    let canceller = Address::generate(&env);
+    let bypasser = Address::generate(&env);
+    let client = initialize(&env, 0, &proposer, &canceller, &bypasser);
+
+    // The proposer holds only PROPOSER_ROLE, not ADMIN_ROLE, so `require_admin`
+    // rejects before the executable is touched. `try_upgrade` recovers the
+    // contract error (matching the crate's existing try_-assert convention).
+    assert!(matches!(
+        client.try_upgrade(&proposer, &zero(&env)),
+        Err(Ok(TimelockError::NotAuthorized))
+    ));
 }

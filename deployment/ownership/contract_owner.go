@@ -6,10 +6,12 @@ import (
 
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 
+	aphbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/advanced_pool_hooks"
 	burnmintbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	cciprecvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	crebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/cre"
+	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	lrpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	mcmsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/mcms"
@@ -23,10 +25,12 @@ import (
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tlbbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_lock_box"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
+	aphops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/advanced_pool_hooks"
 	burnmintops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
 	cciprecvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	creforwarderops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/cre_forwarder"
+	executorops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
@@ -171,6 +175,18 @@ func ContractOwner(ctx context.Context, deps stellardeps.StellarDeps, ref datast
 		return optionalStellarOwner(o)
 	case cciprecvops.ContractType:
 		o, err := cciprecvbindings.NewExampleCcipReceiverClient(deps.Invoker, cid).Owner(ctx)
+		if err != nil {
+			return "", err
+		}
+		return optionalStellarOwner(o)
+	case executorops.ContractType:
+		o, err := executorbindings.NewExecutorClient(deps.Invoker, cid).Owner(ctx)
+		if err != nil {
+			return "", err
+		}
+		return optionalStellarOwner(o)
+	case aphops.ContractType:
+		o, err := aphbindings.NewAdvancedPoolHooksClient(deps.Invoker, cid).Owner(ctx)
 		if err != nil {
 			return "", err
 		}

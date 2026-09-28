@@ -67,6 +67,21 @@ func (c *McmsClient) Execute(ctx context.Context, op StellarOp, proof MerkleProo
 	return nil
 }
 
+// Upgrade calls the upgrade function on the contract.
+func (c *McmsClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
+	args := []xdr.ScVal{
+		scval.Bytes32ToScVal(newWasmHash),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
+	if err != nil {
+		return fmt.Errorf("failed to call upgrade: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // GetRoot calls the get_root function on the contract.
 func (c *McmsClient) GetRoot(ctx context.Context) ([32]byte, uint32, error) {
 	args := []xdr.ScVal{}

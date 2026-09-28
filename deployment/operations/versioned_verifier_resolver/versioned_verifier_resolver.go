@@ -132,3 +132,23 @@ var AcceptOwnership = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// UpgradeInput upgrades the Versioned Verifier Resolver contract in place to a new Wasm hash.
+type UpgradeInput struct {
+	ContractID  string   `json:"contract_id"`
+	NewWasmHash [32]byte `json:"new_wasm_hash"`
+}
+
+// Upgrade calls `upgrade` on Versioned Verifier Resolver (owner-gated in-place self-upgrade).
+var Upgrade = cldfops.NewOperation(
+	"versioned-verifier-resolver:upgrade",
+	stellarops.ContractDeploymentVersion,
+	"Upgrades the Versioned Verifier Resolver Soroban contract in place to a new WASM hash",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in UpgradeInput) (stellarops.Void, error) {
+		c := vvrbindings.NewVersionedVerifierResolverClient(d.Invoker, in.ContractID)
+		if err := c.Upgrade(b.GetContext(), in.NewWasmHash); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

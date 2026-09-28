@@ -2,6 +2,10 @@
 #[soroban_sdk::contractclient(name = "TokenAdminRegistryClient")]
 pub trait TokenAdminRegistryInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn get_pool(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,

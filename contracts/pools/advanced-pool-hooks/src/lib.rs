@@ -59,14 +59,14 @@ pub mod types;
 
 pub use types::{CCVConfig, CCVConfigArg};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::validation::Validatable;
 use common_interfaces::token_pool::{
     LockOrBurnIn, MessageDirection, PoolRequiredCCVs, ReleaseOrMintIn,
 };
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
 
 // ============================================================
 // Storage Keys
@@ -106,6 +106,9 @@ impl Ownable for AdvancedPoolHooksContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for AdvancedPoolHooksContract {}
 
 #[contractimpl]
 impl AdvancedPoolHooksContract {

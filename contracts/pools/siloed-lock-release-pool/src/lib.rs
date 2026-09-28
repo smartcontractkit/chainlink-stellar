@@ -12,9 +12,11 @@
 
 mod events;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_interfaces::token_lock_box::TokenLockBoxClient;
@@ -57,6 +59,9 @@ impl Ownable for SiloedLockReleaseTokenPoolContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for SiloedLockReleaseTokenPoolContract {}
 
 #[contractimpl]
 impl BaseTokenPool for SiloedLockReleaseTokenPoolContract {}

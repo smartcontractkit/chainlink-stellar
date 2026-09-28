@@ -515,6 +515,14 @@ func CurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, su
 		isCursed, err := adapter.IsSubjectCursedOnChain(*env, chainSelector, fastcurse.GenericSelectorToSubject(subjectChainSelector))
 		return err == nil && isCursed
 	}, 5*time.Second, 1*time.Second, "chain %d should be cursed on chain %d", subjectChainSelector, chainSelector)
+
+	// IsSubjectCursedOnChain only confirms the curse landed on the RMN contract.
+	// The committee verifier enforces curses on the verifier side — it polls the
+	// on-chain curse state every ~2s and DROPS messages on cursed lanes, so a
+	// message processed against a stale "cursed" cache never reaches the
+	// aggregator (surfacing as "message ID not found"). Wait for the verifier to
+	// poll and refresh its cached curse state before returning.
+	time.Sleep(5 * time.Second)
 }
 
 // UncurseChain uncurses a subject chain from the perspective of the given chain using fastcurse changeset.
@@ -571,6 +579,16 @@ func UncurseChain(t *testing.T, env *cldfdeployment.Environment, chainSelector, 
 		isCursed, err := adapter.IsSubjectCursedOnChain(*env, chainSelector, fastcurse.GenericSelectorToSubject(subjectChainSelector))
 		return err == nil && !isCursed
 	}, 5*time.Second, 1*time.Second, "chain %d should be uncursed on chain %d", subjectChainSelector, chainSelector)
+
+	// IsSubjectCursedOnChain only confirms the uncurse landed on the RMN contract.
+	// The committee verifier enforces curses on the verifier side — it polls the
+	// on-chain curse state every ~2s and DROPS messages on cursed lanes, so a
+	// message processed against a stale "cursed" cache never reaches the
+	// aggregator (surfacing as "message ID not found"). Stellar has finality
+	// checkers disabled, so the verifier picks up new messages with no finality
+	// delay, making this race especially tight — wait for the verifier to poll
+	// and refresh its cached curse state before the caller sends on the lane.
+	time.Sleep(5 * time.Second)
 }
 
 // deriveCurseAdapterVersion gets the appropriate curse adapter version for a chain.

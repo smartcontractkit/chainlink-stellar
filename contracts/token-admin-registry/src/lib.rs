@@ -3,9 +3,9 @@
 mod events;
 pub mod types;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Symbol, Vec};
 
-use common_authorization::Ownable;
+use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use events::{
@@ -41,6 +41,9 @@ impl Ownable for TokenAdminRegistryContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
+
+#[contractimpl(contracttrait)]
+impl Upgradeable for TokenAdminRegistryContract {}
 
 #[contractimpl]
 impl TokenAdminRegistryContract {

@@ -2,6 +2,10 @@
 #[soroban_sdk::contractclient(name = "ExampleCcipReceiverClient")]
 pub trait ExampleCcipReceiverInterface {
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn upgrade(
+        env: soroban_sdk::Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CCIPError>;
     fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn get_router(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;

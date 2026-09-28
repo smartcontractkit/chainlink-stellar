@@ -6,10 +6,12 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
+	aph "github.com/smartcontractkit/chainlink-stellar/deployment/operations/advanced_pool_hooks"
 	burnmint "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
 	cciprecv "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cv "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	creforwarder "github.com/smartcontractkit/chainlink-stellar/deployment/operations/cre_forwarder"
+	executor "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 	fq "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	lrp "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
@@ -183,5 +185,81 @@ func ExecuteApplyCurseAdminUpdates(
 		return err
 	default:
 		return fmt.Errorf("stellar apply curse admin updates: unsupported contract type %q for %s", ct, cid)
+	}
+}
+
+// ExecuteUpgrade runs the Soroban in-place `upgrade` op for the contract type in
+// ref, swapping the contract's Wasm to newWasmHash. Covers all 18 upgradeable
+// CCIP contracts (17 core + the ccip_receiver example). Unlike
+// ExecuteTransferOwnership this includes executor and advanced_pool_hooks
+// (both have Upgrade ops); cre_forwarder is excluded — it has no Upgrade binding.
+func ExecuteUpgrade(
+	b cldfops.Bundle,
+	deps stellardeps.StellarDeps,
+	ref datastore.AddressRef,
+	newWasmHash [32]byte,
+) error {
+	cid, err := NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return fmt.Errorf("stellar upgrade: %w", err)
+	}
+	ct := string(ref.Type)
+	switch ct {
+	case mcmsops.ContractType:
+		_, err := cldfops.ExecuteOperation(b, mcmsops.Upgrade, deps, mcmsops.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case offramp.ContractType:
+		_, err := cldfops.ExecuteOperation(b, offramp.Upgrade, deps, offramp.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case onramp.ContractType:
+		_, err := cldfops.ExecuteOperation(b, onramp.Upgrade, deps, onramp.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case router.ContractType:
+		_, err := cldfops.ExecuteOperation(b, router.Upgrade, deps, router.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case fq.ContractType:
+		_, err := cldfops.ExecuteOperation(b, fq.Upgrade, deps, fq.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case executor.ContractType:
+		_, err := cldfops.ExecuteOperation(b, executor.Upgrade, deps, executor.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case rmnremote.ContractType:
+		_, err := cldfops.ExecuteOperation(b, rmnremote.Upgrade, deps, rmnremote.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case rmnproxy.ContractType:
+		_, err := cldfops.ExecuteOperation(b, rmnproxy.Upgrade, deps, rmnproxy.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case rr.ContractType:
+		_, err := cldfops.ExecuteOperation(b, rr.Upgrade, deps, rr.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case tar.ContractType:
+		_, err := cldfops.ExecuteOperation(b, tar.Upgrade, deps, tar.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case cv.ContractType:
+		_, err := cldfops.ExecuteOperation(b, cv.Upgrade, deps, cv.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case vvr.ContractType:
+		_, err := cldfops.ExecuteOperation(b, vvr.Upgrade, deps, vvr.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case lrp.ContractType:
+		_, err := cldfops.ExecuteOperation(b, lrp.Upgrade, deps, lrp.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case slrp.ContractType:
+		_, err := cldfops.ExecuteOperation(b, slrp.Upgrade, deps, slrp.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case burnmint.ContractType:
+		_, err := cldfops.ExecuteOperation(b, burnmint.Upgrade, deps, burnmint.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case tlb.ContractType:
+		_, err := cldfops.ExecuteOperation(b, tlb.Upgrade, deps, tlb.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case aph.ContractType:
+		_, err := cldfops.ExecuteOperation(b, aph.Upgrade, deps, aph.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	case cciprecv.ContractType:
+		_, err := cldfops.ExecuteOperation(b, cciprecv.Upgrade, deps, cciprecv.UpgradeInput{ContractID: cid, NewWasmHash: newWasmHash})
+		return err
+	default:
+		return fmt.Errorf("stellar upgrade: unsupported contract type %q for %s", ct, cid)
 	}
 }

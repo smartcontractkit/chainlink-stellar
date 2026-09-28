@@ -200,6 +200,18 @@ var TimelockErrorMessage = map[int]string{
 	56: "unsupported self call",
 }
 
+// UpgradedEvent represents the UpgradedEvent event.
+// Topics: [tl_Upgraded]
+type UpgradedEvent struct {
+	NewWasmHash [32]byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// UpgradedEventTopic is the event topic identifier.
+const UpgradedEventTopic = "tl_Upgraded"
+
 // CancelledEvent represents the CancelledEvent event.
 // Topics: [tl_Cancelled]
 type CancelledEvent struct {
