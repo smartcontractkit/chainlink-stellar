@@ -3190,6 +3190,7 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
         &Vec::new(env),
         &0i128,
         &vec![env, lane.pool_id.clone()],
+        &None,
     );
 
     // Wire the issuer-owned hooks to their token pool (pool-owner-gated; auth is

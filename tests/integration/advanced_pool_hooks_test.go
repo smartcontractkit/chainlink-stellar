@@ -78,7 +78,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 	t.Run("deploy, initialize, and verify readers", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "readers")
 		// No allowlist, no threshold.
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil, nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -110,7 +110,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 
 	t.Run("apply ccv config and read back through get_required_ccvs", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "ccv-config")
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(0), nil, nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -161,7 +161,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 	t.Run("threshold amount appends additional ccvs at or above threshold", func(t *testing.T) {
 		client, _ := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "threshold")
 		// threshold_amount = 1000 configured up front.
-		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(1000), nil); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, nil, big.NewInt(1000), nil, nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -205,7 +205,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		// calls below pass the EVM `_validateCaller` analogue (in production the
 		// authorized caller would be the wired pool; here we exercise preflight
 		// directly, so the tx invoker is the caller).
-		if err := client.Initialize(ctx, deployerAddr, []string{allowed}, big.NewInt(0), []string{deployerAddr}); err != nil {
+		if err := client.Initialize(ctx, deployerAddr, []string{allowed}, big.NewInt(0), []string{deployerAddr}, nil); err != nil {
 			t.Fatalf("Initialize: %v", err)
 		}
 
@@ -268,7 +268,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 
 		hooksClient, hooksID := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "wired")
 		// Authorize the wired pool as a hook caller (EVM `_validateCaller` parity).
-		if err := hooksClient.Initialize(ctx, deployerAddr, nil, big.NewInt(0), []string{poolID}); err != nil {
+		if err := hooksClient.Initialize(ctx, deployerAddr, nil, big.NewInt(0), []string{poolID}, nil); err != nil {
 			t.Fatalf("Initialize hooks: %v", err)
 		}
 		if err := pool.SetAdvancedPoolHooks(ctx, hooksID); err != nil {

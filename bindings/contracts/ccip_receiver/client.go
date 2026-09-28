@@ -242,6 +242,24 @@ func (c *ExampleCcipReceiverClient) TypeAndVersion(ctx context.Context) (string,
 	return scval.StringFromScVal(*result)
 }
 
+// ExtendConfigTtl calls the extend_config_ttl function on the contract.
+func (c *ExampleCcipReceiverClient) ExtendConfigTtl(ctx context.Context, remoteChainSelectors []uint64, ccvSourceChainSelectors []uint64, thresholdLedgers uint32, extendToLedgers uint32) error {
+	args := []xdr.ScVal{
+		scval.Uint64SliceToScVal(remoteChainSelectors),
+		scval.Uint64SliceToScVal(ccvSourceChainSelectors),
+		scval.Uint32ToScVal(thresholdLedgers),
+		scval.Uint32ToScVal(extendToLedgers),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "extend_config_ttl", args)
+	if err != nil {
+		return fmt.Errorf("failed to call extend_config_ttl: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // GetPendingOwner calls the get_pending_owner function on the contract.
 func (c *ExampleCcipReceiverClient) GetPendingOwner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}

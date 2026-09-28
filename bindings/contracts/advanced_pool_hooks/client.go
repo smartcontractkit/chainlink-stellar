@@ -105,12 +105,13 @@ func (c *AdvancedPoolHooksClient) InitOwner(ctx context.Context, owner string) e
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *AdvancedPoolHooksClient) Initialize(ctx context.Context, owner string, allowlist []string, thresholdAmount *big.Int, authorizedCallers []string) error {
+func (c *AdvancedPoolHooksClient) Initialize(ctx context.Context, owner string, allowlist []string, thresholdAmount *big.Int, authorizedCallers []string, policyEngine *string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressSliceToScVal(allowlist),
 		scval.I128ToScVal(thresholdAmount),
 		scval.AddressSliceToScVal(authorizedCallers),
+		scval.OptionalAddressToScVal(policyEngine),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -196,13 +197,13 @@ func (c *AdvancedPoolHooksClient) GetCcvConfig(ctx context.Context, remoteChainS
 }
 
 // PreflightCheck calls the preflight_check function on the contract.
-func (c *AdvancedPoolHooksClient) PreflightCheck(ctx context.Context, caller string, lockOrBurnIn LockOrBurnIn, requestedFinality uint32, tokenArgs []byte, amount *big.Int) error {
+func (c *AdvancedPoolHooksClient) PreflightCheck(ctx context.Context, caller string, lockOrBurnIn LockOrBurnIn, requestedFinality uint32, tokenArgs []byte, amountPostFee *big.Int) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.MustToScVal(lockOrBurnIn.ToScVal()),
 		scval.Uint32ToScVal(requestedFinality),
 		scval.BytesToScVal(tokenArgs),
-		scval.I128ToScVal(amount),
+		scval.I128ToScVal(amountPostFee),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "preflight_check", args)
@@ -281,6 +282,26 @@ func (c *AdvancedPoolHooksClient) GetPendingOwner(ctx context.Context) (*string,
 	return v, nil
 }
 
+// GetPolicyEngine calls the get_policy_engine function on the contract.
+func (c *AdvancedPoolHooksClient) GetPolicyEngine(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_policy_engine", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_policy_engine: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_policy_engine")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
 // GetRequiredCcvs calls the get_required_ccvs function on the contract.
 func (c *AdvancedPoolHooksClient) GetRequiredCcvs(ctx context.Context, localToken string, remoteChainSelector uint64, amount *big.Int, requestedFinality uint32, extraData []byte, direction MessageDirection) (*PoolRequiredCCVs, error) {
 	args := []xdr.ScVal{
@@ -302,6 +323,21 @@ func (c *AdvancedPoolHooksClient) GetRequiredCcvs(ctx context.Context, localToke
 	}
 
 	return PoolRequiredCCVsFromScVal(*result)
+}
+
+// SetPolicyEngine calls the set_policy_engine function on the contract.
+func (c *AdvancedPoolHooksClient) SetPolicyEngine(ctx context.Context, newPolicyEngine *string) error {
+	args := []xdr.ScVal{
+		scval.OptionalAddressToScVal(newPolicyEngine),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "set_policy_engine", args)
+	if err != nil {
+		return fmt.Errorf("failed to call set_policy_engine: %w", err)
+	}
+
+	_ = result // void return
+	return nil
 }
 
 // TransferOwnership calls the transfer_ownership function on the contract.
@@ -412,6 +448,21 @@ func (c *AdvancedPoolHooksClient) ApplyAllowlistUpdates(ctx context.Context, rem
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "apply_allowlist_updates", args)
 	if err != nil {
 		return fmt.Errorf("failed to call apply_allowlist_updates: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
+// ForceSetPolicyEngine calls the force_set_policy_engine function on the contract.
+func (c *AdvancedPoolHooksClient) ForceSetPolicyEngine(ctx context.Context, newPolicyEngine *string) error {
+	args := []xdr.ScVal{
+		scval.OptionalAddressToScVal(newPolicyEngine),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "force_set_policy_engine", args)
+	if err != nil {
+		return fmt.Errorf("failed to call force_set_policy_engine: %w", err)
 	}
 
 	_ = result // void return
@@ -1116,6 +1167,140 @@ func ParseThresholdAmountSetEvent(e protocolrpc.EventInfo) (*ThresholdAmountSetE
 			v, err := scval.I128FromScVal(entry.Val)
 			if err == nil {
 				result.ThresholdAmount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForPolicyEngineAttachedEvent waits for a PolicyEngineAttachedEvent event.
+func (c *AdvancedPoolHooksClient) WaitForPolicyEngineAttachedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*PolicyEngineAttachedEvent) bool) (*PolicyEngineAttachedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{PolicyEngineAttachedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParsePolicyEngineAttachedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParsePolicyEngineAttachedEvent(e protocolrpc.EventInfo) (*PolicyEngineAttachedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &PolicyEngineAttachedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "policy_engine":
+			v, err := scval.OptionalAddressFromScVal(entry.Val)
+			if err == nil {
+				result.PolicyEngine = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForPolicyEngineDetachFailedEvent waits for a PolicyEngineDetachFailedEvent event.
+func (c *AdvancedPoolHooksClient) WaitForPolicyEngineDetachFailedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*PolicyEngineDetachFailedEvent) bool) (*PolicyEngineDetachFailedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{PolicyEngineDetachFailedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParsePolicyEngineDetachFailedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParsePolicyEngineDetachFailedEvent(e protocolrpc.EventInfo) (*PolicyEngineDetachFailedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &PolicyEngineDetachFailedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "policy_engine":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.PolicyEngine = v
 			}
 		}
 	}

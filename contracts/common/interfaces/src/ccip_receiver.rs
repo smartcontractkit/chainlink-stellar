@@ -23,6 +23,13 @@ pub trait ExampleCcipReceiverInterface {
     fn last_message_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
+    fn extend_config_ttl(
+        env: soroban_sdk::Env,
+        remote_chain_selectors: soroban_sdk::Vec<u64>,
+        ccv_source_chain_selectors: soroban_sdk::Vec<u64>,
+        threshold_ledgers: u32,
+        extend_to_ledgers: u32,
+    ) -> Result<(), CCIPError>;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn transfer_ownership(
         env: soroban_sdk::Env,
@@ -243,6 +250,8 @@ pub enum CCIPError {
     ZeroFeeAggregatorNotAllowed = 803,
     ExceedsMaxCCVs = 804,
     CCVNotAllowed = 805,
+    PolicyEngineDetachReverted = 806,
+    UnsupportedSelector = 807,
 }
 #[soroban_sdk::contractevent(topics = ["example_CcvCfg"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

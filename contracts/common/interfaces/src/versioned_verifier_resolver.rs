@@ -206,6 +206,8 @@ pub enum CCIPError {
     ZeroFeeAggregatorNotAllowed = 803,
     ExceedsMaxCCVs = 804,
     CCVNotAllowed = 805,
+    PolicyEngineDetachReverted = 806,
+    UnsupportedSelector = 807,
 }
 #[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

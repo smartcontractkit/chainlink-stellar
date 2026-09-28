@@ -1222,6 +1222,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pools-advanced-pool-hooks-extractor"
+version = "0.0.0"
+dependencies = [
+ "common-error",
+ "common-interfaces",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "pools-burn-mint-pool"
 version = "0.0.0"
 dependencies = [

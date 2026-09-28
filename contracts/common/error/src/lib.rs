@@ -233,4 +233,10 @@ pub enum CCIPError {
     /// A CCV supplied to the executor's fee quote is not on its allowlist while
     /// the allowlist is enabled (EVM `Executor.CCVNotAllowed`).
     CCVNotAllowed = 805,
+    /// Detaching the previous policy engine reverted and the caller did not opt
+    /// into tolerating the failure (EVM `AdvancedPoolHooks.PolicyEngineDetachReverted`).
+    PolicyEngineDetachReverted = 806,
+    /// The policy engine has no extractor registered for `payload.selector`, or the
+    /// routed extractor does not handle it (EVM `IPolicyEngine.UnsupportedSelector`).
+    UnsupportedSelector = 807,
 }

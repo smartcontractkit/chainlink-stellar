@@ -569,6 +569,8 @@ const (
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
 	CCIPErrorExceedsMaxCCVs                      = 804
 	CCIPErrorCCVNotAllowed                       = 805
+	CCIPErrorPolicyEngineDetachReverted          = 806
+	CCIPErrorUnsupportedSelector                 = 807
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
@@ -697,6 +699,8 @@ var CCIPErrorMessage = map[int]string{
 	803: "zero fee aggregator not allowed",
 	804: "exceeds max c c vs",
 	805: "c c v not allowed",
+	806: "policy engine detach reverted",
+	807: "unsupported selector",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
@@ -812,6 +816,30 @@ type ThresholdAmountSetEvent struct {
 
 // ThresholdAmountSetEventTopic is the event topic identifier.
 const ThresholdAmountSetEventTopic = "aph_ThresholdAmountSet"
+
+// PolicyEngineAttachedEvent represents the PolicyEngineAttachedEvent event.
+// Topics: [aph_PolicyEngineAttached]
+type PolicyEngineAttachedEvent struct {
+	PolicyEngine *string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// PolicyEngineAttachedEventTopic is the event topic identifier.
+const PolicyEngineAttachedEventTopic = "aph_PolicyEngineAttached"
+
+// PolicyEngineDetachFailedEvent represents the PolicyEngineDetachFailedEvent event.
+// Topics: [aph_PolicyEngineDetachFailed]
+type PolicyEngineDetachFailedEvent struct {
+	PolicyEngine string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// PolicyEngineDetachFailedEventTopic is the event topic identifier.
+const PolicyEngineDetachFailedEventTopic = "aph_PolicyEngineDetachFailed"
 
 // MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
