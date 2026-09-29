@@ -1,20 +1,25 @@
 package sequences
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
@@ -31,7 +36,6 @@ import (
 
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
-	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
@@ -99,10 +103,34 @@ type fakeCCIPDevenvHost struct {
 
 var _ stellarccip.CCIPDevenvHost = (*fakeCCIPDevenvHost)(nil)
 
-func newFakeCCIPDevenvHost() *fakeCCIPDevenvHost {
+func newFakeCCIPDevenvHost(t *testing.T) *fakeCCIPDevenvHost {
+	t.Helper()
 	log := zerolog.Nop()
 	kp := characterizationKeypair()
-	dep := stellardeployment.NewDeployer(nil, characterizationPassphrase, kp)
+	// The orchestrator reads skip-if-exists state through h.Deployer(), so the
+	// host deployer needs a live-shaped RPC: an httptest server whose ledger
+	// always answers "entry not found" (every component deploys) and whose other
+	// methods are never reached. The response must echo the request id — jrpc2
+	// matches replies by id.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			ID json.RawMessage `json:"id"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  map[string]any{"entries": []any{}, "latestLedger": 1},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	dep := stellardeployment.NewDeployer(rpcclient.NewClient(srv.URL, srv.Client()), characterizationPassphrase, kp)
 	return &fakeCCIPDevenvHost{log: &log, dep: dep, kp: kp, netPass: characterizationPassphrase}
 }
 
@@ -201,13 +229,10 @@ func buildTrace(t *testing.T, reports []cldf_ops.Report[any, any], root string, 
 	trace := goldenTrace{Ops: make([]opTraceEntry, 0, len(reports))}
 	for _, r := range reports {
 		require.Nil(t, r.Err, "op %s reported an error", r.Def.ID)
-		in := r.Input
-		if di, ok := in.(stellarops.DeployInput); ok {
-			di.WasmPath = "$CHAINLINK_STELLAR_ROOT" + strings.TrimPrefix(di.WasmPath, root)
-			in = di
-		}
-		inputJSON, err := json.Marshal(in)
+		inputJSON, err := json.Marshal(r.Input)
 		require.NoError(t, err)
+		// Fold the temp root out of any wasm path, in op and sequence inputs alike.
+		inputJSON = bytes.ReplaceAll(inputJSON, []byte(root), []byte("$CHAINLINK_STELLAR_ROOT"))
 		trace.Ops = append(trace.Ops, opTraceEntry{ID: r.Def.ID, Input: inputJSON})
 	}
 	sorted := make([]datastore.AddressRef, len(refs))
@@ -247,12 +272,14 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 		reporter,
 	)
 
-	inv := operationstest.NewRecordingInvoker()
+	// owner() reads in the skip layer simulate through the invoker; void means
+	// uninitialized, so every component initializes exactly once.
+	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
 	deps := stellardeps.StellarDeps{
 		Deploy:  characterizationDeployer{},
 		Invoker: inv,
 	}
-	host := newFakeCCIPDevenvHost()
+	host := newFakeCCIPDevenvHost(t)
 
 	out, err := RunStellarCCIPFullDeploy(b.GetContext(), b, deps, host, nil, DeployStellarCCIPInnerInput{
 		ChainSelector: characterizationSelector,
@@ -264,7 +291,12 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 	require.NoError(t, err)
 	// 36 op call sites for this input: 24 deploy/init + 12 config, where
 	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
-	require.Len(t, reports, 36)
+	// 36 op call sites for this input: 24 deploy/init + 12 config, where
+	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
+	// The seven tier-0/1 components (RMN Remote, RMN Proxy, FeeQuoter, TAR, VVR,
+	// Executor, RampRegistry) run through their component sequences, so their
+	// sequence reports join the trace after their child op reports.
+	require.Len(t, reports, 43)
 
 	trace := buildTrace(t, reports, root, out.Addresses)
 	got, err := json.MarshalIndent(trace, "", "  ")
