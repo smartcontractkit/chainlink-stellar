@@ -371,13 +371,22 @@ func TestTokenPool(t *testing.T) {
 		})
 	})
 
-	// Single deployFullStack(true) for inbound: subtests share stack + SAC + pool; distinct SequenceNumber per Execute.
+	// Single deployFullStack(true) for inbound: subtests share stack + LINK + pool; distinct SequenceNumber per Execute.
 	t.Run("inbound full stack (shared)", func(t *testing.T) {
 		const localChain = uint64(11111)
 		const inboundSalt = "token-pool-inbound-shared"
 		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, inboundSalt, true)
-		sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, inboundSalt)
-		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt, sacToken, remoteSourceChain)
+		// Custom (non-SAC) LINK token instead of a SAC: proves the lock-release
+		// escrow lane works unchanged against a plain Soroban token contract —
+		// the deployer, lockbox, pool and receiver all hold LINK with zero
+		// trustline setup. The deployer stays the LINK admin in this lane (the
+		// lock-release pool takes custody via the lockbox, not mint authority),
+		// so it mints the initial liquidity directly.
+		linkClient, linkToken := deployLinkToken(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt)
+		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(1_000_000_000_000)); err != nil {
+			t.Fatalf("LinkToken Mint(deployer, 1000 LINK): %v", err) // 1000 LINK @ 7dp, mirroring deployIntegrationTestSAC
+		}
+		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt, linkToken, remoteSourceChain)
 
 		evmPool := bytes.Repeat([]byte{0x51}, 20)
 		evmTok := bytes.Repeat([]byte{0x52}, 20)
@@ -392,7 +401,7 @@ func TestTokenPool(t *testing.T) {
 		}
 
 		// Run low-liquidity first (underfunded lockbox), then curse, then happy-path release, so lockbox balances line up.
-		t.Run("offramp inbound execute rejects when pool has insufficient SAC balance", func(t *testing.T) {
+		t.Run("offramp inbound execute rejects when pool has insufficient LINK balance", func(t *testing.T) {
 			const poolFunding = int64(500_000)
 			const releaseAmount = int64(2_000_000)
 			const seqNo = uint64(1)
@@ -400,13 +409,13 @@ func TestTokenPool(t *testing.T) {
 			// L-4: release_or_mint withdraws from the lockbox, so the lockbox
 			// (not the pool) must hold the liquidity. Fund it under the release
 			// amount so the lockbox withdraw reverts InsufficientPoolLiquidity.
-			sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.LockBoxID, poolFunding)
-			lockboxBal := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.LockBoxID)
+			sacTransferOrFatal(ctx, t, deployer, linkToken, deployerAddr, stack.LockBoxID, poolFunding)
+			lockboxBal := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.LockBoxID)
 			if lockboxBal < releaseAmount {
 				t.Logf("lockbox balance %d < release %d (expected for this test)", lockboxBal, releaseAmount)
 			}
 
-			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, linkToken, stack.ReceiverID, nil)
 			if err != nil {
 				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
 			}
@@ -444,9 +453,9 @@ func TestTokenPool(t *testing.T) {
 			const releaseAmount = int64(2_000_000)
 			const seqNo = uint64(2)
 
-			sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.TokenPoolID, releaseAmount)
+			sacTransferOrFatal(ctx, t, deployer, linkToken, deployerAddr, stack.TokenPoolID, releaseAmount)
 
-			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, linkToken, stack.ReceiverID, nil)
 			if err != nil {
 				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
 			}
@@ -490,25 +499,25 @@ func TestTokenPool(t *testing.T) {
 		})
 
 		// Inbound: OffRamp execute decodes token leg, resolves pool via TokenAdminRegistry, calls release_or_mint.
-		t.Run("offramp execute releases SAC from pool to receiver (inbound)", func(t *testing.T) {
+		t.Run("offramp execute releases LINK from pool to receiver (inbound)", func(t *testing.T) {
 			const releaseAmount = int64(2_000_000)
 			const seqNo = uint64(3)
 
 			// L-4: release_or_mint withdraws from the lockbox, so top up the
 			// lockbox (not the pool) to cover the release.
-			lockboxBal := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.LockBoxID)
+			lockboxBal := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.LockBoxID)
 			if lockboxBal < releaseAmount {
-				sacTransferOrFatal(ctx, t, deployer, sacToken, deployerAddr, stack.LockBoxID, releaseAmount-lockboxBal)
+				sacTransferOrFatal(ctx, t, deployer, linkToken, deployerAddr, stack.LockBoxID, releaseAmount-lockboxBal)
 			}
 
-			lockboxBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.LockBoxID)
-			poolBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-			rcvBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
+			lockboxBefore := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.LockBoxID)
+			poolBefore := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.TokenPoolID)
+			rcvBefore := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.ReceiverID)
 			if lockboxBefore < releaseAmount {
 				t.Fatalf("lockbox underfunded: %d < %d", lockboxBefore, releaseAmount)
 			}
 
-			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, sacToken, stack.ReceiverID, nil)
+			tokenXfer, err := EncodeCcipTokenTransferV1Inbound(releaseAmount, evmPool, evmTok, linkToken, stack.ReceiverID, nil)
 			if err != nil {
 				t.Fatalf("EncodeCcipTokenTransferV1Inbound: %v", err)
 			}
@@ -549,25 +558,25 @@ func TestTokenPool(t *testing.T) {
 				t.Fatalf("execution state = %d, want Success (%d)", state, offrampbindings.MessageExecutionStateSuccess)
 			}
 
-			poolAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.TokenPoolID)
-			lockboxAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.LockBoxID)
-			rcvAfter := sacBalanceOrFatal(ctx, t, deployer, sacToken, stack.ReceiverID)
+			poolAfter := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.TokenPoolID)
+			lockboxAfter := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.LockBoxID)
+			rcvAfter := sacBalanceOrFatal(ctx, t, deployer, linkToken, stack.ReceiverID)
 
 			// L-4: the lockbox holds bridged liquidity; release_or_mint withdraws
 			// from it to the receiver. The pool's own balance (fees only) is
 			// unchanged.
 			if got := poolAfter - poolBefore; got != 0 {
-				t.Fatalf("pool SAC balance should be unchanged (fees only); delta=%d", got)
+				t.Fatalf("pool LINK balance should be unchanged (fees only); delta=%d", got)
 			}
 			if got := lockboxBefore - lockboxAfter; got != releaseAmount {
-				t.Fatalf("lockbox SAC should drop by %d; before=%d after=%d (delta=%d)",
+				t.Fatalf("lockbox LINK should drop by %d; before=%d after=%d (delta=%d)",
 					releaseAmount, lockboxBefore, lockboxAfter, got)
 			}
 			if got := rcvAfter - rcvBefore; got != releaseAmount {
-				t.Fatalf("receiver SAC should increase by %d; before=%d after=%d (delta=%d)",
+				t.Fatalf("receiver LINK should increase by %d; before=%d after=%d (delta=%d)",
 					releaseAmount, rcvBefore, rcvAfter, got)
 			}
-			t.Logf("inbound release_or_mint: moved %d SAC base units lockbox -> receiver %s", releaseAmount, stack.ReceiverID)
+			t.Logf("inbound release_or_mint: moved %d LINK base units lockbox -> receiver %s", releaseAmount, stack.ReceiverID)
 		})
 	})
 

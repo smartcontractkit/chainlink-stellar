@@ -1,8 +1,7 @@
-#[soroban_sdk::contractargs(name = "BnmTokenArgs")]
-#[soroban_sdk::contractclient(name = "BnmTokenClient")]
-pub trait BnmTokenInterface {
+#[soroban_sdk::contractargs(name = "LinkTokenArgs")]
+#[soroban_sdk::contractclient(name = "LinkTokenClient")]
+pub trait LinkTokenInterface {
     fn burn(env: soroban_sdk::Env, from: soroban_sdk::Address, amount: i128);
-    fn drip(env: soroban_sdk::Env, to: soroban_sdk::Address);
     fn mint(env: soroban_sdk::Env, to: soroban_sdk::Address, amount: i128);
     fn name(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn admin(env: soroban_sdk::Env) -> soroban_sdk::Address;
@@ -43,7 +42,7 @@ pub trait BnmTokenInterface {
         name: soroban_sdk::String,
         symbol: soroban_sdk::String,
         decimals: u32,
-    ) -> Result<(), BnmError>;
+    ) -> Result<(), LinkError>;
     fn transfer_from(
         env: soroban_sdk::Env,
         spender: soroban_sdk::Address,
@@ -56,7 +55,7 @@ pub trait BnmTokenInterface {
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum BnmError {
+pub enum LinkError {
     AlreadyInitialized = 1,
     NotAdmin = 2,
     InsufficientBalance = 3,
@@ -69,12 +68,6 @@ pub enum BnmError {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BurnEvent {
     pub from: soroban_sdk::Address,
-    pub amount: i128,
-}
-#[soroban_sdk::contractevent(topics = ["drip"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DripEvent {
-    pub to: soroban_sdk::Address,
     pub amount: i128,
 }
 #[soroban_sdk::contractevent(topics = ["mint"], export = false)]

@@ -26,6 +26,7 @@ members = [
   "contracts/cre/test/receiver",
   "contracts/cre/test/rejecting_receiver",
   "contracts/bnm-token",
+  "contracts/link-token",
   "contracts/common/*",
 ]
 

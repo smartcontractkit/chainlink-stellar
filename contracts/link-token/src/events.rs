@@ -1,13 +1,13 @@
-//! Events emitted by the BnM token contract.
+//! Events emitted by the LINK token contract.
 //!
 //! The CCIP `gen_interfaces.sh` / `gen_bindings.sh` event-prefix convention
-//! prefixes each topic with a short contract tag. BnM is a standalone test
-//! token (not a CCIP ramp), so it uses the bare Stellar token-interface topic
-//! names (`transfer`, `mint`, `burn`, `set_admin`, `set_authorized`,
-//! `approve`) emitted by the standard SAC interface, plus a
-//! `drip` topic for the permissionless faucet entrypoint. There is no
-//! `clawback` event — the clawback entrypoint is unsupported and traps. The
-//! `bnm_` prefix is reserved for any future BnM-specific admin events.
+//! prefixes each topic with a short contract tag. LINK is a standalone token
+//! contract (not a CCIP ramp), so it uses the bare Stellar token-interface
+//! topic names (`transfer`, `mint`, `burn`, `set_admin`, `set_authorized`,
+//! `approve`) emitted by the standard SAC interface. There is no faucet event
+//! — LINK mints only via the admin (the burn-mint pool) on inbound bridge
+//! messages, never out of thin air on Stellar — and no `clawback` event: the
+//! clawback entrypoint is unsupported and traps.
 
 use soroban_sdk::{contractevent, Address};
 
@@ -22,7 +22,7 @@ pub struct TransferEvent {
 }
 
 /// `mint(to, amount)` — matches the SAC `["mint", to]` topic shape. Emitted by
-/// the admin `mint` entrypoint and by the permissionless `drip` faucet.
+/// the admin `mint` entrypoint (the burn-mint pool, on inbound bridge messages).
 #[contractevent(topics = ["mint"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MintEvent {
@@ -31,7 +31,8 @@ pub struct MintEvent {
 }
 
 /// `burn(from, amount)` — matches the SAC `["burn", from]` topic shape.
-/// Emitted by `burn` and `burn_from`.
+/// Emitted by `burn` (the burn-mint pool's outbound `lock_or_burn`) and
+/// `burn_from`.
 #[contractevent(topics = ["burn"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BurnEvent {
@@ -50,9 +51,8 @@ pub struct SetAdminEvent {
 }
 
 /// `set_authorized(id, authorize)` — matches the SAC `["set_authorized", id]`
-/// topic shape. BnM does not gate transfers on authorization (ERC20-like, same
-/// as EVM `BurnMintERC20`), but the entrypoint is retained for interface
-/// fidelity.
+/// topic shape. LINK does not gate transfers on authorization (ERC20-like, same
+/// as EVM LINK), but the entrypoint is retained for interface fidelity.
 #[contractevent(topics = ["set_authorized"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SetAuthorizedEvent {
@@ -69,14 +69,4 @@ pub struct ApproveEvent {
     pub spender: Address,
     pub amount: i128,
     pub expiration_ledger: u32,
-}
-
-/// `drip(to, amount)` — BnM-specific faucet event. Emitted by the
-/// permissionless `drip(to)` entrypoint which mints `0.1` token (10⁶ at 7
-/// decimals) to `to`.
-#[contractevent(topics = ["drip"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DripEvent {
-    pub to: Address,
-    pub amount: i128,
 }

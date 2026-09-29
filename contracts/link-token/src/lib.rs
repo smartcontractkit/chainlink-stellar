@@ -1,6 +1,6 @@
 #![no_std]
 
-//! # CCIP BnM Token
+//! # LINK Token (bridged)
 //!
 //! A custom Soroban token implementing the full `token::StellarAssetInterface`
 //! (the 21-method SAC superset), so the existing `BurnMintTokenPool` can mint
@@ -8,23 +8,33 @@
 //! changes** — the pool calls `token::StellarAssetClient::mint` /
 //! `token::Client::burn`, both of which this contract exposes.
 //!
-//! BnM is CCIP's cross-chain **test token** (EVM `BurnMintERC20` /
-//! `BurnMintERC677`). On Stellar it is the **remotely-issued burn-mint** leg of
-//! a token natively issued elsewhere: no initial supply is minted at deploy
-//! time, and supply grows/shrinks 1:1 with bridge flow (mint on inbound, burn
-//! on outbound).
+//! LINK is natively issued and minted on Ethereum only. On Stellar it is the
+//! **remotely-issued burn-mint** representation: no initial supply is minted at
+//! deploy time, and supply grows/shrinks 1:1 with bridge flow (mint on inbound,
+//! burn on outbound).
 //!
-//! ## Divergences from EVM BnM (deliberate)
+//! ## No local faucet
 //!
-//! - **Decimals = 7**, the Stellar SAC convention (EVM BnM is 18).
-//! - **`drip(to)` mints `0.1` token** (`10⁶` at 7 decimals) to the explicit
-//!   `to` address, permissionlessly. EVM `BurnMintERC20WithDrip.drip(to)` mints
-//!   `1` token; the `0.1` amount is per the Stellar spec. The signature
-//!   (`drip(to)`, no auth, explicit recipient) matches EVM.
-//! - **No transfer authorization gating.** EVM BnM is a plain ERC20 (no
+//! LINK is deliberately **minted only by the admin** (the burn-mint pool, after
+//! the `set_admin` handoff) — never out of thin air on Stellar. Unlike the BnM
+//! test token there is no `drip` (or any other permissionless mint) entrypoint:
+//! every LINK on Stellar exists because a verified inbound bridge message
+//! caused the pool to mint it, and every outbound transfer burns it.
+//!
+//! ## Divergences from EVM LINK (deliberate)
+//!
+//! - **Decimals = 7**, the Stellar SAC convention (EVM LINK is 18). Cross-chain
+//!   amounts are scaled by the pool's `calculate_local_amount` via
+//!   `dest_pool_data`.
+//! - **No transfer authorization gating.** EVM LINK is a plain ERC20 (no
 //!   `set_authorized` transfer lock); this contract keeps `set_authorized` /
 //!   `authorized` for SAC interface fidelity but does **not** gate transfers on
 //!   it (`authorized` always returns `true`).
+//! - **No clawback.** LINK is a plain ERC20-style token (matching EVM LINK,
+//!   which has no clawback). The `clawback` entrypoint exists only because the
+//!   `StellarAssetInterface` ABI requires it; it traps with
+//!   `UnsupportedOperation` for every caller, admin included — nobody can ever
+//!   seize LINK balances.
 //!
 //! ## Burn-mint mint authority
 //!
@@ -36,7 +46,7 @@
 mod events;
 
 use events::{
-    ApproveEvent, BurnEvent, DripEvent, MintEvent, SetAdminEvent, SetAuthorizedEvent, TransferEvent,
+    ApproveEvent, BurnEvent, MintEvent, SetAdminEvent, SetAuthorizedEvent, TransferEvent,
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env,
@@ -78,7 +88,7 @@ pub enum DataKey {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum BnmError {
+pub enum LinkError {
     /// `initialize` called on an already-initialized contract.
     AlreadyInitialized = 1,
     /// A required-admin entrypoint was invoked by a non-admin caller.
@@ -95,8 +105,8 @@ pub enum BnmError {
     /// A read entrypoint was called before `initialize`.
     NotInitialized = 6,
     /// An intentionally-disabled entrypoint was invoked — clawback is not
-    /// supported (BnM is a plain ERC20-style test token, matching EVM
-    /// `BurnMintERC20`, which has no clawback).
+    /// supported (LINK is a plain ERC20-style token, matching EVM LINK,
+    /// which has no clawback).
     UnsupportedOperation = 7,
 }
 
@@ -105,10 +115,10 @@ pub enum BnmError {
 // ============================================================
 
 #[contract]
-pub struct BnmTokenContract;
+pub struct LinkTokenContract;
 
 #[contractimpl(contracttrait)]
-impl token::StellarAssetInterface for BnmTokenContract {
+impl token::StellarAssetInterface for LinkTokenContract {
     fn allowance(env: Env, from: Address, spender: Address) -> i128 {
         // An expired allowance reads as 0 (SAC semantics).
         if allowance_expired(&env, &from, &spender) {
@@ -125,12 +135,12 @@ impl token::StellarAssetInterface for BnmTokenContract {
         require_initialized(&env);
 
         if amount < 0 {
-            env.panic_with_error(BnmError::NegativeAmount);
+            env.panic_with_error(LinkError::NegativeAmount);
         }
 
         // SAC rule: expiration may not be in the past unless clearing to 0.
         if amount != 0 && expiration_ledger < env.ledger().sequence() {
-            env.panic_with_error(BnmError::NegativeAmount);
+            env.panic_with_error(LinkError::NegativeAmount);
         }
 
         env.storage()
@@ -177,7 +187,7 @@ impl token::StellarAssetInterface for BnmTokenContract {
                 .unwrap_or(0)
         };
         if amount > allowed {
-            env.panic_with_error(BnmError::InsufficientAllowance);
+            env.panic_with_error(LinkError::InsufficientAllowance);
         }
         env.storage().persistent().set(
             &DataKey::Allowance(from.clone(), spender.clone()),
@@ -205,7 +215,7 @@ impl token::StellarAssetInterface for BnmTokenContract {
                 .unwrap_or(0)
         };
         if amount > allowed {
-            env.panic_with_error(BnmError::InsufficientAllowance);
+            env.panic_with_error(LinkError::InsufficientAllowance);
         }
         env.storage().persistent().set(
             &DataKey::Allowance(from.clone(), spender.clone()),
@@ -248,7 +258,7 @@ impl token::StellarAssetInterface for BnmTokenContract {
         env.storage()
             .instance()
             .get(&ADMIN)
-            .unwrap_or_else(|| env.panic_with_error(BnmError::NotInitialized))
+            .unwrap_or_else(|| env.panic_with_error(LinkError::NotInitialized))
     }
 
     fn set_authorized(env: Env, id: Address, authorize: bool) {
@@ -261,10 +271,10 @@ impl token::StellarAssetInterface for BnmTokenContract {
     }
 
     fn authorized(_env: Env, _id: Address) -> bool {
-        // BnM is a plain ERC20-style test token: every holder is always
-        // authorized (matches EVM `BurnMintERC20`, which has no auth lock).
-        // The `set_authorized` entrypoint is retained for SAC interface
-        // fidelity but does not gate transfers.
+        // LINK is a plain ERC20-style token (matches EVM LINK, which has no
+        // auth lock): every holder is always authorized. The `set_authorized`
+        // entrypoint is retained for SAC interface fidelity but does not gate
+        // transfers.
         true
     }
 
@@ -276,12 +286,12 @@ impl token::StellarAssetInterface for BnmTokenContract {
     }
 
     fn clawback(env: Env, _from: Address, _amount: i128) {
-        // Not supported: BnM is a plain ERC20-style test token (matching EVM
-        // `BurnMintERC20`, which has no clawback). The entrypoint exists only
-        // because the StellarAssetInterface ABI requires it; every caller —
-        // admin included — traps with UnsupportedOperation. Nobody can ever
-        // seize BnM balances.
-        env.panic_with_error(BnmError::UnsupportedOperation);
+        // Not supported: LINK is a plain ERC20-style token (matching EVM LINK,
+        // which has no clawback). The entrypoint exists only because the
+        // StellarAssetInterface ABI requires it; every caller — admin included
+        // — traps with UnsupportedOperation. Nobody can ever seize LINK
+        // balances.
+        env.panic_with_error(LinkError::UnsupportedOperation);
     }
 
     fn trust(env: Env, addr: Address) {
@@ -294,20 +304,21 @@ impl token::StellarAssetInterface for BnmTokenContract {
 }
 
 #[contractimpl]
-impl BnmTokenContract {
+impl LinkTokenContract {
     /// One-time initialization. Sets the token admin (the deployer, who later
     /// hands off to the burn-mint pool via `set_admin`) and the ERC20 metadata.
-    /// No initial supply is minted — BnM is remotely-issued; supply tracks
-    /// bridge flow.
+    /// No initial supply is minted — LINK is remotely-issued; supply tracks
+    /// bridge flow, and the only minter is the admin (the pool) on inbound
+    /// bridge messages.
     pub fn initialize(
         env: Env,
         admin: Address,
         name: String,
         symbol: String,
         decimals: u32,
-    ) -> Result<(), BnmError> {
+    ) -> Result<(), LinkError> {
         if env.storage().instance().has(&INIT) {
-            return Err(BnmError::AlreadyInitialized);
+            return Err(LinkError::AlreadyInitialized);
         }
         env.storage().instance().set(&INIT, &true);
         env.storage().instance().set(&ADMIN, &admin);
@@ -319,22 +330,7 @@ impl BnmTokenContract {
 
     /// Human-readable version tag (EVM `typeAndVersion` analogue).
     pub fn type_and_version(_env: Env) -> String {
-        String::from_str(&_env, "BnmToken 1.0.0")
-    }
-
-    /// Permissionless faucet: mints `0.1` token (`10⁶` at 7 decimals) to the
-    /// explicit `to` address. No `require_auth` — anyone may call it, matching
-    /// EVM `BurnMintERC20WithDrip.drip(to)`. The amount (0.1, not EVM's 1) is
-    /// the deliberate Stellar-spec divergence.
-    pub fn drip(env: Env, to: Address) {
-        require_initialized(&env);
-        const DRIP_AMOUNT: i128 = 1_000_000; // 0.1 * 10^7
-        credit(&env, &to, DRIP_AMOUNT);
-        DripEvent {
-            to,
-            amount: DRIP_AMOUNT,
-        }
-        .publish(&env);
+        String::from_str(&_env, "LinkToken 1.0.0")
     }
 }
 
@@ -344,7 +340,7 @@ impl BnmTokenContract {
 
 fn require_initialized(env: &Env) {
     if !env.storage().instance().has(&INIT) {
-        env.panic_with_error(BnmError::NotInitialized);
+        env.panic_with_error(LinkError::NotInitialized);
     }
 }
 
@@ -354,7 +350,7 @@ fn require_admin(env: &Env) -> Address {
     env.storage()
         .instance()
         .get(&ADMIN)
-        .unwrap_or_else(|| env.panic_with_error(BnmError::NotInitialized))
+        .unwrap_or_else(|| env.panic_with_error(LinkError::NotInitialized))
 }
 
 /// True iff the `(from, spender)` allowance entry has expired (and so reads as
@@ -375,7 +371,7 @@ fn allowance_expired(env: &Env, from: &Address, spender: &Address) -> bool {
 /// (the guard here makes `mint` (and any future caller) negative-safe).
 fn credit(env: &Env, to: &Address, amount: i128) {
     if amount < 0 {
-        env.panic_with_error(BnmError::NegativeAmount);
+        env.panic_with_error(LinkError::NegativeAmount);
     }
     let bal: i128 = env
         .storage()
@@ -392,7 +388,7 @@ fn credit(env: &Env, to: &Address, amount: i128) {
 fn debit(env: &Env, from: &Address, amount: i128) {
     require_initialized(env);
     if amount < 0 {
-        env.panic_with_error(BnmError::NegativeAmount);
+        env.panic_with_error(LinkError::NegativeAmount);
     }
     let bal: i128 = env
         .storage()
@@ -400,7 +396,7 @@ fn debit(env: &Env, from: &Address, amount: i128) {
         .get(&DataKey::Balance(from.clone()))
         .unwrap_or(0);
     if amount > bal {
-        env.panic_with_error(BnmError::InsufficientBalance);
+        env.panic_with_error(LinkError::InsufficientBalance);
     }
     env.storage()
         .persistent()

@@ -24,7 +24,7 @@ func TestCommitteeVerifier(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	// Deploy the CommitteeVerifier contract
@@ -276,32 +276,38 @@ func TestCommitteeVerifier(t *testing.T) {
 	})
 
 	t.Run("withdraw fee tokens", func(t *testing.T) {
-		// Point the fee_aggregator at a REAL account (the deployer) that holds a
-		// trustline to the SAC fee token. The init-time mockFeeAggregator is a bare
-		// contract strkey with no on-ledger trustline, so a SAC transfer to it reverts
-		// (same caveat documented in fee_distribution_test.go's sweep subtest).
-		// SetDynamicConfig is owner-only; the deployer is the contract owner.
+		// Point the fee_aggregator at a REAL account (the deployer) that holds the
+		// fee token. The init-time mockFeeAggregator is a bare contract strkey;
+		// with the custom (non-SAC) LINK token as the fee token, no holder needs
+		// a trustline, but the aggregator is still repointed to a funded account
+		// for a clean before/after delta. SetDynamicConfig is owner-only; the
+		// deployer is the contract owner.
 		if err := client.SetDynamicConfig(ctx, ccvsbindings.DynamicConfig{
 			FeeAggregator: &deployerAddr,
 		}); err != nil {
 			t.Fatalf("SetDynamicConfig(fee_aggregator=deployer): %v", err)
 		}
 
-		// Real 7-decimal SAC fee token. deployIntegrationTestSAC establishes the
-		// deployer's trustline and mints 1000 tokens to the deployer.
-		feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, "cv-withdraw")
+		// Custom (non-SAC) LINK fee token — LINK's production role on this lane.
+		// Deploy + initialize, then the deployer (still the LINK admin) mints
+		// 1000 LINK (1e10 at 7 decimals) to itself: no trustline setup, unlike
+		// the SAC route (deployIntegrationTestSAC).
+		linkClient, feeToken := deployLinkToken(ctx, t, projectRoot, deployer, deployerAddr, "cv-withdraw")
+		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(1_000_000_000_000)); err != nil {
+			t.Fatalf("LinkToken Mint(deployer, 1000 LINK): %v", err)
+		}
 
 		// Fund the committee-verifier contract with a fee-token balance, simulating
-		// fees accrued to it. SAC transfer(deployer -> contract) is authorized by the
-		// deployer as the transaction source account.
-		const accrual int64 = 100_000_000 // 10 tokens at 7 decimals
+		// fees accrued to it. LINK transfer(deployer -> contract) is authorized by
+		// the deployer as the transaction source account.
+		const accrual int64 = 100_000_000 // 10 LINK at 7 decimals
 		transferArgs := []xdr.ScVal{
 			scval.AddressToScVal(deployerAddr),
 			scval.AddressToScVal(contractID),
 			scval.I128ToScVal(big.NewInt(accrual)),
 		}
 		if _, err := deployer.InvokeContract(ctx, feeToken, "transfer", transferArgs); err != nil {
-			t.Fatalf("fund verifier via SAC transfer: %v", err)
+			t.Fatalf("fund verifier via LINK transfer: %v", err)
 		}
 
 		contractBal := sacBalanceOrFatal(ctx, t, deployer, feeToken, contractID)

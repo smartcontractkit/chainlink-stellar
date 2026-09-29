@@ -54,6 +54,9 @@ CONTRACTS=(
   # heuristic only catches `balance`. include_void_fns: the SAC write entrypoints
   # plus `drip` are void (`()`), so they're omitted unless explicitly listed.
   "bnm_token|BnmToken|bnm_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version|burn,drip,mint,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
+  # link_token: same as bnm_token minus drip — LINK has no local faucet (mint
+  # is admin-only, i.e. the burn-mint pool on inbound bridge messages).
+  "link_token|LinkToken|link_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version|burn,mint,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
   "token_pool|TokenPool|token_pool|0"
   "token_lock_box|TokenLockBox|token_lock_box|0"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"

@@ -5,30 +5,29 @@ use soroban_sdk::{
     IntoVal, String,
 };
 
-use crate::{BnmTokenContract, BnmTokenContractClient};
+use crate::{LinkTokenContract, LinkTokenContractClient};
 
-/// 0.1 token at 7 decimals — the amount `drip` mints per call.
-const DRIP_AMOUNT: i128 = 1_000_000;
-
-/// Fresh env + deployed BnM token initialized with `admin`, named
-/// "CCIP BnM" / "BnM" / 7 decimals. All auths mocked so admin entrypoints
-/// (mint, set_admin) are reachable in happy-path tests.
+/// Fresh env + deployed LINK token initialized with `admin`, named
+/// "ChainLink Token" / "LINK" / 7 decimals (the EVM LINK name/symbol; the
+/// decimals are the deliberate Stellar divergence from EVM's 18). All auths
+/// mocked so admin entrypoints (mint, set_admin) are reachable in
+/// happy-path tests.
 fn setup() -> (
     soroban_sdk::Env,
-    BnmTokenContractClient<'static>,
+    LinkTokenContractClient<'static>,
     soroban_sdk::Address,
 ) {
     let env = soroban_sdk::Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = soroban_sdk::Address::generate(&env);
-    let contract_id = env.register(BnmTokenContract, ());
-    let client = BnmTokenContractClient::new(&env, &contract_id);
+    let contract_id = env.register(LinkTokenContract, ());
+    let client = LinkTokenContractClient::new(&env, &contract_id);
 
     client.initialize(
         &admin,
-        &String::from_str(&env, "CCIP BnM"),
-        &String::from_str(&env, "BnM"),
+        &String::from_str(&env, "ChainLink Token"),
+        &String::from_str(&env, "LINK"),
         &7u32,
     );
 
@@ -44,11 +43,11 @@ fn test_initialize_sets_metadata_and_admin() {
     let (env, client, admin) = setup();
     assert_eq!(client.admin(), admin);
     assert_eq!(client.decimals(), 7);
-    assert_eq!(client.name(), String::from_str(&env, "CCIP BnM"));
-    assert_eq!(client.symbol(), String::from_str(&env, "BnM"));
+    assert_eq!(client.name(), String::from_str(&env, "ChainLink Token"));
+    assert_eq!(client.symbol(), String::from_str(&env, "LINK"));
     assert_eq!(
         client.type_and_version(),
-        String::from_str(&env, "BnmToken 1.0.0")
+        String::from_str(&env, "LinkToken 1.0.0")
     );
 }
 
@@ -68,15 +67,15 @@ fn test_double_initialize_fails() {
 fn test_read_before_initialize_panics() {
     let env = soroban_sdk::Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(BnmTokenContract, ());
-    let client = BnmTokenContractClient::new(&env, &contract_id);
+    let contract_id = env.register(LinkTokenContract, ());
+    let client = LinkTokenContractClient::new(&env, &contract_id);
     // `admin` requires initialization; the try_ variant surfaces the trap as Err.
     assert!(client.try_admin().is_err());
     assert!(client.try_decimals().is_err());
 }
 
 // ============================================================
-// Mint — admin-gated
+// Mint — admin-gated, the ONLY supply source
 // ============================================================
 
 #[test]
@@ -94,7 +93,9 @@ fn test_mint_by_admin_credits_recipient() {
 fn test_mint_rejects_unauthenticated_caller() {
     let (env, client, _admin) = setup();
     // Turn off mock_all_auths: nobody is authorized, so the stored admin's
-    // `require_auth()` inside `mint` is not satisfied → the call traps.
+    // `require_auth()` inside `mint` is not satisfied → the call traps. LINK
+    // has no faucet: this is the only mint entrypoint, so with no admin auth
+    // there is NO path that creates supply.
     env.mock_auths(&[]);
     let recipient = soroban_sdk::Address::generate(&env);
     let r = client.try_mint(&recipient, &1_000_000);
@@ -177,50 +178,6 @@ fn test_transfer_from_insufficient_allowance_rejected() {
 }
 
 // ============================================================
-// drip — permissionless faucet (the headline BnM feature)
-// ============================================================
-
-#[test]
-fn test_drip_is_permissionless_and_mints_a_tenth() {
-    let (env, client, _admin) = setup();
-    let to = soroban_sdk::Address::generate(&env);
-
-    // Strict auth mode: NO address is authorized. `drip` performs no
-    // `require_auth`, so it must still succeed — this is the proof it is
-    // permissionless (EVM `BurnMintERC20WithDrip.drip(to)` parity).
-    env.mock_auths(&[]);
-    client.drip(&to);
-
-    assert_eq!(client.balance(&to), DRIP_AMOUNT);
-    // 0.1 token at 7 decimals == 1_000_000 base units.
-    assert_eq!(DRIP_AMOUNT, 1_000_000);
-
-    // A second drip stacks — no per-address rate limit (matches EVM drip).
-    client.drip(&to);
-    assert_eq!(client.balance(&to), 2 * DRIP_AMOUNT);
-
-    // Drip to one address must not affect another.
-    let other = soroban_sdk::Address::generate(&env);
-    assert_eq!(client.balance(&other), 0);
-    client.drip(&other);
-    assert_eq!(client.balance(&other), DRIP_AMOUNT);
-    assert_eq!(client.balance(&to), 2 * DRIP_AMOUNT);
-
-    let _ = env; // env still in strict-auth mode for the assertions above
-}
-
-#[test]
-fn test_drip_requires_initialization() {
-    let env = soroban_sdk::Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(BnmTokenContract, ());
-    let client = BnmTokenContractClient::new(&env, &contract_id);
-    let to = soroban_sdk::Address::generate(&env);
-    // `drip` guards on initialization even though it is permissionless.
-    assert!(client.try_drip(&to).is_err());
-}
-
-// ============================================================
 // set_admin — burn-mint mint-authority handoff
 // ============================================================
 
@@ -299,7 +256,7 @@ fn test_set_admin_rejects_unauthenticated_caller() {
 fn test_authorized_always_true() {
     let (env, client, _admin) = setup();
     let holder = soroban_sdk::Address::generate(&env);
-    // BnM is a plain ERC20-style test token: every holder is always authorized,
+    // LINK is a plain ERC20-style token: every holder is always authorized,
     // even after set_authorized(false) (the entrypoint is retained for SAC
     // interface fidelity but does not gate transfers).
     assert!(client.authorized(&holder));
@@ -314,9 +271,9 @@ fn test_authorized_always_true() {
 }
 
 /// clawback is unsupported and traps for EVERY caller — even the admin with all
-/// auths mocked (EVM `BurnMintERC20` has no clawback; the entrypoint exists
-/// only because the StellarAssetInterface ABI requires it). No BnM balance
-/// can ever be seized.
+/// auths mocked (EVM LINK has no clawback; the entrypoint exists only because
+/// the StellarAssetInterface ABI requires it). No LINK balance can ever be
+/// seized.
 #[test]
 fn test_clawback_unsupported_traps_for_every_caller() {
     let (env, client, _admin) = setup();
