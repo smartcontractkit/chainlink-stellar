@@ -21,6 +21,29 @@ func TestGenerateTypes_eventsOnlyNoImports(t *testing.T) {
 	mustContain(t, out, "type CursedEvent struct")
 }
 
+// TestMergeEvents_SkipsDuplicatesByName is the regression guard for the -events
+// double-append dup: a contract whose interface already carries all events
+// (keep-all prefixes, e.g. bnm_token) must be able to pass -events without
+// redeclaring every Parse*Event/Event. Only names not already present may be
+// appended, and duplicates within src are dropped too.
+func TestMergeEvents_SkipsDuplicatesByName(t *testing.T) {
+	mk := func(name string) Event { return Event{Name: name, Topics: []string{name}} }
+	dst := []Event{mk("TransferEvent"), mk("MintEvent")}
+	got := mergeEvents(dst, []Event{
+		mk("TransferEvent"), // already in dst -> dropped
+		mk("DripEvent"),     // new -> kept
+		mk("DripEvent"),     // dup within src -> dropped
+	})
+	if len(got) != 3 {
+		t.Fatalf("expected 3 events, got %d: %+v", len(got), got)
+	}
+	for i, want := range []string{"TransferEvent", "MintEvent", "DripEvent"} {
+		if got[i].Name != want {
+			t.Fatalf("event %d: want %s, got %s", i, want, got[i].Name)
+		}
+	}
+}
+
 // TestGenerateEnum_IntReprEmitsU32 is a regression guard: a #[contracttype]
 // enum whose every variant is a unit with an EXPLICIT `= N` discriminant (the
 // soroban-sdk derive_type_enum_int path) must emit the `type X uint32` newtype

@@ -32,6 +32,27 @@ func writeGoFile(outDir, name, src string) {
 	fmt.Printf("Generated %s\n", path)
 }
 
+// mergeEvents appends src events to dst, skipping any whose name is already
+// present (in dst or earlier in src), so supplementing via -events is
+// idempotent by event name. -events exists to re-supply events pruned out of
+// the interface (e.g. offramp's offramp_1_7_* topics); for contracts whose
+// interface already carries all events (keep-all prefixes), appending
+// unconditionally would redeclare every Parse*Event/Event in the output.
+func mergeEvents(dst, src []Event) []Event {
+	seen := make(map[string]bool, len(dst))
+	for _, e := range dst {
+		seen[e.Name] = true
+	}
+	for _, e := range src {
+		if seen[e.Name] {
+			continue
+		}
+		seen[e.Name] = true
+		dst = append(dst, e)
+	}
+	return dst
+}
+
 func parseFnSet(flagName, csv string, valid map[string]bool, contractName string) map[string]bool {
 	if csv == "" {
 		return nil
@@ -114,7 +135,7 @@ func main() {
 			os.Exit(1)
 		}
 		parsedEvents := parseEvents(string(eventsSource))
-		contract.Events = append(contract.Events, parsedEvents...)
+		contract.Events = mergeEvents(contract.Events, parsedEvents)
 		fmt.Printf("Parsed %d events from %s\n", len(parsedEvents), *events)
 	}
 

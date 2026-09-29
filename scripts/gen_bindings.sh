@@ -44,9 +44,11 @@ CONTRACTS=(
   "token_admin_registry|TokenAdminRegistry|token_admin_registry|0|"
   "lock_release_pool|LockReleasePool|lock_release_pool|0|contracts/pools/lock-release-pool/src/events.rs"
   "burn_mint_pool|BurnMintPool|burn_mint_pool|0|contracts/pools/burn-mint-pool/src/events.rs"
-  # bnm_token: NO events_file — gen_interfaces uses empty prefixes (keep-all) for
-  # BnM, so all 8 events are already in the interface; passing -events would
-  # append them again and redeclare every Parse*Event/Event (dup build errors).
+  # bnm_token: no events_file — gen_interfaces uses empty prefixes (keep-all)
+  # for BnM (its event topics are unprefixed lowercase and can't match the
+  # prefix rule), so all 8 events are already in the interface. -events is
+  # idempotent (the generator dedupes by event name), so passing one would be
+  # a harmless no-op, but it isn't needed.
   # readonly_fns: the SAC read entrypoints (name/symbol/decimals/admin/balance/
   # allowance/authorized/type_and_version) must simulate, not submit — the name
   # heuristic only catches `balance`. include_void_fns: the SAC write entrypoints
