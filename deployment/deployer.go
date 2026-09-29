@@ -1305,6 +1305,45 @@ func ComputeSACContractID(networkPassphrase string, asset xdr.Asset) (string, er
 	return strkey.Encode(strkey.VersionByteContract, h[:])
 }
 
+// ComputeContractID returns the deterministic contract address (C… strkey) that
+// deploying with deployerAddress and salt would create on the network, without
+// touching the chain. It mirrors the preimage built by
+// buildCreateContractHostFunction.
+func ComputeContractID(networkPassphrase, deployerAddress string, salt [32]byte) (string, error) {
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, deployerAddress)
+	if err != nil {
+		return "", fmt.Errorf("decode deployer address: %w", err)
+	}
+	var pubKey256 xdr.Uint256
+	copy(pubKey256[:], raw)
+	networkID := sha256.Sum256([]byte(networkPassphrase))
+	preimage := xdr.HashIdPreimage{
+		Type: xdr.EnvelopeTypeEnvelopeTypeContractId,
+		ContractId: &xdr.HashIdPreimageContractId{
+			NetworkId: networkID,
+			ContractIdPreimage: xdr.ContractIdPreimage{
+				Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+				FromAddress: &xdr.ContractIdPreimageFromAddress{
+					Address: xdr.ScAddress{
+						Type: xdr.ScAddressTypeScAddressTypeAccount,
+						AccountId: &xdr.AccountId{
+							Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+							Ed25519: &pubKey256,
+						},
+					},
+					Salt: xdr.Uint256(salt),
+				},
+			},
+		},
+	}
+	b, err := preimage.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("marshal preimage: %w", err)
+	}
+	h := sha256.Sum256(b)
+	return strkey.Encode(strkey.VersionByteContract, h[:])
+}
+
 // SignerAddress returns the G… strkey of the deployer's signing keypair.
 func (d *Deployer) SignerAddress() string {
 	return d.signer.Address()
