@@ -44,6 +44,14 @@ CONTRACTS=(
   "token_admin_registry|TokenAdminRegistry|token_admin_registry|0|"
   "lock_release_pool|LockReleasePool|lock_release_pool|0|contracts/pools/lock-release-pool/src/events.rs"
   "burn_mint_pool|BurnMintPool|burn_mint_pool|0|contracts/pools/burn-mint-pool/src/events.rs"
+  # bnm_token: NO events_file — gen_interfaces uses empty prefixes (keep-all) for
+  # BnM, so all 8 events are already in the interface; passing -events would
+  # append them again and redeclare every Parse*Event/Event (dup build errors).
+  # readonly_fns: the SAC read entrypoints (name/symbol/decimals/admin/balance/
+  # allowance/authorized/type_and_version) must simulate, not submit — the name
+  # heuristic only catches `balance`. include_void_fns: the SAC write entrypoints
+  # plus `drip` are void (`()`), so they're omitted unless explicitly listed.
+  "bnm_token|BnmToken|bnm_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version|burn,drip,mint,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
   "token_pool|TokenPool|token_pool|0"
   "token_lock_box|TokenLockBox|token_lock_box|0"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"

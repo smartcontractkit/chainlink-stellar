@@ -646,6 +646,9 @@ func rustTypeToGo(rustType string) string {
 		return "bool"
 	case "soroban_sdk::Address":
 		return "string"
+	case "soroban_sdk::MuxedAddress":
+		// Treated as a plain Address (string) — see getArgConverter.
+		return "string"
 	case "soroban_sdk::Bytes":
 		return "[]byte"
 	case "soroban_sdk::Symbol":
