@@ -160,6 +160,10 @@ pub enum CCIPError {
     /// Fewer than the receiver's `optional_threshold` optional CCVs are present in the attested
     /// `ccvs` list (EVM `OffRamp.OptionalCCVQuorumNotReached`).
     OptionalCCVQuorumNotReached = 118,
+    /// A retry of an already-failed message failed again: no progress was made, so the
+    /// transaction reverts instead of rewriting the state and re-emitting the event
+    /// (EVM `OffRamp.NoStateProgressMade`; INV-EXEC-7).
+    NoStateProgressMade = 119,
 
     // ============================================================
     // TokenAdminRegistry errors

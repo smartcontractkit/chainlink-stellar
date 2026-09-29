@@ -166,7 +166,7 @@ func (c *LockReleasePoolClient) InitOwner(ctx context.Context, owner string) err
 }
 
 // Initialize calls the initialize function on the contract.
-func (c *LockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string, rmnProxy string) error {
+func (c *LockReleasePoolClient) Initialize(ctx context.Context, owner string, token string, tokenDecimals uint32, router string, rampRegistry string, rmnProxy string, lockBox string) error {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(owner),
 		scval.AddressToScVal(token),
@@ -174,6 +174,7 @@ func (c *LockReleasePoolClient) Initialize(ctx context.Context, owner string, to
 		scval.AddressToScVal(router),
 		scval.AddressToScVal(rampRegistry),
 		scval.AddressToScVal(rmnProxy),
+		scval.AddressToScVal(lockBox),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
@@ -201,10 +202,8 @@ func (c *LockReleasePoolClient) SetRouter(ctx context.Context, router string) er
 }
 
 // GetLockBox calls the get_lock_box function on the contract.
-func (c *LockReleasePoolClient) GetLockBox(ctx context.Context, remoteChainSelector uint64) (string, error) {
-	args := []xdr.ScVal{
-		scval.Uint64ToScVal(remoteChainSelector),
-	}
+func (c *LockReleasePoolClient) GetLockBox(ctx context.Context) (string, error) {
+	args := []xdr.ScVal{}
 
 	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_lock_box", args)
 	if err != nil {
@@ -641,21 +640,6 @@ func (c *LockReleasePoolClient) WithdrawFeeTokens(ctx context.Context, caller st
 	return nil
 }
 
-// ConfigureLockBoxes calls the configure_lock_boxes function on the contract.
-func (c *LockReleasePoolClient) ConfigureLockBoxes(ctx context.Context, configs []LockBoxEntry) error {
-	args := []xdr.ScVal{
-		scval.StructSliceToScVal(configs),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "configure_lock_boxes", args)
-	if err != nil {
-		return fmt.Errorf("failed to call configure_lock_boxes: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // GetRateLimitAdmin calls the get_rate_limit_admin function on the contract.
 func (c *LockReleasePoolClient) GetRateLimitAdmin(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -743,34 +727,6 @@ func (c *LockReleasePoolClient) SetAdvancedPoolHooks(ctx context.Context, hooks 
 
 	_ = result // void return
 	return nil
-}
-
-// GetAllLockBoxConfigs calls the get_all_lock_box_configs function on the contract.
-func (c *LockReleasePoolClient) GetAllLockBoxConfigs(ctx context.Context) ([]LockBoxEntry, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_all_lock_box_configs", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_all_lock_box_configs: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_all_lock_box_configs")
-	}
-
-	vec, ok := result.GetVec()
-	if !ok || vec == nil {
-		return nil, fmt.Errorf("expected vec return type")
-	}
-	out := make([]LockBoxEntry, len(*vec))
-	for i, item := range *vec {
-		v, err := LockBoxEntryFromScVal(item)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = *v
-	}
-	return out, nil
 }
 
 // CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.

@@ -186,11 +186,13 @@ pub struct TokenTransferFeeConfigArgs {
 /// `fee = amount * fee_bps / BPS_DIVIDER`.
 pub const BPS_DIVIDER: u32 = 10_000;
 
-/// Per-chain lockbox custody mapping shared by the canonical and siloed
-/// lock-release pools (EVM `LockReleaseTokenPool.i_lockBox` /
-/// `SiloedLockReleaseTokenPool.s_lockBoxes`). Escrowing in a lockbox keeps user
-/// liquidity off the pool address so the pool's own token balance equals only
-/// accrued fees, making `withdraw_fee_tokens` (full-balance sweep) safe.
+/// Per-chain lockbox custody mapping used by the siloed lock-release pool
+/// (EVM `SiloedLockReleaseTokenPool.s_lockBoxes`). The canonical pool's
+/// lockbox is a single immutable value fixed at `initialize` (EVM
+/// `LockReleaseTokenPool.i_lockBox`), so it has no per-chain entries.
+/// Escrowing in a lockbox keeps user liquidity off the pool address so the
+/// pool's own token balance equals only accrued fees, making
+/// `withdraw_fee_tokens` (full-balance sweep) safe.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockBoxEntry {

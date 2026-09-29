@@ -88,8 +88,9 @@ type fullStack struct {
 	TokenPoolClient          *tokenpoolbindings.TokenPoolClient
 	RampRegistryClient       *rampregistrybindings.RampRegistryClient
 
-	// LockReleasePoolClient exposes lock-release-specific entrypoints
-	// (ConfigureLockBoxes) that the generic TokenPoolClient interface omits.
+	// LockReleasePoolClient exposes the lock-release-specific initialize (it
+	// takes the lockbox — EVM `i_lockBox` constructor parity) that the generic
+	// TokenPoolClient interface's initialize omits.
 	LockReleasePoolClient *lockreleasepoolbindings.LockReleasePoolClient
 	LockBoxClient         *tokenlockboxbindings.TokenLockBoxClient
 
@@ -353,10 +354,11 @@ func (s *fullStack) buildValidMessage(t *testing.T, destChainSelector uint64, se
 
 // deployTokenPool deploys a TokenAdminRegistry and a LockRelease pool contract,
 // registers the pool for the given token, and wires everything into the fullStack.
-// It also deploys + initializes a per-chain TokenLockBox and maps it to
-// remoteChainSelector on the pool, so lock_or_burn / release_or_mint resolve a
-// lockbox instead of reverting InvalidConfig (#52). This is additive — call after
-// deployFullStack.
+// It also deploys + initializes a TokenLockBox and fixes it on the pool at
+// initialize (EVM `LockReleaseTokenPool.i_lockBox` constructor parity — a single
+// lockbox for all remote chains), so lock_or_burn / release_or_mint escrow
+// through the lockbox and the pool's own balance stays fees-only. This is
+// additive — call after deployFullStack.
 func (s *fullStack) deployTokenPool(
 	ctx context.Context,
 	t *testing.T,
@@ -365,7 +367,6 @@ func (s *fullStack) deployTokenPool(
 	deployerAddr string,
 	saltPrefix string,
 	tokenID string,
-	remoteChainSelector uint64,
 ) {
 	t.Helper()
 
@@ -392,6 +393,7 @@ func (s *fullStack) deployTokenPool(
 
 	s.TokenPoolID = deploy("lock-release-pool", "pools_lock_release_pool.wasm")
 	s.TokenPoolClient = tokenpoolbindings.NewTokenPoolClient(deployer, s.TokenPoolID)
+	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
 
 	s.RampRegistryID = deploy("ramp-registry", "ccip_ramp_registry.wasm")
 	s.RampRegistryClient = rampregistrybindings.NewRampRegistryClient(deployer, s.RampRegistryID)
@@ -420,8 +422,22 @@ func (s *fullStack) deployTokenPool(
 	if s.RmnProxyID == "" {
 		t.Fatal("fullStack.RmnProxyID is empty; deployFullStack must run before deployTokenPool")
 	}
-	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID); err != nil {
-		t.Fatalf("TokenPool Initialize: %v", err)
+	// L-4 lockbox-escrow parity (EVM LockReleaseTokenPool): the pool escrows
+	// bridged liquidity in a single TokenLockBox fixed at `initialize` (EVM
+	// `immutable i_lockBox` constructor parity) rather than its own balance.
+	// Stand the lockbox up first so its address can be passed into the pool's
+	// initialize; the pool validates it holds the pool's token on-chain.
+	s.LockBoxID = deploy("token-lock-box", "pools_token_lock_box.wasm")
+	s.LockBoxClient = tokenlockboxbindings.NewTokenLockBoxClient(deployer, s.LockBoxID)
+	if err := s.LockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
+		t.Fatalf("TokenLockBox Initialize: %v", err)
+	}
+	if err := s.LockReleasePoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID, s.LockBoxID); err != nil {
+		t.Fatalf("LockReleasePool Initialize: %v", err)
+	}
+	// Only the pool may deposit / withdraw from the lockbox.
+	if err := s.LockBoxClient.AddAllowedCallers(ctx, []string{s.TokenPoolID}); err != nil {
+		t.Fatalf("TokenLockBox AddAllowedCallers: %v", err)
 	}
 
 	// Two-step admin registration: propose deployer as administrator, accept, then set pool
@@ -433,32 +449,6 @@ func (s *fullStack) deployTokenPool(
 	}
 	if err := s.TokenAdminRegistryClient.SetPool(ctx, tokenID, &s.TokenPoolID); err != nil {
 		t.Fatalf("TokenAdminRegistry SetPool: %v", err)
-	}
-
-	// L-4 lockbox-escrow parity (EVM LockReleaseTokenPool): the pool escrows
-	// bridged liquidity in a per-chain TokenLockBox rather than its own balance.
-	// lock_or_burn deposits dest_token_amount into the lockbox; release_or_mint
-	// withdraws from it. The pool's own SAC balance is accrued fees only, so
-	// resolve_lock_box must find a configured lockbox or both paths revert
-	// InvalidConfig (#52).
-	s.LockBoxID = deploy("token-lock-box", "pools_token_lock_box.wasm")
-	s.LockBoxClient = tokenlockboxbindings.NewTokenLockBoxClient(deployer, s.LockBoxID)
-	if err := s.LockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
-		t.Fatalf("TokenLockBox Initialize: %v", err)
-	}
-	// Only the pool may deposit / withdraw from the lockbox.
-	if err := s.LockBoxClient.AddAllowedCallers(ctx, []string{s.TokenPoolID}); err != nil {
-		t.Fatalf("TokenLockBox AddAllowedCallers: %v", err)
-	}
-	// Map the lockbox to the remote chain. configure_lock_boxes does not require
-	// the chain to be supported (it only checks the lockbox token matches the
-	// pool token), so this is safe before ApplyChainUpdates.
-	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
-	if err := s.LockReleasePoolClient.ConfigureLockBoxes(ctx, []lockreleasepoolbindings.LockBoxEntry{{
-		LockBox:             s.LockBoxID,
-		RemoteChainSelector: remoteChainSelector,
-	}}); err != nil {
-		t.Fatalf("LockReleasePool ConfigureLockBoxes: %v", err)
 	}
 }
 

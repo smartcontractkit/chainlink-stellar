@@ -13,17 +13,23 @@ use common_interfaces::token_lock_box::TokenLockBoxClient;
 use common_pool::{
     _get_fee, calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
     rate_limit, BaseTokenPool, ChainUpdate, FtfInboundConsumedEvent, FtfOutboundConsumedEvent,
-    InboundRateLimitConsumedEvent, LockBoxConfiguredEvent, LockBoxEntry, LockOrBurnIn,
-    LockOrBurnOut, MessageDirection, OutboundRateLimitConsumedEvent, PoolFeeResult,
-    PoolRequiredCCVs, RateLimitConfig, RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut,
-    TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
+    InboundRateLimitConsumedEvent, LockOrBurnIn, LockOrBurnOut, MessageDirection,
+    OutboundRateLimitConsumedEvent, PoolFeeResult, PoolRequiredCCVs, RateLimitConfig,
+    RateLimiterState, ReleaseOrMintIn, ReleaseOrMintOut, TokenTransferFeeConfig,
+    TokenTransferFeeConfigArgs,
 };
 use events::{LockedEvent, ReleasedEvent};
 
 const INITIALIZED: Symbol = symbol_short!("INIT");
 const OWNER: Symbol = symbol_short!("OWNER");
 const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
-/// Persistent: `(LOCKBOX, remote_chain_selector) → Address` of the lockbox for that chain.
+/// Instance: `LOCKBOX → Address` of the pool's lockbox. Set once at
+/// `initialize` and immutable thereafter — mirrors EVM
+/// `LockReleaseTokenPool`'s `immutable i_lockBox` constructor arg (a single
+/// lockbox shared by all remote chains; per-chain mapping is the siloed
+/// sibling's design). Soroban has no `immutable` keyword, so immutability is
+/// enforced by `initialize` being one-shot and there being no
+/// `configure_lock_boxes` entrypoint.
 const LOCKBOX: Symbol = symbol_short!("LOCKBOX");
 /// `approve` expiry ledger for pool→lockbox allowance: `ledger.sequence() + this`.
 ///
@@ -68,6 +74,7 @@ impl LockReleaseTokenPoolContract {
         router: Address,
         ramp_registry: Address,
         rmn_proxy: Address,
+        lock_box: Address,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
@@ -84,6 +91,18 @@ impl LockReleaseTokenPoolContract {
         // one-shot (`require_not_initialized`) and there being no `set_rmn_proxy`
         // entrypoint.
         <Self as BaseTokenPool>::set_rmn_proxy(&env, &rmn_proxy);
+        // The lockbox is validated and stored LAST — EVM constructor ordering: the
+        // base `TokenPool` constructor runs first (owner, token, router, RMN
+        // proxy), then the derived `LockReleaseTokenPool` constructor validates
+        // `i_lockBox`. Like the EVM constructor, a failure rolls back atomically:
+        // returning `Err` aborts the whole Soroban transaction, so no partial
+        // initialization state persists. The lockbox must hold this pool's token
+        // (EVM `isTokenSupported(token)` constructor check).
+        let lb_client = TokenLockBoxClient::new(&env, &lock_box);
+        if !lb_client.is_token_supported(&token) {
+            return Err(CCIPError::InvalidConfig);
+        }
+        env.storage().instance().set(&LOCKBOX, &lock_box);
         Ok(())
     }
 
@@ -92,59 +111,16 @@ impl LockReleaseTokenPoolContract {
     }
 
     // ------------------------------------------------------------------
-    // Lock box configuration (owner-only)
+    // Lock box (immutable — set and validated once at initialize)
     // ------------------------------------------------------------------
 
-    /// Map remote chain selectors to lockbox addresses (EVM
-    /// `LockReleaseTokenPool.configureLockBoxes` parity — the canonical pool
-    /// now escrows in a lockbox like its siloed sibling, so the pool's own token
-    /// balance equals only accrued fees and `withdraw_fee_tokens` can safely
-    /// sweep the full balance). Many selectors may point to the same lockbox
-    /// (shared liquidity). Each lockbox must support this pool's token.
-    pub fn configure_lock_boxes(env: Env, configs: Vec<LockBoxEntry>) -> Result<(), CCIPError> {
+    /// Returns the pool's lockbox, fixed at `initialize` (EVM
+    /// `LockReleaseTokenPool.getLockBox()`). All remote chains share it;
+    /// the per-chain lockbox mapping is the siloed sibling's design (EVM
+    /// `SiloedLockReleaseTokenPool.configureLockBoxes`).
+    pub fn get_lock_box(env: Env) -> Result<Address, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        <Self as Ownable>::require_owner(&env)?;
-        let pool_token = <Self as BaseTokenPool>::get_token(&env)?;
-        for i in 0..configs.len() {
-            let entry = configs.get(i).ok_or(CCIPError::InvalidConfig)?;
-            let lb_client = TokenLockBoxClient::new(&env, &entry.lock_box);
-            if !lb_client.is_token_supported(&pool_token) {
-                return Err(CCIPError::InvalidConfig);
-            }
-            let key = (LOCKBOX, entry.remote_chain_selector);
-            env.storage().persistent().set(&key, &entry.lock_box);
-            LockBoxConfiguredEvent {
-                remote_chain_selector: entry.remote_chain_selector,
-                lock_box: entry.lock_box,
-            }
-            .publish(&env);
-        }
-        Ok(())
-    }
-
-    pub fn get_lock_box(env: Env, remote_chain_selector: u64) -> Result<Address, CCIPError> {
-        <Self as Initializable>::require_initialized(&env)?;
-        resolve_lock_box(&env, remote_chain_selector)
-    }
-
-    pub fn get_all_lock_box_configs(env: Env) -> Result<Vec<LockBoxEntry>, CCIPError> {
-        <Self as Initializable>::require_initialized(&env)?;
-        let chains = load_supported_chains(&env);
-        let mut out: Vec<LockBoxEntry> = Vec::new(&env);
-        for sel in chains.iter() {
-            let key = (LOCKBOX, sel);
-            if let Some(addr) = env
-                .storage()
-                .persistent()
-                .get::<(Symbol, u64), Address>(&key)
-            {
-                out.push_back(LockBoxEntry {
-                    remote_chain_selector: sel,
-                    lock_box: addr,
-                });
-            }
-        }
-        Ok(out)
+        resolve_lock_box(&env)
     }
 
     // ------------------------------------------------------------------
@@ -152,9 +128,10 @@ impl LockReleaseTokenPoolContract {
     // ------------------------------------------------------------------
 
     /// Locks tokens by transferring the source-side fee to the pool and depositing
-    /// the post-fee `dest_token_amount` into the lockbox configured for
-    /// `remote_chain_selector` (EVM `TokenPool.lockOrBurn` parity). Called by the
-    /// OnRamp during a cross-chain send.
+    /// the post-fee `dest_token_amount` into the pool's lockbox (EVM
+    /// `LockReleaseTokenPool._lockOrBurn` → `i_lockBox.deposit` parity — the
+    /// lockbox is fixed at `initialize`). Called by the OnRamp during a
+    /// cross-chain send.
     ///
     /// The caller (OnRamp/Router) must have arranged for the tokens to be
     /// transferred into this contract before calling `lock_or_burn`.
@@ -265,12 +242,13 @@ impl LockReleaseTokenPoolContract {
         let token_client = token::Client::new(&env, &pool_token);
         token_client.transfer(&input.original_sender, &pool_address, &input.amount);
 
-        let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
+        let lock_box_addr = resolve_lock_box(&env)?;
         // A zero-amount lock transfers no value, so skip the lockbox deposit
-        // entirely — the lockbox `deposit` rejects `amount <= 0`. The lockbox
-        // must still be configured for the chain (`resolve_lock_box` above
-        // enforces that), but no token movement occurs. Mirrors EVM, where a
-        // zero-amount `lockOrBurn` is a valid no-op transfer (L-1).
+        // entirely — the lockbox `deposit` rejects `amount <= 0`. No token
+        // movement occurs. On EVM this path is unreachable: the OnRamp rejects
+        // zero-amount sends (`OnRamp.sol:730` `CannotSendZeroTokens`,
+        // INV-SRC-4); the guard is kept here as defense-in-depth for direct
+        // `lock_or_burn` callers.
         if dest_token_amount > 0 {
             let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
             let allowance_exp = env
@@ -397,13 +375,14 @@ impl LockReleaseTokenPoolContract {
         // `LockReleaseTokenPool._releaseOrMint` calls `i_lockBox.withdraw`). The
         // lockbox performs its own balance check, so the pool no longer guards
         // `InsufficientPoolLiquidity` here — the pool's own balance is fees only.
-        let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
+        let lock_box_addr = resolve_lock_box(&env)?;
         let pool_address = env.current_contract_address();
         // A zero-amount release transfers no value, so skip the lockbox
-        // withdrawal — the lockbox `withdraw` rejects `amount <= 0`. The lockbox
-        // must still be configured for the chain (`resolve_lock_box` above
-        // enforces that). Mirrors EVM, where a zero-amount `releaseOrMint` is a
-        // valid no-op transfer.
+        // withdrawal — the lockbox `withdraw` rejects `amount <= 0`. On EVM the
+        // lockbox `withdraw` likewise rejects a zero amount, so a zero-amount
+        // release is a no-op here rather than a reverted call (the source OnRamp
+        // rejects zero-amount sends, so this is defense-in-depth for
+        // directly-invoked releases).
         if local_amount > 0 {
             let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
             lb_client.withdraw(&pool_address, &local_amount, &input.receiver);
@@ -732,20 +711,11 @@ fn revoke_pool_allowance_to_lockbox(
     token_client.approve(pool_address, lock_box_addr, &0i128, &seq);
 }
 
-fn resolve_lock_box(env: &Env, remote_chain_selector: u64) -> Result<Address, CCIPError> {
-    let key = (LOCKBOX, remote_chain_selector);
-    env.storage()
-        .persistent()
-        .get::<(Symbol, u64), Address>(&key)
-        .ok_or(CCIPError::InvalidConfig)
-}
-
-fn load_supported_chains(env: &Env) -> Vec<u64> {
-    use common_pool::PoolDataKey;
+fn resolve_lock_box(env: &Env) -> Result<Address, CCIPError> {
     env.storage()
         .instance()
-        .get(&PoolDataKey::SupportedChains)
-        .unwrap_or_else(|| Vec::new(env))
+        .get::<Symbol, Address>(&LOCKBOX)
+        .ok_or(CCIPError::InvalidConfig)
 }
 
 #[cfg(test)]

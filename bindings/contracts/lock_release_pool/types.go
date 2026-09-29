@@ -158,53 +158,6 @@ func TokenBucketFromScVal(val xdr.ScVal) (*TokenBucket, error) {
 	return result, nil
 }
 
-// LockBoxEntry represents the LockBoxEntry struct from the contract.
-type LockBoxEntry struct {
-	LockBox             string
-	RemoteChainSelector uint64
-}
-
-// ToScVal converts LockBoxEntry to an xdr.ScVal for contract calls.
-func (s LockBoxEntry) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"lock_box":              scval.AddressToScVal(s.LockBox),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
-	})
-}
-
-// LockBoxEntryFromScVal parses an xdr.ScVal into LockBoxEntry.
-func LockBoxEntryFromScVal(val xdr.ScVal) (*LockBoxEntry, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &LockBoxEntry{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "lock_box":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("lock_box: %w", err)
-			}
-			result.LockBox = v
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
-			}
-			result.RemoteChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
 // LockOrBurnIn represents the LockOrBurnIn struct from the contract.
 type LockOrBurnIn struct {
 	Amount              *big.Int
@@ -912,6 +865,7 @@ const (
 	CCIPErrorRequiredCCVMissing                  = 116
 	CCIPErrorInvalidOptionalThreshold            = 117
 	CCIPErrorOptionalCCVQuorumNotReached         = 118
+	CCIPErrorNoStateProgressMade                 = 119
 	CCIPErrorOnlyRegistryModuleOrOwner           = 201
 	CCIPErrorOnlyAdministrator                   = 202
 	CCIPErrorOnlyPendingAdministrator            = 203
@@ -1043,6 +997,7 @@ var CCIPErrorMessage = map[int]string{
 	116: "required c c v missing",
 	117: "invalid optional threshold",
 	118: "optional c c v quorum not reached",
+	119: "no state progress made",
 	201: "only registry module or owner",
 	202: "only administrator",
 	203: "only pending administrator",

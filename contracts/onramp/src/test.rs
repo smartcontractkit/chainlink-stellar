@@ -22,7 +22,7 @@ use common_message::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
     TokenAmount,
 };
-use common_pool::{ChainUpdate, LockBoxEntry, RateLimitConfig};
+use common_pool::{ChainUpdate, RateLimitConfig};
 use executor::{
     types::{
         DynamicConfig as ExecDynamicConfig, RemoteChainConfig as ExecRemoteChainConfig,
@@ -1769,6 +1769,12 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
     } else {
         let pool_id = env.register(LockReleaseTokenPoolContract, ());
         let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+        // The lockbox is fixed at pool `initialize` (EVM
+        // `LockReleaseTokenPool.i_lockBox` constructor arg): stand it up first
+        // and pass its address into the pool's `initialize`.
+        let lockbox_id = env.register(TokenLockBox, ());
+        let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+        lockbox_client.initialize(&owner, &transfer_token);
         pool_client.initialize(
             &owner,
             &transfer_token,
@@ -1776,7 +1782,9 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
             &router_id,
             &ramp_registry_client.address,
             &rmn_proxy_id,
+            &lockbox_id,
         );
+        lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
 
         let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
         let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);
@@ -1794,17 +1802,6 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
             &Vec::new(&env),
         );
 
-        let lockbox_id = env.register(TokenLockBox, ());
-        let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
-        lockbox_client.initialize(&owner, &transfer_token);
-        lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
-        pool_client.configure_lock_boxes(&vec![
-            &env,
-            LockBoxEntry {
-                remote_chain_selector: evm_chain_selector,
-                lock_box: lockbox_client.address.clone(),
-            },
-        ]);
         pool_id
     };
 
@@ -2526,6 +2523,11 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
     let pool_id = env.register(LockReleaseTokenPoolContract, ());
     let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+    // The lockbox is fixed at pool `initialize` (EVM `i_lockBox` constructor arg):
+    // stand it up first and pass its address into the pool's `initialize`.
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &transfer_token);
     pool_client.initialize(
         &owner,
         &transfer_token,
@@ -2533,7 +2535,9 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         &router_id,
         &ramp_registry_client.address,
         &rmn_proxy_id,
+        &lockbox_id,
     );
+    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
     // M-6: the pool's `lock_or_burn` curse check reads the RMN proxy from pool
     // storage (set at `initialize`, mirroring EVM's immutable constructor arg), not
     // via `Router.get_config()` (which would re-enter the Router mid-`ccip_send`).
@@ -2554,22 +2558,6 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         ],
         &Vec::new(&env),
     );
-
-    // L-4: the canonical lock-release pool escrows locked tokens in a TokenLockBox
-    // (parity with its siloed sibling). `lock_or_burn` resolves the lockbox for the
-    // destination chain via `configure_lock_boxes`; without it, `resolve_lock_box`
-    // reverts InvalidConfig (#52). The lockbox holds the transfer token.
-    let lockbox_id = env.register(TokenLockBox, ());
-    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
-    lockbox_client.initialize(&owner, &transfer_token);
-    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
-    pool_client.configure_lock_boxes(&vec![
-        &env,
-        LockBoxEntry {
-            remote_chain_selector: evm_chain_selector,
-            lock_box: lockbox_client.address.clone(),
-        },
-    ]);
 
     ramp_registry_client.apply_onramp_updates(&vec![
         &env,
@@ -2895,6 +2883,12 @@ where
 
     let pool_id = env.register(LockReleaseTokenPoolContract, ());
     let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+    // The lockbox is fixed at pool `initialize` (EVM `i_lockBox` constructor
+    // arg): stand it up first and pass its address into the pool's
+    // `initialize`.
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &transfer_token);
     pool_client.initialize(
         &owner,
         &transfer_token,
@@ -2902,7 +2896,9 @@ where
         &router_id,
         &ramp_registry_client.address,
         &rmn_proxy_id,
+        &lockbox_id,
     );
+    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
 
     let remote_pool = Bytes::from_slice(&env, &[0x11u8; 20]);
     let remote_token = Bytes::from_slice(&env, &[0x22u8; 20]);
@@ -2919,18 +2915,6 @@ where
         ],
         &Vec::new(&env),
     );
-
-    let lockbox_id = env.register(TokenLockBox, ());
-    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
-    lockbox_client.initialize(&owner, &transfer_token);
-    lockbox_client.add_allowed_callers(&vec![&env, pool_client.address.clone()]);
-    pool_client.configure_lock_boxes(&vec![
-        &env,
-        LockBoxEntry {
-            remote_chain_selector: evm_chain_selector,
-            lock_box: lockbox_client.address.clone(),
-        },
-    ]);
 
     ramp_registry_client.apply_onramp_updates(&vec![
         &env,
@@ -3392,6 +3376,12 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
 
     let second_pool_id = env.register(LockReleaseTokenPoolContract, ());
     let second_pool_client = LockReleaseTokenPoolContractClient::new(env, &second_pool_id);
+    // The lockbox is fixed at pool `initialize` (EVM `i_lockBox` constructor
+    // arg): stand it up first and pass its address into the pool's
+    // `initialize`.
+    let second_lockbox_id = env.register(TokenLockBox, ());
+    let second_lockbox_client = TokenLockBoxClient::new(env, &second_lockbox_id);
+    second_lockbox_client.initialize(&lane.owner, &second_token);
     second_pool_client.initialize(
         &lane.owner,
         &second_token,
@@ -3399,7 +3389,9 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
         &lane.router_client.address.clone(),
         &second_ramp_registry_client.address,
         &second_rmn_proxy_id,
+        &second_lockbox_id,
     );
+    second_lockbox_client.add_allowed_callers(&vec![env, second_pool_client.address.clone()]);
     second_pool_client.apply_chain_updates(
         &vec![
             env,
@@ -3413,17 +3405,6 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
         ],
         &Vec::new(env),
     );
-    let second_lockbox_id = env.register(TokenLockBox, ());
-    let second_lockbox_client = TokenLockBoxClient::new(env, &second_lockbox_id);
-    second_lockbox_client.initialize(&lane.owner, &second_token);
-    second_lockbox_client.add_allowed_callers(&vec![env, second_pool_client.address.clone()]);
-    second_pool_client.configure_lock_boxes(&vec![
-        env,
-        LockBoxEntry {
-            remote_chain_selector: evm,
-            lock_box: second_lockbox_client.address.clone(),
-        },
-    ]);
 
     // Register second_token -> second_pool in the OnRamp's TokenAdminRegistry
     // (resolved from the onramp's static config) so the send path can resolve
