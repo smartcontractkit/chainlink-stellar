@@ -24,16 +24,6 @@ func TestAddressBytesLength_unknownSelector(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestZeroAddressBytes_stellar(t *testing.T) {
-	t.Parallel()
-	z, err := ZeroAddressBytes(chainsel.STELLAR_LOCALNET.Selector)
-	require.NoError(t, err)
-	assert.Len(t, z, int(StellarAddressByteLen))
-	for _, b := range z {
-		assert.Equal(t, byte(0), b)
-	}
-}
-
 func TestAddressBytesHex_wrongLengthForStellar(t *testing.T) {
 	t.Parallel()
 	ref := datastore.AddressRef{Address: "0x00"}

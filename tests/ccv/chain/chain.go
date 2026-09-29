@@ -282,7 +282,7 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 		return fmt.Errorf("resolve default executor proxy: %w", err)
 	}
 
-	onRampDestConfigs, err := c.buildOnRampDestConfigs(env.DataStore, remoteSelectors, defaultExecutor, true)
+	onRampDestConfigs, err := c.buildOnRampDestConfigs(env.DataStore, remoteSelectors, defaultExecutor)
 	if err != nil {
 		return fmt.Errorf("build onramp dest configs: %w", err)
 	}
@@ -290,7 +290,7 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 		return fmt.Errorf("apply onramp dest configs in post-connect: %w", err)
 	}
 
-	offRampSourceConfigs, err := c.buildOffRampSourceConfigs(env.DataStore, remoteSelectors, true)
+	offRampSourceConfigs, err := c.buildOffRampSourceConfigs(env.DataStore, remoteSelectors)
 	if err != nil {
 		return fmt.Errorf("build offramp source configs: %w", err)
 	}
@@ -1385,12 +1385,12 @@ func (c *Chain) buildPoolChainUpdates(ds datastore.DataStore, remoteSelectors []
 	return updates, nil
 }
 
-func (c *Chain) buildOnRampDestConfigs(ds datastore.DataStore, remoteSelectors []uint64, defaultExecutor string, useRemoteOffRamp bool) ([]onrampbindings.DestChainConfigArgs, error) {
-	return stellarccip.BuildOnRampDestConfigs(ds, remoteSelectors, defaultExecutor, useRemoteOffRamp, c.vvrContractID, c.routerContractID)
+func (c *Chain) buildOnRampDestConfigs(ds datastore.DataStore, remoteSelectors []uint64, defaultExecutor string) ([]onrampbindings.DestChainConfigArgs, error) {
+	return stellarccip.BuildOnRampDestConfigs(ds, remoteSelectors, defaultExecutor, c.vvrContractID, c.routerContractID)
 }
 
-func (c *Chain) buildOffRampSourceConfigs(ds datastore.DataStore, remoteSelectors []uint64, useRemoteOnRamp bool) ([]offrampbindings.SourceChainConfigArgs, error) {
-	return stellarccip.BuildOffRampSourceConfigs(ds, remoteSelectors, useRemoteOnRamp, c.vvrContractID, c.routerContractID)
+func (c *Chain) buildOffRampSourceConfigs(ds datastore.DataStore, remoteSelectors []uint64) ([]offrampbindings.SourceChainConfigArgs, error) {
+	return stellarccip.BuildOffRampSourceConfigs(ds, remoteSelectors, c.vvrContractID, c.routerContractID)
 }
 
 func (c *Chain) NativeBalance(ctx context.Context, address protocol.UnknownAddress) (*big.Int, error) {
