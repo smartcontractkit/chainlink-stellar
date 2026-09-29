@@ -55,6 +55,21 @@ func (d *Deployer) ContractWasmHash(ctx context.Context, contractID string) (xdr
 	return *cd.Val.Instance.Executable.WasmHash, nil
 }
 
+// ContractInstanceState reads a contract's instance ledger entry, reporting
+// whether the contract exists and, when it does, the WASM hash its instance
+// currently runs. A contract that was never deployed reports exists=false with
+// no error.
+func (d *Deployer) ContractInstanceState(ctx context.Context, contractID string) (bool, xdr.Hash, error) {
+	wasmHash, err := d.ContractWasmHash(ctx, contractID)
+	if errors.Is(err, ErrLedgerEntryNotFound) {
+		return false, xdr.Hash{}, nil
+	}
+	if err != nil {
+		return false, xdr.Hash{}, err
+	}
+	return true, wasmHash, nil
+}
+
 // ExtendTTLToMax extends the given persistent ledger entries to the network's
 // maximum TTL in one ExtendFootprintTtl transaction paid by the deployer, and
 // returns each entry's live-until ledger afterwards, in key order. Extending is
@@ -207,6 +222,9 @@ func (d *Deployer) liveUntilLedgers(ctx context.Context, keys []xdr.LedgerKey) (
 	return out, nil
 }
 
+// ErrLedgerEntryNotFound reports a ledger key with no live entry on chain.
+var ErrLedgerEntryNotFound = errors.New("ledger entry not found")
+
 func (d *Deployer) fetchLedgerEntry(ctx context.Context, key xdr.LedgerKey) (xdr.LedgerEntryData, error) {
 	keyXDR, err := key.MarshalBinaryBase64()
 	if err != nil {
@@ -217,7 +235,7 @@ func (d *Deployer) fetchLedgerEntry(ctx context.Context, key xdr.LedgerKey) (xdr
 		return xdr.LedgerEntryData{}, err
 	}
 	if len(resp.Entries) == 0 {
-		return xdr.LedgerEntryData{}, errors.New("ledger entry not found")
+		return xdr.LedgerEntryData{}, ErrLedgerEntryNotFound
 	}
 	entryXDR, ok := getLedgerEntryXDR(resp.Entries[0])
 	if !ok {

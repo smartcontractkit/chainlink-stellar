@@ -1,0 +1,919 @@
+{
+  "ops": [
+    {
+      "id": "onramp:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/onramp.wasm",
+        "salt": [
+          229,
+          35,
+          161,
+          101,
+          21,
+          192,
+          153,
+          249,
+          211,
+          68,
+          190,
+          21,
+          202,
+          112,
+          224,
+          232,
+          212,
+          80,
+          222,
+          59,
+          125,
+          19,
+          3,
+          109,
+          82,
+          63,
+          176,
+          145,
+          59,
+          165,
+          74,
+          103
+        ]
+      }
+    },
+    {
+      "id": "rmn-remote:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_remote.wasm",
+        "salt": [
+          8,
+          241,
+          214,
+          35,
+          1,
+          245,
+          214,
+          10,
+          4,
+          3,
+          22,
+          117,
+          234,
+          27,
+          183,
+          172,
+          222,
+          87,
+          139,
+          213,
+          142,
+          222,
+          212,
+          7,
+          244,
+          156,
+          244,
+          16,
+          194,
+          128,
+          191,
+          126
+        ]
+      }
+    },
+    {
+      "id": "rmn-remote:initialize",
+      "input": {
+        "contract_id": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "rmn-proxy:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_proxy.wasm",
+        "salt": [
+          74,
+          144,
+          206,
+          24,
+          143,
+          233,
+          178,
+          8,
+          95,
+          237,
+          204,
+          180,
+          71,
+          215,
+          156,
+          187,
+          192,
+          182,
+          154,
+          56,
+          3,
+          225,
+          106,
+          37,
+          144,
+          200,
+          63,
+          220,
+          0,
+          136,
+          65,
+          56
+        ]
+      }
+    },
+    {
+      "id": "rmn-proxy:initialize",
+      "input": {
+        "contract_id": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "rmn_remote": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML"
+      }
+    },
+    {
+      "id": "fee-quoter:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/fee_quoter.wasm",
+        "salt": [
+          252,
+          72,
+          204,
+          241,
+          61,
+          73,
+          207,
+          1,
+          246,
+          164,
+          185,
+          5,
+          195,
+          157,
+          184,
+          109,
+          60,
+          35,
+          87,
+          176,
+          120,
+          182,
+          187,
+          22,
+          197,
+          58,
+          223,
+          146,
+          54,
+          13,
+          85,
+          131
+        ]
+      }
+    },
+    {
+      "id": "fee-quoter:initialize",
+      "input": {
+        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "static_config": {
+          "LinkToken": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
+          "MaxFeeJuelsPerMsg": 1000000000000000000
+        },
+        "authorized_callers": [
+          "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+        ]
+      }
+    },
+    {
+      "id": "token-admin-registry:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/token_admin_registry.wasm",
+        "salt": [
+          77,
+          250,
+          98,
+          10,
+          119,
+          228,
+          161,
+          121,
+          76,
+          18,
+          28,
+          168,
+          186,
+          135,
+          180,
+          127,
+          152,
+          146,
+          204,
+          201,
+          197,
+          176,
+          10,
+          100,
+          25,
+          234,
+          226,
+          238,
+          161,
+          42,
+          254,
+          49
+        ]
+      }
+    },
+    {
+      "id": "token-admin-registry:initialize",
+      "input": {
+        "contract_id": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "onramp:initialize",
+      "input": {
+        "contract_id": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "static_config": {
+          "ChainSelector": 17301180955411967724,
+          "MaxUsdCentsPerMessage": 500000,
+          "RmnProxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+          "TokenAdminRegistry": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76"
+        },
+        "dynamic_config": {
+          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+          "FeeQuoter": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK"
+        }
+      }
+    },
+    {
+      "id": "versioned-verifier-resolver:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccvs_versioned_verifier_resolver.wasm",
+        "salt": [
+          205,
+          224,
+          206,
+          229,
+          10,
+          81,
+          125,
+          105,
+          243,
+          163,
+          246,
+          104,
+          153,
+          56,
+          167,
+          135,
+          230,
+          114,
+          172,
+          201,
+          43,
+          41,
+          107,
+          155,
+          3,
+          79,
+          41,
+          176,
+          96,
+          254,
+          222,
+          239
+        ]
+      }
+    },
+    {
+      "id": "versioned-verifier-resolver:initialize",
+      "input": {
+        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "fee_aggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "committee-verifier:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccvs_committee_verifier.wasm",
+        "salt": [
+          123,
+          62,
+          211,
+          91,
+          209,
+          82,
+          255,
+          192,
+          73,
+          136,
+          145,
+          172,
+          151,
+          177,
+          108,
+          84,
+          201,
+          32,
+          147,
+          155,
+          226,
+          45,
+          139,
+          83,
+          160,
+          46,
+          77,
+          142,
+          151,
+          206,
+          98,
+          189
+        ]
+      }
+    },
+    {
+      "id": "committee-verifier:initialize",
+      "input": {
+        "contract_id": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "dynamic_config": {
+          "AllowlistAdmin": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+        },
+        "storage_locations": [
+          "73faikh4e5lJS5872GXmWPQVWNVwPwjKXLXsxrWVRBk="
+        ],
+        "rmn_proxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+        "version_tag": [
+          233,
+          160,
+          90,
+          32
+        ]
+      }
+    },
+    {
+      "id": "executor:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/executor.wasm",
+        "salt": [
+          176,
+          218,
+          202,
+          12,
+          184,
+          166,
+          175,
+          223,
+          236,
+          165,
+          92,
+          88,
+          209,
+          50,
+          21,
+          202,
+          65,
+          87,
+          59,
+          78,
+          60,
+          247,
+          61,
+          193,
+          201,
+          212,
+          13,
+          124,
+          180,
+          140,
+          223,
+          245
+        ]
+      }
+    },
+    {
+      "id": "executor:initialize",
+      "input": {
+        "contract_id": "CCTHX3E33UOTLGO37Y726HA5DLRVCPLLLXK7TNN6WIAU5KLDGGVEMRLV",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "max_ccvs_per_msg": 2,
+        "dynamic_config": {
+          "AllowedFinalityConfig": 0,
+          "CcvAllowlistEnabled": false,
+          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+        }
+      }
+    },
+    {
+      "id": "executor:apply-dest-chain-updates",
+      "input": {
+        "contract_id": "CCTHX3E33UOTLGO37Y726HA5DLRVCPLLLXK7TNN6WIAU5KLDGGVEMRLV",
+        "to_remove": null,
+        "to_add": [
+          {
+            "Config": {
+              "Enabled": true,
+              "UsdCentsFee": 0
+            },
+            "DestChainSelector": 16015286601757825753
+          }
+        ]
+      }
+    },
+    {
+      "id": "versioned-verifier-resolver:apply-outbound-impl-updates",
+      "input": {
+        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "implementations": [
+          {
+            "DestChainSelector": 17301180955411967724,
+            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH"
+          },
+          {
+            "DestChainSelector": 16015286601757825753,
+            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH"
+          }
+        ]
+      }
+    },
+    {
+      "id": "versioned-verifier-resolver:apply-inbound-impl-updates",
+      "input": {
+        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "implementations": [
+          {
+            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+            "Version": [
+              233,
+              160,
+              90,
+              32
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "fee-quoter:apply-dest-chain-configs",
+      "input": {
+        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "configs": [
+          {
+            "Config": {
+              "DefaultTokenDestGas": 50000,
+              "DefaultTokenFeeUsd": 50,
+              "DefaultTxGasLimit": 200000,
+              "DestGasOverhead": 350000,
+              "DestGasPerPayloadByte": 16,
+              "IsEnabled": true,
+              "LinkPremiumPercent": 90,
+              "MaxDataBytes": 50000,
+              "MaxPerMsgGasLimit": 4000000,
+              "NetworkFeeUsdCents": 100
+            },
+            "DestChainSelector": 17301180955411967724
+          },
+          {
+            "Config": {
+              "DefaultTokenDestGas": 50000,
+              "DefaultTokenFeeUsd": 50,
+              "DefaultTxGasLimit": 200000,
+              "DestGasOverhead": 350000,
+              "DestGasPerPayloadByte": 16,
+              "IsEnabled": true,
+              "LinkPremiumPercent": 90,
+              "MaxDataBytes": 50000,
+              "MaxPerMsgGasLimit": 4000000,
+              "NetworkFeeUsdCents": 100
+            },
+            "DestChainSelector": 16015286601757825753
+          }
+        ]
+      }
+    },
+    {
+      "id": "fee-quoter:update-prices",
+      "input": {
+        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "updater": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "price_updates": {
+          "GasPriceUpdates": [
+            {
+              "DestChainSelector": 17301180955411967724,
+              "UsdPerUnitGas": {
+                "Hi": 0,
+                "Lo": 100000000000000
+              }
+            },
+            {
+              "DestChainSelector": 16015286601757825753,
+              "UsdPerUnitGas": {
+                "Hi": 0,
+                "Lo": 100000000000000
+              }
+            }
+          ],
+          "TokenPriceUpdates": [
+            {
+              "Token": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
+              "UsdPerToken": {
+                "Hi": 5421010862,
+                "Lo": 7886392056514347008
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "offramp:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/offramp.wasm",
+        "salt": [
+          46,
+          70,
+          144,
+          131,
+          244,
+          2,
+          213,
+          205,
+          160,
+          172,
+          162,
+          44,
+          233,
+          200,
+          36,
+          73,
+          178,
+          62,
+          52,
+          132,
+          190,
+          40,
+          203,
+          99,
+          197,
+          140,
+          85,
+          53,
+          227,
+          10,
+          187,
+          253
+        ]
+      }
+    },
+    {
+      "id": "offramp:initialize",
+      "input": {
+        "contract_id": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "static_config": {
+          "ChainSelector": 17301180955411967724,
+          "RmnProxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+          "TokenAdminRegistry": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76"
+        }
+      }
+    },
+    {
+      "id": "router:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/router.wasm",
+        "salt": [
+          57,
+          107,
+          50,
+          32,
+          190,
+          124,
+          17,
+          87,
+          226,
+          42,
+          170,
+          157,
+          216,
+          153,
+          57,
+          26,
+          252,
+          67,
+          28,
+          139,
+          108,
+          179,
+          201,
+          101,
+          184,
+          76,
+          124,
+          9,
+          171,
+          49,
+          17,
+          32
+        ]
+      }
+    },
+    {
+      "id": "router:initialize",
+      "input": {
+        "contract_id": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "rmn_proxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF"
+      }
+    },
+    {
+      "id": "committee-verifier:apply-remote-chain-cfg-updates",
+      "input": {
+        "contract_id": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+        "configs": [
+          {
+            "AllowlistEnabled": false,
+            "FeeUsdCents": 0,
+            "GasForVerification": 10000,
+            "PayloadSizeBytes": 0,
+            "RemoteChainSelector": 17301180955411967724,
+            "Router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+          },
+          {
+            "AllowlistEnabled": false,
+            "FeeUsdCents": 0,
+            "GasForVerification": 10000,
+            "PayloadSizeBytes": 0,
+            "RemoteChainSelector": 16015286601757825753,
+            "Router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+          }
+        ]
+      }
+    },
+    {
+      "id": "router:apply-ramp-updates",
+      "input": {
+        "contract_id": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT",
+        "on_ramp_updates": [
+          {
+            "DestChainSelector": 16015286601757825753,
+            "Onramp": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V"
+          }
+        ],
+        "off_ramp_removes": [],
+        "off_ramp_adds": [
+          {
+            "Offramp": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+            "SourceChainSelector": 16015286601757825753
+          }
+        ]
+      }
+    },
+    {
+      "id": "ramp-registry:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccip_ramp_registry.wasm",
+        "salt": [
+          210,
+          183,
+          60,
+          253,
+          157,
+          211,
+          68,
+          110,
+          179,
+          118,
+          23,
+          207,
+          173,
+          23,
+          16,
+          13,
+          83,
+          103,
+          251,
+          41,
+          172,
+          225,
+          122,
+          68,
+          165,
+          101,
+          234,
+          199,
+          202,
+          218,
+          190,
+          43
+        ]
+      }
+    },
+    {
+      "id": "ramp-registry:initialize",
+      "input": {
+        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "ramp-registry:apply-onramp-updates",
+      "input": {
+        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "updates": [
+          {
+            "DestChainSelector": 16015286601757825753,
+            "Onramp": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ramp-registry:apply-offramp-updates",
+      "input": {
+        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "updates": [
+          {
+            "Enabled": true,
+            "Offramp": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+            "SourceChainSelector": 16015286601757825753
+          }
+        ]
+      }
+    },
+    {
+      "id": "ccip-receiver:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccip_receiver_example.wasm",
+        "salt": [
+          107,
+          2,
+          230,
+          66,
+          3,
+          205,
+          205,
+          21,
+          112,
+          148,
+          189,
+          119,
+          64,
+          11,
+          223,
+          198,
+          76,
+          16,
+          98,
+          218,
+          189,
+          55,
+          158,
+          2,
+          153,
+          109,
+          128,
+          200,
+          4,
+          133,
+          160,
+          220
+        ]
+      }
+    },
+    {
+      "id": "ccip-receiver:initialize",
+      "input": {
+        "contract_id": "CA6PV4Q3BEXL6CACLEQQJC7Y4MMHD2TK4G6VPGBHLJXOIUI3MW6EMXYV",
+        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+      }
+    },
+    {
+      "id": "ccip-receiver:enable-remote-chain",
+      "input": {
+        "contract_id": "CA6PV4Q3BEXL6CACLEQQJC7Y4MMHD2TK4G6VPGBHLJXOIUI3MW6EMXYV",
+        "caller": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "remote_chain_selector": 16015286601757825753,
+        "extra_args": "AQ==",
+        "allowed_finality_config": 0
+      }
+    }
+  ],
+  "addresses": [
+    {
+      "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "ARMProxy",
+      "version": "1.0.0"
+    },
+    {
+      "address": "0x3cfaf21b092ebf08025921048bf8e31871ea6ae1bd5798275a6ee4511b65bc46",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "CcipReceiverExample",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xc0b8b49c89f12246735175a8b3cff1410aef499e9303d41f0a4d9a55170487d1",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "default",
+      "type": "CommitteeVerifier",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xa7e53a142cc18df81ec9962e65d4db2b1029d7fecb7a251462020b909f9662d4",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "default",
+      "type": "CommitteeVerifierResolver",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "default",
+      "type": "Executor",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "FeeQuoter",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0x740a941742ad746dfa26112b9185bd27e509041d0b63777b10faea300ec7b228",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "OffRamp",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "OnRamp",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "default",
+      "type": "Proxy",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "RMNRemote",
+      "version": "1.6.0"
+    },
+    {
+      "address": "0x7316d463ff1ce03217eedd2629f8ddf304b7c63c4d7dcf8ea18e41f1acc53de4",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "RampRegistry",
+      "version": "2.0.0"
+    },
+    {
+      "address": "0x8c355de70a6b89fdf67ab6fc3f53e8716be9fc2d7a2a4c130c015581dfe8063e",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "Router",
+      "version": "1.2.0"
+    },
+    {
+      "address": "0xa2552aa298971c1d83e103fa3c3514b71fb47a4bfda168db44de53dc7d24f160",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "token_admin_registry",
+      "version": "2.0.0"
+    }
+  ]
+}

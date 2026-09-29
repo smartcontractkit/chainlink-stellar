@@ -13,7 +13,7 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260915214759-02f2214d5823
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
 	github.com/smartcontractkit/chainlink-deployments-framework v0.123.3
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260828132741-4eb62ddc67fb
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260929203752-2cf745a3c698
 	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-00010101000000-000000000000
 	github.com/stellar/go-stellar-sdk v0.7.3
