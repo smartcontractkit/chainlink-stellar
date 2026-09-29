@@ -68,6 +68,7 @@ CONTRACTS=(
   "token_admin_registry|token_admin_registry|TokenAdminRegistry|0|auth_,tar_"
   "pools_lock_release_pool|lock_release_pool|LockReleasePool|0|auth_,pool_"
   "pools_burn_mint_pool|burn_mint_pool|BurnMintPool|0|auth_,pool_"
+  "bnm_token|bnm_token|BnmToken|0|"
   "pools_token_lock_box|token_lock_box|TokenLockBox|0|auth_,lockbox_"
   "pools_siloed_lock_release_pool|siloed_lock_release_pool|SiloedLockReleasePool|0|auth_,pool_"
   "pools_advanced_pool_hooks|advanced_pool_hooks|AdvancedPoolHooks|0|auth_,aph_"

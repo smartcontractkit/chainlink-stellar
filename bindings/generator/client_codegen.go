@@ -807,10 +807,17 @@ func getArgConverter(rustType, varName string) string {
 		return fmt.Sprintf("scval.BoolToScVal(%s)", varName)
 	case "soroban_sdk::Address":
 		return fmt.Sprintf("scval.AddressToScVal(%s)", varName)
+	case "soroban_sdk::MuxedAddress":
+		// MuxedAddress params accept a plain Address ScVal (the memo/muxed
+		// account capability is unused for CCIP token transfers); mirrors the
+		// sac_token.Transfer op, which passes AddressToScVal to `transfer`.
+		return fmt.Sprintf("scval.AddressToScVal(%s)", varName)
 	case "soroban_sdk::Bytes":
 		return fmt.Sprintf("scval.BytesToScVal(%s)", varName)
 	case "soroban_sdk::Symbol":
 		return fmt.Sprintf("scval.SymbolToScVal(%s)", varName)
+	case "soroban_sdk::String", "String":
+		return fmt.Sprintf("scval.StringToScVal(%s)", varName)
 	}
 
 	if strings.HasPrefix(rustType, "Option<") && strings.Contains(rustType, "soroban_sdk::Address") {

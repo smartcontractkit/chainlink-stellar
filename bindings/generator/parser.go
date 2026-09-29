@@ -504,10 +504,14 @@ func qualifySorobanType(t string) string {
 	switch t {
 	case "Address":
 		return "soroban_sdk::Address"
+	case "MuxedAddress":
+		return "soroban_sdk::MuxedAddress"
 	case "Bytes":
 		return "soroban_sdk::Bytes"
 	case "Symbol":
 		return "soroban_sdk::Symbol"
+	case "String":
+		return "soroban_sdk::String"
 	}
 	if strings.HasPrefix(t, "BytesN<") {
 		return "soroban_sdk::" + t
