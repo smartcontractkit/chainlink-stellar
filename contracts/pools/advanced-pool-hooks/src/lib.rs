@@ -62,11 +62,15 @@ pub use types::{CCVConfig, CCVConfigArg};
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_helpers::validation::Validatable;
+use common_helpers::validation::{is_zero_address, Validatable};
+use common_interfaces::policy_engine::{Payload, PolicyData, PolicyEngineClient};
+use common_interfaces::pool_hooks::{PoolHooksPayloadData, PostflightPayload, PreflightPayload};
 use common_interfaces::token_pool::{
     LockOrBurnIn, MessageDirection, PoolRequiredCCVs, ReleaseOrMintIn,
 };
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
+};
 
 // ============================================================
 // Storage Keys
@@ -88,6 +92,11 @@ const VERIFIER_CONFIG: Symbol = symbol_short!("VRFCONF");
 /// Authorized hook invokers — the set of pools allowed to call
 /// `preflight_check`/`postflight_check` (EVM `AuthorizedCallers.s_authorizedCallers`).
 const AUTHORIZED_CALLERS: Symbol = symbol_short!("AUTHCALL");
+/// The policy engine attached to these hooks, or `None` to disable policy
+/// checks (EVM `s_policyEngine`; `address(0)` => disabled). `None` is the
+/// dormant default — the `run` calls in preflight/postflight short-circuit,
+/// matching EVM's `if (address(policyEngine) == address(0)) return;`.
+const POLICY_ENGINE: Symbol = symbol_short!("POLENG");
 
 // ============================================================
 // Contract
@@ -113,19 +122,22 @@ impl Upgradeable for AdvancedPoolHooksContract {}
 #[contractimpl]
 impl AdvancedPoolHooksContract {
     /// Initializes the hooks with `owner`, an optional sender `allowlist`, the
-    /// initial `threshold_amount`, and the initial `authorized_callers` set (EVM
-    /// constructor `AuthorizedCallers(authorizedCallers)`). The allowlist is
+    /// initial `threshold_amount`, the initial `authorized_callers` set (EVM
+    /// constructor `AuthorizedCallers(authorizedCallers)`), and an optional
+    /// `policy_engine` (EVM constructor `policyEngine` arg). The allowlist is
     /// enabled iff a non-empty list is supplied (EVM constructor
     /// `i_allowlistEnabled = allowlist.length > 0`); the flag is immutable
     /// thereafter. Zero-account entries are skipped and duplicates collapsed in
     /// both the allowlist and the authorized-callers set, matching EVM
     /// `_applyAllowListUpdates` / `_applyAuthorizedCallerUpdates` bookkeeping.
+    /// `policy_engine = None` leaves policy checks dormant (EVM `address(0)`).
     pub fn initialize(
         env: Env,
         owner: Address,
         allowlist: Vec<Address>,
         threshold_amount: i128,
         authorized_callers: Vec<Address>,
+        policy_engine: Option<Address>,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;
         <Self as Initializable>::init(&env)?;
@@ -136,7 +148,7 @@ impl AdvancedPoolHooksContract {
         if allowlist_enabled {
             for i in 0..allowlist.len() {
                 if let Some(sender) = allowlist.get(i) {
-                    if is_zero_account(&env, &sender) {
+                    if is_zero_address(&env, &sender) {
                         continue;
                     }
                     if !contains(&stored, &sender) {
@@ -163,11 +175,14 @@ impl AdvancedPoolHooksContract {
 
         // Seed the authorized-callers set (EVM constructor →
         // `_applyAuthorizedCallerUpdates({added: authorizedCallers, removed: []})`).
+        // A zero-account entry reverts `ZeroAddressNotAllowed`, matching EVM's
+        // `_applyAuthorizedCallerUpdates` (unlike the allowlist seeding above,
+        // which skips zeros per `_applyAllowListUpdates`). Duplicates collapse.
         let mut auth: Vec<Address> = Vec::new(&env);
         for i in 0..authorized_callers.len() {
             if let Some(caller) = authorized_callers.get(i) {
-                if is_zero_account(&env, &caller) {
-                    continue;
+                if is_zero_address(&env, &caller) {
+                    return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &caller) {
                     auth.push_back(caller.clone());
@@ -179,6 +194,10 @@ impl AdvancedPoolHooksContract {
             }
         }
         env.storage().instance().set(&AUTHORIZED_CALLERS, &auth);
+
+        // Attach the initial policy engine if supplied (EVM constructor
+        // `_setPolicyEngine(policyEngine, false)`). `None` => dormant.
+        Self::set_policy_engine_impl(&env, &policy_engine, false)?;
 
         events::ThresholdAmountSetEvent { threshold_amount }.publish(&env);
         Ok(())
@@ -321,6 +340,15 @@ impl AdvancedPoolHooksContract {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Checks if `sender` is allowed to perform an operation (EVM `checkAllowList`).
+    /// A no-op when the allowlist is disabled; otherwise reverts `SenderNotAllowed`
+    /// iff `sender` is not in the stored allowlist. This is the same check
+    /// `preflight_check` applies to `lock_or_burn_in.original_sender`, exposed as a
+    /// public view so callers can pre-validate a sender without invoking preflight.
+    pub fn check_allow_list(env: Env, sender: Address) -> Result<(), CCIPError> {
+        Self::require_allowlisted(&env, &sender)
+    }
+
     /// Owner-only update of the allowlist contents (EVM `applyAllowListUpdates`).
     /// Reverts `FeatureNotEnabled` if the allowlist was disabled at `initialize`,
     /// matching EVM `AllowListNotEnabled`. Removals first, then validated adds
@@ -367,7 +395,7 @@ impl AdvancedPoolHooksContract {
 
         for i in 0..adds.len() {
             if let Some(to_add) = adds.get(i) {
-                if is_zero_account(&env, &to_add) {
+                if is_zero_address(&env, &to_add) {
                     continue;
                 }
                 if !contains(&allow, &to_add) {
@@ -398,10 +426,12 @@ impl AdvancedPoolHooksContract {
 
     /// Owner-only batch update of the authorized-callers set (EVM
     /// `applyAuthorizedCallerUpdates`). Removals are applied first, then adds.
-    /// Zero-account adds are skipped and duplicate adds collapse (no-op), as the
-    /// stored set is membership-based; removals of absent callers are no-ops.
-    /// `AuthorizedCallerAdded`/`AuthorizedCallerRemoved` fire only for entries
-    /// actually added/removed.
+    /// A zero-account add reverts `ZeroAddressNotAllowed` (EVM
+    /// `_applyAuthorizedCallerUpdates` reverts `ZeroAddressNotAllowed` on a zero
+    /// add — unlike the allowlist path, which skips zeros). Duplicate adds
+    /// collapse (no-op), as the stored set is membership-based; removals of
+    /// absent callers are no-ops. `AuthorizedCallerAdded`/`AuthorizedCallerRemoved`
+    /// fire only for entries actually added/removed.
     pub fn apply_authorized_callers_updates(
         env: Env,
         removes: Vec<Address>,
@@ -440,8 +470,8 @@ impl AdvancedPoolHooksContract {
 
         for i in 0..adds.len() {
             if let Some(to_add) = adds.get(i) {
-                if is_zero_account(&env, &to_add) {
-                    continue;
+                if is_zero_address(&env, &to_add) {
+                    return Err(CCIPError::ZeroAddressNotAllowed);
                 }
                 if !contains(&auth, &to_add) {
                     auth.push_back(to_add.clone());
@@ -454,6 +484,94 @@ impl AdvancedPoolHooksContract {
         }
 
         env.storage().instance().set(&AUTHORIZED_CALLERS, &auth);
+        Ok(())
+    }
+
+    // ========================================
+    // Policy engine (EVM `s_policyEngine` + `_setPolicyEngine`)
+    // ========================================
+
+    /// Returns the attached policy engine, or `None` if policy checks are
+    /// disabled (EVM `getPolicyEngine`; `address(0)` => `None`).
+    pub fn get_policy_engine(env: Env) -> Option<Address> {
+        // Stored as `Option<Address>` (`Some` = enabled, `None`/absent = dormant,
+        // EVM `address(0)`). Read it back as `Option<Address>`: `unwrap_or(None)`
+        // collapses the outer "key absent" `None` and the inner "cleared" `None`
+        // into a single dormant result.
+        env.storage().instance().get(&POLICY_ENGINE).unwrap_or(None)
+    }
+
+    /// Owner-only. Sets a new policy engine, detaching the previous one and
+    /// reverting if that detach reverts (EVM `setPolicyEngine`).
+    pub fn set_policy_engine(
+        env: Env,
+        new_policy_engine: Option<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as Ownable>::require_owner(&env)?;
+        Self::set_policy_engine_impl(&env, &new_policy_engine, false)
+    }
+
+    /// Owner-only. Sets a new policy engine while tolerating a revert from the
+    /// previous engine's `detach` — the escape hatch for an adversarial old
+    /// engine whose `detach()` reverts (EVM `setPolicyEngineAllowFailedDetach`).
+    /// Named `force_set_policy_engine` to fit Soroban's 32-char function-name cap.
+    pub fn force_set_policy_engine(
+        env: Env,
+        new_policy_engine: Option<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as Ownable>::require_owner(&env)?;
+        Self::set_policy_engine_impl(&env, &new_policy_engine, true)
+    }
+
+    /// Mirrors EVM `_setPolicyEngine`. No-op when unchanged. Detaches the old
+    /// engine (tolerating the revert iff `allow_failed_detach`), stores the new
+    /// address, and attaches the new engine when present. The detach/attach
+    /// calls use the generated `try_`/direct client methods: a returned
+    /// `Err` or a host revert from `detach` is the "detach failed" branch; a
+    /// `run`/`attach` revert propagates and aborts, as on EVM.
+    fn set_policy_engine_impl(
+        env: &Env,
+        new_policy_engine: &Option<Address>,
+        allow_failed_detach: bool,
+    ) -> Result<(), CCIPError> {
+        let old = Self::get_policy_engine(env.clone());
+        if new_policy_engine == &old {
+            return Ok(());
+        }
+
+        if let Some(old_addr) = old.clone() {
+            let old_client = PolicyEngineClient::new(env, &old_addr);
+            let self_addr = env.current_contract_address();
+            // `try_detach` returns `Result<Result<(), CCIPEngine>, InvokeError>`:
+            // `Ok(Ok(()))` is the only success path; a returned `Err` or a host
+            // revert both count as "detach failed" (EVM `try/catch`).
+            let detached = matches!(old_client.try_detach(&self_addr), Ok(Ok(())));
+            if !detached {
+                if !allow_failed_detach {
+                    return Err(CCIPError::PolicyEngineDetachReverted);
+                }
+                events::PolicyEngineDetachFailedEvent {
+                    policy_engine: old_addr,
+                }
+                .publish(env);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&POLICY_ENGINE, new_policy_engine);
+
+        if let Some(new_addr) = new_policy_engine {
+            let new_client = PolicyEngineClient::new(env, new_addr);
+            // Non-`try_` attach: a revert/Err aborts `set_policy_engine`, as on
+            // EVM where `attach()` is outside the try/catch.
+            new_client.attach(&env.current_contract_address());
+        }
+
+        events::PolicyEngineAttachedEvent {
+            policy_engine: new_policy_engine.clone(),
+        }
+        .publish(env);
         Ok(())
     }
 
@@ -511,42 +629,63 @@ impl AdvancedPoolHooksContract {
 
     /// Outbound preflight (EVM `preflightCheck`). First validates the caller
     /// against the `authorized_callers` set (EVM `_validateCaller`), then performs
-    /// the sender allowlist check; policy-engine validation is deferred. `caller`
+    /// the sender allowlist check, then runs the policy engine over the
+    /// preflight payload if one is attached (EVM `policyEngine.run`). `caller`
     /// is the invoking pool's address — the hooks require it to authenticate and
-    /// be a member of the authorized set.
+    /// be a member of the authorized set. `amount_post_fee` is EVM
+    /// `amountPostFee`; `token_args` is forwarded as the policy-engine `context`
+    /// (EVM passes `tokenArgs` as `context`). With no engine attached the
+    /// `run` is skipped — the dormant default (EVM `address(0)` short-circuit).
     pub fn preflight_check(
         env: Env,
         caller: Address,
         lock_or_burn_in: LockOrBurnIn,
-        _requested_finality: u32,
-        _token_args: soroban_sdk::Bytes,
-        _amount: i128,
+        requested_finality: u32,
+        token_args: soroban_sdk::Bytes,
+        amount_post_fee: i128,
     ) -> Result<(), CCIPError> {
         Self::require_authorized_caller(&env, &caller)?;
-        if Self::get_allowlist_enabled(env.clone()) {
-            let allow: Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&ALLOWLIST)
-                .unwrap_or(Vec::new(&env));
-            if !contains(&allow, &lock_or_burn_in.original_sender) {
-                return Err(CCIPError::SenderNotAllowed);
-            }
-        }
+        Self::require_allowlisted(&env, &lock_or_burn_in.original_sender)?;
+        Self::run_policy_engine(
+            &env,
+            &caller,
+            PolicyData::PoolHooks(PoolHooksPayloadData::Preflight(PreflightPayload {
+                lock_or_burn_in,
+                requested_finality,
+                amount_post_fee,
+            })),
+            token_args,
+        )?;
         Ok(())
     }
 
     /// Inbound postflight (EVM `postflightCheck`). First validates the caller
-    /// against the `authorized_callers` set (EVM `_validateCaller`); the body is a
-    /// no-op (policy-engine validation deferred).
+    /// against the `authorized_callers` set (EVM `_validateCaller`), then runs
+    /// the policy engine over the postflight payload if one is attached. The
+    /// `context` is `offchain_token_data`; EVM notes it is unused in v2+
+    /// TokenPools, so empty `Bytes` is the current-faithful value — a real field
+    /// would be threaded here if reintroduced. With no engine attached the `run`
+    /// is skipped (dormant default).
     pub fn postflight_check(
         env: Env,
         caller: Address,
-        _release_or_mint_in: ReleaseOrMintIn,
-        _local_amount: i128,
-        _requested_finality: u32,
+        release_or_mint_in: ReleaseOrMintIn,
+        local_amount: i128,
+        requested_finality: u32,
     ) -> Result<(), CCIPError> {
         Self::require_authorized_caller(&env, &caller)?;
+        // EVM `releaseOrMintIn.offchainTokenData` — unused in v2+ (always empty).
+        let context = Bytes::new(&env);
+        Self::run_policy_engine(
+            &env,
+            &caller,
+            PolicyData::PoolHooks(PoolHooksPayloadData::Postflight(PostflightPayload {
+                release_or_mint_in,
+                local_amount,
+                requested_finality,
+            })),
+            context,
+        )?;
         Ok(())
     }
 }
@@ -575,15 +714,62 @@ impl AdvancedPoolHooksContract {
         }
         Ok(())
     }
-}
 
-/// True iff `addr` is the zero Stellar account (EVM `address(0)` parity for
-/// allowlist-entry rejection). Mirrors `executor::is_zero_fee_recipient`.
-fn is_zero_account(env: &Env, addr: &Address) -> bool {
-    addr == &Address::from_str(
-        env,
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    )
+    /// EVM `checkAllowList` analogue. A no-op when the allowlist is disabled
+    /// (`i_allowlistEnabled == false`); otherwise reverts `SenderNotAllowed` iff
+    /// `sender` is absent from the stored allowlist. Shared by the public
+    /// `check_allow_list` view and `preflight_check`.
+    fn require_allowlisted(env: &Env, sender: &Address) -> Result<(), CCIPError> {
+        if Self::get_allowlist_enabled(env.clone()) {
+            let allow: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&ALLOWLIST)
+                .unwrap_or(Vec::new(env));
+            if !contains(&allow, sender) {
+                return Err(CCIPError::SenderNotAllowed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs the attached policy engine over `data` + `context`, the Stellar
+    /// analogue of EVM `policyEngine.run(Payload{selector, sender, data,
+    /// context})`. Dormant when no engine is attached (EVM `address(0)`
+    /// short-circuit). The `selector` identifies the hooks method and is
+    /// derived from the payload variant — the extractor dispatches on it. A
+    /// policy rejection propagates as `Err` (or a host revert aborts), blocking
+    /// the transfer, as on EVM.
+    fn run_policy_engine(
+        env: &Env,
+        sender: &Address,
+        data: PolicyData,
+        context: Bytes,
+    ) -> Result<(), CCIPError> {
+        let Some(pe) = Self::get_policy_engine(env.clone()) else {
+            return Ok(());
+        };
+        let selector = match &data {
+            PolicyData::PoolHooks(PoolHooksPayloadData::Preflight(_)) => {
+                Symbol::new(env, "preflight_check")
+            }
+            PolicyData::PoolHooks(PoolHooksPayloadData::Postflight(_)) => {
+                Symbol::new(env, "postflight_check")
+            }
+        };
+        let payload = Payload {
+            selector,
+            sender: sender.clone(),
+            data,
+            context,
+        };
+        let client = PolicyEngineClient::new(env, &pe);
+        // Non-`try_` run: a policy rejection reverts/aborts, propagating up and
+        // blocking the transfer — EVM `policyEngine.run` revert parity. The
+        // pool already treats any hooks failure as an abort.
+        client.run(&payload);
+        Ok(())
+    }
 }
 
 /// Linear membership test (Soroban `Vec` has no `contains`).

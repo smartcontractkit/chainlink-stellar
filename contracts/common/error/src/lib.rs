@@ -233,4 +233,16 @@ pub enum CCIPError {
     /// A CCV supplied to the executor's fee quote is not on its allowlist while
     /// the allowlist is enabled (EVM `Executor.CCVNotAllowed`).
     CCVNotAllowed = 805,
+    /// Detaching the previous policy engine reverted and the caller did not opt
+    /// into tolerating the failure (EVM `AdvancedPoolHooks.PolicyEngineDetachReverted`).
+    PolicyEngineDetachReverted = 806,
+    /// The policy engine has no extractor registered for `payload.selector`, or the
+    /// routed extractor does not handle it (EVM `IPolicyEngine.UnsupportedSelector`).
+    UnsupportedSelector = 807,
+    /// A zero account was supplied where a non-zero address is required (EVM
+    /// `AuthorizedCallers.ZeroAddressNotAllowed`). The authorized-callers set
+    /// rejects zero-account adds — both at `initialize` seeding and via
+    /// `apply_authorized_callers_updates` — matching EVM's revert. (The allowlist
+    /// path still skips zero accounts, mirroring EVM `_applyAllowListUpdates`.)
+    ZeroAddressNotAllowed = 808,
 }

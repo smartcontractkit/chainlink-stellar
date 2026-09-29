@@ -35,6 +35,7 @@ type InitializeInput struct {
 	Allowlist         []string `json:"allowlist"`
 	ThresholdAmount   *big.Int `json:"threshold_amount"`   // i128; defaults to 0 (hook applies to all amounts)
 	AuthorizedCallers []string `json:"authorized_callers"` // pool addresses allowed to invoke the hooks (EVM `_validateCaller`)
+	PolicyEngine      *string  `json:"policy_engine"`      // optional policy engine address; nil leaves policy checks dormant (EVM `address(0)`)
 }
 
 // Initialize calls Advanced Pool Hooks `initialize` with the issuer as owner.
@@ -55,7 +56,7 @@ var Initialize = cldfops.NewOperation(
 			threshold = big.NewInt(0) // scval.I128ToScVal panics on nil; 0 = hook applies to every amount
 		}
 		c := aphbindings.NewAdvancedPoolHooksClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Allowlist, threshold, in.AuthorizedCallers); err != nil {
+		if err := c.Initialize(b.GetContext(), in.Owner, in.Allowlist, threshold, in.AuthorizedCallers, in.PolicyEngine); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

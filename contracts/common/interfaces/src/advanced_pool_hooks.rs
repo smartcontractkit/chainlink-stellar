@@ -14,6 +14,7 @@ pub trait AdvancedPoolHooksInterface {
         allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
         threshold_amount: i128,
         authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
+        policy_engine: Option<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn get_allowlist(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
@@ -24,9 +25,13 @@ pub trait AdvancedPoolHooksInterface {
         lock_or_burn_in: LockOrBurnIn,
         requested_finality: u32,
         token_args: soroban_sdk::Bytes,
-        amount: i128,
+        amount_post_fee: i128,
     ) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
+    fn check_allow_list(
+        env: soroban_sdk::Env,
+        sender: soroban_sdk::Address,
+    ) -> Result<(), CCIPError>;
     fn postflight_check(
         env: soroban_sdk::Env,
         caller: soroban_sdk::Address,
@@ -36,6 +41,7 @@ pub trait AdvancedPoolHooksInterface {
     ) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+    fn get_policy_engine(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_required_ccvs(
         env: soroban_sdk::Env,
         local_token: soroban_sdk::Address,
@@ -45,6 +51,10 @@ pub trait AdvancedPoolHooksInterface {
         extra_data: soroban_sdk::Bytes,
         direction: MessageDirection,
     ) -> PoolRequiredCCVs;
+    fn set_policy_engine(
+        env: soroban_sdk::Env,
+        new_policy_engine: Option<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
     fn transfer_ownership(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
@@ -58,6 +68,10 @@ pub trait AdvancedPoolHooksInterface {
         env: soroban_sdk::Env,
         removes: soroban_sdk::Vec<soroban_sdk::Address>,
         adds: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
+    fn force_set_policy_engine(
+        env: soroban_sdk::Env,
+        new_policy_engine: Option<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn apply_ccv_config_updates(
         env: soroban_sdk::Env,
@@ -252,6 +266,9 @@ pub enum CCIPError {
     ZeroFeeAggregatorNotAllowed = 803,
     ExceedsMaxCCVs = 804,
     CCVNotAllowed = 805,
+    PolicyEngineDetachReverted = 806,
+    UnsupportedSelector = 807,
+    ZeroAddressNotAllowed = 808,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -303,4 +320,14 @@ pub struct CCVConfigUpdatedEvent {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ThresholdAmountSetEvent {
     pub threshold_amount: i128,
+}
+#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineAttached"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PolicyEngineAttachedEvent {
+    pub policy_engine: Option<soroban_sdk::Address>,
+}
+#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineDetachFailed"], export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PolicyEngineDetachFailedEvent {
+    pub policy_engine: soroban_sdk::Address,
 }

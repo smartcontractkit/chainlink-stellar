@@ -22,6 +22,9 @@ use common_pool::{
     ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig, ReleaseOrMintIn,
     TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
+use pools_advanced_pool_hooks::{
+    AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
+};
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
@@ -1477,6 +1480,60 @@ fn get_required_ccvs_delegates_to_hooks() {
     assert_eq!(v.ccvs.len(), 1);
     assert_eq!(v.ccvs.get(0).unwrap(), expected_ccv);
     assert!(!v.include_defaults);
+}
+
+#[test]
+fn get_required_ccvs_real_advanced_pool_hooks() {
+    // Closes the siloed-lock-release variant of CCV-7: a REAL
+    // AdvancedPoolHooks contract (not a mock) stores an issuer-configured
+    // per-chain CCV choice, and the siloed pool's `get_required_ccvs` delegates
+    // to it end-to-end — mirroring burn-mint-pool's
+    // `test_get_required_ccvs_real_advanced_pool_hooks`. The issuer opts out of
+    // lane defaults (`outbound_include_defaults = false`), so the pool relays
+    // exactly the issuer's CCV set and the `include_defaults = false` flag.
+    let t = setup();
+
+    let hooks_id = t.env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&t.env, &hooks_id);
+    let hooks_owner = Address::generate(&t.env);
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&t.env),
+        &0i128,
+        &Vec::new(&t.env),
+        &None,
+    );
+
+    t.pool_client.set_advanced_pool_hooks(&hooks_id.clone());
+
+    let ccv_a = Address::generate(&t.env);
+    let ccv_b = Address::generate(&t.env);
+    let config = CCVConfigArg {
+        remote_chain_selector: REMOTE_CHAIN,
+        outbound_ccvs: vec![&t.env, ccv_a.clone(), ccv_b.clone()],
+        threshold_outbound_ccvs: Vec::new(&t.env),
+        inbound_ccvs: Vec::new(&t.env),
+        threshold_inbound_ccvs: Vec::new(&t.env),
+        outbound_include_defaults: false,
+        inbound_include_defaults: true,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&t.env, config]);
+
+    let v = t.pool_client.get_required_ccvs(
+        &t.token_addr,
+        &REMOTE_CHAIN,
+        &100i128,
+        &0u32,
+        &Bytes::new(&t.env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(v.ccvs.len(), 2);
+    assert_eq!(v.ccvs.get(0).unwrap(), ccv_a);
+    assert_eq!(v.ccvs.get(1).unwrap(), ccv_b);
+    assert!(
+        !v.include_defaults,
+        "issuer set include_defaults=false; siloed pool must relay it"
+    );
 }
 
 /// Proves the sender-supplied `token_args` (extra args → OnRamp →

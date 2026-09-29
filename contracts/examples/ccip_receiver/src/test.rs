@@ -3,8 +3,9 @@
 extern crate std;
 
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events as _, vec, Address, Bytes, BytesN,
-    Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    symbol_short, testutils::storage::Instance as _, testutils::storage::Persistent as _,
+    testutils::Address as _, testutils::Events as _, vec, Address, Bytes, BytesN, Env, Map, Symbol,
+    TryFromVal, TryIntoVal, Val, Vec,
 };
 
 use crate::{CcvChainConfig, CcvConfigUpdate, ExampleCcipReceiver, ExampleCcipReceiverClient};
@@ -359,4 +360,109 @@ fn test_upgrade_by_non_owner_rejected() {
     // runs first and panics, so `update_current_contract_wasm` is never reached.
     let hash = BytesN::<32>::from_array(&env, &[0u8; 32]);
     client.upgrade(&hash);
+}
+
+#[test]
+fn test_extend_config_ttl_bumps_persistent_and_instance_entries() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
+    client.initialize(&owner, &router);
+
+    // Create persistent config entries: REM_CFG(sel) via enable_remote_chain and
+    // CCV_KEY(sel) via apply_ccv_config_updates.
+    let sel: u64 = 1;
+    let extra = Bytes::from_slice(&env, &[0x01]);
+    client.enable_remote_chain(&owner, &sel, &extra, &0u32);
+    let required = vec![&env, Address::generate(&env)];
+    let updates = vec![
+        &env,
+        CcvConfigUpdate {
+            source_chain_selector: sel,
+            required_ccvs: required,
+            optional_ccvs: vec![&env],
+            optional_threshold: 0,
+        },
+    ];
+    client.apply_ccv_config_updates(&owner, &updates);
+
+    let rem_key = (symbol_short!("RMCFG"), sel);
+    let ccv_key = (symbol_short!("CCVCG"), sel);
+
+    let rem_ttl_before = env.as_contract(&receiver_id, || {
+        env.storage().persistent().get_ttl(&rem_key)
+    });
+    let ccv_ttl_before = env.as_contract(&receiver_id, || {
+        env.storage().persistent().get_ttl(&ccv_key)
+    });
+    let inst_ttl_before = env.as_contract(&receiver_id, || env.storage().instance().get_ttl());
+
+    // extend_ttl requires threshold <= extend_to and only fires when the remaining
+    // TTL drops below threshold. Set threshold == extend_to (satisfies the <= bound)
+    // and extend_to comfortably larger than every current live-until, so the bump
+    // fires and is observable on all three entries.
+    let extend_to = rem_ttl_before.max(ccv_ttl_before).max(inst_ttl_before) + 50_000;
+    let threshold = extend_to;
+    client.extend_config_ttl(&vec![&env, sel], &vec![&env, sel], &threshold, &extend_to);
+
+    let rem_ttl_after = env.as_contract(&receiver_id, || {
+        env.storage().persistent().get_ttl(&rem_key)
+    });
+    let ccv_ttl_after = env.as_contract(&receiver_id, || {
+        env.storage().persistent().get_ttl(&ccv_key)
+    });
+    let inst_ttl_after = env.as_contract(&receiver_id, || env.storage().instance().get_ttl());
+
+    assert!(
+        rem_ttl_after > rem_ttl_before,
+        "REM_CFG TTL not bumped: {} -> {}",
+        rem_ttl_before,
+        rem_ttl_after
+    );
+    assert!(
+        ccv_ttl_after > ccv_ttl_before,
+        "CCV_KEY TTL not bumped: {} -> {}",
+        ccv_ttl_before,
+        ccv_ttl_after
+    );
+    assert!(
+        inst_ttl_after > inst_ttl_before,
+        "instance TTL not bumped: {} -> {}",
+        inst_ttl_before,
+        inst_ttl_after
+    );
+
+    // Entries remain readable with their configured values after the bump.
+    assert!(!client.get_remote_chain_config(&sel).extra_args.is_empty());
+    assert_eq!(client.get_ccv_config(&sel).required_ccvs.len(), 1);
+}
+
+#[test]
+fn test_extend_config_ttl_skips_absent_selectors_without_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
+    client.initialize(&owner, &router);
+
+    // No REM_CFG/CCV_KEY entries exist for selector 999. The keeper's has() guard
+    // must skip absent entries rather than panic; instance TTL is still bumped.
+    // threshold == extend_to satisfies extend_ttl's `threshold <= extend_to` bound.
+    client.extend_config_ttl(
+        &vec![&env, 999u64],
+        &vec![&env, 999u64],
+        &10_000u32,
+        &10_000u32,
+    );
+
+    // Unconfigured selector returns the documented default (empty extra_args).
+    let cfg = client.get_remote_chain_config(&999u64);
+    assert!(cfg.extra_args.is_empty());
 }

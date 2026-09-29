@@ -162,6 +162,67 @@ impl ExampleCcipReceiver {
             .ok_or(CCIPError::NotInitialized)
     }
 
+    /// Permissionless TTL-bump keeper (mirrors the OffRamp's
+    /// `extend_execution_state_ttl`). Soroban archives `Persistent`/`Instance`
+    /// entries whose TTL expires; an archived entry must be restored (rehydrated)
+    /// before it can be read, and the CCIP relayer refuses to pay to rehydrate
+    /// *external* (receiver-owned) cold storage — it submits the execute once and
+    /// defers to manual re-execution. To keep this receiver's config live without
+    /// relying on the relayer, an owner/keeper should call this periodically.
+    ///
+    /// Bumps, for every selector supplied:
+    ///   - the persistent `REM_CFG(selector)` entry (outbound `extra_args` /
+    ///     `allowed_finality_config`), and
+    ///   - the persistent `CCV_KEY(selector)` entry (inbound required/optional CCVs).
+    /// It also bumps the instance TTL (covers `ROUTER`/`OWNER`/`INIT`/`REM_SELS`/
+    /// `LAST_MID`). Absent entries are skipped (a keeper need not know which
+    /// selectors are currently configured).
+    ///
+    /// `threshold_ledgers` / `extend_to_ledgers` are the `extend_ttl` parameters
+    /// (extend only when the remaining TTL drops below `threshold_ledgers`; extend
+    /// to `extend_to_ledgers`). Recommended defaults match the OffRamp:
+    /// `threshold_ledgers = 518_400`, `extend_to_ledgers = 3_110_400`.
+    ///
+    /// No `require_auth`: TTL extension is not a security boundary — anyone can
+    /// already extend a contract's entry TTL via a bare `ExtendFootprintTTLOp`.
+    pub fn extend_config_ttl(
+        env: Env,
+        remote_chain_selectors: Vec<u64>,
+        ccv_source_chain_selectors: Vec<u64>,
+        threshold_ledgers: u32,
+        extend_to_ledgers: u32,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        env.storage()
+            .instance()
+            .extend_ttl(threshold_ledgers, extend_to_ledgers);
+        for i in 0..remote_chain_selectors.len() {
+            if let Some(sel) = remote_chain_selectors.get(i) {
+                let key = (REM_CFG, sel);
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().extend_ttl(
+                        &key,
+                        threshold_ledgers,
+                        extend_to_ledgers,
+                    );
+                }
+            }
+        }
+        for i in 0..ccv_source_chain_selectors.len() {
+            if let Some(sel) = ccv_source_chain_selectors.get(i) {
+                let key = (CCV_KEY, sel);
+                if env.storage().persistent().has(&key) {
+                    env.storage().persistent().extend_ttl(
+                        &key,
+                        threshold_ledgers,
+                        extend_to_ledgers,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Configure a remote chain (EVM `enableChain`): non-empty `extra_args` enables outbound sends;
     /// `allowed_finality_config` is FinalityCodec-style `u32` (EVM `bytes4`) for inbound policy documentation.
     pub fn enable_remote_chain(

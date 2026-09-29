@@ -1005,6 +1005,9 @@ const (
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
 	CCIPErrorExceedsMaxCCVs                      = 804
 	CCIPErrorCCVNotAllowed                       = 805
+	CCIPErrorPolicyEngineDetachReverted          = 806
+	CCIPErrorUnsupportedSelector                 = 807
+	CCIPErrorZeroAddressNotAllowed               = 808
 )
 
 // CCIPErrorMessage returns a human-readable message for error codes.
@@ -1133,6 +1136,9 @@ var CCIPErrorMessage = map[int]string{
 	803: "zero fee aggregator not allowed",
 	804: "exceeds max c c vs",
 	805: "c c v not allowed",
+	806: "policy engine detach reverted",
+	807: "unsupported selector",
+	808: "zero address not allowed",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.

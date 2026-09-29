@@ -48,3 +48,20 @@ pub struct CCVConfigUpdatedEvent {
 pub struct ThresholdAmountSetEvent {
     pub threshold_amount: i128,
 }
+
+/// Mirrors `PolicyEngineAttached(address indexed policyEngine)`. `None` means
+/// the engine was cleared (EVM `address(0)` — policy checks disabled).
+#[contractevent(topics = ["aph_PolicyEngineAttached"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyEngineAttachedEvent {
+    pub policy_engine: Option<Address>,
+}
+
+/// Mirrors `PolicyEngineDetachFailed(address indexed policyEngine, bytes reason)`.
+/// EVM carries the revert reason bytes; Soroban's typed `try_` call API does not
+/// surface them cheaply, so only the failing engine address is carried.
+#[contractevent(topics = ["aph_PolicyEngineDetachFailed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyEngineDetachFailedEvent {
+    pub policy_engine: Address,
+}

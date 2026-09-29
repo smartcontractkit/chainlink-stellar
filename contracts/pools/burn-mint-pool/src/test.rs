@@ -2923,7 +2923,13 @@ fn test_get_required_ccvs_real_advanced_pool_hooks() {
     let hooks_id = env.register(AdvancedPoolHooksContract, ());
     let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
     let hooks_owner = Address::generate(&env);
-    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &0i128,
+        &Vec::new(&env),
+        &None,
+    );
 
     pool_client.set_advanced_pool_hooks(&hooks_id);
 
@@ -2977,7 +2983,13 @@ fn test_get_required_ccvs_threshold_through_pool() {
     let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
     let hooks_owner = Address::generate(&env);
     // threshold_amount = 1_000 configured up front.
-    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &1_000i128, &Vec::new(&env));
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &1_000i128,
+        &Vec::new(&env),
+        &None,
+    );
     pool_client.set_advanced_pool_hooks(&hooks_id);
 
     let base = Address::generate(&env);
@@ -3038,7 +3050,13 @@ fn test_get_required_ccvs_inbound_through_pool() {
     let hooks_id = env.register(AdvancedPoolHooksContract, ());
     let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
     let hooks_owner = Address::generate(&env);
-    hooks_client.initialize(&hooks_owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &0i128,
+        &Vec::new(&env),
+        &None,
+    );
     pool_client.set_advanced_pool_hooks(&hooks_id);
 
     let inc = Address::generate(&env);
@@ -3106,6 +3124,7 @@ fn test_lock_or_burn_gated_by_real_hooks_allowlist() {
         &vec![&env, allowed.clone()],
         &0i128,
         &vec![&env, pool_client.address.clone()],
+        &None,
     );
     pool_client.set_advanced_pool_hooks(&hooks_id);
 

@@ -20,7 +20,7 @@
 pub mod events;
 pub mod types;
 
-use common_helpers::map_updater::MapUpdater;
+use common_helpers::{map_updater::MapUpdater, validation::is_zero_address};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
@@ -356,7 +356,7 @@ impl VersionedVerifierResolverContract {
         <Self as Initializable>::require_initialized(&env)?;
 
         let fee_agg = Self::get_fee_aggregator(env.clone())?;
-        if is_zero_fee_recipient(&env, &fee_agg) {
+        if is_zero_address(&env, &fee_agg) {
             return Err(CCIPError::ZeroFeeAggregatorNotAllowed);
         }
 
@@ -373,13 +373,6 @@ impl VersionedVerifierResolverContract {
 
         Ok(())
     }
-}
-
-fn is_zero_fee_recipient(env: &Env, addr: &Address) -> bool {
-    addr == &Address::from_str(
-        env,
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    )
 }
 
 #[cfg(test)]

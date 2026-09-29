@@ -6,7 +6,10 @@ pub mod types;
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
-use common_helpers::{finality_codec, validation::Validatable};
+use common_helpers::{
+    finality_codec,
+    validation::{is_zero_address, Validatable},
+};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, BytesN, Env, Map, Symbol, Vec,
 };
@@ -285,7 +288,7 @@ impl ExecutorContract {
 
         // Additions (dedup + zero-account rejection).
         for to_add in ccvs_to_add.iter() {
-            if is_zero_fee_recipient(&env, &to_add) {
+            if is_zero_address(&env, &to_add) {
                 return Err(CCIPError::InvalidAddress);
             }
             if !contains(&allowed, &to_add) {
@@ -394,7 +397,7 @@ impl ExecutorContract {
         let fee_agg = dynamic
             .fee_aggregator
             .ok_or(CCIPError::ZeroFeeAggregatorNotAllowed)?;
-        if is_zero_fee_recipient(&env, &fee_agg) {
+        if is_zero_address(&env, &fee_agg) {
             return Err(CCIPError::ZeroFeeAggregatorNotAllowed);
         }
 
@@ -424,15 +427,6 @@ impl ExecutorContract {
 // ============================================================
 // Helpers
 // ============================================================
-
-/// True iff `addr` is the zero Stellar account (EVM `address(0)` parity for
-/// fee-recipient and CCV rejection). Mirrors `committee_verifier::is_zero_fee_recipient`.
-fn is_zero_fee_recipient(env: &Env, addr: &Address) -> bool {
-    addr == &Address::from_str(
-        env,
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    )
-}
 
 /// Linear membership test for a `Vec<Address>` (Soroban `Vec` has no `contains`).
 fn contains(haystack: &Vec<Address>, needle: &Address) -> bool {

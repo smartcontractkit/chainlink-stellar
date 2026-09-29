@@ -19,6 +19,7 @@ common-interfaces = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 pools-token-lock-box = { path = "../token-lock-box" }
+pools-advanced-pool-hooks = { path = "../advanced-pool-hooks" }
 ccip-ramp-registry = { workspace = true }
 router = { workspace = true }
 rmn_proxy = { workspace = true }

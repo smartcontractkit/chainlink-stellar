@@ -1,12 +1,15 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events as _, vec, Address, Bytes, BytesN,
-    Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Events as _, vec,
+    Address, Bytes, BytesN, Env, Map, String, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
 use crate::types::CCVConfigArg;
 use crate::{AdvancedPoolHooksContract, AdvancedPoolHooksContractClient};
+use common_error::CCIPError;
+use common_interfaces::policy_engine::{Payload, PolicyData};
+use common_interfaces::pool_hooks::PoolHooksPayloadData;
 use common_interfaces::token_pool::{LockOrBurnIn, MessageDirection, ReleaseOrMintIn};
 
 const REMOTE_CHAIN: u64 = 5009297550715157269;
@@ -20,7 +23,7 @@ fn setup() -> (Env, AdvancedPoolHooksContractClient<'static>, Address) {
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
     // No allowlist, no threshold, no authorized callers by default.
-    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env), &None);
 
     (env, client, owner)
 }
@@ -46,7 +49,7 @@ fn setup_with_allowlist(
     }
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env));
+    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env), &None);
 
     (env, client, owner, allowlist)
 }
@@ -84,6 +87,18 @@ fn zero_addr(env: &Env) -> Address {
     Address::from_str(
         env,
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    )
+}
+
+/// The zero Stellar contract — contract hash `0^32`, strkey `C…`. EVM
+/// `address(0)` is type-agnostic, so the role-2 guards must reject a zero
+/// *contract* too, not only a zero account. This exercises the parity gap the
+/// shared `is_zero_address` helper closes (the old `is_zero_account` only
+/// matched the account strkey).
+fn zero_contract_addr(env: &Env) -> Address {
+    Address::from_str(
+        env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
     )
 }
 
@@ -439,6 +454,30 @@ fn test_preflight_noop_when_allowlist_disabled() {
 }
 
 #[test]
+fn test_check_allow_list_noop_when_disabled() {
+    // EVM `checkAllowList` is a no-op when `i_allowlistEnabled == false`: any
+    // sender (even a stranger) passes.
+    let (env, client, _owner) = setup(); // allowlist off
+    let stranger = Address::generate(&env);
+    client.check_allow_list(&stranger);
+}
+
+#[test]
+fn test_check_allow_list_accepts_allowlisted_sender() {
+    let (_env, client, _owner, allowlist) = setup_with_allowlist(1);
+    let allowed = allowlist.get(0).unwrap();
+    client.check_allow_list(&allowed);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #49)")] // SenderNotAllowed
+fn test_check_allow_list_rejects_non_allowlisted_sender() {
+    let (env, client, _owner, _allowlist) = setup_with_allowlist(1);
+    let stranger = Address::generate(&env);
+    client.check_allow_list(&stranger);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #10)")] // FeatureNotEnabled (AllowListNotEnabled)
 fn test_apply_allowlist_updates_rejected_when_disabled() {
     let (env, client, _owner) = setup(); // allowlist disabled at init
@@ -549,29 +588,77 @@ fn test_apply_authorized_callers_updates_adds_and_removes() {
 }
 
 #[test]
-fn test_initialize_seeds_authorized_callers_with_dedup_and_zero_skip() {
+fn test_initialize_seeds_authorized_callers_with_dedup() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
     let real = Address::generate(&env);
     let pool = Address::generate(&env);
-    // [zero, real, real, pool] -> stored = [real, pool] (zero skipped, dup collapsed).
-    let authorized = vec![
-        &env,
-        zero_addr(&env),
-        real.clone(),
-        real.clone(),
-        pool.clone(),
-    ];
+    // [real, real, pool] -> stored = [real, pool] (dup collapsed; no zero entry).
+    let authorized = vec![&env, real.clone(), real.clone(), pool.clone()];
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
 
     let stored = client.get_all_authorized_callers();
     assert_eq!(stored.len(), 2);
     assert_eq!(stored.get(0).unwrap(), real);
     assert_eq!(stored.get(1).unwrap(), pool);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_initialize_rejects_zero_authorized_caller() {
+    // EVM constructor → `_applyAuthorizedCallerUpdates` reverts
+    // `ZeroAddressNotAllowed` on a zero add; Stellar matches (unlike the
+    // allowlist seeding, which skips zeros per `_applyAllowListUpdates`).
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let real = Address::generate(&env);
+    let authorized = vec![&env, zero_addr(&env), real.clone()];
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_apply_authorized_callers_updates_rejects_zero_add() {
+    // EVM `_applyAuthorizedCallerUpdates` reverts `ZeroAddressNotAllowed` on a
+    // zero add; Stellar matches.
+    let (_env, client, _owner) = setup();
+    let zero = zero_addr(&client.env);
+    client.apply_authorized_callers_updates(&Vec::new(&client.env), &vec![&client.env, zero]);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_initialize_rejects_zero_contract_authorized_caller() {
+    // EVM `address(0)` is type-agnostic — a zero is a zero whether the slot
+    // expects an EOA or a contract. The shared `is_zero_address` helper checks
+    // both strkey kinds, so a zero *contract* hash is rejected just like a zero
+    // account. This is the gap the old account-only `is_zero_account` left open.
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let real = Address::generate(&env);
+    let authorized = vec![&env, zero_contract_addr(&env), real.clone()];
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &authorized, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_apply_authorized_callers_updates_rejects_zero_contract_add() {
+    // Same type-agnostic parity as the initialize variant, via the update path.
+    let (_env, client, _owner) = setup();
+    let zero = zero_contract_addr(&client.env);
+    client.apply_authorized_callers_updates(&Vec::new(&client.env), &vec![&client.env, zero]);
 }
 
 #[test]
@@ -807,7 +894,7 @@ fn test_initialize_skips_zero_and_dedups_allowlist() {
     let allowlist = vec![&env, zero_addr(&env), real.clone(), real.clone()];
     let id = env.register(AdvancedPoolHooksContract, ());
     let client = AdvancedPoolHooksContractClient::new(&env, &id);
-    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env));
+    client.initialize(&owner, &allowlist, &0i128, &Vec::new(&env), &None);
 
     assert!(client.get_allowlist_enabled());
     let stored = client.get_allowlist();
@@ -914,10 +1001,343 @@ fn test_upgrade_by_non_owner_rejected() {
     let client = AdvancedPoolHooksContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
-    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env));
+    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env), &None);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before
     // the executable is touched.
     client.upgrade(&hash);
+}
+
+// ============================================================
+// Policy engine (EVM `s_policyEngine` + `_setPolicyEngine`)
+// ============================================================
+
+/// In-workspace mock policy engine. Implements the `PolicyEngineInterface` ABI
+/// (`attach`/`detach`/`run`/`type_and_version`) so the hooks' `PolicyEngineClient`
+/// can call it cross-contract. Records calls + the last `run` payload, and can
+/// be configured to revert on `detach` (adversarial old engine) or reject on
+/// `run` (policy rejection), to exercise the detach escape hatch and the
+/// transfer-blocking path.
+#[contract]
+pub struct MockPolicyEngineContract;
+
+const MOCK_REVERT_DETACH: Symbol = symbol_short!("MREVDET");
+const MOCK_REVERT_RUN: Symbol = symbol_short!("MREVRUN");
+const MOCK_LAST_PAYLOAD: Symbol = symbol_short!("MLASTPL");
+const MOCK_ATTACH_COUNT: Symbol = symbol_short!("MATTACH");
+const MOCK_DETACH_COUNT: Symbol = symbol_short!("MDETACH");
+
+#[contractimpl]
+impl MockPolicyEngineContract {
+    pub fn attach(env: Env, target: Address) -> Result<(), CCIPError> {
+        target.require_auth();
+        let c: u32 = env
+            .storage()
+            .instance()
+            .get(&MOCK_ATTACH_COUNT)
+            .unwrap_or(0);
+        env.storage().instance().set(&MOCK_ATTACH_COUNT, &(c + 1));
+        Ok(())
+    }
+
+    pub fn detach(env: Env, target: Address) -> Result<(), CCIPError> {
+        target.require_auth();
+        if env
+            .storage()
+            .instance()
+            .get(&MOCK_REVERT_DETACH)
+            .unwrap_or(false)
+        {
+            // Adversarial engine whose detach reverts (EVM try/catch `catch` branch).
+            panic!("mock detach reverted");
+        }
+        let c: u32 = env
+            .storage()
+            .instance()
+            .get(&MOCK_DETACH_COUNT)
+            .unwrap_or(0);
+        env.storage().instance().set(&MOCK_DETACH_COUNT, &(c + 1));
+        Ok(())
+    }
+
+    pub fn run(env: Env, payload: Payload) -> Result<(), CCIPError> {
+        if env
+            .storage()
+            .instance()
+            .get(&MOCK_REVERT_RUN)
+            .unwrap_or(false)
+        {
+            // Policy rejection — non-`try_` `PolicyEngineClient::run` panics on
+            // this, aborting the hooks call and blocking the transfer.
+            return Err(CCIPError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&MOCK_LAST_PAYLOAD, &Some(payload));
+        Ok(())
+    }
+
+    pub fn type_and_version(env: Env) -> String {
+        String::from_str(&env, "MockPolicyEngine 1.0.0")
+    }
+
+    // ---- test-only configuration / inspection ----
+    pub fn set_revert_on_detach(env: Env, v: bool) {
+        env.storage().instance().set(&MOCK_REVERT_DETACH, &v);
+    }
+    pub fn set_revert_on_run(env: Env, v: bool) {
+        env.storage().instance().set(&MOCK_REVERT_RUN, &v);
+    }
+    pub fn last_payload(env: Env) -> Option<Payload> {
+        env.storage()
+            .instance()
+            .get(&MOCK_LAST_PAYLOAD)
+            .unwrap_or(None)
+    }
+    pub fn attach_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&MOCK_ATTACH_COUNT)
+            .unwrap_or(0)
+    }
+    pub fn detach_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&MOCK_DETACH_COUNT)
+            .unwrap_or(0)
+    }
+}
+
+/// Registers a fresh mock policy engine and returns its address + client.
+fn register_mock_engine(env: &Env) -> (Address, MockPolicyEngineContractClient<'static>) {
+    let id = env.register(MockPolicyEngineContract, ());
+    let client = MockPolicyEngineContractClient::new(env, &id);
+    (id, client)
+}
+
+#[test]
+fn test_policy_engine_dormant_by_default() {
+    let (env, client, _owner) = setup();
+    assert_eq!(client.get_policy_engine(), None);
+    // No engine => preflight/postflight must not touch any engine. Allowlist is
+    // off in `setup`, so this completes (no panic) and records no payload.
+    let caller = authorize_caller(&client);
+    let lob = lock_or_burn(&env, Address::generate(&env));
+    client.preflight_check(&caller, &lob, &0u32, &Bytes::new(&env), &0i128);
+}
+
+#[test]
+fn test_set_policy_engine_attaches_and_stores() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr.clone()));
+    assert_eq!(client.get_policy_engine(), Some(mock_addr));
+    // EVM `_setPolicyEngine` calls `attach()` on the new engine.
+    assert_eq!(mock_client.attach_count(), 1);
+}
+
+#[test]
+fn test_set_policy_engine_is_owner_only() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, _mock_client) = register_mock_engine(&env);
+    env.mock_auths(&[]);
+    let r = client.try_set_policy_engine(&Some(mock_addr));
+    assert!(
+        r.is_err(),
+        "non-owner / unauthed set_policy_engine must fail"
+    );
+}
+
+#[test]
+fn test_set_policy_engine_swaps_detach_old_attach_new() {
+    let (env, client, _owner) = setup();
+    let (first, first_client) = register_mock_engine(&env);
+    let (second, second_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(first.clone()));
+    client.set_policy_engine(&Some(second.clone()));
+    assert_eq!(client.get_policy_engine(), Some(second));
+    assert_eq!(
+        first_client.detach_count(),
+        1,
+        "old engine must be detached"
+    );
+    assert_eq!(
+        second_client.attach_count(),
+        1,
+        "new engine must be attached"
+    );
+}
+
+#[test]
+fn test_set_policy_engine_none_detaches_and_disables() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    client.set_policy_engine(&None);
+    assert_eq!(client.get_policy_engine(), None);
+    assert_eq!(mock_client.detach_count(), 1);
+}
+
+#[test]
+fn test_set_policy_engine_strict_reverts_on_detach_failure() {
+    let (env, client, _owner) = setup();
+    let (first, first_client) = register_mock_engine(&env);
+    let (second, second_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(first.clone()));
+    first_client.set_revert_on_detach(&true);
+
+    // Strict path: old detach reverts -> PolicyEngineDetachReverted (#806), no swap.
+    // Contract errors surface on the outer-Err side as `Err(Ok(CCIPError))`
+    // (see lock-release-pool tests); `Ok(Err(_))` is a conversion failure.
+    let r = client.try_set_policy_engine(&Some(second.clone()));
+    match r {
+        Ok(Ok(())) => panic!("strict set must not succeed when detach reverts"),
+        Err(Ok(e)) => assert_eq!(e, CCIPError::PolicyEngineDetachReverted),
+        Ok(Err(_)) => panic!("unexpected conversion error"),
+        Err(Err(_)) => panic!("unexpected host error"),
+    }
+    assert_eq!(
+        client.get_policy_engine(),
+        Some(first),
+        "engine must not swap"
+    );
+    assert_eq!(
+        second_client.attach_count(),
+        0,
+        "new engine must not be attached"
+    );
+}
+
+#[test]
+fn test_force_set_policy_engine_tolerates_detach_failure() {
+    let (env, client, _owner) = setup();
+    let (first, _first_client) = register_mock_engine(&env);
+    let (second, second_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(first.clone()));
+    // Make the old engine's detach revert; the force path must proceed anyway.
+    let first_client_for_flag = MockPolicyEngineContractClient::new(&env, &first);
+    first_client_for_flag.set_revert_on_detach(&true);
+
+    client.force_set_policy_engine(&Some(second.clone()));
+    // A PolicyEngineDetachFailed event must be emitted (topic aph_PolicyEngineDetachFailed).
+    // `env.events()` reflects only the most recent top-level call (see executor
+    // contract gotcha), so read it IMMEDIATELY after the force call — before any
+    // later client call clobbers the log — and filter to the hooks contract,
+    // the same pattern as `upgraded_event_hash`.
+    let detach_failed_topic = Symbol::new(&env, "aph_PolicyEngineDetachFailed");
+    let mut saw_detach_failed = false;
+    let evs = env.events().all().filter_by_contract(&client.address);
+    for e in evs.events().iter() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body else {
+            continue;
+        };
+        for t in v0.topics.iter() {
+            let s: Symbol = t
+                .clone()
+                .try_into_val(&env)
+                .unwrap_or(Symbol::new(&env, ""));
+            if s == detach_failed_topic {
+                saw_detach_failed = true;
+            }
+        }
+    }
+    assert!(
+        saw_detach_failed,
+        "force path must emit PolicyEngineDetachFailed"
+    );
+    assert_eq!(client.get_policy_engine(), Some(second));
+    assert_eq!(second_client.attach_count(), 1);
+}
+
+fn release_or_mint(env: &Env) -> ReleaseOrMintIn {
+    ReleaseOrMintIn {
+        original_sender: Bytes::new(env),
+        remote_chain_selector: REMOTE_CHAIN,
+        receiver: Address::generate(env),
+        amount: 100,
+        local_token: Address::generate(env),
+        source_pool_address: Bytes::new(env),
+        source_pool_data: Bytes::new(env),
+    }
+}
+
+#[test]
+fn test_preflight_runs_engine_with_payload() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    let caller = authorize_caller(&client);
+    let sender = Address::generate(&env);
+    let lob = lock_or_burn(&env, sender.clone());
+    let token_args = Bytes::from_slice(&env, &[0xaa, 0xbb]);
+
+    client.preflight_check(&caller, &lob, &7u32, &token_args, &42i128);
+
+    let payload = mock_client
+        .last_payload()
+        .expect("engine run must record payload");
+    assert_eq!(payload.selector, Symbol::new(&env, "preflight_check"));
+    assert_eq!(payload.sender, caller);
+    assert_eq!(payload.context, token_args);
+    match payload.data {
+        PolicyData::PoolHooks(PoolHooksPayloadData::Preflight(p)) => {
+            assert_eq!(p.amount_post_fee, 42);
+            assert_eq!(p.requested_finality, 7);
+            assert_eq!(p.lock_or_burn_in.original_sender, sender);
+        }
+        other => panic!("expected Preflight payload, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_postflight_runs_engine_with_payload() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    let caller = authorize_caller(&client);
+    let rom = release_or_mint(&env);
+
+    client.postflight_check(&caller, &rom, &55i128, &9u32);
+
+    let payload = mock_client
+        .last_payload()
+        .expect("engine run must record payload");
+    assert_eq!(payload.selector, Symbol::new(&env, "postflight_check"));
+    assert_eq!(payload.sender, caller);
+    // offchain_token_data is unused in v2+ -> empty context.
+    assert_eq!(payload.context, Bytes::new(&env));
+    match payload.data {
+        PolicyData::PoolHooks(PoolHooksPayloadData::Postflight(p)) => {
+            assert_eq!(p.local_amount, 55);
+            assert_eq!(p.requested_finality, 9);
+            assert_eq!(p.release_or_mint_in.remote_chain_selector, REMOTE_CHAIN);
+        }
+        other => panic!("expected Postflight payload, got {:?}", other),
+    }
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // Unauthorized -> policy rejection
+fn test_preflight_blocks_when_engine_rejects() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    mock_client.set_revert_on_run(&true);
+    let caller = authorize_caller(&client);
+    let lob = lock_or_burn(&env, Address::generate(&env));
+    // Non-try preflight panics when the engine rejects -> transfer blocked.
+    client.preflight_check(&caller, &lob, &0u32, &Bytes::new(&env), &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // Unauthorized -> policy rejection
+fn test_postflight_blocks_when_engine_rejects() {
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    mock_client.set_revert_on_run(&true);
+    let caller = authorize_caller(&client);
+    let rom = release_or_mint(&env);
+    client.postflight_check(&caller, &rom, &0i128, &0u32);
 }

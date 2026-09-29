@@ -3190,6 +3190,7 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
         &Vec::new(env),
         &0i128,
         &vec![env, lane.pool_id.clone()],
+        &None,
     );
 
     // Wire the issuer-owned hooks to their token pool (pool-owner-gated; auth is
@@ -3253,6 +3254,290 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
             "lane default ccv_b must not be required for the issuer's token"
         );
     }
+}
+
+/// True iff some receipt in `receipts` has `issuer == addr` (Soroban `Vec` has
+/// no `contains`/`any`, so this is a linear scan).
+fn receipt_issuers_contain(receipts: &Vec<Receipt>, addr: &Address) -> bool {
+    for r in receipts.iter() {
+        if r.issuer == *addr {
+            return true;
+        }
+    }
+    false
+}
+
+/// CCV-7 augment + coexistence (closes gap 1 + gap 2): two tokens on ONE lane
+/// require DIFFERENT CCV sets, exercised in two separate `ccip_send` calls.
+///
+/// Token S (the "special" token, `lane.transfer_token`): its pool wires a real
+/// `AdvancedPoolHooks` configured with the issuer's own CCV AND
+/// `outbound_include_defaults = true` (augment). A token-only send of S must
+/// require BOTH the issuer's special CCV and the lane defaults (ccv_a/ccv_b) —
+/// proving `include_defaults = true` AUGMENTS (not replaces) lane defaults
+/// end-to-end through Router→OnRamp→pool→hooks→merge→receipts (gap 2, the
+/// augment case that was only ever proven at flag/merge-unit level before).
+///
+/// Token D (a second, default-only token): its pool has NO advanced hooks. A
+/// token-only send of D must require ONLY the lane defaults (ccv_a/ccv_b) — the
+/// special CCV is NOT required for D (gap 1: two tokens coexist on the lane,
+/// each enforced against its own CCV set, in two distinct messages).
+#[test]
+fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
+    let lane = setup_fee_dist_lane();
+    let env = &lane.env;
+    let evm = lane.evm_chain_selector;
+
+    // The lane's default executor caps `max_ccvs_per_msg` at 2 (enforced in
+    // `get_fee` as `ExceedsMaxCCVs` #804). The augment case merges the issuer's
+    // special CCV + the two lane defaults = 3 CCVs, so swap in an executor with
+    // a higher cap and re-apply the OnRamp dest-chain config against it. This is
+    // test-only executor provisioning — no contract change — mirroring how a
+    // production lane would size `i_maxCCVsPerMsg` for pools that augment.
+    let exec_id = env.register(ExecutorContract, ());
+    let exec_client = ExecutorContractClient::new(env, &exec_id);
+    exec_client.initialize(
+        &lane.owner,
+        &4u32, // max_ccvs_per_msg — accommodate the augment merge (3 CCVs)
+        &ExecDynamicConfig {
+            fee_aggregator: Some(Address::generate(env)),
+            allowed_finality_config: 0,
+            ccv_allowlist_enabled: false,
+        },
+    );
+    exec_client.apply_dest_chain_updates(
+        &Vec::new(env),
+        &vec![
+            env,
+            ExecRemoteChainConfigArgs {
+                dest_chain_selector: evm,
+                config: ExecRemoteChainConfig {
+                    usd_cents_fee: 25,
+                    enabled: true,
+                },
+            },
+        ],
+    );
+    lane.onramp_client.apply_dest_chain_config_updates(&vec![
+        env,
+        OnrampDestChainConfigArgs {
+            dest_chain_selector: evm,
+            router: lane.router_client.address.clone(),
+            address_bytes_length: 20,
+            token_receiver_allowed: true,
+            message_network_fee_usd_cents: 50,
+            token_network_fee_usd_cents: 100,
+            base_execution_gas_cost: 200_000,
+            execution_fee_usd_cents: 25,
+            default_executor: exec_id.clone(),
+            lane_mandated_ccvs: Vec::new(env),
+            default_ccvs: vec![env, lane.ccv_a.clone(), lane.ccv_b.clone()],
+            off_ramp: Bytes::from_array(env, &[0u8; 20]),
+        },
+    ]);
+
+    // --- Token S: wire AdvancedPoolHooks on lane.pool_id in AUGMENT mode ---
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(env, &hooks_id);
+    hooks_client.initialize(
+        &lane.owner,
+        &Vec::new(env),
+        &0i128,
+        &vec![env, lane.pool_id.clone()],
+        &None,
+    );
+    let pool_client = LockReleaseTokenPoolContractClient::new(env, &lane.pool_id);
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    // Issuer's special CCV charges 40 USD-cents (distinct from lane defaults 30/70).
+    let special_ccv = deploy_fee_charging_ccv(env, &lane.owner, evm, 40);
+    let config = CCVConfigArg {
+        remote_chain_selector: evm,
+        outbound_ccvs: vec![env, special_ccv.clone()],
+        threshold_outbound_ccvs: Vec::new(env),
+        inbound_ccvs: Vec::new(env),
+        threshold_inbound_ccvs: Vec::new(env),
+        outbound_include_defaults: true, // AUGMENT: special CCV + lane defaults
+        inbound_include_defaults: true,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![env, config]);
+
+    // --- Token D: a second token + pool with NO hooks (default-only) ---
+    let second_token_admin = Address::generate(env);
+    let second_token_contract = env.register_stellar_asset_contract_v2(second_token_admin.clone());
+    let second_token = second_token_contract.address();
+    let second_token_sac = token::StellarAssetClient::new(env, &second_token);
+
+    // The second pool needs a ramp-registry that authorizes the lane's onramp
+    // for `evm`, plus an uncursed RMN. (The pool resolves RMN via the router at
+    // lock_or_burn; a fresh uncursed RMN is safe either way.)
+    let second_ramp_registry_id = env.register(RampRegistryContract, ());
+    let second_ramp_registry_client =
+        RampRegistryContractClient::new(env, &second_ramp_registry_id);
+    second_ramp_registry_client.initialize(&lane.owner);
+    second_ramp_registry_client.apply_onramp_updates(&vec![
+        env,
+        OnRampUpdate {
+            dest_chain_selector: evm,
+            onramp: Some(lane.onramp_id.clone()),
+        },
+    ]);
+
+    let second_rmn_remote_id = env.register(RmnRemoteContract, ());
+    let second_rmn_remote_client = RmnRemoteContractClient::new(env, &second_rmn_remote_id);
+    second_rmn_remote_client.initialize(&lane.owner, &soroban_sdk::Vec::new(env));
+    let second_rmn_proxy_id = env.register(RmnProxyContract, ());
+    let second_rmn_proxy_client = RmnProxyContractClient::new(env, &second_rmn_proxy_id);
+    second_rmn_proxy_client.initialize(&lane.owner, &second_rmn_remote_id);
+
+    let second_pool_id = env.register(LockReleaseTokenPoolContract, ());
+    let second_pool_client = LockReleaseTokenPoolContractClient::new(env, &second_pool_id);
+    second_pool_client.initialize(
+        &lane.owner,
+        &second_token,
+        &7u32,
+        &lane.router_client.address.clone(),
+        &second_ramp_registry_client.address,
+        &second_rmn_proxy_id,
+    );
+    second_pool_client.apply_chain_updates(
+        &vec![
+            env,
+            ChainUpdate {
+                remote_chain_selector: evm,
+                remote_pool_addresses: vec![env, Bytes::from_slice(env, &[0x11u8; 20])],
+                remote_token_address: Bytes::from_slice(env, &[0x22u8; 20]),
+                outbound_rate_limiter_config: RateLimitConfig::disabled(),
+                inbound_rate_limiter_config: RateLimitConfig::disabled(),
+            },
+        ],
+        &Vec::new(env),
+    );
+    let second_lockbox_id = env.register(TokenLockBox, ());
+    let second_lockbox_client = TokenLockBoxClient::new(env, &second_lockbox_id);
+    second_lockbox_client.initialize(&lane.owner, &second_token);
+    second_lockbox_client.add_allowed_callers(&vec![env, second_pool_client.address.clone()]);
+    second_pool_client.configure_lock_boxes(&vec![
+        env,
+        LockBoxEntry {
+            remote_chain_selector: evm,
+            lock_box: second_lockbox_client.address.clone(),
+        },
+    ]);
+
+    // Register second_token -> second_pool in the OnRamp's TokenAdminRegistry
+    // (resolved from the onramp's static config) so the send path can resolve
+    // token D to its (hookless) pool.
+    let tar_id = lane.onramp_client.get_static_config().token_admin_registry;
+    let tar_client = TokenAdminRegistryContractClient::new(env, &tar_id);
+    let second_registry_admin = Address::generate(env);
+    tar_client.propose_administrator(&lane.owner, &second_token, &second_registry_admin);
+    tar_client.accept_admin_role(&second_token);
+    tar_client.set_pool(&second_token, &Some(second_pool_id.clone()));
+
+    // Price + per-token fee config for token D. `update_prices` MERGES into the
+    // existing price map (it does not wipe the lane's fee/transfer-token prices
+    // that token S depends on), so a single-token update is safe.
+    lane.fee_quoter_client.update_prices(
+        &lane.owner,
+        &PriceUpdates {
+            token_price_updates: vec![
+                env,
+                TokenPriceUpdate {
+                    token: second_token.clone(),
+                    usd_per_token: 1_000_000_000_000_000_000,
+                },
+            ],
+            gas_price_updates: Vec::new(env),
+        },
+    );
+    lane.fee_quoter_client.apply_token_fee_configs(
+        &vec![
+            env,
+            TokenFeeConfigArgs {
+                dest_chain_selector: evm,
+                token: second_token.clone(),
+                config: TokenTransferFeeConfig {
+                    fee_usd_cents: 5000,
+                    dest_gas_overhead: 75_000,
+                    dest_bytes_overhead: 64,
+                    is_enabled: true,
+                },
+            },
+        ],
+        &Vec::new(env),
+    );
+
+    // --- Message A: special token S (augment) ---
+    let mut amounts_s: Vec<TokenAmount> = Vec::new(env);
+    amounts_s.push_back(TokenAmount {
+        token: lane.transfer_token.clone(),
+        amount: 1_000_000,
+    });
+    let msg_s = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::new(env), // token-only: pool CCVs drive the merge
+        token_amounts: amounts_s,
+        fee_token: lane.fee_token.clone(),
+        extra_args: Bytes::new(env),
+    };
+    let (receipts_s, _msg_s, _fee_s) = lane.send(msg_s);
+
+    // Augment: special CCV + BOTH lane defaults are required for token S.
+    // [special_ccv, ccv_a, ccv_b, pool, executor, network] (order not asserted).
+    assert_eq!(
+        receipts_s.len(),
+        6,
+        "expected special_ccv + ccv_a + ccv_b + pool + executor + network (augment)"
+    );
+    assert!(
+        receipt_issuers_contain(&receipts_s, &special_ccv),
+        "augment: the issuer's special CCV must be required for token S"
+    );
+    assert!(
+        receipt_issuers_contain(&receipts_s, &lane.ccv_a),
+        "augment: lane default ccv_a must ALSO be required (include_defaults=true)"
+    );
+    assert!(
+        receipt_issuers_contain(&receipts_s, &lane.ccv_b),
+        "augment: lane default ccv_b must ALSO be required (include_defaults=true)"
+    );
+
+    // --- Message B: default-only token D (no hooks) ---
+    // `lane.send` only mints `lane.transfer_token`; mint token D for the sender.
+    second_token_sac.mint(&lane.sender, &1_000_000);
+    let mut amounts_d: Vec<TokenAmount> = Vec::new(env);
+    amounts_d.push_back(TokenAmount {
+        token: second_token.clone(),
+        amount: 1_000_000,
+    });
+    let msg_d = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x44u8; 20]),
+        data: Bytes::new(env),
+        token_amounts: amounts_d,
+        fee_token: lane.fee_token.clone(),
+        extra_args: Bytes::new(env),
+    };
+    let (receipts_d, _msg_d, _fee_d) = lane.send(msg_d);
+
+    // Default-only: just ccv_a + ccv_b (NO special CCV) + pool + executor + network.
+    assert_eq!(
+        receipts_d.len(),
+        5,
+        "expected ccv_a + ccv_b + pool + executor + network (default-only)"
+    );
+    assert!(
+        receipt_issuers_contain(&receipts_d, &lane.ccv_a),
+        "default-only: lane default ccv_a required for token D"
+    );
+    assert!(
+        receipt_issuers_contain(&receipts_d, &lane.ccv_b),
+        "default-only: lane default ccv_b required for token D"
+    );
+    assert!(
+        !receipt_issuers_contain(&receipts_d, &special_ccv),
+        "coexistence: the special CCV must NOT be required for the default-only token D"
+    );
 }
 
 /// H-3 / INV-FEE-20: the token-pool fee is transferred at send time to the pool
