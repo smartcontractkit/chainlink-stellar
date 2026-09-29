@@ -2876,12 +2876,16 @@ fn setup_pool_for_upgrade(env: &Env) -> LockReleaseTokenPoolContractClient<'stat
     let contract_id = env.register(LockReleaseTokenPoolContract, ());
     let client = LockReleaseTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
+    // The lockbox must hold the SAME token the pool registers — each
+    // `Address::generate` call yields a fresh address, so generating it once
+    // and sharing it is what makes `is_token_supported(token)` true.
+    let token = Address::generate(env);
     let lockbox_id = env.register(TokenLockBox, ());
     let lockbox = TokenLockBoxClient::new(env, &lockbox_id);
-    lockbox.initialize(&owner, &Address::generate(env));
+    lockbox.initialize(&owner, &token);
     client.initialize(
         &owner,
-        &Address::generate(env),
+        &token,
         &18,
         &Address::generate(env),
         &Address::generate(env),
