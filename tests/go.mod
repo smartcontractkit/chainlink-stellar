@@ -17,7 +17,7 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260910195529-801eb99e80b2
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.0
 	github.com/smartcontractkit/chainlink-deployments-framework v0.120.1-0.20260828145648-3e1bcd2ac1da
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260909180436-ad98b0a6d8b7
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260929203752-2cf745a3c698
 	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.7
