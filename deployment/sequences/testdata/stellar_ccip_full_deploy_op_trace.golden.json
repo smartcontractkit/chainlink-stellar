@@ -88,6 +88,23 @@
       }
     },
     {
+      "id": "stellar-deploy-rmn-remote",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_remote.wasm",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          }
+        ]
+      }
+    },
+    {
       "id": "rmn-proxy:deploy",
       "input": {
         "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_proxy.wasm",
@@ -133,6 +150,32 @@
         "contract_id": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "rmn_remote": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML"
+      }
+    },
+    {
+      "id": "stellar-deploy-rmn-proxy",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_proxy.wasm",
+        "rmnRemote": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          }
+        ]
       }
     },
     {
@@ -190,6 +233,40 @@
       }
     },
     {
+      "id": "stellar-deploy-fee-quoter",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/fee_quoter.wasm",
+        "feeToken": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          }
+        ]
+      }
+    },
+    {
       "id": "token-admin-registry:deploy",
       "input": {
         "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/token_admin_registry.wasm",
@@ -234,6 +311,47 @@
       "input": {
         "contract_id": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-token-admin-registry",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/token_admin_registry.wasm",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -299,6 +417,56 @@
         "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "fee_aggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-versioned-verifier-resolver",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccvs_versioned_verifier_resolver.wasm",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa2552aa298971c1d83e103fa3c3514b71fb47a4bfda168db44de53dc7d24f160",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -413,6 +581,72 @@
           "CcvAllowlistEnabled": false,
           "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
         }
+      }
+    },
+    {
+      "id": "stellar-deploy-executor",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/executor.wasm",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa2552aa298971c1d83e103fa3c3514b71fb47a4bfda168db44de53dc7d24f160",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa7e53a142cc18df81ec9962e65d4db2b1029d7fecb7a251462020b909f9662d4",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xc0b8b49c89f12246735175a8b3cff1410aef499e9303d41f0a4d9a55170487d1",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -768,6 +1002,103 @@
       "input": {
         "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-ramp-registry",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccip_ramp_registry.wasm",
+        "existingAddresses": [
+          {
+            "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa2552aa298971c1d83e103fa3c3514b71fb47a4bfda168db44de53dc7d24f160",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa7e53a142cc18df81ec9962e65d4db2b1029d7fecb7a251462020b909f9662d4",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xc0b8b49c89f12246735175a8b3cff1410aef499e9303d41f0a4d9a55170487d1",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Executor",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Proxy",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x740a941742ad746dfa26112b9185bd27e509041d0b63777b10faea300ec7b228",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OffRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x8c355de70a6b89fdf67ab6fc3f53e8716be9fc2d7a2a4c130c015581dfe8063e",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "Router",
+            "version": "1.2.0"
+          }
+        ]
       }
     },
     {
