@@ -217,6 +217,9 @@ dependencies = [
 name = "bnm-token"
 version = "0.0.0"
 dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
  "soroban-sdk",
 ]
 
@@ -1055,6 +1058,9 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 name = "link-token"
 version = "0.0.0"
 dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
  "soroban-sdk",
 ]
 
@@ -1248,6 +1254,7 @@ dependencies = [
 name = "pools-burn-mint-pool"
 version = "0.0.0"
 dependencies = [
+ "bnm-token",
  "ccip-ramp-registry",
  "common-authorization",
  "common-error",

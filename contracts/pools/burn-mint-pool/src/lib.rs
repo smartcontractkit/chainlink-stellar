@@ -9,6 +9,7 @@ use soroban_sdk::{
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
+use common_interfaces::bnm_token;
 use common_pool::{
     _get_fee, calculate_local_amount, encode_local_decimals, finality_codec, parse_remote_decimals,
     rate_limit, BaseTokenPool, ChainUpdate, FtfInboundConsumedEvent, FtfOutboundConsumedEvent,
@@ -303,8 +304,19 @@ impl BurnMintTokenPoolContract {
 
         <Self as BaseTokenPool>::postflight_check(&env, &input, local_amount, requested_finality)?;
 
-        let admin_client = token::StellarAssetClient::new(&env, &pool_token);
-        admin_client.mint(&input.receiver, &local_amount);
+        // Self-identifying mint through the shared token ABI (doc §5.4): the
+        // pool claims ITSELF as the minter, so the token authenticates the
+        // pool (mint_as membership + require_auth) rather than trusting a
+        // stored-admin `mint`. `BnmTokenClient` is address + ABI, not
+        // wasm-bound — it works against any token implementing the shared
+        // ABI (BnM and LINK). This couples the burn-mint pool to tokens
+        // that expose `mint_as` — acceptable because real SACs pair with
+        // lock-release, not burn-mint.
+        bnm_token::BnmTokenClient::new(&env, &pool_token).mint_as(
+            &env.current_contract_address(),
+            &input.receiver,
+            &local_amount,
+        );
 
         MintedEvent {
             sender: env.current_contract_address(),

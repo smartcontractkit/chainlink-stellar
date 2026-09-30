@@ -8,6 +8,7 @@ use soroban_sdk::{
 };
 
 use crate::{BurnMintTokenPoolContract, BurnMintTokenPoolContractClient};
+use bnm_token::{BnmTokenContract, BnmTokenContractClient};
 use ccip_ramp_registry::{
     OffRampUpdate, OnRampUpdate, RampRegistryContract, RampRegistryContractClient,
 };
@@ -290,13 +291,38 @@ fn setup_router_with_rmn(
     (router_id, rmn_proxy_id, rmn_remote_client)
 }
 
+/// Deploy the burn-mint token the pool pairs with (the custom BnM token —
+/// real SACs pair with lock-release, not burn-mint) and hand the primary
+/// mint to `pool` via `set_admin`, mirroring the deployed onboarding flow
+/// (doc §5.4: the pool mints through `mint_as(itself, …)`).
+///
+/// The deployer is demoted out of the minters set by the `set_admin` handoff;
+/// tests may still fund balances with `mint` because they run under
+/// `mock_all_auths` — the pool's `require_auth` inside `mint`/`mint_as` is
+/// satisfied regardless of the caller.
+fn register_bnm_token(env: &Env, pool: &Address) -> (Address, BnmTokenContractClient<'static>) {
+    let token_admin = Address::generate(env);
+    let token_id = env.register(BnmTokenContract, ());
+    let token_client = BnmTokenContractClient::new(env, &token_id);
+    token_client.initialize(
+        &token_admin,
+        &soroban_sdk::String::from_str(env, "CCIP BnM"),
+        &soroban_sdk::String::from_str(env, "BnM"),
+        &7u32,
+    );
+    // Hand the primary mint to the pool; the deployer is demoted out of
+    // MINTERS (the pool is the only minter).
+    token_client.set_admin(pool);
+    (token_client.address.clone(), token_client)
+}
+
 fn setup_env() -> (
     Env,
     BurnMintTokenPoolContractClient<'static>,
     Address,
     Address,
-    token::Client<'static>,
-    token::StellarAssetClient<'static>,
+    BnmTokenContractClient<'static>,
+    BnmTokenContractClient<'static>,
     RampRegistryContractClient<'static>,
     inbound_release_stub::PoolInboundReleaseStubClient<'static>,
     Address,
@@ -318,14 +344,8 @@ fn setup_env() -> (
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
 
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
-    let token_client = token::Client::new(&env, &token_address);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-
-    // Set the pool contract as the token admin so it can mint
-    token_admin_client.set_admin(&pool_id);
+    let (token_address, token_client) = register_bnm_token(&env, &pool_id);
+    let token_admin_client = BnmTokenContractClient::new(&env, &token_address);
 
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
@@ -433,7 +453,7 @@ fn test_burn_and_mint() {
 
     let sender = Address::generate(&env);
     let burn_amount: i128 = 1_000_000_000;
-    let sac_client = token::StellarAssetClient::new(&env, &token_address);
+    let sac_client = BnmTokenContractClient::new(&env, &token_address);
     sac_client.mint(&sender, &burn_amount);
     assert_eq!(token_client.balance(&sender), burn_amount);
 
@@ -481,7 +501,7 @@ fn test_unsupported_chain_rejected() {
     ) = setup_env();
 
     let sender = Address::generate(&env);
-    let sac_client = token::StellarAssetClient::new(&env, &token_address);
+    let sac_client = BnmTokenContractClient::new(&env, &token_address);
     sac_client.mint(&sender, &1_000_000_000);
 
     let lock_input = LockOrBurnIn {
@@ -628,11 +648,7 @@ fn setup_env_with_rmn() -> (
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
 
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-    token_admin_client.set_admin(&pool_id);
+    let (token_address, _token_client) = register_bnm_token(&env, &pool_id);
 
     pool_client.initialize(
         &owner,
@@ -990,7 +1006,7 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
     );
 
     let sender = Address::generate(&env);
-    let sac_client = token::StellarAssetClient::new(&env, &token_address);
+    let sac_client = BnmTokenContractClient::new(&env, &token_address);
     sac_client.mint(&sender, &1);
     let lock_input = LockOrBurnIn {
         receiver: Bytes::from_slice(&env, &[3u8; 20]),
@@ -1056,12 +1072,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
-    let token_client = token::Client::new(&env, &token_address);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-    token_admin_client.set_admin(&pool_id);
+    let (token_address, token_client) = register_bnm_token(&env, &pool_id);
 
     let local_decimals: u32 = 6;
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
@@ -1118,12 +1129,7 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
 
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
-    let token_client = token::Client::new(&env, &token_address);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-    token_admin_client.set_admin(&pool_id);
+    let (token_address, token_client) = register_bnm_token(&env, &pool_id);
 
     let local_decimals: u32 = 9;
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
@@ -1411,9 +1417,7 @@ fn test_initialize_rejects_decimals_above_uint8() {
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
     let owner = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_address = token_contract.address();
+    let (token_address, _token_client) = register_bnm_token(&env, &pool_id);
 
     let router = Address::generate(&env);
     let ramp_registry = Address::generate(&env);
@@ -3129,7 +3133,7 @@ fn test_lock_or_burn_gated_by_real_hooks_allowlist() {
     pool_client.set_advanced_pool_hooks(&hooks_id);
 
     let amount: i128 = 1_000_000_000;
-    let sac_client = token::StellarAssetClient::new(&env, &token_address);
+    let sac_client = BnmTokenContractClient::new(&env, &token_address);
     sac_client.mint(&allowed, &amount);
     let stranger = Address::generate(&env);
     sac_client.mint(&stranger, &amount);

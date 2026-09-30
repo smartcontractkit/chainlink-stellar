@@ -14,12 +14,13 @@ common-error = { workspace = true }
 common-guard = { workspace = true }
 common-authorization = { workspace = true }
 common-pool = { workspace = true }
+common-interfaces = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-common-interfaces = { workspace = true }
 ccip-ramp-registry = { workspace = true }
 router = { workspace = true }
 rmn_proxy = { workspace = true }
 rmn_remote = { workspace = true }
 pools-advanced-pool-hooks = { path = "../advanced-pool-hooks" }
+bnm-token = { path = "../../bnm-token" }

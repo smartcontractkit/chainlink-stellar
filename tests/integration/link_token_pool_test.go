@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/keypair"
+
 	burnmintpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	linkbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/link_token"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
@@ -477,4 +479,141 @@ func TestLinkTokenPoolInbound(t *testing.T) {
 	}
 	t.Logf("inbound release_or_mint: pool minted %d fresh LINK to receiver %s (pool balance untouched)",
 		releaseAmount, stack.ReceiverID)
+}
+
+// TestLinkTokenMinterRotation exercises the owner/minters surface of the
+// custom LINK token through the Go bindings (docs/token-ownership-and-minters.md
+// §5–§6): the owner (the deployer until an optional MCMS transfer) manages the
+// minters set; set_admin has reposition semantics (the old primary is demoted
+// OUT of the set in the same operation); and the no-faucet property holds at
+// every step of the migration overlap.
+//
+// It deploys ONLY the token — the rotation surface is the token's own. The
+// overlap's positive mint legs (mint_as(oldPool/newPool, …)) require the pools'
+// own auth inside the call tree, which an external transaction cannot provide,
+// so this test asserts the rotation state, the membership rejections, and the
+// two-step ownership propose/read/cancel legs; the positive overlap legs are
+// covered by the Rust test_two_pool_migration_overlap.
+func TestLinkTokenMinterRotation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
+
+	const rotationSalt = "link-minter-rotation"
+
+	client, tokenID := deployLinkToken(ctx, t, projectRoot, deployer, deployerAddr, rotationSalt)
+	t.Logf("LINK token %s: owner/primary minter = deployer %s", tokenID, deployerAddr)
+
+	// Pre-handoff: owner = deployer, minters = [deployer] (the deployer holds
+	// both roles until the set_admin handoff).
+	if owner, err := client.Owner(ctx); err != nil || owner == nil || *owner != deployerAddr {
+		t.Fatalf("Owner: want deployer %s, got %v (err=%v)", deployerAddr, owner, err)
+	}
+	if ok, err := client.IsOwner(ctx, deployerAddr); err != nil || !ok {
+		t.Fatalf("IsOwner(deployer) = %v (err=%v); want true", ok, err)
+	}
+	if minters, err := client.GetMinters(ctx); err != nil || len(minters) != 1 || minters[0] != deployerAddr {
+		t.Fatalf("GetMinters: want [deployer], got %v (err=%v)", minters, err)
+	}
+
+	// add_minter on the primary is a duplicate (MinterAlreadyExists).
+	if err := client.AddMinter(ctx, deployerAddr); err == nil {
+		t.Fatal("AddMinter(deployer) must fail — the deployer is already the primary minter")
+	} else {
+		t.Logf("AddMinter(deployer) correctly rejected: %v", err)
+	}
+
+	// The two "pools" and the MCMS stand-in are ordinary accounts — the
+	// rotation surface only needs addresses, and none of them ever signs.
+	oldPoolKP := keypair.MustRandom()
+	newPoolKP := keypair.MustRandom()
+	mcmsKP := keypair.MustRandom()
+	oldPool, newPool, mcms := oldPoolKP.Address(), newPoolKP.Address(), mcmsKP.Address()
+
+	// Onboarding handoff: set_admin(oldPool) demotes the deployer OUT of the
+	// minters set entirely (admin() == MINTERS[0] == the old pool).
+	if err := client.SetAdmin(ctx, oldPool); err != nil {
+		t.Fatalf("SetAdmin(oldPool): %v", err)
+	}
+	if minters, err := client.GetMinters(ctx); err != nil || len(minters) != 1 || minters[0] != oldPool {
+		t.Fatalf("GetMinters after handoff: want [oldPool %s], got %v (err=%v)", oldPool, minters, err)
+	}
+
+	// No-faucet at the new state: the demoted deployer can neither mint (the
+	// stored primary is the old pool) nor mint_as itself (membership).
+	if err := client.Mint(ctx, deployerAddr, big.NewInt(1)); err == nil {
+		t.Fatal("post-handoff Mint by the deployer must fail — LINK has no local faucet")
+	} else {
+		t.Logf("post-handoff Mint by the deployer correctly rejected: %v", err)
+	}
+	if err := client.MintAs(ctx, deployerAddr, deployerAddr, big.NewInt(1)); err == nil {
+		t.Fatal("post-handoff MintAs(deployer, …) must fail — the deployer is not a minter")
+	} else {
+		t.Logf("post-handoff MintAs(deployer, …) correctly rejected: %v", err)
+	}
+
+	// Migration overlap: the owner adds newPool as a secondary minter — both
+	// pools are minters during the window.
+	if err := client.AddMinter(ctx, newPool); err != nil {
+		t.Fatalf("AddMinter(newPool): %v", err)
+	}
+	if minters, err := client.GetMinters(ctx); err != nil || len(minters) != 2 || minters[0] != oldPool || minters[1] != newPool {
+		t.Fatalf("GetMinters during overlap: want [oldPool, newPool] = [%s, %s], got %v (err=%v)", oldPool, newPool, minters, err)
+	}
+
+	// remove_minter refuses the primary (CannotRemovePrimaryMinter) but
+	// removes a secondary fine.
+	if err := client.RemoveMinter(ctx, oldPool); err == nil {
+		t.Fatal("RemoveMinter(oldPool) must fail — the primary must be replaced via set_admin, not removed")
+	} else {
+		t.Logf("RemoveMinter(oldPool) correctly rejected: %v", err)
+	}
+	if err := client.RemoveMinter(ctx, newPool); err != nil {
+		t.Fatalf("RemoveMinter(newPool): %v", err)
+	}
+	if err := client.AddMinter(ctx, newPool); err != nil { // re-add for the re-point below
+		t.Fatalf("AddMinter(newPool) re-add: %v", err)
+	}
+
+	// Re-point: set_admin(newPool) repositions the secondary to primary and
+	// removes the old pool from the set in the SAME operation — no separate
+	// remove_minter(oldPool) (it would trap MinterNotFound).
+	if err := client.SetAdmin(ctx, newPool); err != nil {
+		t.Fatalf("SetAdmin(newPool): %v", err)
+	}
+	if minters, err := client.GetMinters(ctx); err != nil || len(minters) != 1 || minters[0] != newPool {
+		t.Fatalf("GetMinters after re-point: want [newPool %s], got %v (err=%v)", newPool, minters, err)
+	}
+	if admin, err := client.Admin(ctx); err != nil || admin != newPool {
+		t.Fatalf("Admin after re-point: want %s, got %s (err=%v)", newPool, admin, err)
+	}
+	// The old pool lost membership with the re-point: mint_as(oldPool, …) is
+	// rejected on membership even though the transaction sender signs.
+	if err := client.MintAs(ctx, oldPool, deployerAddr, big.NewInt(1)); err == nil {
+		t.Fatal("MintAs(oldPool, …) after re-point must fail — the old pool is no longer a minter")
+	} else {
+		t.Logf("MintAs(oldPool, …) after re-point correctly rejected: %v", err)
+	}
+
+	// Requirement-2 optional leg: the deployer MAY hand token ownership to
+	// MCMS via the two-step transfer. Acceptance needs MCMS's own auth (an
+	// external transaction cannot provide it), so externally this drives
+	// propose + read + cancel; the owner stays the deployer throughout.
+	if err := client.TransferOwnership(ctx, mcms); err != nil {
+		t.Fatalf("TransferOwnership(mcms): %v", err)
+	}
+	if pending, err := client.GetPendingOwner(ctx); err != nil || pending == nil || *pending != mcms {
+		t.Fatalf("GetPendingOwner: want %s, got %v (err=%v)", mcms, pending, err)
+	}
+	if err := client.CancelOwnershipTransfer(ctx); err != nil {
+		t.Fatalf("CancelOwnershipTransfer: %v", err)
+	}
+	if pending, err := client.GetPendingOwner(ctx); err != nil || pending != nil {
+		t.Fatalf("GetPendingOwner after cancel: want nil, got %v (err=%v)", pending, err)
+	}
+	if owner, err := client.Owner(ctx); err != nil || owner == nil || *owner != deployerAddr {
+		t.Fatalf("Owner after cancel: want deployer %s, got %v (err=%v)", deployerAddr, owner, err)
+	}
 }

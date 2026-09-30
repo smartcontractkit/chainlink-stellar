@@ -3,23 +3,50 @@
 //! # LINK Token (bridged)
 //!
 //! A custom Soroban token implementing the full `token::StellarAssetInterface`
-//! (the 21-method SAC superset), so the existing `BurnMintTokenPool` can mint
-//! on inbound bridge messages and burn on outbound ones with **no pool-side
-//! changes** — the pool calls `token::StellarAssetClient::mint` /
-//! `token::Client::burn`, both of which this contract exposes.
+//! (the 21-method SAC superset) plus an owner/minter split with multiple
+//! minters, so the existing `BurnMintTokenPool` can mint on inbound bridge
+//! messages and burn on outbound ones, and a second pool can be minting
+//! during a zero-downtime pool migration. Full design:
+//! `docs/token-ownership-and-minters.md`.
 //!
 //! LINK is natively issued and minted on Ethereum only. On Stellar it is the
 //! **remotely-issued burn-mint** representation: no initial supply is minted at
 //! deploy time, and supply grows/shrinks 1:1 with bridge flow (mint on inbound,
 //! burn on outbound).
 //!
+//! ## Owner / minters split (EVM parity)
+//!
+//! EVM `CrossChainToken` splits mint authority (`MINTER_ROLE` on the pool)
+//! from the power to re-grant it (`BURN_MINT_ADMIN_ROLE` / two-step
+//! `DEFAULT_ADMIN_ROLE` → MCMS). This contract mirrors that split with the
+//! fleet's shared `Ownable` trait:
+//!
+//! - **Owner** — the deployer initially, MCMS after the two-step
+//!   `transfer_ownership` → `accept_ownership`. Gates `set_admin`,
+//!   `add_minter`, `remove_minter`, `set_authorized`.
+//! - **Minters** — an ordered `MINTERS: Vec<Address>` set; `MINTERS[0]` is the
+//!   **primary minter**, which the SAC read `admin()` returns. The burn-mint
+//!   pool after the `set_admin` handoff (was: the deployer, who mints the
+//!   pre-funding before the handoff). Secondary minters exist for the pool
+//!   migration overlap window.
+//! - `mint(to, amount)` keeps the fixed SAC ABI and authorizes the primary
+//!   minter only — with no caller argument the token can authenticate exactly
+//!   one stored address. `mint_as(caller, to, amount)` is the multi-minter
+//!   path: the caller passes itself explicitly, `caller.require_auth()` proves
+//!   it is in the call chain, and membership in `MINTERS` is then checked (the
+//!   `advanced-pool-hooks` explicit-caller pattern).
+//! - `set_admin(new)` is **owner-gated** (was admin-gated): `new` becomes
+//!   `MINTERS[0]`, the old primary is demoted out of the set, and `new` is
+//!   repositioned to the front if it was already a secondary minter.
+//!
 //! ## No local faucet
 //!
-//! LINK is deliberately **minted only by the admin** (the burn-mint pool, after
-//! the `set_admin` handoff) — never out of thin air on Stellar. Unlike the BnM
-//! test token there is no `drip` (or any other permissionless mint) entrypoint:
-//! every LINK on Stellar exists because a verified inbound bridge message
-//! caused the pool to mint it, and every outbound transfer burns it.
+//! LINK is deliberately **minted only via the minters set** (the burn-mint
+//! pool, after the `set_admin` handoff) — never out of thin air on Stellar.
+//! Unlike the BnM test token there is no `drip` (or any other permissionless
+//! mint) entrypoint: every LINK on Stellar exists because a verified inbound
+//! bridge message caused the pool to mint it, and every outbound transfer
+//! burns it.
 //!
 //! ## Divergences from EVM LINK (deliberate)
 //!
@@ -33,15 +60,8 @@
 //! - **No clawback.** LINK is a plain ERC20-style token (matching EVM LINK,
 //!   which has no clawback). The `clawback` entrypoint exists only because the
 //!   `StellarAssetInterface` ABI requires it; it traps with
-//!   `UnsupportedOperation` for every caller, admin included — nobody can ever
+//!   `UnsupportedOperation` for every caller, owner included — nobody can ever
 //!   seize LINK balances.
-//!
-//! ## Burn-mint mint authority
-//!
-//! The pool can only call `mint` once it is the token's admin. The deployer
-//! initializes the token as admin, then calls `set_admin(pool)` (admin-gated)
-//! to hand mint authority to the burn-mint pool — exactly the SAC
-//! `set_admin` handoff used in `burn-mint-pool` tests.
 
 mod events;
 
@@ -50,8 +70,12 @@ use events::{
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env,
-    MuxedAddress, String, Symbol,
+    MuxedAddress, String, Symbol, Vec,
 };
+
+use common_authorization::Ownable;
+use common_error::CCIPError;
+use common_guard::initializable::Initializable;
 
 // ============================================================
 // Storage keys
@@ -59,9 +83,15 @@ use soroban_sdk::{
 
 /// One-shot initialization guard (instance storage).
 const INIT: Symbol = symbol_short!("INIT");
-/// Current token admin — the only address that may mint / clawback / set
-/// authorized / re-assign admin (instance storage).
-const ADMIN: Symbol = symbol_short!("ADMIN");
+/// Token owner — gates `set_admin` / `add_minter` / `remove_minter` /
+/// `set_authorized` (instance storage; the `Ownable` trait's key).
+const OWNER: Symbol = symbol_short!("OWNER");
+/// Pending owner during the two-step ownership transfer (instance storage).
+const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+/// Ordered minters set (instance storage). `MINTERS[0]` is the primary minter
+/// — what the SAC read `admin()` returns. Secondary minters (migration overlap
+/// window) follow.
+const MINTERS: Symbol = symbol_short!("MINTERS");
 /// Token name (instance storage).
 const NAME: Symbol = symbol_short!("NAME");
 /// Token symbol (instance storage).
@@ -108,6 +138,16 @@ pub enum LinkError {
     /// supported (LINK is a plain ERC20-style token, matching EVM LINK,
     /// which has no clawback).
     UnsupportedOperation = 7,
+    /// `mint_as` invoked by an address that is not in the minters set.
+    NotMinter = 8,
+    /// `add_minter` on an address already in the minters set.
+    MinterAlreadyExists = 9,
+    /// `remove_minter` on an address not in the minters set.
+    MinterNotFound = 10,
+    /// `remove_minter` on the primary minter — use `set_admin` instead (the
+    /// old primary must be demoted by replacing the primary, not removed as
+    /// a secondary).
+    CannotRemovePrimaryMinter = 11,
 }
 
 // ============================================================
@@ -116,6 +156,22 @@ pub enum LinkError {
 
 #[contract]
 pub struct LinkTokenContract;
+
+/// One-shot `INIT` guard shared by the token's own `initialize` and the
+/// `Ownable` trait's `init_owner` (the token's `initialize` seeds both).
+#[contractimpl]
+impl Initializable for LinkTokenContract {
+    const INITIALIZED: Symbol = INIT;
+}
+
+/// Owner/minter split (EVM `DEFAULT_ADMIN_ROLE` parity): two-step
+/// `transfer_ownership` → `accept_ownership` moves control to MCMS while the
+/// minters set (the pool) is left untouched.
+#[contractimpl(contracttrait)]
+impl Ownable for LinkTokenContract {
+    const OWNER: Symbol = OWNER;
+    const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
 
 #[contractimpl(contracttrait)]
 impl token::StellarAssetInterface for LinkTokenContract {
@@ -247,23 +303,38 @@ impl token::StellarAssetInterface for LinkTokenContract {
     }
 
     fn set_admin(env: Env, new_admin: Address) {
-        let admin = require_admin(&env);
-        admin.require_auth();
-        env.storage().instance().set(&ADMIN, &new_admin);
-        SetAdminEvent { admin, new_admin }.publish(&env);
+        require_owner(&env);
+        let previous = primary_minter(&env);
+
+        // `new_admin` becomes MINTERS[0]; the old primary is demoted out of
+        // the set (preserving LINK's "no faucet post-handoff" property — the
+        // deployer cannot mint after set_admin(pool)). A `new_admin` that was
+        // already a secondary minter (the migration overlap flow) is
+        // repositioned to the front, not duplicated.
+        let current = minters(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        updated.push_back(new_admin.clone());
+        for m in current.iter() {
+            if m != new_admin && m != previous {
+                updated.push_back(m);
+            }
+        }
+        env.storage().instance().set(&MINTERS, &updated);
+
+        SetAdminEvent {
+            admin: previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     fn admin(env: Env) -> Address {
         require_initialized(&env);
-        env.storage()
-            .instance()
-            .get(&ADMIN)
-            .unwrap_or_else(|| env.panic_with_error(LinkError::NotInitialized))
+        primary_minter(&env)
     }
 
     fn set_authorized(env: Env, id: Address, authorize: bool) {
-        let admin = require_admin(&env);
-        admin.require_auth();
+        require_owner(&env);
         env.storage()
             .persistent()
             .set(&DataKey::Authorized(id.clone()), &authorize);
@@ -279,8 +350,8 @@ impl token::StellarAssetInterface for LinkTokenContract {
     }
 
     fn mint(env: Env, to: Address, amount: i128) {
-        let admin = require_admin(&env);
-        admin.require_auth();
+        let primary = primary_minter(&env);
+        primary.require_auth();
         credit(&env, &to, amount);
         MintEvent { to, amount }.publish(&env);
     }
@@ -288,7 +359,7 @@ impl token::StellarAssetInterface for LinkTokenContract {
     fn clawback(env: Env, _from: Address, _amount: i128) {
         // Not supported: LINK is a plain ERC20-style token (matching EVM LINK,
         // which has no clawback). The entrypoint exists only because the
-        // StellarAssetInterface ABI requires it; every caller — admin included
+        // StellarAssetInterface ABI requires it; every caller — owner included
         // — traps with UnsupportedOperation. Nobody can ever seize LINK
         // balances.
         env.panic_with_error(LinkError::UnsupportedOperation);
@@ -305,11 +376,11 @@ impl token::StellarAssetInterface for LinkTokenContract {
 
 #[contractimpl]
 impl LinkTokenContract {
-    /// One-time initialization. Sets the token admin (the deployer, who later
-    /// hands off to the burn-mint pool via `set_admin`) and the ERC20 metadata.
-    /// No initial supply is minted — LINK is remotely-issued; supply tracks
-    /// bridge flow, and the only minter is the admin (the pool) on inbound
-    /// bridge messages.
+    /// One-time initialization. Sets the token owner **and** primary minter
+    /// (the deployer, who later hands off to the burn-mint pool via the
+    /// owner-gated `set_admin`) and the ERC20 metadata. No initial supply is
+    /// minted — LINK is remotely-issued; supply tracks bridge flow, and the
+    /// only minters are the pool(s) in `MINTERS`.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -323,7 +394,12 @@ impl LinkTokenContract {
 
         admin.require_auth();
         env.storage().instance().set(&INIT, &true);
-        env.storage().instance().set(&ADMIN, &admin);
+        if let Err(e) = <Self as Ownable>::init_owner(&env, &admin) {
+            env.panic_with_error(e);
+        }
+        let mut initial_minters: Vec<Address> = Vec::new(&env);
+        initial_minters.push_back(admin.clone());
+        env.storage().instance().set(&MINTERS, &initial_minters);
         env.storage().instance().set(&NAME, &name);
         env.storage().instance().set(&SYMBOL, &symbol);
         env.storage().instance().set(&DECIMALS, &decimals);
@@ -333,6 +409,70 @@ impl LinkTokenContract {
     /// Human-readable version tag (EVM `typeAndVersion` analogue).
     pub fn type_and_version(_env: Env) -> String {
         String::from_str(&_env, "LinkToken 1.0.0")
+    }
+
+    /// Multi-minter mint path (the pool's path). `caller` passes itself
+    /// explicitly; `caller.require_auth()` proves it is in the call chain
+    /// (only the invoking contract can satisfy that), and membership in
+    /// `MINTERS` is then checked — the `advanced-pool-hooks`
+    /// explicit-caller pattern. Any minter (primary or secondary) may mint
+    /// through this entrypoint; there is no owner gate.
+    pub fn mint_as(env: Env, caller: Address, to: Address, amount: i128) {
+        require_initialized(&env);
+        // Membership first, so non-minters get the typed NotMinter error
+        // instead of a host auth failure.
+        if !is_minter(&env, &caller) {
+            env.panic_with_error(LinkError::NotMinter);
+        }
+        caller.require_auth();
+        credit(&env, &to, amount);
+        MintEvent { to, amount }.publish(&env);
+    }
+
+    /// Adds a **secondary** minter (owner-gated) — the migration overlap
+    /// window: a new pool can be minting while the old one still is, before
+    /// `set_admin(newPool)` re-points the primary. Mirrors EVM
+    /// `grantMintAndBurnRoles` under `BURN_MINT_ADMIN_ROLE`.
+    pub fn add_minter(env: Env, minter: Address) -> Result<(), LinkError> {
+        require_owner(&env);
+        if is_minter(&env, &minter) {
+            return Err(LinkError::MinterAlreadyExists);
+        }
+        let mut updated = minters(&env);
+        updated.push_back(minter);
+        env.storage().instance().set(&MINTERS, &updated);
+        Ok(())
+    }
+
+    /// Removes a **secondary** minter (owner-gated). The primary minter is
+    /// demoted via `set_admin` instead (replacing the primary), not removed
+    /// here.
+    pub fn remove_minter(env: Env, minter: Address) -> Result<(), LinkError> {
+        require_owner(&env);
+        if minter == primary_minter(&env) {
+            return Err(LinkError::CannotRemovePrimaryMinter);
+        }
+        let current = minters(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        let mut found = false;
+        for m in current.iter() {
+            if m == minter {
+                found = true;
+            } else {
+                updated.push_back(m);
+            }
+        }
+        if !found {
+            return Err(LinkError::MinterNotFound);
+        }
+        env.storage().instance().set(&MINTERS, &updated);
+        Ok(())
+    }
+
+    /// Read: the ordered minters set, primary (`MINTERS[0]`) first.
+    pub fn get_minters(env: Env) -> Vec<Address> {
+        require_initialized(&env);
+        minters(&env)
     }
 }
 
@@ -346,13 +486,39 @@ fn require_initialized(env: &Env) {
     }
 }
 
-/// Returns the current admin, panicking with `NotInitialized` if unset.
-fn require_admin(env: &Env) -> Address {
-    require_initialized(env);
+/// Requires the stored owner's authorization. Panics with `CCIPError::NotOwner`
+/// (the `Ownable` trait's error) if unset, or a host auth failure if the owner
+/// did not authorize this invocation.
+fn require_owner(env: &Env) {
+    if let Err(e) = <LinkTokenContract as Ownable>::require_owner(env) {
+        env.panic_with_error(e);
+    }
+}
+
+/// Returns the ordered minters set, panicking with `NotInitialized` if unset.
+fn minters(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
-        .get(&ADMIN)
+        .get(&MINTERS)
         .unwrap_or_else(|| env.panic_with_error(LinkError::NotInitialized))
+}
+
+/// Returns the primary minter (`MINTERS[0]`) — what the SAC read `admin()`
+/// returns and the only address the fixed-ABI `mint` authorizes.
+fn primary_minter(env: &Env) -> Address {
+    minters(env)
+        .get(0)
+        .unwrap_or_else(|| env.panic_with_error(LinkError::NotInitialized))
+}
+
+/// True iff `addr` is in the minters set (primary or secondary).
+fn is_minter(env: &Env, addr: &Address) -> bool {
+    for m in minters(env).iter() {
+        if m == *addr {
+            return true;
+        }
+    }
+    false
 }
 
 /// True iff the `(from, spender)` allowance entry has expired (and so reads as
