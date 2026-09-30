@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	stellarprovider "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar/provider"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	testenv "github.com/smartcontractkit/chainlink-deployments-framework/engine/test/environment"
@@ -34,23 +35,25 @@ func TestComponentChangesetsApplyAllTwice(t *testing.T) {
 	_, _, _, _, passphrase, _ := GetSharedTestEnv(ctx, t)
 	sel := chainsel.STELLAR_LOCALNET.Selector
 
-	// A dedicated funded signer: the component salt labels are fixed, so
+	// A dedicated random signer: the component salt labels are fixed, so
 	// reusing the suite-wide deployer would deploy the same contract IDs as
 	// the other integration tests (same deployer, same salt, same network) and
 	// break them by test order.
-	deployerGen := stellarprovider.KeypairRandom()
-	signer, err := deployerGen.Generate()
-	require.NoError(t, err)
-	require.NoError(t, helpers.FundViaFriendbot(sharedEnv.FriendbotURL, signer.Address()))
-
 	provider := stellarprovider.NewRPCChainProvider(sel, stellarprovider.RPCChainProviderConfig{
 		SorobanRPCURL:      sharedEnv.Output.Nodes[0].ExternalHTTPUrl,
 		NetworkPassphrase:  passphrase,
 		FriendbotURL:       sharedEnv.FriendbotURL,
-		DeployerKeypairGen: deployerGen,
+		DeployerKeypairGen: stellarprovider.KeypairRandom(),
 	})
 	blockchain, err := provider.Initialize(ctx)
 	require.NoError(t, err)
+
+	// Fund the signer the provider actually installed: KeypairRandom.Generate
+	// returns a new keypair on every call, so funding must happen after
+	// Initialize, on the chain's own signer.
+	chain, ok := blockchain.(*cldfstellar.Chain)
+	require.True(t, ok, "provider returned %T, want *cldfstellar.Chain", blockchain)
+	require.NoError(t, helpers.FundViaFriendbot(sharedEnv.FriendbotURL, chain.Signer.Address()))
 
 	env, err := testenv.New(ctx, testenv.WithChains(blockchain))
 	require.NoError(t, err)
