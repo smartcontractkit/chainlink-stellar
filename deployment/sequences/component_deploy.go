@@ -99,6 +99,14 @@ func resolveComponentContract(
 		if err != nil {
 			return componentContract{}, fmt.Errorf("deploy %s: %w", ref.Type, err)
 		}
+		// The chain must land the contract at the predicted ID; anything else means
+		// ComponentDeps (passphrase or deployer address) does not match the key that
+		// actually signed, and every later rerun would predict the wrong ID.
+		if out.ContractID != predicted {
+			return componentContract{}, fmt.Errorf(
+				"deploy %s returned contract %s but the salt predicted %s: check ComponentDeps NetworkPassphrase and DeployerAddress",
+				ref.Type, out.ContractID, predicted)
+		}
 		return componentContract{ID: out.ContractID, Deployed: true}, nil
 	}
 

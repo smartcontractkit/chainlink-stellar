@@ -129,7 +129,9 @@ func TestStellarDeployChainContracts_RunsWithoutStashedTopology(t *testing.T) {
 		ChainSelector: sel,
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "OnRamp WASM not found at "+filepath.Join(root, "target", "wasm32v1-none", "release", "onramp.wasm"))
+	// OnRamp now deploys after TAR (reviewed move), so RMN Remote is the first
+	// WASM the orchestrator needs.
+	require.Contains(t, err.Error(), "RMN Remote WASM not found at "+filepath.Join(root, "target", "wasm32v1-none", "release", "rmn_remote.wasm"))
 	require.NotContains(t, err.Error(), "topology")
 }
 

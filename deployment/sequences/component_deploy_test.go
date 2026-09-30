@@ -59,7 +59,7 @@ func componentTestSetup(t *testing.T, ledger InstanceStateReader) (
 			// characterizationDeployer returns valid per-wasm C… strkeys; the
 			// refs the sequences record are hex-converted, which the checksum-less
 			// operationstest placeholder fails.
-			Deploy:  characterizationDeployer{},
+			Deploy:  newCharacterizationDeployer(),
 			Invoker: inv,
 		},
 		NetworkPassphrase: characterizationPassphrase,
@@ -67,6 +67,20 @@ func componentTestSetup(t *testing.T, ledger InstanceStateReader) (
 		Ledger:            ledger,
 	}
 	return wasmPath, b, inv, reporter, deps
+}
+
+// requireOnlyFailedSequenceReports asserts that every recorded report is the
+// component's sequence report from a failed call: CLDF records the sequence
+// report even when the handler errors.
+func requireOnlyFailedSequenceReports(t *testing.T, reporter *cldf_ops.MemoryReporter, sequenceID string) {
+	t.Helper()
+	reports, err := reporter.GetReports()
+	require.NoError(t, err)
+	require.NotEmpty(t, reports)
+	for _, r := range reports {
+		require.Equal(t, sequenceID, r.Def.ID)
+		require.NotNil(t, r.Err)
+	}
 }
 
 // reportIDs returns the ordered report ids the bundle recorded.
@@ -275,6 +289,126 @@ func TestDeployTokenAdminRegistry_AdoptedOwnedByConfiguredOwnerSkipsInit(t *test
 	require.False(t, out.Deployed)
 	require.False(t, out.Initialized)
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+}
+
+// bogusDeployer returns a valid but wrong contract ID, as a real deploy would
+// if ComponentDeps did not match the signing key.
+type bogusDeployer struct{ id string }
+
+func (d bogusDeployer) DeployContract(context.Context, string, [32]byte) (string, error) {
+	return d.id, nil
+}
+
+func TestDeployTokenAdminRegistry_DeployedIDMismatchErrors(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	deps.Deploy = bogusDeployer{id: predictedID(t, "not-the-tar-label")}
+	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
+		ChainSelector: 1, WasmPath: wasmPath,
+	})
+	require.ErrorContains(t, err, "the salt predicted")
+	require.Equal(t, []string{"token-admin-registry:deploy", "stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+}
+
+func TestDeployExecutor_WritesProxyRefWhenMissing(t *testing.T) {
+	t.Parallel()
+	// An executor ref recorded by hand but no proxy row: nothing deploys or
+	// initializes, yet the missing proxy row is written.
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	id := predictedID(t, "executor")
+	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
+	inv.WithSimulateResultForFn("owner", &configuredOwner)
+	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, "")
+	execRef.Address = id
+	out, err := execComponentSequence(b, deps, DeployExecutor, DeployExecutorInput{
+		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{execRef},
+	})
+	require.NoError(t, err)
+	require.False(t, out.Deployed)
+	require.False(t, out.Initialized)
+	require.Equal(t, id, out.ContractID)
+	require.Len(t, out.Refs, 1)
+	require.Equal(t, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).Type, out.Refs[0].Type)
+	require.Equal(t, []string{"stellar-deploy-executor"}, reportIDs(t, reporter))
+}
+
+func TestDeployOnRamp_RequiresDependencies(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	dep := predictedID(t, "some-dependency")
+	for name, in := range map[string]DeployOnRampInput{
+		"tokenAdminRegistry": {ChainSelector: 1, WasmPath: wasmPath, RmnProxy: dep, FeeQuoter: dep},
+		"rmnProxy":           {ChainSelector: 1, WasmPath: wasmPath, TokenAdminRegistry: dep, FeeQuoter: dep},
+		"feeQuoter":          {ChainSelector: 1, WasmPath: wasmPath, TokenAdminRegistry: dep, RmnProxy: dep},
+	} {
+		_, err := execComponentSequence(b, deps, DeployOnRamp, in)
+		require.ErrorContains(t, err, name+" is required", name)
+	}
+	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-onramp")
+}
+
+func TestDeployOnRamp_FreshDeploysAndInitializes(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	tar, rmnProxy, fq := predictedID(t, "token-admin-registry"), predictedID(t, "rmn-proxy"), predictedID(t, "fee-quoter")
+	out, err := execComponentSequence(b, deps, DeployOnRamp, DeployOnRampInput{
+		ChainSelector: 1, WasmPath: wasmPath,
+		TokenAdminRegistry: tar, RmnProxy: rmnProxy, FeeQuoter: fq,
+	})
+	require.NoError(t, err)
+	require.True(t, out.Deployed)
+	require.True(t, out.Initialized)
+	require.Equal(t, []string{"onramp:deploy", "onramp:initialize", "stellar-deploy-onramp"}, reportIDs(t, reporter))
+}
+
+func TestDeployOffRamp_RequiresDependencies(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	dep := predictedID(t, "some-dependency")
+	_, err := execComponentSequence(b, deps, DeployOffRamp, DeployOffRampInput{
+		ChainSelector: 1, WasmPath: wasmPath, TokenAdminRegistry: dep,
+	})
+	require.ErrorContains(t, err, "rmnProxy is required")
+	_, err = execComponentSequence(b, deps, DeployOffRamp, DeployOffRampInput{
+		ChainSelector: 1, WasmPath: wasmPath, RmnProxy: dep,
+	})
+	require.ErrorContains(t, err, "tokenAdminRegistry is required")
+	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-offramp")
+}
+
+func TestDeployRouter_RequiresRmnProxy(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	_, err := execComponentSequence(b, deps, DeployRouter, DeployRouterInput{
+		ChainSelector: 1, WasmPath: wasmPath,
+	})
+	require.ErrorContains(t, err, "rmnProxy is required")
+	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-router")
+}
+
+func TestDeployCommitteeVerifier_RequiresStorageLocationsAndRmnProxy(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	rmnProxy := predictedID(t, "rmn-proxy")
+	_, err := execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, WasmPath: wasmPath, RmnProxy: rmnProxy,
+	})
+	require.ErrorContains(t, err, "storageLocations is required")
+	_, err = execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, WasmPath: wasmPath, StorageLocations: [][]byte{{0x01}},
+	})
+	require.ErrorContains(t, err, "rmnProxy is required")
+	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-committee-verifier")
+}
+
+func TestDeployCCIPReceiver_RequiresRouter(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	_, err := execComponentSequence(b, deps, DeployCCIPReceiver, DeployCCIPReceiverInput{
+		ChainSelector: 1, WasmPath: wasmPath,
+	})
+	require.ErrorContains(t, err, "router is required")
+	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-ccip-receiver")
 }
 
 func TestDeployFeeQuoter_RequiresFeeToken(t *testing.T) {
