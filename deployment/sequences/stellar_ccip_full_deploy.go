@@ -67,7 +67,9 @@ func statReleaseWasm(path, displayName string) error {
 
 // RunStellarCCIPFullDeploy deploys and configures the full Stellar CCIP Soroban stack for devenv using CLDF
 // operations on the given bundle. It mirrors the phased devenv pipeline (foundation → verification/fees
-// → ramps → receiver + cross-family datastore refs).
+// → ramps → receiver). Each component deploys and initializes through its own
+// rerun-safe sequence; this orchestrator passes dependencies, applies the config
+// ops and updates the host.
 //
 // topology is optional: committee verifier signature quorums are applied at lane-configuration
 // time, not during the deploy, so the deploy itself needs no NOP/committee data. It is kept as a
@@ -668,8 +670,6 @@ func RunStellarCCIPFullDeploy(
 	h.SetReceiver(receiverContractID)
 	h.Logger().Info().Str("receiverContractID", receiverContractID).Msg("CCIP receiver example deployed and initialized")
 
-	// Every component sequence recorded its own final datastore rows; the
-	// monolith's tail re-upsert block is gone.
 	addrs, err := ds.AddressRefStore.Fetch()
 	if err != nil {
 		return seq_core.OnChainOutput{}, err

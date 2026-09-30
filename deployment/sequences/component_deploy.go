@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -50,6 +51,9 @@ type componentContract struct {
 	Deployed bool
 	Adopted  bool
 	FromRef  bool
+	// RefAddress is the raw datastore address a FromRef reuse came from, used
+	// to detect and rewrite hand-recorded strkey rows.
+	RefAddress string
 }
 
 // componentIdempotencyKey scopes component op reports to one network, so the
@@ -81,7 +85,7 @@ func resolveComponentContract(
 		if err != nil {
 			return componentContract{}, fmt.Errorf("existing %s ref: %w", ref.Type, err)
 		}
-		return componentContract{ID: id, FromRef: true}, nil
+		return componentContract{ID: id, FromRef: true, RefAddress: r.Address}, nil
 	}
 
 	salt := stellardeployment.GenerateDeterministicSalt(deps.DeployerAddress, saltLabel)
@@ -157,6 +161,9 @@ func componentOwner(ctx context.Context, deps ComponentDeps, contractID string) 
 func shouldInitialize(ctx context.Context, deps ComponentDeps, contract componentContract, owner string) (bool, error) {
 	current, err := componentOwner(ctx, deps, contract.ID)
 	if err != nil {
+		if contract.FromRef {
+			return false, fmt.Errorf("datastore ref may be stale: contract %s cannot be read on chain: %w", contract.ID, err)
+		}
 		return false, err
 	}
 	switch {
@@ -201,6 +208,15 @@ func deployAndInitialize(
 		out.Initialized = true
 	}
 	if contract.Deployed || contract.Adopted {
+		refs, err := componentRefs(ref, chainSelector, contract.ID)
+		if err != nil {
+			return ComponentDeployOutput{}, err
+		}
+		out.Refs = refs
+	} else if contract.FromRef && !strings.HasPrefix(contract.RefAddress, "0x") {
+		// A ref recorded by hand may carry the C… strkey instead of the hex the
+		// datastore readers (adapters, lane config) expect; rewrite the row to
+		// hex, as the orchestrator's old tail block did for every row.
 		refs, err := componentRefs(ref, chainSelector, contract.ID)
 		if err != nil {
 			return ComponentDeployOutput{}, err

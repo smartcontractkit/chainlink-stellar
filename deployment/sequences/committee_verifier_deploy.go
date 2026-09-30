@@ -24,7 +24,7 @@ type DeployCommitteeVerifierInput struct {
 	RmnProxy          string                 `json:"rmnProxy"`
 	AllowlistAdmin    string                 `json:"allowlistAdmin,omitempty"`
 	FeeAggregator     string                 `json:"feeAggregator,omitempty"`
-	VersionTag        [4]byte                `json:"versionTag,omitempty"`
+	VersionTag        [4]byte                `json:"versionTag"`
 	ExistingAddresses []datastore.AddressRef `json:"existingAddresses,omitempty"`
 }
 

@@ -3,6 +3,8 @@ package sequences
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,9 +23,12 @@ import (
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
+	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
+	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
 	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
 )
 
 // fakeLedger answers ContractInstanceState from a map, standing in for the
@@ -190,6 +195,28 @@ func TestDeployTokenAdminRegistry_RerunWithStrkeyFormRef(t *testing.T) {
 	require.False(t, out.Deployed)
 	require.False(t, out.Initialized)
 	require.Equal(t, id, out.ContractID)
+	// The strkey-form row is rewritten to hex in the returned refs, so the
+	// datastore readers that expect hex keep working.
+	hexAddr, err := stellarutil.StrkeyToHex(id)
+	require.NoError(t, err)
+	require.Len(t, out.Refs, 1)
+	require.Equal(t, hexAddr, out.Refs[0].Address)
+	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+}
+
+func TestDeployTokenAdminRegistry_StaleRefErrorsClearly(t *testing.T) {
+	t.Parallel()
+	// A ref whose contract is gone from the chain fails the owner read; the
+	// error must point at the stale ref.
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	id := predictedID(t, "token-admin-registry")
+	deps.Invoker = simulateErrorInvoker{inv}
+	strkeyRef := stellarccip.TokenAdminRegistryDatastoreRef().FullAddressRef(1, "")
+	strkeyRef.Address = id
+	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
+		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{strkeyRef},
+	})
+	require.ErrorContains(t, err, "datastore ref may be stale")
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
@@ -291,6 +318,15 @@ func TestDeployTokenAdminRegistry_AdoptedOwnedByConfiguredOwnerSkipsInit(t *test
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
+// simulateErrorInvoker fails every SimulateContract, as a stale ref would.
+type simulateErrorInvoker struct {
+	*operationstest.RecordingInvoker
+}
+
+func (simulateErrorInvoker) SimulateContract(context.Context, string, string, []xdr.ScVal) (*xdr.ScVal, error) {
+	return nil, fmt.Errorf("simulate failed")
+}
+
 // bogusDeployer returns a valid but wrong contract ID, as a real deploy would
 // if ComponentDeps did not match the signing key.
 type bogusDeployer struct{ id string }
@@ -316,10 +352,11 @@ func TestDeployExecutor_WritesProxyRefWhenMissing(t *testing.T) {
 	// initializes, yet the missing proxy row is written.
 	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	id := predictedID(t, "executor")
+	execHex, err := stellarutil.StrkeyToHex(id)
+	require.NoError(t, err)
 	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
 	inv.WithSimulateResultForFn("owner", &configuredOwner)
-	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, "")
-	execRef.Address = id
+	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, execHex)
 	out, err := execComponentSequence(b, deps, DeployExecutor, DeployExecutorInput{
 		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{execRef},
 	})
@@ -330,6 +367,84 @@ func TestDeployExecutor_WritesProxyRefWhenMissing(t *testing.T) {
 	require.Len(t, out.Refs, 1)
 	require.Equal(t, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).Type, out.Refs[0].Type)
 	require.Equal(t, []string{"stellar-deploy-executor"}, reportIDs(t, reporter))
+}
+
+func TestDeployExecutor_RewritesStaleProxyRef(t *testing.T) {
+	t.Parallel()
+	// A proxy row pointing at an old executor is realigned with the executor the
+	// sequence resolved, so the OnRamp's default-executor lookup stays correct.
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	id := predictedID(t, "executor")
+	oldExecutor := predictedID(t, "old-executor")
+	execHex, err := stellarutil.StrkeyToHex(id)
+	require.NoError(t, err)
+	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
+	inv.WithSimulateResultForFn("owner", &configuredOwner)
+	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, execHex)
+	oldHex, err := stellarutil.StrkeyToHex(oldExecutor)
+	require.NoError(t, err)
+	staleProxyRef := stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).FullAddressRef(1, oldHex)
+	out, err := execComponentSequence(b, deps, DeployExecutor, DeployExecutorInput{
+		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{execRef, staleProxyRef},
+	})
+	require.NoError(t, err)
+	require.Equal(t, id, out.ContractID)
+	require.Len(t, out.Refs, 1)
+	require.Equal(t, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).Type, out.Refs[0].Type)
+	require.Equal(t, execHex, out.Refs[0].Address)
+	require.Equal(t, []string{"stellar-deploy-executor"}, reportIDs(t, reporter))
+}
+
+// opInput returns the recorded input of the given op.
+func opInput[IN any](t *testing.T, reporter *cldf_ops.MemoryReporter, opID string) IN {
+	t.Helper()
+	reports, err := reporter.GetReports()
+	require.NoError(t, err)
+	for _, r := range reports {
+		if r.Def.ID == opID {
+			in, ok := r.Input.(IN)
+			require.True(t, ok, "op %s input has unexpected type", opID)
+			return in
+		}
+	}
+	t.Fatalf("op %s not recorded", opID)
+	var zero IN
+	return zero
+}
+
+func TestComponentParams_FlowIntoInitializeInputs(t *testing.T) {
+	t.Parallel()
+	// L3 changesets will call the sequences with explicit params; the values
+	// must reach the initialize op inputs verbatim.
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	owner := foreignOwnerAddress()
+	feeAgg := predictedID(t, "fee-agg")
+
+	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
+		ChainSelector: 1, WasmPath: wasmPath, Owner: owner,
+	})
+	require.NoError(t, err)
+	require.Equal(t, owner, opInput[tarops.InitializeInput](t, reporter, "token-admin-registry:initialize").Owner)
+
+	_, err = execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, WasmPath: wasmPath, Owner: owner, AllowlistAdmin: feeAgg, FeeAggregator: owner,
+		StorageLocations: [][]byte{{0xAA}}, RmnProxy: predictedID(t, "rmn-proxy"),
+	})
+	require.NoError(t, err)
+	cvIn := opInput[cvops.InitializeInput](t, reporter, "committee-verifier:initialize")
+	require.Equal(t, owner, cvIn.Owner)
+	require.Equal(t, feeAgg, *cvIn.DynamicConfig.AllowlistAdmin)
+	require.Equal(t, owner, *cvIn.DynamicConfig.FeeAggregator)
+
+	_, err = execComponentSequence(b, deps, DeployFeeQuoter, DeployFeeQuoterInput{
+		ChainSelector: 1, WasmPath: wasmPath, Owner: owner, FeeToken: predictedID(t, "fee-token"),
+		MaxFeeJuelsPerMsg: big.NewInt(42), AuthorizedCallers: []string{feeAgg},
+	})
+	require.NoError(t, err)
+	fqIn := opInput[fqops.InitializeInput](t, reporter, "fee-quoter:initialize")
+	require.Equal(t, owner, fqIn.Owner)
+	require.Equal(t, int64(42), fqIn.StaticConfig.MaxFeeJuelsPerMsg.Int64())
+	require.Equal(t, []string{feeAgg}, fqIn.AuthorizedCallers)
 }
 
 func TestDeployOnRamp_RequiresDependencies(t *testing.T) {
