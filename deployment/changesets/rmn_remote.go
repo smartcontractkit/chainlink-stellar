@@ -1,9 +1,13 @@
 package changesets
 
 import (
+	"fmt"
+
+	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 
+	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
@@ -27,7 +31,26 @@ type DeployRMNRemote struct{}
 var _ cldf.ChangeSetV2[DeployRMNRemoteConfig] = DeployRMNRemote{}
 
 func (DeployRMNRemote) VerifyPreconditions(e cldf.Environment, cfg DeployRMNRemoteConfig) error {
-	return verifyComponent(e, cfg.ChainSelector, nil, nil)
+	if err := verifyComponent(e, cfg.ChainSelector, nil, nil); err != nil {
+		return err
+	}
+	if !cfg.EnableFastCurse {
+		return nil
+	}
+	// The wrapped sequence prepends the fast-curse timelock as a curse admin
+	// and fails during Apply when it is missing; catch that here instead.
+	fastQual := cfg.FastCurseQualifier
+	if fastQual == "" {
+		fastQual = cciputils.UltraFastCurseMCMSQualifier
+	}
+	refs, err := e.DataStore.Addresses().Fetch()
+	if err != nil {
+		return fmt.Errorf("fetch existing address refs: %w", err)
+	}
+	if _, ok := mcmsutil.FindExistingStellarTimelock(refs, cfg.ChainSelector, fastQual); !ok {
+		return fmt.Errorf("deploy the fast-curse MCMS stack (RBACTimelock, qualifier %q) on chain %d first", fastQual, cfg.ChainSelector)
+	}
+	return nil
 }
 
 func (DeployRMNRemote) Apply(e cldf.Environment, cfg DeployRMNRemoteConfig) (cldf.ChangesetOutput, error) {

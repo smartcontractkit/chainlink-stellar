@@ -7,18 +7,19 @@ import (
 	"testing"
 	"time"
 
-	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
-	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	"github.com/stretchr/testify/require"
 
-	testenv "github.com/smartcontractkit/chainlink-deployments-framework/engine/test/environment"
 	stellarprovider "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar/provider"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
+	testenv "github.com/smartcontractkit/chainlink-deployments-framework/engine/test/environment"
+	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/changesets"
+	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
 // TestComponentChangesetsApplyAllTwice proves the per-component changesets on
@@ -30,14 +31,23 @@ func TestComponentChangesetsApplyAllTwice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	_, deployerKP, _, _, passphrase, _ := GetSharedTestEnv(ctx, t)
+	_, _, _, _, passphrase, _ := GetSharedTestEnv(ctx, t)
 	sel := chainsel.STELLAR_LOCALNET.Selector
+
+	// A dedicated funded signer: the component salt labels are fixed, so
+	// reusing the suite-wide deployer would deploy the same contract IDs as
+	// the other integration tests (same deployer, same salt, same network) and
+	// break them by test order.
+	deployerGen := stellarprovider.KeypairRandom()
+	signer, err := deployerGen.Generate()
+	require.NoError(t, err)
+	require.NoError(t, helpers.FundViaFriendbot(sharedEnv.FriendbotURL, signer.Address()))
 
 	provider := stellarprovider.NewRPCChainProvider(sel, stellarprovider.RPCChainProviderConfig{
 		SorobanRPCURL:      sharedEnv.Output.Nodes[0].ExternalHTTPUrl,
 		NetworkPassphrase:  passphrase,
 		FriendbotURL:       sharedEnv.FriendbotURL,
-		DeployerKeypairGen: stellarprovider.KeypairFromHex(deployerKP.Seed()),
+		DeployerKeypairGen: deployerGen,
 	})
 	blockchain, err := provider.Initialize(ctx)
 	require.NoError(t, err)
@@ -143,37 +153,49 @@ func TestComponentChangesetsApplyAllTwice(t *testing.T) {
 	}
 
 	rerun(t, "RMN Remote",
-		func() error { return changesets.DeployRMNRemote{}.VerifyPreconditions(*env, changesets.DeployRMNRemoteConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployRMNRemote{}.VerifyPreconditions(*env, changesets.DeployRMNRemoteConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployRMNRemote{}.Apply(*env, changesets.DeployRMNRemoteConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "TokenAdminRegistry",
-		func() error { return changesets.DeployTokenAdminRegistry{}.VerifyPreconditions(*env, changesets.DeployTokenAdminRegistryConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployTokenAdminRegistry{}.VerifyPreconditions(*env, changesets.DeployTokenAdminRegistryConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployTokenAdminRegistry{}.Apply(*env, changesets.DeployTokenAdminRegistryConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "RampRegistry",
-		func() error { return changesets.DeployRampRegistry{}.VerifyPreconditions(*env, changesets.DeployRampRegistryConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployRampRegistry{}.VerifyPreconditions(*env, changesets.DeployRampRegistryConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployRampRegistry{}.Apply(*env, changesets.DeployRampRegistryConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "VVR",
-		func() error { return changesets.DeployVVR{}.VerifyPreconditions(*env, changesets.DeployVVRConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployVVR{}.VerifyPreconditions(*env, changesets.DeployVVRConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployVVR{}.Apply(*env, changesets.DeployVVRConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "Executor",
-		func() error { return changesets.DeployExecutor{}.VerifyPreconditions(*env, changesets.DeployExecutorConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployExecutor{}.VerifyPreconditions(*env, changesets.DeployExecutorConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployExecutor{}.Apply(*env, changesets.DeployExecutorConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "RMN Proxy",
-		func() error { return changesets.DeployRMNProxy{}.VerifyPreconditions(*env, changesets.DeployRMNProxyConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployRMNProxy{}.VerifyPreconditions(*env, changesets.DeployRMNProxyConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployRMNProxy{}.Apply(*env, changesets.DeployRMNProxyConfig{ChainSelector: sel})
 			return out.DataStore, err
@@ -187,19 +209,25 @@ func TestComponentChangesetsApplyAllTwice(t *testing.T) {
 			return out.DataStore, err
 		})
 	rerun(t, "OnRamp",
-		func() error { return changesets.DeployOnRamp{}.VerifyPreconditions(*env, changesets.DeployOnRampConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployOnRamp{}.VerifyPreconditions(*env, changesets.DeployOnRampConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployOnRamp{}.Apply(*env, changesets.DeployOnRampConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "OffRamp",
-		func() error { return changesets.DeployOffRamp{}.VerifyPreconditions(*env, changesets.DeployOffRampConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployOffRamp{}.VerifyPreconditions(*env, changesets.DeployOffRampConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployOffRamp{}.Apply(*env, changesets.DeployOffRampConfig{ChainSelector: sel})
 			return out.DataStore, err
 		})
 	rerun(t, "Router",
-		func() error { return changesets.DeployRouter{}.VerifyPreconditions(*env, changesets.DeployRouterConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployRouter{}.VerifyPreconditions(*env, changesets.DeployRouterConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployRouter{}.Apply(*env, changesets.DeployRouterConfig{ChainSelector: sel})
 			return out.DataStore, err
@@ -219,7 +247,9 @@ func TestComponentChangesetsApplyAllTwice(t *testing.T) {
 			return out.DataStore, err
 		})
 	rerun(t, "ccip_receiver_example",
-		func() error { return changesets.DeployCCIPReceiver{}.VerifyPreconditions(*env, changesets.DeployCCIPReceiverConfig{ChainSelector: sel}) },
+		func() error {
+			return changesets.DeployCCIPReceiver{}.VerifyPreconditions(*env, changesets.DeployCCIPReceiverConfig{ChainSelector: sel})
+		},
 		func() (datastore.MutableDataStore, error) {
 			out, err := changesets.DeployCCIPReceiver{}.Apply(*env, changesets.DeployCCIPReceiverConfig{ChainSelector: sel})
 			return out.DataStore, err

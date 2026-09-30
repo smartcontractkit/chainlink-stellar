@@ -20,8 +20,10 @@
 // Apply builds the deployer from the chain's signer, so no raw keypair is
 // required and KMS-backed signers work; the address used to predict contract
 // IDs is the signer's own address, so a predicted ID can never diverge from
-// the key that signs the deploy. Deploys leave the deployer key as owner;
-// ownership moves later through the transfer-ownership changesets.
+// the key that signs the deploy. Owner defaults to that signer address (the
+// configs accept another owner for custom workflows). These changesets never
+// transfer ownership or emit MCMS proposals; ownership moves later through
+// the transfer-ownership changesets.
 //
 // Rerun safety comes from the component sequences' three-layer skip
 // (datastore ref, predicted contract ID + WASM hash, owner()): re-applying an

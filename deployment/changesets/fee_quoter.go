@@ -29,13 +29,22 @@ type DeployFeeQuoter struct{}
 
 var _ cldf.ChangeSetV2[DeployFeeQuoterConfig] = DeployFeeQuoter{}
 
+// maxFeeJuelsPerMsgBound is the largest i128 value FeeQuoter's initialize
+// accepts (it rejects values <= 0 on chain).
+var maxFeeJuelsPerMsgBound = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 127), big.NewInt(1))
+
 func (DeployFeeQuoter) VerifyPreconditions(e cldf.Environment, cfg DeployFeeQuoterConfig) error {
 	return verifyComponent(e, cfg.ChainSelector, nil, func() error {
 		if cfg.FeeToken == "" {
 			return fmt.Errorf("feeToken is required: pass the fee-token SAC strkey")
 		}
-		if cfg.MaxFeeJuelsPerMsg != nil && cfg.MaxFeeJuelsPerMsg.Sign() < 0 {
-			return fmt.Errorf("maxFeeJuelsPerMsg must not be negative")
+		if cfg.MaxFeeJuelsPerMsg != nil {
+			if cfg.MaxFeeJuelsPerMsg.Sign() <= 0 {
+				return fmt.Errorf("maxFeeJuelsPerMsg must be positive")
+			}
+			if cfg.MaxFeeJuelsPerMsg.Cmp(maxFeeJuelsPerMsgBound) > 0 {
+				return fmt.Errorf("maxFeeJuelsPerMsg exceeds the i128 upper bound %s", maxFeeJuelsPerMsgBound)
+			}
 		}
 		return nil
 	})

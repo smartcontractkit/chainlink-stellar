@@ -18,7 +18,9 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 )
 
 // testEnvironment builds a minimal CLDF environment: a Stellar chain for
@@ -145,14 +147,36 @@ func TestVerifyPreconditions_FeeQuoterParams(t *testing.T) {
 	err = DeployFeeQuoter{}.VerifyPreconditions(env, DeployFeeQuoterConfig{
 		ChainSelector:     sel,
 		FeeToken:          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-		MaxFeeJuelsPerMsg: big.NewInt(-1),
+		MaxFeeJuelsPerMsg: big.NewInt(0),
 	})
-	require.ErrorContains(t, err, "maxFeeJuelsPerMsg must not be negative")
+	require.ErrorContains(t, err, "maxFeeJuelsPerMsg must be positive")
+
+	err = DeployFeeQuoter{}.VerifyPreconditions(env, DeployFeeQuoterConfig{
+		ChainSelector:     sel,
+		FeeToken:          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+		MaxFeeJuelsPerMsg: new(big.Int).Add(maxFeeJuelsPerMsgBound, big.NewInt(1)),
+	})
+	require.ErrorContains(t, err, "maxFeeJuelsPerMsg exceeds the i128 upper bound")
 
 	require.NoError(t, DeployFeeQuoter{}.VerifyPreconditions(env, DeployFeeQuoterConfig{
-		ChainSelector: sel,
-		FeeToken:      "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+		ChainSelector:     sel,
+		FeeToken:          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+		MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
 	}))
+}
+
+func TestVerifyPreconditions_RMNRemoteFastCurseTimelock(t *testing.T) {
+	sel := chainsel.STELLAR_LOCALNET.Selector
+
+	// EnableFastCurse makes the fast-curse timelock a precondition; an empty
+	// datastore must fail preflight instead of Apply.
+	env := testEnvironment(t, sel, true)
+	err := DeployRMNRemote{}.VerifyPreconditions(env, DeployRMNRemoteConfig{ChainSelector: sel, EnableFastCurse: true})
+	require.ErrorContains(t, err, "deploy the fast-curse MCMS stack")
+
+	env = testEnvironment(t, sel, true,
+		mcmsutil.StellarTimelockDatastoreRef(sel, cciputils.UltraFastCurseMCMSQualifier, "0x"+strings.Repeat("ab", 32)))
+	require.NoError(t, DeployRMNRemote{}.VerifyPreconditions(env, DeployRMNRemoteConfig{ChainSelector: sel, EnableFastCurse: true}))
 }
 
 func TestVerifyPreconditions_CommitteeVerifierParams(t *testing.T) {
