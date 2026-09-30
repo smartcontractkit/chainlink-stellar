@@ -32,6 +32,7 @@ import (
 	"time"
 
 	advancedpoolhooksbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/advanced_pool_hooks"
+	lockreleasepoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
@@ -261,10 +262,18 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		mockRouter := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-router")
 		mockRampRegistry := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-ramp-registry")
 		mockRmnProxy := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-rmn-proxy")
-		pool := tokenpoolbindings.NewTokenPoolClient(deployer, poolID)
-		if err := pool.Initialize(ctx, deployerAddr, mockToken, 7, mockRouter, mockRampRegistry, mockRmnProxy); err != nil {
+		// The lock-release pool's initialize fixes its lockbox (EVM `i_lockBox`
+		// constructor parity) and cross-calls it, so initialize through the
+		// lock_release_pool binding (7 args, incl. lockBoxID) — not the generic
+		// token_pool binding (6 args, which the WASM rejects with
+		// Func(MismatchingParameterLen)). Same pattern as TestTokenPool: the
+		// lockbox never calls the token, so a mock tokenID suffices.
+		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "aph-wired-pool-lockbox", mockToken)
+		lrPool := lockreleasepoolbindings.NewLockReleasePoolClient(deployer, poolID)
+		if err := lrPool.Initialize(ctx, deployerAddr, mockToken, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
 			t.Fatalf("Initialize pool: %v", err)
 		}
+		pool := tokenpoolbindings.NewTokenPoolClient(deployer, poolID)
 
 		hooksClient, hooksID := deployHooks(ctx, t, projectRoot, deployerAddr, deployer, "wired")
 		// Authorize the wired pool as a hook caller (EVM `_validateCaller` parity).
