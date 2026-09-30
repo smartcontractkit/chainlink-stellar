@@ -18,7 +18,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
@@ -64,15 +63,26 @@ func characterizationKeypair() *keypair.Full {
 	return kp
 }
 
-// characterizationDeployer deploys each WASM to a valid, distinct, deterministic
-// C… strkey (sha256 of the wasm file name), unlike operationstest.FakeDeployer's
-// checksum-less placeholder: the monolith tail converts every contract ID to hex
-// via StrkeyToHex, which rejects invalid strkeys.
-type characterizationDeployer struct{}
+// characterizationDeployer returns the contract ID the skip helper predicts
+// for the given salt — the address a real deploy lands at — so the fake matches
+// the chain's deterministic addressing. Unlike operationstest.FakeDeployer's
+// checksum-less placeholder, the IDs are valid C… strkeys (the refs the
+// sequences record are hex-converted).
+type characterizationDeployer struct {
+	passphrase      string
+	deployerAddress string
+}
 
-func (characterizationDeployer) DeployContract(_ context.Context, wasmPath string, _ [32]byte) (string, error) {
-	sum := sha256.Sum256([]byte(filepath.Base(wasmPath)))
-	return strkey.Encode(strkey.VersionByteContract, sum[:])
+func (d characterizationDeployer) DeployContract(_ context.Context, _ string, salt [32]byte) (string, error) {
+	return stellardeployment.ComputeContractID(d.passphrase, d.deployerAddress, salt)
+}
+
+// newCharacterizationDeployer builds the fake over the fixture's fixed keypair.
+func newCharacterizationDeployer() characterizationDeployer {
+	return characterizationDeployer{
+		passphrase:      characterizationPassphrase,
+		deployerAddress: characterizationKeypair().Address(),
+	}
 }
 
 // fakeCCIPDevenvHost is a CCIPDevenvHost with no friendbot (the monolith then
@@ -276,7 +286,7 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 	// uninitialized, so every component initializes exactly once.
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
 	deps := stellardeps.StellarDeps{
-		Deploy:  characterizationDeployer{},
+		Deploy:  newCharacterizationDeployer(),
 		Invoker: inv,
 	}
 	host := newFakeCCIPDevenvHost(t)
@@ -293,10 +303,9 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
 	// 36 op call sites for this input: 24 deploy/init + 12 config, where
 	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
-	// The seven tier-0/1 components (RMN Remote, RMN Proxy, FeeQuoter, TAR, VVR,
-	// Executor, RampRegistry) run through their component sequences, so their
-	// sequence reports join the trace after their child op reports.
-	require.Len(t, reports, 43)
+	// All 12 components run through their component sequences, so 12 sequence
+	// reports join the trace after their child op reports.
+	require.Len(t, reports, 48)
 
 	trace := buildTrace(t, reports, root, out.Addresses)
 	got, err := json.MarshalIndent(trace, "", "  ")

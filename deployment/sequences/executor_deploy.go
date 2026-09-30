@@ -61,12 +61,15 @@ var DeployExecutor = cldf_ops.NewSequence(
 		if err != nil {
 			return ComponentDeployOutput{}, err
 		}
-		if len(out.Refs) > 0 {
-			proxyRef, err := executorProxyRef(in.ChainSelector, out.ContractID)
+		// Both rows must exist even if only one went missing (e.g. an executor ref
+		// recorded by hand): the proxy row is written whenever it is absent.
+		proxyRef := stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier)
+		if findExistingComponentRef(in.ExistingAddresses, proxyRef, in.ChainSelector) == nil {
+			ref, err := executorProxyRef(in.ChainSelector, out.ContractID)
 			if err != nil {
 				return ComponentDeployOutput{}, err
 			}
-			out.Refs = append(out.Refs, proxyRef)
+			out.Refs = append(out.Refs, ref)
 		}
 		return out, nil
 	},

@@ -6,16 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Masterminds/semver/v3"
-
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/executor"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/fee_quoter"
-	offrampoperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/offramp"
-	onrampoperations "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/onramp"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/proxy"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -30,10 +20,8 @@ import (
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
-	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	recvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
@@ -138,25 +126,7 @@ func RunStellarCCIPFullDeploy(
 		routerContractID    string
 	)
 
-	// --- Foundation (OnRamp deploy first; initialize after TAR + FeeQuoter) ---
-	onrampWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "onramp.wasm")
-	if err := statReleaseWasm(onrampWasmPath, "OnRamp"); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-	h.Logger().Info().Str("wasmPath", onrampWasmPath).Msg("Deploying OnRamp contract...")
-	onrampSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "onramp")
-	onrampOut, err := execStellarCCIPOp(b, deps, onrampops.Deploy, stellarops.DeployInput{WasmPath: onrampWasmPath, Salt: onrampSalt})
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("deploy OnRamp: %w", err)
-	}
-	onrampContractID = onrampOut.ContractID
-	if err := stellarccip.RecordOnRamp(ds, selector, onrampContractID); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-	onRampClient := onrampbindings.NewOnRampClient(h.Deployer(), onrampContractID)
-	h.SetOnRamp(onrampContractID, onRampClient)
-	h.Logger().Info().Str("contractID", onrampContractID).Msg("OnRamp contract deployed")
-
+	// --- Foundation → verification/fees → ramps → receiver, via component sequences ---
 	rmnRemoteWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
 	currentRefs, err := ds.AddressRefStore.Fetch()
 	if err != nil {
@@ -260,31 +230,34 @@ func RunStellarCCIPFullDeploy(
 
 	// Fee aggregator receivable account: devenv uses the deployer account (real on-chain identity, not a synthetic C… mock).
 	feeAggregatorAddr := h.DeployerKeypair().Address()
-	if _, err := execStellarCCIPOp(b, deps, onrampops.Initialize, onrampops.InitializeInput{
-		ContractID: onrampContractID,
-		Owner:      h.DeployerKeypair().Address(),
-		StaticConfig: onrampbindings.StaticConfig{
-			ChainSelector:      selector,
-			TokenAdminRegistry: tarContractID,
-			RmnProxy:           rmnProxyContractID,
-			// Per-message fee cap in USD cents. Enforced post-conversion via
-			// fee_math::usd_cents_to_fee_token (onramp lib.rs:224 → FeeExceedsMaxAllowed),
-			// so it is scale-correct under the USDPriceWith18Decimals convention.
-			// $5000: at the devenv gas price (~$100/M-gas ≈ 33 gwei) a 350k-gas
-			// message costs ~$35, but an Ethereum spike (200 gwei) + complex 1M-gas
-			// receiver + non-LINK premium (2×) can reach ~$1200. $5000 admits normal
-			// + spike sends while rejecting pathological (>$5k) quotes that signal a
-			// gas/oracle anomaly. u32 max is 4.29e9, so 500_000 cents fits easily.
-			MaxUsdCentsPerMessage: 500_000, // $5000
-		},
-		DynamicConfig: onrampbindings.DynamicConfig{
-			FeeQuoter:     feeQuoterContractID,
-			FeeAggregator: feeAggregatorAddr,
-		},
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("initialize OnRamp: %w", err)
+	// OnRamp deploys and initializes in one step, after TAR (the monolith
+	// deployed it first for no functional reason; addresses are
+	// salt-deterministic, so only the transaction order changes — the one
+	// reviewed op-order move of this refactor).
+	onrampWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "onramp.wasm")
+	currentRefs, err = ds.AddressRefStore.Fetch()
+	if err != nil {
+		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("onRampContractID", onrampContractID).Msg("OnRamp client initialized")
+	onrampOut, err := execComponentSequence(b, componentDeps, DeployOnRamp, DeployOnRampInput{
+		ChainSelector:      selector,
+		WasmPath:           onrampWasmPath,
+		TokenAdminRegistry: tarContractID,
+		RmnProxy:           rmnProxyContractID,
+		FeeQuoter:          feeQuoterContractID,
+		FeeAggregator:      feeAggregatorAddr,
+		ExistingAddresses:  currentRefs,
+	})
+	if err != nil {
+		return seq_core.OnChainOutput{}, fmt.Errorf("deploy OnRamp: %w", err)
+	}
+	onrampContractID = onrampOut.ContractID
+	if err := upsertComponentRefs(ds, onrampOut.Refs); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+	onRampClient := onrampbindings.NewOnRampClient(h.Deployer(), onrampContractID)
+	h.SetOnRamp(onrampContractID, onRampClient)
+	h.Logger().Info().Str("onRampContractID", onrampContractID).Msg("OnRamp deployed and initialized")
 
 	// --- Verification + FeeQuoter config ---
 	vvrWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccvs_versioned_verifier_resolver.wasm")
@@ -309,39 +282,28 @@ func RunStellarCCIPFullDeploy(
 	h.Logger().Info().Str("vvrContractID", vvrContractID).Msg("VVR deployed and initialized")
 
 	cvWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccvs_committee_verifier.wasm")
-	if err := statReleaseWasm(cvWasmPath, "Committee Verifier"); err != nil {
+	currentRefs, err = ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("wasmPath", cvWasmPath).Msg("Deploying Committee Verifier contract...")
-	cvSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "committee-verifier")
-	cvOut, err := execStellarCCIPOp(b, deps, cvops.Deploy, stellarops.DeployInput{WasmPath: cvWasmPath, Salt: cvSalt})
+	mockStorageLocation := stellarutil.GenerateContractAddress("storage-location", h.NetworkPassphrase())
+	cvOut, err := execComponentSequence(b, componentDeps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector:     selector,
+		WasmPath:          cvWasmPath,
+		StorageLocations:  [][]byte{mockStorageLocation},
+		RmnProxy:          rmnProxyContractID,
+		FeeAggregator:     feeAggregatorAddr,
+		ExistingAddresses: currentRefs,
+	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy Committee Verifier: %w", err)
 	}
 	cvContractID = cvOut.ContractID
-	if err := stellarccip.RecordCommitteeVerifier(ds, selector, cvContractID); err != nil {
+	if err := upsertComponentRefs(ds, cvOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("contractID", cvContractID).Msg("Committee Verifier contract deployed")
-
-	allowlistAdmin := h.DeployerKeypair().Address()
-	cvFeeAgg := feeAggregatorAddr
-	mockStorageLocation := stellarutil.GenerateContractAddress("storage-location", h.NetworkPassphrase())
-	if _, err := execStellarCCIPOp(b, deps, cvops.Initialize, cvops.InitializeInput{
-		ContractID: cvContractID,
-		Owner:      h.DeployerKeypair().Address(),
-		DynamicConfig: cvbindings.DynamicConfig{
-			AllowlistAdmin: &allowlistAdmin,
-			FeeAggregator:  &cvFeeAgg,
-		},
-		StorageLocations: [][]byte{mockStorageLocation},
-		RmnProxy:         rmnProxyContractID,
-		VersionTag:       stellarutil.DefaultCommitteeVerifierVersionTag(),
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("initialize Committee Verifier: %w", err)
-	}
 	h.SetCV(cvContractID)
-	h.Logger().Info().Str("cvContractID", cvContractID).Msg("Committee Verifier client initialized")
+	h.Logger().Info().Str("cvContractID", cvContractID).Msg("Committee Verifier deployed and initialized")
 
 	execWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "executor.wasm")
 	currentRefs, err = ds.AddressRefStore.Fetch()
@@ -514,59 +476,49 @@ func RunStellarCCIPFullDeploy(
 
 	// --- Ramps, router, registry, provisional lanes ---
 	offRampWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "offramp.wasm")
-	if err := statReleaseWasm(offRampWasmPath, "OffRamp"); err != nil {
+	currentRefs, err = ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("wasmPath", offRampWasmPath).Msg("Deploying OffRamp contract...")
-	offRampSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "offramp")
-	offRampOut, err := execStellarCCIPOp(b, deps, offrampops.Deploy, stellarops.DeployInput{WasmPath: offRampWasmPath, Salt: offRampSalt})
+	offRampOut, err := execComponentSequence(b, componentDeps, DeployOffRamp, DeployOffRampInput{
+		ChainSelector:      selector,
+		WasmPath:           offRampWasmPath,
+		RmnProxy:           rmnProxyContractID,
+		TokenAdminRegistry: tarContractID,
+		ExistingAddresses:  currentRefs,
+	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy OffRamp: %w", err)
 	}
 	offRampContractID = offRampOut.ContractID
-	if err := stellarccip.RecordOffRamp(ds, selector, offRampContractID); err != nil {
+	if err := upsertComponentRefs(ds, offRampOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
 	offRampClient := offrampbindings.NewOffRampClient(h.Deployer(), offRampContractID)
 	h.SetOffRamp(offRampContractID, offRampClient)
-
-	if _, err := execStellarCCIPOp(b, deps, offrampops.Initialize, offrampops.InitializeInput{
-		ContractID: offRampContractID,
-		Owner:      h.DeployerKeypair().Address(),
-		Config: offrampbindings.StaticConfig{
-			ChainSelector:      selector,
-			RmnProxy:           rmnProxyContractID,
-			TokenAdminRegistry: tarContractID,
-		},
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("initialize OffRamp: %w", err)
-	}
-	h.Logger().Info().Str("offRampContractID", offRampContractID).Msg("OffRamp initialized")
+	h.Logger().Info().Str("offRampContractID", offRampContractID).Msg("OffRamp deployed and initialized")
 
 	routerWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "router.wasm")
-	if err := statReleaseWasm(routerWasmPath, "Router"); err != nil {
+	currentRefs, err = ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("wasmPath", routerWasmPath).Msg("Deploying Router contract...")
-	routerSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "router")
-	routerOut, err := execStellarCCIPOp(b, deps, routerops.Deploy, stellarops.DeployInput{WasmPath: routerWasmPath, Salt: routerSalt})
+	routerOut, err := execComponentSequence(b, componentDeps, DeployRouter, DeployRouterInput{
+		ChainSelector:     selector,
+		WasmPath:          routerWasmPath,
+		RmnProxy:          rmnProxyContractID,
+		ExistingAddresses: currentRefs,
+	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy Router: %w", err)
 	}
 	routerContractID = routerOut.ContractID
-	if err := stellarccip.RecordRouter(ds, selector, routerContractID); err != nil {
+	if err := upsertComponentRefs(ds, routerOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
 	routerClient := routerbindings.NewRouterClient(h.Deployer(), routerContractID)
-	if _, err := execStellarCCIPOp(b, deps, routerops.Initialize, routerops.InitializeInput{
-		ContractID: routerContractID,
-		Owner:      h.DeployerKeypair().Address(),
-		RmnProxy:   rmnProxyContractID,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("initialize Router: %w", err)
-	}
 	h.SetRouter(routerContractID, routerClient)
-	h.Logger().Info().Str("routerContractID", routerContractID).Msg("Router initialized")
+	h.Logger().Info().Str("routerContractID", routerContractID).Msg("Router deployed and initialized")
 
 	// CommitteeVerifier RemoteChainConfig.Router must be this chain's Router contract (not the deployer);
 	// router exists only after deploy + Initialize above (matches tests/integration/contract_deploy_helpers_test.go).
@@ -680,27 +632,24 @@ func RunStellarCCIPFullDeploy(
 	h.SetRampRegistry(rampRegistryContractID)
 	h.Logger().Info().Str("contractID", rampRegistryContractID).Msg("RampRegistry deployed and ramp maps synced with Router")
 
-	// --- Receiver + EVM-typed datastore refs for CCIP v2 tooling ---
+	// --- Receiver (remote-chain enablement stays here: config op) ---
 	receiverWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccip_receiver_example.wasm")
-	if err := statReleaseWasm(receiverWasmPath, "ccip_receiver_example"); err != nil {
+	currentRefs, err = ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	h.Logger().Info().Str("wasmPath", receiverWasmPath).Msg("Deploying CCIP receiver example contract...")
-	receiverSalt := stellardeployment.GenerateDeterministicSalt(h.DeployerKeypair().Address(), "ccip-receiver-example")
-	recvOut, err := execStellarCCIPOp(b, deps, recvops.Deploy, stellarops.DeployInput{WasmPath: receiverWasmPath, Salt: receiverSalt})
+	recvOut, err := execComponentSequence(b, componentDeps, DeployCCIPReceiver, DeployCCIPReceiverInput{
+		ChainSelector:     selector,
+		WasmPath:          receiverWasmPath,
+		Router:            routerContractID,
+		ExistingAddresses: currentRefs,
+	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy ccip_receiver_example: %w", err)
 	}
 	receiverContractID := recvOut.ContractID
-	if err := stellarccip.RecordCCIPReceiver(ds, selector, receiverContractID); err != nil {
+	if err := upsertComponentRefs(ds, recvOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
-	}
-	if _, err := execStellarCCIPOp(b, deps, recvops.Initialize, recvops.InitializeInput{
-		ContractID: receiverContractID,
-		Owner:      h.DeployerKeypair().Address(),
-		Router:     routerContractID,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("initialize ccip_receiver_example: %w", err)
 	}
 
 	ownerAddr := h.DeployerKeypair().Address()
@@ -719,153 +668,8 @@ func RunStellarCCIPFullDeploy(
 	h.SetReceiver(receiverContractID)
 	h.Logger().Info().Str("receiverContractID", receiverContractID).Msg("CCIP receiver example deployed and initialized")
 
-	receiverHex, err := stellarutil.StrkeyToHex(receiverContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert receiver address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       receiverHex,
-		ChainSelector: selector,
-		Type:          datastore.ContractType(stellarccip.CcipReceiverContractType),
-		Version:       stellarops.ContractDeploymentVersion,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	onrampHex, err := stellarutil.StrkeyToHex(onrampContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert OnRamp address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       onrampHex,
-		ChainSelector: selector,
-		Type:          datastore.ContractType(onrampoperations.ContractType),
-		Version:       semver.MustParse(onrampoperations.Deploy.Version()),
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	offRampHex, err := stellarutil.StrkeyToHex(offRampContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert OffRamp address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       offRampHex,
-		ChainSelector: selector,
-		Type:          datastore.ContractType(offrampoperations.ContractType),
-		Version:       semver.MustParse(offrampoperations.Deploy.Version()),
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	routerHex, err := stellarutil.StrkeyToHex(routerContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert Router address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       routerHex,
-		ChainSelector: selector,
-		Type:          datastore.ContractType(router.ContractType),
-		Version:       semver.MustParse(router.Deploy.Version()),
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	tarHex, err := stellarutil.StrkeyToHex(tarContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert TokenAdminRegistry address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       tarHex,
-		ChainSelector: selector,
-		Type:          datastore.ContractType(stellarccip.TokenAdminRegistryContractType),
-		Version:       stellarops.ContractDeploymentVersion,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	vvrHex, err := stellarutil.StrkeyToHex(vvrContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert VVR address: %w", err)
-	}
-	for _, qualifier := range []string{stellarccip.DefaultCommitteeVerifierQualifier} {
-		if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-			Address:       vvrHex,
-			Type:          datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
-			Version:       versioned_verifier_resolver.Version,
-			Qualifier:     qualifier,
-			ChainSelector: selector,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, err
-		}
-	}
-
-	cvHex, err := stellarutil.StrkeyToHex(cvContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert Committee Verifier address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       cvHex,
-		Type:          datastore.ContractType(committee_verifier.ContractType),
-		Version:       committee_verifier.Version,
-		Qualifier:     stellarccip.DefaultCommitteeVerifierQualifier,
-		ChainSelector: selector,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	executorHex, err := stellarutil.StrkeyToHex(executorContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert Executor address: %w", err)
-	}
-	// Soroban has no EVM-style delegate proxy, so both the executor and executor-proxy
-	// address-book rows point at the same deployed Executor contract. The OnRamp resolves
-	// default_executor from the proxy row and invokes get_fee on it directly.
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       executorHex,
-		Type:          datastore.ContractType(executor.ContractType),
-		Version:       executor.Version,
-		Qualifier:     stellarccip.DefaultExecutorQualifier,
-		ChainSelector: selector,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       executorHex,
-		Type:          datastore.ContractType(proxy.ContractType),
-		Version:       proxy.Version,
-		Qualifier:     stellarccip.DefaultExecutorQualifier,
-		ChainSelector: selector,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	rmnRemoteHex, err := stellarutil.StrkeyToHex(rmnRemoteContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert RMN Remote address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       rmnRemoteHex,
-		Type:          datastore.ContractType(stellarccip.RMNRemoteContractType),
-		Version:       semver.MustParse(stellarccip.RMNRemoteContractVersion),
-		ChainSelector: selector,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
-	feeQuoterHex, err := stellarutil.StrkeyToHex(feeQuoterContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("convert FeeQuoter address: %w", err)
-	}
-	if err := ds.AddressRefStore.Upsert(datastore.AddressRef{
-		Address:       feeQuoterHex,
-		Type:          datastore.ContractType(fee_quoter.ContractType),
-		Version:       semver.MustParse(fee_quoter.Deploy.Version()),
-		ChainSelector: selector,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, err
-	}
-
+	// Every component sequence recorded its own final datastore rows; the
+	// monolith's tail re-upsert block is gone.
 	addrs, err := ds.AddressRefStore.Fetch()
 	if err != nil {
 		return seq_core.OnChainOutput{}, err
