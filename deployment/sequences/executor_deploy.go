@@ -6,7 +6,6 @@ import (
 
 	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 )
 
@@ -61,24 +60,18 @@ var DeployExecutor = cldf_ops.NewSequence(
 		if err != nil {
 			return ComponentDeployOutput{}, err
 		}
-		// Both rows must exist even if only one went missing (e.g. an executor ref
-		// recorded by hand): the proxy row is written whenever it is absent.
-		proxyRef := stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier)
-		if findExistingComponentRef(in.ExistingAddresses, proxyRef, in.ChainSelector) == nil {
-			ref, err := executorProxyRef(in.ChainSelector, out.ContractID)
-			if err != nil {
-				return ComponentDeployOutput{}, err
-			}
-			out.Refs = append(out.Refs, ref)
+		// The proxy row must exist and point at this Executor: it is written
+		// whenever it is missing or stale (e.g. hand-recorded, or left over from
+		// an earlier deploy with a different deployer). The OnRamp resolves its
+		// default executor through the proxy row.
+		refs, err := componentRefs(stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier), in.ChainSelector, out.ContractID)
+		if err != nil {
+			return ComponentDeployOutput{}, err
+		}
+		proxyRow := refs[0]
+		if existing := findExistingComponentRef(in.ExistingAddresses, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier), in.ChainSelector); existing == nil || existing.Address != proxyRow.Address {
+			out.Refs = append(out.Refs, proxyRow)
 		}
 		return out, nil
 	},
 )
-
-func executorProxyRef(chainSelector uint64, contractID string) (datastore.AddressRef, error) {
-	hexAddr, err := stellarutil.StrkeyToHex(contractID)
-	if err != nil {
-		return datastore.AddressRef{}, err
-	}
-	return stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).FullAddressRef(chainSelector, hexAddr), nil
-}
