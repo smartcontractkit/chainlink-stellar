@@ -1,46 +1,6 @@
 {
   "ops": [
     {
-      "id": "onramp:deploy",
-      "input": {
-        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/onramp.wasm",
-        "salt": [
-          229,
-          35,
-          161,
-          101,
-          21,
-          192,
-          153,
-          249,
-          211,
-          68,
-          190,
-          21,
-          202,
-          112,
-          224,
-          232,
-          212,
-          80,
-          222,
-          59,
-          125,
-          19,
-          3,
-          109,
-          82,
-          63,
-          176,
-          145,
-          59,
-          165,
-          74,
-          103
-        ]
-      }
-    },
-    {
       "id": "rmn-remote:deploy",
       "input": {
         "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_remote.wasm",
@@ -83,8 +43,15 @@
     {
       "id": "rmn-remote:initialize",
       "input": {
-        "contract_id": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML",
+        "contract_id": "CCTGSKSANAH4CJQ36OPTRTBMWFY7YOEGVA5NSJX2ZFRE22FCM7AHILUS",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-rmn-remote",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_remote.wasm"
       }
     },
     {
@@ -130,9 +97,27 @@
     {
       "id": "rmn-proxy:initialize",
       "input": {
-        "contract_id": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+        "contract_id": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "rmn_remote": "CDPP3RAI7ET2VRG5YA6JDTA27XGCLERPXAKAUV44EDUAINHKKJ3YU2ML"
+        "rmn_remote": "CCTGSKSANAH4CJQ36OPTRTBMWFY7YOEGVA5NSJX2ZFRE22FCM7AHILUS"
+      }
+    },
+    {
+      "id": "stellar-deploy-rmn-proxy",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/rmn_proxy.wasm",
+        "rmnRemote": "CCTGSKSANAH4CJQ36OPTRTBMWFY7YOEGVA5NSJX2ZFRE22FCM7AHILUS",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          }
+        ]
       }
     },
     {
@@ -178,7 +163,7 @@
     {
       "id": "fee-quoter:initialize",
       "input": {
-        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "contract_id": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "static_config": {
           "LinkToken": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
@@ -186,6 +171,32 @@
         },
         "authorized_callers": [
           "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+        ]
+      }
+    },
+    {
+      "id": "stellar-deploy-fee-quoter",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/fee_quoter.wasm",
+        "feeToken": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          }
         ]
       }
     },
@@ -232,25 +243,143 @@
     {
       "id": "token-admin-registry:initialize",
       "input": {
-        "contract_id": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76",
+        "contract_id": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-token-admin-registry",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/token_admin_registry.wasm",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "onramp:deploy",
+      "input": {
+        "wasm_path": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/onramp.wasm",
+        "salt": [
+          229,
+          35,
+          161,
+          101,
+          21,
+          192,
+          153,
+          249,
+          211,
+          68,
+          190,
+          21,
+          202,
+          112,
+          224,
+          232,
+          212,
+          80,
+          222,
+          59,
+          125,
+          19,
+          3,
+          109,
+          82,
+          63,
+          176,
+          145,
+          59,
+          165,
+          74,
+          103
+        ]
       }
     },
     {
       "id": "onramp:initialize",
       "input": {
-        "contract_id": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V",
+        "contract_id": "CBBCOCNUCWJUIYEI6VKRIHKGF3QZZYBOB2ZG3FT5R3FG5U72WFGFXBWH",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "static_config": {
           "ChainSelector": 17301180955411967724,
           "MaxUsdCentsPerMessage": 500000,
-          "RmnProxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
-          "TokenAdminRegistry": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76"
+          "RmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+          "TokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT"
         },
         "dynamic_config": {
           "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-          "FeeQuoter": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK"
+          "FeeQuoter": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI"
         }
+      }
+    },
+    {
+      "id": "stellar-deploy-onramp",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/onramp.wasm",
+        "tokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT",
+        "rmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+        "feeQuoter": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -296,9 +425,59 @@
     {
       "id": "versioned-verifier-resolver:initialize",
       "input": {
-        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "contract_id": "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "fee_aggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-versioned-verifier-resolver",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccvs_versioned_verifier_resolver.wasm",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -344,7 +523,7 @@
     {
       "id": "committee-verifier:initialize",
       "input": {
-        "contract_id": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+        "contract_id": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "dynamic_config": {
           "AllowlistAdmin": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
@@ -353,12 +532,80 @@
         "storage_locations": [
           "73faikh4e5lJS5872GXmWPQVWNVwPwjKXLXsxrWVRBk="
         ],
-        "rmn_proxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
+        "rmn_proxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
         "version_tag": [
           233,
           160,
           90,
           32
+        ]
+      }
+    },
+    {
+      "id": "stellar-deploy-committee-verifier",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccvs_committee_verifier.wasm",
+        "storageLocations": [
+          "73faikh4e5lJS5872GXmWPQVWNVwPwjKXLXsxrWVRBk="
+        ],
+        "rmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "versionTag": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          }
         ]
       }
     },
@@ -405,7 +652,7 @@
     {
       "id": "executor:initialize",
       "input": {
-        "contract_id": "CCTHX3E33UOTLGO37Y726HA5DLRVCPLLLXK7TNN6WIAU5KLDGGVEMRLV",
+        "contract_id": "CAY4P74XRKJQH5SJTIO6JPYU746FOQISIR2WRS5Z3GLLAHBD4DWYIZ3S",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "max_ccvs_per_msg": 2,
         "dynamic_config": {
@@ -416,9 +663,75 @@
       }
     },
     {
+      "id": "stellar-deploy-executor",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/executor.wasm",
+        "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          }
+        ]
+      }
+    },
+    {
       "id": "executor:apply-dest-chain-updates",
       "input": {
-        "contract_id": "CCTHX3E33UOTLGO37Y726HA5DLRVCPLLLXK7TNN6WIAU5KLDGGVEMRLV",
+        "contract_id": "CAY4P74XRKJQH5SJTIO6JPYU746FOQISIR2WRS5Z3GLLAHBD4DWYIZ3S",
         "to_remove": null,
         "to_add": [
           {
@@ -434,15 +747,15 @@
     {
       "id": "versioned-verifier-resolver:apply-outbound-impl-updates",
       "input": {
-        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "contract_id": "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7",
         "implementations": [
           {
             "DestChainSelector": 17301180955411967724,
-            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH"
+            "Verifier": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF"
           },
           {
             "DestChainSelector": 16015286601757825753,
-            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH"
+            "Verifier": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF"
           }
         ]
       }
@@ -450,10 +763,10 @@
     {
       "id": "versioned-verifier-resolver:apply-inbound-impl-updates",
       "input": {
-        "contract_id": "CCT6KOQUFTAY36A6ZGLC4ZOU3MVRAKOX73FXUJIUMIBAXEE7SZRNIFJS",
+        "contract_id": "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7",
         "implementations": [
           {
-            "Verifier": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+            "Verifier": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF",
             "Version": [
               233,
               160,
@@ -467,7 +780,7 @@
     {
       "id": "fee-quoter:apply-dest-chain-configs",
       "input": {
-        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "contract_id": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI",
         "configs": [
           {
             "Config": {
@@ -505,7 +818,7 @@
     {
       "id": "fee-quoter:update-prices",
       "input": {
-        "contract_id": "CDRHX5RMWS27QIFAIFEWP324QHWJ55LKROG7G2SQFCLJIXNYGLPJOBIK",
+        "contract_id": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI",
         "updater": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "price_updates": {
           "GasPriceUpdates": [
@@ -579,13 +892,96 @@
     {
       "id": "offramp:initialize",
       "input": {
-        "contract_id": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+        "contract_id": "CD5QIFNLQKJJOPDYO2CYPGRCPJDNMYNTXNV6ELJDYLHSYH5I6JZDGPTY",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "static_config": {
           "ChainSelector": 17301180955411967724,
-          "RmnProxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF",
-          "TokenAdminRegistry": "CCRFKKVCTCLRYHMD4EB7UPBVCS3R7ND2JP62C2G3ITPFHXD5ETYWBC76"
+          "RmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+          "TokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT"
         }
+      }
+    },
+    {
+      "id": "stellar-deploy-offramp",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/offramp.wasm",
+        "rmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+        "tokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Executor",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Proxy",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
@@ -631,15 +1027,105 @@
     {
       "id": "router:initialize",
       "input": {
-        "contract_id": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT",
+        "contract_id": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "rmn_proxy": "CDDFWEGY3KVB5XKXYSY4BDLCDLRBH4HQOBFFAL2BGVU2G6MYEQXNYYVF"
+        "rmn_proxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN"
+      }
+    },
+    {
+      "id": "stellar-deploy-router",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/router.wasm",
+        "rmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Executor",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Proxy",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xfb0415ab8292973c787685879a227a46d661b3bb6be22d23c2cf2c1fa8f27233",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OffRamp",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
       "id": "committee-verifier:apply-remote-chain-cfg-updates",
       "input": {
-        "contract_id": "CDALRNE4RHYSERTTKF22RM6P6FAQV32JT2JQHVA7BJGZUVIXASD5DQSH",
+        "contract_id": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF",
         "configs": [
           {
             "AllowlistEnabled": false,
@@ -647,7 +1133,7 @@
             "GasForVerification": 10000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 17301180955411967724,
-            "Router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+            "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
           },
           {
             "AllowlistEnabled": false,
@@ -655,7 +1141,7 @@
             "GasForVerification": 10000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 16015286601757825753,
-            "Router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+            "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
           }
         ]
       }
@@ -663,17 +1149,17 @@
     {
       "id": "router:apply-ramp-updates",
       "input": {
-        "contract_id": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT",
+        "contract_id": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
         "on_ramp_updates": [
           {
             "DestChainSelector": 16015286601757825753,
-            "Onramp": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V"
+            "Onramp": "CBBCOCNUCWJUIYEI6VKRIHKGF3QZZYBOB2ZG3FT5R3FG5U72WFGFXBWH"
           }
         ],
         "off_ramp_removes": [],
         "off_ramp_adds": [
           {
-            "Offramp": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+            "Offramp": "CD5QIFNLQKJJOPDYO2CYPGRCPJDNMYNTXNV6ELJDYLHSYH5I6JZDGPTY",
             "SourceChainSelector": 16015286601757825753
           }
         ]
@@ -722,18 +1208,115 @@
     {
       "id": "ramp-registry:initialize",
       "input": {
-        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "contract_id": "CCWP3RGY3UMCRVSMMQKKDJFPGMIB7Q35Z6BE53PQCRIBUNNPUMXBXBNP",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+      }
+    },
+    {
+      "id": "stellar-deploy-ramp-registry",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccip_ramp_registry.wasm",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Executor",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Proxy",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xfb0415ab8292973c787685879a227a46d661b3bb6be22d23c2cf2c1fa8f27233",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OffRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x16a732486ec62da0372e710375e75efb4616e8c57e613744bd9c83005ddb1909",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "Router",
+            "version": "1.2.0"
+          }
+        ]
       }
     },
     {
       "id": "ramp-registry:apply-onramp-updates",
       "input": {
-        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "contract_id": "CCWP3RGY3UMCRVSMMQKKDJFPGMIB7Q35Z6BE53PQCRIBUNNPUMXBXBNP",
         "updates": [
           {
             "DestChainSelector": 16015286601757825753,
-            "Onramp": "CAXE5S3GI4MJOX3COMGBKCUYEDVOZ5WGP4ID2IIHF5GSYPRALMXVD46V"
+            "Onramp": "CBBCOCNUCWJUIYEI6VKRIHKGF3QZZYBOB2ZG3FT5R3FG5U72WFGFXBWH"
           }
         ]
       }
@@ -741,11 +1324,11 @@
     {
       "id": "ramp-registry:apply-offramp-updates",
       "input": {
-        "contract_id": "CBZRNVDD74OOAMQX53OSMKPY3XZQJN6GHRGX3T4OUGHED4NMYU66JGR3",
+        "contract_id": "CCWP3RGY3UMCRVSMMQKKDJFPGMIB7Q35Z6BE53PQCRIBUNNPUMXBXBNP",
         "updates": [
           {
             "Enabled": true,
-            "Offramp": "CB2AVFAXIKWXI3P2EYISXEMFXUT6KCIEDUFWG533CD5OUMAOY6ZCRUZF",
+            "Offramp": "CD5QIFNLQKJJOPDYO2CYPGRCPJDNMYNTXNV6ELJDYLHSYH5I6JZDGPTY",
             "SourceChainSelector": 16015286601757825753
           }
         ]
@@ -794,15 +1377,121 @@
     {
       "id": "ccip-receiver:initialize",
       "input": {
-        "contract_id": "CA6PV4Q3BEXL6CACLEQQJC7Y4MMHD2TK4G6VPGBHLJXOIUI3MW6EMXYV",
+        "contract_id": "CD6PED7IXL2CIL54457B6SF3ISVYKRJNWXS2ZVWAHD4BSC5S4UQFHD63",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "router": "CCGDKXPHBJVYT7PWPK3PYP2T5BYWX2P4FV5CUTATBQAVLAO75ADD5GWT"
+        "router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
+      }
+    },
+    {
+      "id": "stellar-deploy-ccip-receiver",
+      "input": {
+        "chainSelector": 17301180955411967724,
+        "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/ccip_receiver_example.wasm",
+        "router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
+        "existingAddresses": [
+          {
+            "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RMNRemote",
+            "version": "1.6.0"
+          },
+          {
+            "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "ARMProxy",
+            "version": "1.0.0"
+          },
+          {
+            "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "FeeQuoter",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "token_admin_registry",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OnRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifierResolver",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "CommitteeVerifier",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Executor",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "default",
+            "type": "Proxy",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0xfb0415ab8292973c787685879a227a46d661b3bb6be22d23c2cf2c1fa8f27233",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "OffRamp",
+            "version": "2.0.0"
+          },
+          {
+            "address": "0x16a732486ec62da0372e710375e75efb4616e8c57e613744bd9c83005ddb1909",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "Router",
+            "version": "1.2.0"
+          },
+          {
+            "address": "0xacfdc4d8dd1828d64c6414a1a4af33101fc37dcf824eedf014501a35afa32e1b",
+            "chainSelector": 17301180955411967724,
+            "labels": [],
+            "qualifier": "",
+            "type": "RampRegistry",
+            "version": "2.0.0"
+          }
+        ]
       }
     },
     {
       "id": "ccip-receiver:enable-remote-chain",
       "input": {
-        "contract_id": "CA6PV4Q3BEXL6CACLEQQJC7Y4MMHD2TK4G6VPGBHLJXOIUI3MW6EMXYV",
+        "contract_id": "CD6PED7IXL2CIL54457B6SF3ISVYKRJNWXS2ZVWAHD4BSC5S4UQFHD63",
         "caller": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "remote_chain_selector": 16015286601757825753,
         "extra_args": "AQ==",
@@ -812,7 +1501,7 @@
   ],
   "addresses": [
     {
-      "address": "0xc65b10d8daaa1edd57c4b1c08d621ae213f0f0704a502f413569a37998242edc",
+      "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -820,7 +1509,7 @@
       "version": "1.0.0"
     },
     {
-      "address": "0x3cfaf21b092ebf08025921048bf8e31871ea6ae1bd5798275a6ee4511b65bc46",
+      "address": "0xfcf20fe8baf4242fbce77e1f48bb44ab85452db5e5acd6c038f8190bb2e52053",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -828,7 +1517,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xc0b8b49c89f12246735175a8b3cff1410aef499e9303d41f0a4d9a55170487d1",
+      "address": "0x7b8d14e6b01cfeedf19579de391c11307f0a1d5727d7f97c4670a7d994608940",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "default",
@@ -836,7 +1525,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xa7e53a142cc18df81ec9962e65d4db2b1029d7fecb7a251462020b909f9662d4",
+      "address": "0x14a93a8a57e1287aa6040e2df43479a28a1d94368e5edead95fc0de1337e00ca",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "default",
@@ -844,7 +1533,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+      "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "default",
@@ -852,7 +1541,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xe27bf62cb4b5f820a0414967ef5c81ec9ef56a8b8df36a502896945db832de97",
+      "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -860,7 +1549,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0x740a941742ad746dfa26112b9185bd27e509041d0b63777b10faea300ec7b228",
+      "address": "0xfb0415ab8292973c787685879a227a46d661b3bb6be22d23c2cf2c1fa8f27233",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -868,7 +1557,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0x2e4ecb664718975f62730c150a9820eaecf6c67f103d21072f4d2c3e205b2f51",
+      "address": "0x422709b41593446088f555141d462ee19ce02e0eb26d967d8eca6ed3fab14c5b",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -876,7 +1565,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xa67bec9bdd1d3599dbfe3faf1c1d1ae3513d6b5dd5f9b5beb2014ea96331aa46",
+      "address": "0x31c7ff978a9303f6499a1de4bf14ff3c574112447568cbb9d996b01c23e0ed84",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "default",
@@ -884,7 +1573,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0xdefdc408f927aac4ddc03c91cc1afdcc25922fb8140a579c20e80434ea52778a",
+      "address": "0xa6692a40680fc1261bf39f38cc2cb171fc3886a83ad926fac9624d68a267c074",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -892,7 +1581,7 @@
       "version": "1.6.0"
     },
     {
-      "address": "0x7316d463ff1ce03217eedd2629f8ddf304b7c63c4d7dcf8ea18e41f1acc53de4",
+      "address": "0xacfdc4d8dd1828d64c6414a1a4af33101fc37dcf824eedf014501a35afa32e1b",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -900,7 +1589,7 @@
       "version": "2.0.0"
     },
     {
-      "address": "0x8c355de70a6b89fdf67ab6fc3f53e8716be9fc2d7a2a4c130c015581dfe8063e",
+      "address": "0x16a732486ec62da0372e710375e75efb4616e8c57e613744bd9c83005ddb1909",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
@@ -908,7 +1597,7 @@
       "version": "1.2.0"
     },
     {
-      "address": "0xa2552aa298971c1d83e103fa3c3514b71fb47a4bfda168db44de53dc7d24f160",
+      "address": "0xbc6cdd3ef8f988019c5a33b7f3424532002b6f04dc4c152af9426425fef85fb6",
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
