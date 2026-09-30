@@ -26,8 +26,6 @@ import (
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
-	offrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/offramp"
-	onrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/onramp"
 	rrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ramp_registry"
 	routerops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/router"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
@@ -543,27 +541,16 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
 	}
 
-	onRampDestConfigs, err := stellarccip.BuildOnRampDestConfigs(ds.Seal(), remoteSelectors, executorContractID, false, vvrContractID, routerContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("build provisional onramp dest configs: %w", err)
-	}
-	if _, err := execStellarCCIPOp(b, deps, onrampops.ApplyDestChainConfigUpdates, onrampops.ApplyDestChainConfigUpdatesInput{
-		ContractID: onrampContractID,
-		Updates:    onRampDestConfigs,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply dest chain config updates on OnRamp: %w", err)
-	}
-
-	offRampSourceConfigs, err := stellarccip.BuildOffRampSourceConfigs(ds.Seal(), remoteSelectors, false, vvrContractID, routerContractID)
-	if err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("build provisional offramp source configs: %w", err)
-	}
-	if _, err := execStellarCCIPOp(b, deps, offrampops.ApplySourceChainCfgUpdates, offrampops.ApplySourceChainCfgUpdatesInput{
-		ContractID: offRampContractID,
-		Updates:    offRampSourceConfigs,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply source chain config updates on OffRamp: %w", err)
-	}
+	// No OnRamp DestChainConfig / OffRamp SourceChainConfig wiring happens here.
+	// EVM parity (and Solana parity): `DeployChainContracts` deploys and
+	// initializes only — ramp lane configs are lane-configuration-time wiring,
+	// applied with the remote chain's real ramp addresses resolved from the
+	// datastore. Stellar's lane-time wiring lives in ccvchain Chain.PostConnect
+	// (ApplyDestChainConfigUpdates + ApplySourceChainCfgUpdates, datastore
+	// backed). There is no valid placeholder for a deploy-time provisional
+	// entry: the OffRamp rejects an all-zero onramp encoding with
+	// `ZeroAddressNotAllowed` (#808, EVM `OffRamp.applySourceChainConfigUpdates`
+	// parity), and a nonzero fake value would silently corrupt the allowlist.
 
 	onRampEntries := make([]routerbindings.OnRampEntry, 0, len(remoteSelectors))
 	offRampEntries := make([]routerbindings.OffRampEntry, 0, len(remoteSelectors))

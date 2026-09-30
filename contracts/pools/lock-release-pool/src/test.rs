@@ -15,8 +15,8 @@ use common_interfaces::token_pool::{
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
 use common_pool::{
-    encode_local_decimals, ChainUpdate, LockBoxEntry, LockOrBurnIn, MessageDirection,
-    RateLimitConfig, ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
+    encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
+    ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
@@ -322,6 +322,13 @@ fn setup_env() -> (
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
+    // The lockbox is fixed at pool `initialize` (EVM `LockReleaseTokenPool`
+    // constructor `i_lockBox`): register + initialize it for the token first,
+    // pass its address into the pool's `initialize`, then authorize the pool
+    // as its sole caller.
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &token_address);
     pool_client.initialize(
         &owner,
         &token_address,
@@ -329,7 +336,9 @@ fn setup_env() -> (
         &router,
         &registry_client.address,
         &rmn_proxy,
+        &lockbox_id,
     );
+    lockbox_client.add_allowed_callers(&Vec::from_array(&env, [pool_client.address.clone()]));
 
     (
         env,
@@ -344,33 +353,19 @@ fn setup_env() -> (
     )
 }
 
-/// Register + initialize a `TokenLockBox` for `token_address`, authorize the
-/// pool as an allowed caller, and map it to `chain` via `configure_lock_boxes`.
-/// The canonical lock-release pool now escrows in a lockbox (EVM
-/// `LockReleaseTokenPool.i_lockBox` parity), so every `lock_or_burn` /
-/// `release_or_mint` test must wire one for its remote chain. Returns the
-/// lockbox client so tests can fund it (release path) or assert its balance.
-/// The lockbox owner is generated internally — only the pool's owner-gated
-/// `configure_lock_boxes` matters here, and auth is mocked in tests.
+/// Returns a client over the pool's lockbox — the one fixed at the pool's
+/// `initialize` (EVM `LockReleaseTokenPool.i_lockBox`). The test setups
+/// (`setup_env` and the standalone release-path setup) register + initialize
+/// the lockbox for the pool token, authorize the pool as its sole caller, and
+/// pass its address into the pool's `initialize`; this helper just re-derives
+/// the client so tests can fund the lockbox (release path) or assert its
+/// balance.
 fn wire_lockbox<'a>(
     env: &'a Env,
     pool_client: &LockReleaseTokenPoolContractClient<'_>,
-    token_address: &Address,
-    chain: u64,
 ) -> TokenLockBoxClient<'a> {
-    let lockbox_owner = Address::generate(env);
-    let lockbox_id = env.register(TokenLockBox, ());
-    let lockbox_client = TokenLockBoxClient::new(env, &lockbox_id);
-    lockbox_client.initialize(&lockbox_owner, token_address);
-    lockbox_client.add_allowed_callers(&Vec::from_array(env, [pool_client.address.clone()]));
-    pool_client.configure_lock_boxes(&Vec::from_array(
-        env,
-        [LockBoxEntry {
-            remote_chain_selector: chain,
-            lock_box: lockbox_client.address.clone(),
-        }],
-    ));
-    lockbox_client
+    let lock_box = pool_client.get_lock_box();
+    TokenLockBoxClient::new(env, &lock_box)
 }
 
 fn register_onramp_for_chain(
@@ -454,7 +449,7 @@ fn test_lock_and_release() {
     };
     pool_client.apply_chain_updates(&Vec::from_array(&env, [chain_update]), &Vec::new(&env));
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     let lock_amount: i128 = 1_000_000_000;
@@ -599,6 +594,9 @@ fn test_initialize_twice_rejected() {
     ) = setup_env();
     let router = Address::generate(&_env);
     let rmn_proxy = Address::generate(&_env);
+    // The 8th arg is never reached — `require_not_initialized` reverts with
+    // AlreadyInitialized (#2) before the lockbox is touched.
+    let lock_box = Address::generate(&_env);
     pool_client.initialize(
         &owner,
         &token_address,
@@ -606,6 +604,7 @@ fn test_initialize_twice_rejected() {
         &router,
         &registry_client.address,
         &rmn_proxy,
+        &lock_box,
     );
 }
 
@@ -629,7 +628,7 @@ fn test_lock_or_burn_zero_amount_succeeds_when_chain_configured() {
         &Vec::new(&env),
     );
 
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     let lock_input = LockOrBurnIn {
@@ -666,7 +665,7 @@ fn test_release_or_mint_zero_amount_succeeds_without_pool_balance() {
         &Vec::new(&env),
     );
 
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -775,7 +774,7 @@ fn test_release_or_mint_insufficient_pool_liquidity() {
         &Vec::new(&env),
     );
 
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     let locked: i128 = 50;
@@ -1081,7 +1080,7 @@ fn test_apply_chain_updates_duplicate_selector_overwrites_remote_token() {
         vec![&env, Bytes::from_slice(&env, &[3u8; 20])]
     );
 
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1);
@@ -1116,7 +1115,7 @@ fn test_lock_or_burn_dest_pool_data_encodes_local_decimals() {
         &Vec::new(&env),
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &100);
@@ -1159,6 +1158,11 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let local_decimals: u32 = 6;
     let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
+    // The lockbox is fixed at pool `initialize` (EVM `i_lockBox`): stand it up
+    // first, then authorize the pool as its sole caller.
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
+    lockbox_client.initialize(&owner, &token_address);
     pool_client.initialize(
         &owner,
         &token_address,
@@ -1166,7 +1170,9 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
         &router,
         &registry_client.address,
         &rmn_proxy,
+        &lockbox_id,
     );
+    lockbox_client.add_allowed_callers(&Vec::from_array(&env, [pool_client.address.clone()]));
 
     let remote_chain: u64 = DEFAULT_REMOTE_CHAIN;
     pool_client.apply_chain_updates(
@@ -1174,7 +1180,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
         &Vec::new(&env),
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
 
     let expected_local: i128 = 1_000_000;
     // Release pulls from the lockbox, so fund it (not the pool address).
@@ -1214,6 +1220,10 @@ fn test_initialize_rejects_decimals_above_uint8() {
     let ramp_registry = Address::generate(&env);
     let rmn_proxy = Address::generate(&env);
 
+    // The 8th arg is never reached — `init_pool` rejects the decimals (#309)
+    // before the lockbox is validated (EVM constructor ordering: base pool
+    // constructor first, lockbox validation in the derived body).
+    let lock_box = Address::generate(&env);
     let r = pool_client.try_initialize(
         &owner,
         &token_address,
@@ -1221,6 +1231,7 @@ fn test_initialize_rejects_decimals_above_uint8() {
         &router,
         &ramp_registry,
         &rmn_proxy,
+        &lock_box,
     );
     assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
@@ -1314,7 +1325,7 @@ fn test_lock_or_burn_outbound_refills_over_time() {
         &Vec::new(&env),
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &5000);
@@ -1431,7 +1442,7 @@ fn test_release_or_mint_inbound_refills_over_time() {
         &Vec::new(&env),
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &5000);
 
@@ -1656,7 +1667,7 @@ fn test_ftf_inbound_uses_ftf_bucket_when_configured() {
         &true,
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &10_000);
 
@@ -1741,7 +1752,7 @@ fn test_ftf_inbound_falls_back_to_default_bucket_when_not_configured() {
     );
     // No FTF buckets configured — FTF requests should fall back to the default inbound bucket.
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &10_000);
 
@@ -1812,7 +1823,7 @@ fn test_ftf_outbound_uses_ftf_bucket_when_configured() {
         &true,
     );
 
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &5000);
@@ -1965,7 +1976,7 @@ fn test_outbound_block_depth_slower_than_minimum_admitted() {
     );
     // Issuer sets a minimum of 10 source-chain confirmations.
     pool_client.set_allowed_finality_config(&10u32);
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1000);
@@ -2089,7 +2100,7 @@ fn test_ftf_and_default_buckets_are_independent() {
         &true,
     );
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &10_000);
 
@@ -2397,7 +2408,7 @@ fn test_lock_or_burn_with_nonzero_bps_fee() {
     ) = setup_env();
 
     add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, DEFAULT_REMOTE_CHAIN);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
 
     let sender = Address::generate(&env);
@@ -2442,7 +2453,7 @@ fn test_lock_or_burn_dust_amount_zero_fee() {
     ) = setup_env();
 
     add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, DEFAULT_REMOTE_CHAIN);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
     apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 250, 0);
 
     let sender = Address::generate(&env);
@@ -2585,7 +2596,7 @@ fn test_preflight_hook_receives_token_args() {
 
     // A successful preflight lets `lock_or_burn` escrow tokens, so a lockbox
     // must be configured for the remote chain (lock-release parity).
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1_000_000_000);
@@ -2665,7 +2676,7 @@ fn test_withdraw_fee_tokens_sweeps_accrued() {
     ) = setup_env();
 
     add_remote_chain(&env, &pool_client, DEFAULT_REMOTE_CHAIN);
-    let _lockbox_client = wire_lockbox(&env, &pool_client, &token_address, DEFAULT_REMOTE_CHAIN);
+    let _lockbox_client = wire_lockbox(&env, &pool_client);
     apply_bps_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 100, 0);
 
     let sender = Address::generate(&env);
@@ -2722,7 +2733,7 @@ fn test_postflight_hook_rejects_release_or_mint() {
     let hooks_id = env.register(mock_hooks::MockPostflightRejects, ());
     pool_client.set_advanced_pool_hooks(&hooks_id.clone());
 
-    let lockbox_client = wire_lockbox(&env, &pool_client, &token_address, remote_chain);
+    let lockbox_client = wire_lockbox(&env, &pool_client);
 
     let sender = Address::generate(&env);
     token_admin_client.mint(&sender, &1_000_000_000);
@@ -2855,20 +2866,31 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     panic!("expected Upgraded event with new_wasm_hash from contract");
 }
 
-/// Minimal initialized pool: `initialize` only stores its address args (it does
-/// not call into the token/router/ramp/registry/rmn at init), so dummy
-/// `Address::generate` values suffice for an upgrade test.
+/// Minimal initialized pool: `initialize` only stores its address args — the
+/// one exception is the lockbox, which it cross-calls (`is_token_supported`;
+/// EVM `i_lockBox` constructor validation). The lockbox itself never calls the
+/// token (it just compares its stored token), so a real `TokenLockBox`
+/// registered for a dummy token satisfies the check while every other arg
+/// stays a dummy `Address::generate`.
 fn setup_pool_for_upgrade(env: &Env) -> LockReleaseTokenPoolContractClient<'static> {
     let contract_id = env.register(LockReleaseTokenPoolContract, ());
     let client = LockReleaseTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
+    // The lockbox must hold the SAME token the pool registers — each
+    // `Address::generate` call yields a fresh address, so generating it once
+    // and sharing it is what makes `is_token_supported(token)` true.
+    let token = Address::generate(env);
+    let lockbox_id = env.register(TokenLockBox, ());
+    let lockbox = TokenLockBoxClient::new(env, &lockbox_id);
+    lockbox.initialize(&owner, &token);
     client.initialize(
         &owner,
-        &Address::generate(env),
+        &token,
         &18,
         &Address::generate(env),
         &Address::generate(env),
         &Address::generate(env),
+        &lockbox_id,
     );
     client
 }

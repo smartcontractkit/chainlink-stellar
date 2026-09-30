@@ -117,6 +117,19 @@ fn test_validate_negative_token_amount_fails() {
 }
 
 #[test]
+fn test_validate_zero_token_amount_fails() {
+    // INV-SRC-4 / L-1: zero-amount token transfers are rejected on send
+    // (EVM `OnRamp.sol:730` `CannotSendZeroTokens()` parity).
+    let env = Env::default();
+    let ta = TokenAmount {
+        token: Address::generate(&env),
+        amount: 0,
+    };
+    let msg = make_message(&env, vec![&env, ta]);
+    assert_eq!(msg.validate(), Err(CCIPError::CannotSendZeroTokens));
+}
+
+#[test]
 fn test_to_bytes_deterministic() {
     let env = Env::default();
     let msg = make_message(&env, Vec::new(&env));

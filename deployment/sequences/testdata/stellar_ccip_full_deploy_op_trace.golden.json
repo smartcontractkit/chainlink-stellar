@@ -1147,50 +1147,6 @@
       }
     },
     {
-      "id": "onramp:apply-dest-chain-config-updates",
-      "input": {
-        "contract_id": "CBBCOCNUCWJUIYEI6VKRIHKGF3QZZYBOB2ZG3FT5R3FG5U72WFGFXBWH",
-        "updates": [
-          {
-            "AddressBytesLength": 20,
-            "BaseExecutionGasCost": 100000,
-            "DefaultCcvs": [
-              "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7"
-            ],
-            "DefaultExecutor": "CAY4P74XRKJQH5SJTIO6JPYU746FOQISIR2WRS5Z3GLLAHBD4DWYIZ3S",
-            "DestChainSelector": 16015286601757825753,
-            "ExecutionFeeUsdCents": 0,
-            "LaneMandatedCcvs": [],
-            "MessageNetworkFeeUsdCents": 100,
-            "OffRamp": "AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
-            "TokenNetworkFeeUsdCents": 50,
-            "TokenReceiverAllowed": true
-          }
-        ]
-      }
-    },
-    {
-      "id": "offramp:apply-source-chain-cfg-updates",
-      "input": {
-        "contract_id": "CD5QIFNLQKJJOPDYO2CYPGRCPJDNMYNTXNV6ELJDYLHSYH5I6JZDGPTY",
-        "updates": [
-          {
-            "DefaultCcvs": [
-              "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7"
-            ],
-            "IsEnabled": true,
-            "LaneMandatedCcvs": [],
-            "OnRamps": [
-              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-            ],
-            "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
-            "SourceChainSelector": 16015286601757825753
-          }
-        ]
-      }
-    },
-    {
       "id": "router:apply-ramp-updates",
       "input": {
         "contract_id": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",

@@ -25,12 +25,10 @@ pub trait LockReleasePoolInterface {
         router: soroban_sdk::Address,
         ramp_registry: soroban_sdk::Address,
         rmn_proxy: soroban_sdk::Address,
+        lock_box: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
     fn set_router(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;
-    fn get_lock_box(
-        env: soroban_sdk::Env,
-        remote_chain_selector: u64,
-    ) -> Result<soroban_sdk::Address, CCIPError>;
+    fn get_lock_box(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn lock_or_burn(
         env: soroban_sdk::Env,
         caller: soroban_sdk::Address,
@@ -110,10 +108,6 @@ pub trait LockReleasePoolInterface {
         fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
         recipient: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn configure_lock_boxes(
-        env: soroban_sdk::Env,
-        configs: soroban_sdk::Vec<LockBoxEntry>,
-    ) -> Result<(), CCIPError>;
     fn get_rate_limit_admin(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn set_rate_limit_admin(
         env: soroban_sdk::Env,
@@ -132,9 +126,6 @@ pub trait LockReleasePoolInterface {
         env: soroban_sdk::Env,
         hooks: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn get_all_lock_box_configs(
-        env: soroban_sdk::Env,
-    ) -> Result<soroban_sdk::Vec<LockBoxEntry>, CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn remove_advanced_pool_hooks(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> u32;
@@ -174,12 +165,6 @@ pub struct TokenBucket {
     pub last_updated: u64,
     pub rate: u128,
     pub tokens: u128,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct LockBoxEntry {
-    pub lock_box: soroban_sdk::Address,
-    pub remote_chain_selector: u64,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -359,6 +344,7 @@ pub enum CCIPError {
     RequiredCCVMissing = 116,
     InvalidOptionalThreshold = 117,
     OptionalCCVQuorumNotReached = 118,
+    NoStateProgressMade = 119,
     OnlyRegistryModuleOrOwner = 201,
     OnlyAdministrator = 202,
     OnlyPendingAdministrator = 203,

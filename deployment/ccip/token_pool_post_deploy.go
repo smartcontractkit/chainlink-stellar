@@ -11,6 +11,7 @@ import (
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	sacops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/sac_token"
 	slrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
@@ -79,14 +80,15 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 	deployerAddr := host.DeployerKeypair().Address()
 	deps := stellardeps.FromDeployer(host.Deployer())
 
-	// The canonical lock-release pool now escrows in a lockbox (EVM
-	// `LockReleaseTokenPool.i_lockBox` parity): `release_or_mint` withdraws from the
-	// lockbox and `lock_or_burn` deposits the post-fee amount into it, so the pool's
-	// own token balance equals only accrued fees. Seed liquidity into the lockbox,
-	// not onto the pool address. The legacy pool is a deployed reference artifact
-	// (the siloed pool is the one wired for E2E), so its lockbox is deployed + funded
-	// here but not mapped to any remote chain — a test exercising the legacy pool
-	// must `configure_lock_boxes` for its remote chains first.
+	// The canonical lock-release pool escrows in a single immutable lockbox fixed
+	// at `initialize` (EVM `LockReleaseTokenPool.i_lockBox` constructor parity):
+	// `release_or_mint` withdraws from the lockbox and `lock_or_burn` deposits the
+	// post-fee amount into it, so the pool's own token balance equals only accrued
+	// fees. Seed liquidity into the lockbox, not onto the pool address. The legacy
+	// pool is a deployed reference artifact (the siloed pool is the one wired for
+	// E2E), so its lockbox is deployed + funded here but no remote-chain wiring is
+	// needed — a test exercising the legacy pool only has to `apply_chain_updates`
+	// for its remote chains.
 	lockBoxSalt := stellardeployment.GenerateDeterministicSalt(deployerAddr, "legacy-token-lock-box")
 	lockBoxRep, err := cldfops.ExecuteOperation(opBundle, tlbops.Deploy, deps, stellarops.DeployInput{WasmPath: lockBoxWasm, Salt: lockBoxSalt})
 	if err != nil {
@@ -123,7 +125,10 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 	if rmnProxyContractID == "" {
 		return fmt.Errorf("rmn proxy contract ID is empty; token pool curse checks require it (deploy core CCIP first)")
 	}
-	if _, err := cldfops.ExecuteOperation(opBundle, poolops.Initialize, deps, poolops.InitializeInput{
+	// The canonical pool's initialize takes the lockbox (EVM `i_lockBox`
+	// constructor parity), so the generic token-pool initialize op does not fit —
+	// use the lock-release-pool op.
+	if _, err := cldfops.ExecuteOperation(opBundle, lrpops.Initialize, deps, lrpops.InitializeInput{
 		ContractID:    poolContractID,
 		Owner:         deployerAddr,
 		Token:         tokenContractID,
@@ -131,6 +136,7 @@ func deployLegacyLockReleasePool(ctx context.Context, opBundle cldfops.Bundle, h
 		Router:        routerContractID,
 		RampRegistry:  rampRegistryContractID,
 		RmnProxy:      rmnProxyContractID,
+		LockBox:       lockBoxID,
 	}); err != nil {
 		return fmt.Errorf("failed to initialize legacy pool with token: %w", err)
 	}

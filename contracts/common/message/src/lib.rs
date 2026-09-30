@@ -253,7 +253,16 @@ impl StellarToAnyMessage {
             return Err(CCIPError::CanOnlySendOneTokenPerMessage);
         }
 
+        // INV-SRC-4: a token transfer, if included, must carry a non-zero
+        // amount. Mirrors EVM `OnRamp` send-path validation
+        // (`OnRamp.sol:730` — `revert CannotSendZeroTokens()`); the check
+        // lives here rather than in `TokenAmount::validate` because it is a
+        // send-side rule — destination-side `dest_token_amounts` (inbound
+        // messages) have no EVM counterpart check.
         for token_amount in self.token_amounts.iter() {
+            if token_amount.amount == 0 {
+                return Err(CCIPError::CannotSendZeroTokens);
+            }
             token_amount.validate()?;
         }
 

@@ -96,6 +96,17 @@ impl Validatable for SourceChainConfigArgs {
             return Err(CCIPError::InvalidSourceChainConfig);
         }
 
+        // INV-LCFG-11: every OnRamp allowlist entry must be a non-empty, non-zero
+        // encoding (EVM `OffRamp.applySourceChainConfigUpdates` — `revert
+        // ZeroAddressNotAllowed()` for an empty `onRamp` or the zero-address
+        // encoding). An empty stored entry would otherwise match any message
+        // whose onramp field decodes to empty bytes in `verify_onramp_allowed`.
+        for entry in self.on_ramps.iter() {
+            if entry.len() == 0 || entry.iter().all(|b| b == 0) {
+                return Err(CCIPError::ZeroAddressNotAllowed);
+            }
+        }
+
         // H-11 / INV-CFG-5: the OffRamp requires a non-empty default CCV set —
         // the lane's fallback verification set (EVM `OffRamp
         // .applySourceChainConfigUpdates` mandates non-empty

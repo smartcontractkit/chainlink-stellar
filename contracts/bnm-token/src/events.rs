@@ -4,9 +4,10 @@
 //! prefixes each topic with a short contract tag. BnM is a standalone test
 //! token (not a CCIP ramp), so it uses the bare Stellar token-interface topic
 //! names (`transfer`, `mint`, `burn`, `set_admin`, `set_authorized`,
-//! `clawback`, `approve`) emitted by the standard SAC interface, plus a
-//! `drip` topic for the permissionless faucet entrypoint. The `bnm_` prefix
-//! is reserved for any future BnM-specific admin events.
+//! `approve`) emitted by the standard SAC interface, plus a
+//! `drip` topic for the permissionless faucet entrypoint. There is no
+//! `clawback` event — the clawback entrypoint is unsupported and traps. The
+//! `bnm_` prefix is reserved for any future BnM-specific admin events.
 
 use soroban_sdk::{contractevent, Address};
 
@@ -57,16 +58,6 @@ pub struct SetAdminEvent {
 pub struct SetAuthorizedEvent {
     pub id: Address,
     pub authorize: bool,
-}
-
-/// `clawback(admin, from, amount)` — matches the SAC `["clawback", admin,
-/// from]` topic shape. Required by the interface ABI; unused by CCIP.
-#[contractevent(topics = ["clawback"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClawbackEvent {
-    pub admin: Address,
-    pub from: Address,
-    pub amount: i128,
 }
 
 /// `approve(from, spender, amount, expiration_ledger)` — matches the SAC

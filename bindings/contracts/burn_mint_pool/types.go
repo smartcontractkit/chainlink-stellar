@@ -865,6 +865,7 @@ const (
 	CCIPErrorRequiredCCVMissing                  = 116
 	CCIPErrorInvalidOptionalThreshold            = 117
 	CCIPErrorOptionalCCVQuorumNotReached         = 118
+	CCIPErrorNoStateProgressMade                 = 119
 	CCIPErrorOnlyRegistryModuleOrOwner           = 201
 	CCIPErrorOnlyAdministrator                   = 202
 	CCIPErrorOnlyPendingAdministrator            = 203
@@ -996,6 +997,7 @@ var CCIPErrorMessage = map[int]string{
 	116: "required c c v missing",
 	117: "invalid optional threshold",
 	118: "optional c c v quorum not reached",
+	119: "no state progress made",
 	201: "only registry module or owner",
 	202: "only administrator",
 	203: "only pending administrator",

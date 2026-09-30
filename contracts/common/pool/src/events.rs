@@ -140,7 +140,9 @@ pub struct TokenFeeCfgDeletedEvent {
     pub remote_chain_selector: u64,
 }
 
-/// EVM `LockReleaseTokenPool.LockBoxConfigured` / `SiloedLockReleaseTokenPool.LockBoxConfigured`.
+/// EVM `SiloedLockReleaseTokenPool.LockBoxConfigured` (the canonical pool's
+/// lockbox is immutable — fixed at `initialize` with no config event, mirroring
+/// EVM `LockReleaseTokenPool`'s constructor-set `i_lockBox`).
 #[contractevent(topics = ["pool_LockBoxConfigured"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockBoxConfiguredEvent {

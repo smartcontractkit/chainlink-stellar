@@ -11,9 +11,9 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/lanes"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
 const testEVMSelector = uint64(3379446385462418246)
@@ -119,12 +119,18 @@ func TestPostConnect(t *testing.T) {
 }
 
 func TestBuildOnRampDestConfigs_UsesSelectorSpecificAddressLengths(t *testing.T) {
+	ds := datastore.NewMemoryDataStore()
+	// Remote OffRamp refs with family-appropriate address lengths: 20 bytes
+	// for the EVM remote, 32 for the Stellar remote.
+	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OffRampDatastoreRef().FullAddressRef(testEVMSelector, "0x"+strings.Repeat("cd", 20))))
+	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OffRampDatastoreRef().FullAddressRef(chainsel.STELLAR_LOCALNET.Selector, "0x"+strings.Repeat("cd", int(stellarccip.StellarAddressByteLen)))))
+
 	chain := &Chain{
 		vvrContractID:    "vvr",
 		routerContractID: "router",
 	}
 
-	configs, err := chain.buildOnRampDestConfigs(nil, []uint64{testEVMSelector, chainsel.STELLAR_LOCALNET.Selector}, "executor", false)
+	configs, err := chain.buildOnRampDestConfigs(ds.Seal(), []uint64{testEVMSelector, chainsel.STELLAR_LOCALNET.Selector}, "executor")
 	require.NoError(t, err)
 	require.Len(t, configs, 2)
 
@@ -132,22 +138,6 @@ func TestBuildOnRampDestConfigs_UsesSelectorSpecificAddressLengths(t *testing.T)
 	assert.Len(t, configs[0].OffRamp, 20)
 	assert.Equal(t, uint32(stellarccip.StellarAddressByteLen), configs[1].AddressBytesLength)
 	assert.Len(t, configs[1].OffRamp, stellarccip.StellarAddressByteLen)
-}
-
-func TestBuildOffRampSourceConfigs_UsesPlaceholderOnRampBytes(t *testing.T) {
-	chain := &Chain{
-		vvrContractID:    "vvr",
-		routerContractID: "router",
-	}
-
-	configs, err := chain.buildOffRampSourceConfigs(nil, []uint64{testEVMSelector, chainsel.STELLAR_LOCALNET.Selector}, false)
-	require.NoError(t, err)
-	require.Len(t, configs, 2)
-
-	require.Len(t, configs[0].OnRamps, 1)
-	assert.Len(t, configs[0].OnRamps[0], 32)
-	require.Len(t, configs[1].OnRamps, 1)
-	assert.Len(t, configs[1].OnRamps[0], 32)
 }
 
 func TestBuildRemoteRampConfigs_ResolveDatastoreAddresses(t *testing.T) {
@@ -160,12 +150,12 @@ func TestBuildRemoteRampConfigs_ResolveDatastoreAddresses(t *testing.T) {
 		routerContractID: "router",
 	}
 
-	onRampConfigs, err := chain.buildOnRampDestConfigs(ds.Seal(), []uint64{testEVMSelector}, "executor", true)
+	onRampConfigs, err := chain.buildOnRampDestConfigs(ds.Seal(), []uint64{testEVMSelector}, "executor")
 	require.NoError(t, err)
 	require.Len(t, onRampConfigs, 1)
 	assert.Equal(t, []byte{0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, onRampConfigs[0].OffRamp)
 
-	offRampConfigs, err := chain.buildOffRampSourceConfigs(ds.Seal(), []uint64{testEVMSelector}, true)
+	offRampConfigs, err := chain.buildOffRampSourceConfigs(ds.Seal(), []uint64{testEVMSelector})
 	require.NoError(t, err)
 	require.Len(t, offRampConfigs, 1)
 	require.Len(t, offRampConfigs[0].OnRamps, 1)

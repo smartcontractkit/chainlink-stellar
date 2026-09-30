@@ -27,15 +27,6 @@ func AddressBytesLength(selector uint64) (uint32, error) {
 	return 20, nil
 }
 
-// ZeroAddressBytes returns a zero-filled address of the correct length for selector.
-func ZeroAddressBytes(selector uint64) ([]byte, error) {
-	addressBytesLength, err := AddressBytesLength(selector)
-	if err != nil {
-		return nil, err
-	}
-	return make([]byte, addressBytesLength), nil
-}
-
 // LookupAddressRef loads an address ref from the datastore.
 func LookupAddressRef(ds datastore.DataStore, selector uint64, contractType datastore.ContractType, version *semver.Version, qualifier string) (datastore.AddressRef, error) {
 	ref, err := ds.Addresses().Get(datastore.NewAddressRefKey(selector, contractType, version, qualifier))
@@ -94,12 +85,15 @@ func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]by
 	return padded, nil
 }
 
-// BuildOnRampDestConfigs builds provisional or datastore-backed OnRamp destination chain configs.
+// BuildOnRampDestConfigs builds datastore-backed OnRamp destination chain configs.
+// The remote chain's OffRamp must already be deployed and recorded: a
+// zero-address placeholder is not a valid entry (the ramp contracts reject
+// zero encodings, EVM `ZeroAddressNotAllowed` parity), so lane wiring is
+// strictly a lookup-and-fail-loudly operation at lane-configuration time.
 func BuildOnRampDestConfigs(
 	ds datastore.DataStore,
 	remoteSelectors []uint64,
 	defaultExecutor string,
-	useRemoteOffRamp bool,
 	vvrContractID string,
 	routerContractID string,
 ) ([]onrampbindings.DestChainConfigArgs, error) {
@@ -110,19 +104,13 @@ func BuildOnRampDestConfigs(
 			return nil, err
 		}
 
-		offRampBytes, err := ZeroAddressBytes(rs)
+		offRampRef, err := OffRampDatastoreRef().LookupAddressRef(ds, rs)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("lookup remote offramp for %d: %w", rs, err)
 		}
-		if useRemoteOffRamp {
-			offRampRef, err := OffRampDatastoreRef().LookupAddressRef(ds, rs)
-			if err != nil {
-				return nil, fmt.Errorf("lookup remote offramp for %d: %w", rs, err)
-			}
-			offRampBytes, err = AddressBytesHex(offRampRef, rs)
-			if err != nil {
-				return nil, fmt.Errorf("resolve remote offramp bytes for %d: %w", rs, err)
-			}
+		offRampBytes, err := AddressBytesHex(offRampRef, rs)
+		if err != nil {
+			return nil, fmt.Errorf("resolve remote offramp bytes for %d: %w", rs, err)
 		}
 
 		configs = append(configs, onrampbindings.DestChainConfigArgs{
@@ -143,26 +131,27 @@ func BuildOnRampDestConfigs(
 	return configs, nil
 }
 
-// BuildOffRampSourceConfigs builds provisional or datastore-backed OffRamp source configs.
+// BuildOffRampSourceConfigs builds datastore-backed OffRamp source configs.
+// The remote chain's OnRamp must already be deployed and recorded: the
+// OffRamp rejects an all-zero onramp entry with `ZeroAddressNotAllowed`
+// (#808, EVM `OffRamp.applySourceChainConfigUpdates` parity), so there is
+// deliberately no zero-address placeholder mode here — lane wiring fails
+// loudly when a remote OnRamp is not yet in the datastore.
 func BuildOffRampSourceConfigs(
 	ds datastore.DataStore,
 	remoteSelectors []uint64,
-	useRemoteOnRamp bool,
 	vvrContractID string,
 	routerContractID string,
 ) ([]offrampbindings.SourceChainConfigArgs, error) {
 	configs := make([]offrampbindings.SourceChainConfigArgs, 0, len(remoteSelectors))
 	for _, rs := range remoteSelectors {
-		onRampBytes := make([]byte, 32)
-		if useRemoteOnRamp {
-			onRampRef, err := OnRampDatastoreRef().LookupAddressRef(ds, rs)
-			if err != nil {
-				return nil, fmt.Errorf("lookup remote onramp for %d: %w", rs, err)
-			}
-			onRampBytes, err = CanonicalSourceOnRampBytes(onRampRef, rs)
-			if err != nil {
-				return nil, fmt.Errorf("resolve remote onramp bytes for %d: %w", rs, err)
-			}
+		onRampRef, err := OnRampDatastoreRef().LookupAddressRef(ds, rs)
+		if err != nil {
+			return nil, fmt.Errorf("lookup remote onramp for %d: %w", rs, err)
+		}
+		onRampBytes, err := CanonicalSourceOnRampBytes(onRampRef, rs)
+		if err != nil {
+			return nil, fmt.Errorf("resolve remote onramp bytes for %d: %w", rs, err)
 		}
 
 		configs = append(configs, offrampbindings.SourceChainConfigArgs{

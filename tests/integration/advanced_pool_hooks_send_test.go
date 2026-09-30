@@ -73,7 +73,6 @@ func (s *fullStack) deployAdditionalLockReleasePool(
 	deployer *deployment.Deployer,
 	deployerAddr, saltPrefix string,
 	tokenID string,
-	remoteChainSelector uint64,
 ) {
 	t.Helper()
 	if s.TokenAdminRegistryID == "" || s.RampRegistryID == "" {
@@ -93,10 +92,22 @@ func (s *fullStack) deployAdditionalLockReleasePool(
 
 	s.TokenPoolID = deploy("lock-release-pool", "pools_lock_release_pool.wasm")
 	s.TokenPoolClient = tokenpoolbindings.NewTokenPoolClient(deployer, s.TokenPoolID)
+	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
 
 	const tokenPoolDecimals uint32 = 7
-	if err := s.TokenPoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID); err != nil {
-		t.Fatalf("TokenPool Initialize (additional): %v", err)
+	// The lockbox is fixed at pool `initialize` (EVM `i_lockBox` constructor
+	// parity): stand it up first and pass its address into the pool's
+	// `initialize` (8th arg, lock-release-specific entrypoint).
+	s.LockBoxID = deploy("token-lock-box", "pools_token_lock_box.wasm")
+	s.LockBoxClient = tokenlockboxbindings.NewTokenLockBoxClient(deployer, s.LockBoxID)
+	if err := s.LockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
+		t.Fatalf("TokenLockBox Initialize (additional): %v", err)
+	}
+	if err := s.LockReleasePoolClient.Initialize(ctx, deployerAddr, tokenID, tokenPoolDecimals, s.RouterID, s.RampRegistryID, s.RmnProxyID, s.LockBoxID); err != nil {
+		t.Fatalf("LockReleasePool Initialize (additional): %v", err)
+	}
+	if err := s.LockBoxClient.AddAllowedCallers(ctx, []string{s.TokenPoolID}); err != nil {
+		t.Fatalf("TokenLockBox AddAllowedCallers (additional): %v", err)
 	}
 
 	// Two-step admin registration in the SHARED registry (already deployed by the
@@ -109,24 +120,6 @@ func (s *fullStack) deployAdditionalLockReleasePool(
 	}
 	if err := s.TokenAdminRegistryClient.SetPool(ctx, tokenID, &s.TokenPoolID); err != nil {
 		t.Fatalf("TokenAdminRegistry SetPool (additional): %v", err)
-	}
-
-	// L-4 lockbox-escrow parity: release_or_mint / lock_or_burn resolve a configured
-	// lockbox for this (pool, remote-chain) pair or revert InvalidConfig (#52).
-	s.LockBoxID = deploy("token-lock-box", "pools_token_lock_box.wasm")
-	s.LockBoxClient = tokenlockboxbindings.NewTokenLockBoxClient(deployer, s.LockBoxID)
-	if err := s.LockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
-		t.Fatalf("TokenLockBox Initialize (additional): %v", err)
-	}
-	if err := s.LockBoxClient.AddAllowedCallers(ctx, []string{s.TokenPoolID}); err != nil {
-		t.Fatalf("TokenLockBox AddAllowedCallers (additional): %v", err)
-	}
-	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
-	if err := s.LockReleasePoolClient.ConfigureLockBoxes(ctx, []lockreleasepoolbindings.LockBoxEntry{{
-		LockBox:             s.LockBoxID,
-		RemoteChainSelector: remoteChainSelector,
-	}}); err != nil {
-		t.Fatalf("LockReleasePool ConfigureLockBoxes (additional): %v", err)
 	}
 }
 
@@ -159,12 +152,12 @@ func TestAdvancedPoolHooksOutboundSend(t *testing.T) {
 	// RampRegistry (and sets stack.RampRegistryClient), while deployOutboundSendWire
 	// only registers the OnRamp into it when that client is already non-nil. Capture
 	// pool #1's ID/client before deploying pool #2 (which overwrites the stack fields).
-	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-hook-pool", hookToken, remoteDestChain)
+	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-hook-pool", hookToken)
 	hookPoolID := stack.TokenPoolID
 	hookPoolClient := stack.TokenPoolClient
 
 	// Pool #2 (default-only token) on the SHARED TAR + RampRegistry.
-	stack.deployAdditionalLockReleasePool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-default-pool", defaultToken, remoteDestChain)
+	stack.deployAdditionalLockReleasePool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-default-pool", defaultToken)
 	defaultPoolID := stack.TokenPoolID
 	defaultPoolClient := stack.TokenPoolClient
 
@@ -405,7 +398,7 @@ func TestAdvancedPoolHooksInboundExecute(t *testing.T) {
 	// relies on to find the pool for the inbound dest_token.
 	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChain, saltPrefix, true)
 	sacToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix)
-	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, sacToken, remoteSourceChain)
+	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, sacToken)
 
 	evmPool := bytes.Repeat([]byte{0x51}, 20)
 	evmTok := bytes.Repeat([]byte{0x52}, 20)

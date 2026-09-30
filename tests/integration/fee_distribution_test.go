@@ -62,7 +62,7 @@ func TestOnRampFeeDistribution(t *testing.T) {
 	// pool's require_authorized_onramp → get_onramp(dest) reverts
 	// UnsupportedDestinationChain (#63) inside lock_or_burn. Mirrors token_pool_test.go,
 	// which deploys the pool before the wire for the same reason.
-	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-bridge-pool", sacToken, remoteDestChain)
+	stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-bridge-pool", sacToken)
 
 	// One wire priced for both sends: the fee token is always priced; sacToken is
 	// registered as a transferable token so the FeeQuoter prices it + applies its

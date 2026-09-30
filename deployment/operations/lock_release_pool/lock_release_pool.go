@@ -16,7 +16,7 @@ const ContractType = "LockReleasePool"
 // Deploy uploads pools_lock_release_pool.wasm.
 var Deploy = stellarops.NewDeployOperation("lock-release-pool:deploy", "Deploys the lock-release pool Soroban contract from WASM")
 
-// InitializeInput matches lock-release pool `initialize` (same shape as burn-mint pool).
+// InitializeInput matches lock-release pool `initialize`.
 type InitializeInput struct {
 	ContractID    string `json:"contract_id"`
 	Owner         string `json:"owner"`
@@ -31,20 +31,33 @@ type InitializeInput struct {
 	// (EVM parity: the constructor reverts on the zero address; Soroban has no zero
 	// address, so the op enforces non-empty here).
 	RmnProxy string `json:"rmn_proxy"`
+	// LockBox is the token lock box stored immutably on the pool at initialize
+	// (mirrors EVM `LockReleaseTokenPool`'s `immutable i_lockBox` constructor arg
+	// — there is no configure_lock_boxes entrypoint on the canonical pool; the
+	// per-chain mapping is the siloed pool's design). The pool deposits the
+	// post-fee amount into it on lock_or_burn and withdraws from it on
+	// release_or_mint. Must be an initialized TokenLockBox for the same token
+	// and be non-empty (the pool validates token support on-chain).
+	LockBox string `json:"lock_box"`
 }
 
-// Initialize calls lock-release pool `initialize` with owner, token, router, ramp registry,
-// and the immutable RMN proxy (EVM `immutable i_rmnProxy` parity — set once, no setter).
+// Initialize calls lock-release pool `initialize` with owner, token, router, ramp
+// registry, the immutable RMN proxy (EVM `immutable i_rmnProxy` parity — set once,
+// no setter), and the immutable lock box (EVM `immutable i_lockBox` parity — set
+// once, no configure_lock_boxes entrypoint).
 var Initialize = cldfops.NewOperation(
 	"lock-release-pool:initialize",
 	stellarops.ContractDeploymentVersion,
-	"Initializes lock-release pool with owner, token, router, ramp registry, and RMN proxy",
+	"Initializes lock-release pool with owner, token, router, ramp registry, RMN proxy, and lock box",
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
 		if in.RmnProxy == "" {
 			return stellarops.Void{}, fmt.Errorf("lock-release pool initialize: rmn_proxy is required (EVM i_rmnProxy parity, no zero address)")
 		}
+		if in.LockBox == "" {
+			return stellarops.Void{}, fmt.Errorf("lock-release pool initialize: lock_box is required (EVM i_lockBox parity, immutable constructor arg)")
+		}
 		c := lrpbindings.NewLockReleasePoolClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Token, in.TokenDecimals, in.Router, in.RampRegistry, in.RmnProxy); err != nil {
+		if err := c.Initialize(b.GetContext(), in.Owner, in.Token, in.TokenDecimals, in.Router, in.RampRegistry, in.RmnProxy, in.LockBox); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil
@@ -161,29 +174,6 @@ var ApplyChainUpdates = cldfops.NewOperation(
 	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyChainUpdatesInput) (stellarops.Void, error) {
 		c := lrpbindings.NewLockReleasePoolClient(d.Invoker, in.ContractID)
 		if err := c.ApplyChainUpdates(b.GetContext(), in.Adds, in.Removes); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
-// ConfigureLockBoxesInput maps remote chain selectors to token lock box addresses. The
-// canonical lock-release pool now escrows in a lockbox (EVM `LockReleaseTokenPool.i_lockBox`
-// parity), so the pool's own token balance equals only accrued fees and `withdraw_fee_tokens`
-// can safely sweep the full balance.
-type ConfigureLockBoxesInput struct {
-	ContractID string                     `json:"contract_id"`
-	Configs    []lrpbindings.LockBoxEntry `json:"configs"`
-}
-
-// ConfigureLockBoxes calls lock-release pool `configure_lock_boxes`.
-var ConfigureLockBoxes = cldfops.NewOperation(
-	"lock-release-pool:configure-lock-boxes",
-	stellarops.ContractDeploymentVersion,
-	"Maps remote chain selectors to token lock box addresses on the lock-release pool",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ConfigureLockBoxesInput) (stellarops.Void, error) {
-		c := lrpbindings.NewLockReleasePoolClient(d.Invoker, in.ContractID)
-		if err := c.ConfigureLockBoxes(b.GetContext(), in.Configs); err != nil {
 			return stellarops.Void{}, err
 		}
 		return stellarops.Void{}, nil

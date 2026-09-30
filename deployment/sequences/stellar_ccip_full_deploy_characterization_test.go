@@ -299,13 +299,15 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	// 36 op call sites for this input: 24 deploy/init + 12 config, where
-	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
-	// 36 op call sites for this input: 24 deploy/init + 12 config, where
+	// 34 op call sites for this input: 24 deploy/init + 10 config, where
 	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
 	// All 12 components run through their component sequences, so 12 sequence
-	// reports join the trace after their child op reports.
-	require.Len(t, reports, 48)
+	// reports join the trace after their child op reports (34 + 12 = 46).
+	// No OnRamp DestChainConfig / OffRamp SourceChainConfig applies here — ramp
+	// lane wiring is lane-configuration-time work (EVM/Solana parity), done by
+	// ccvchain Chain.PostConnect with datastore-resolved remote ramp addresses;
+	// the OffRamp rejects zero onramp placeholders (ZeroAddressNotAllowed).
+	require.Len(t, reports, 46)
 
 	trace := buildTrace(t, reports, root, out.Addresses)
 	got, err := json.MarshalIndent(trace, "", "  ")

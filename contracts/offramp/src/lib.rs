@@ -216,6 +216,19 @@ impl OffRampContract {
             gas_limit_override,
         );
 
+        // INV-EXEC-7 / EVM parity (`OffRamp.sol:249-253`): a retry of an
+        // already-FAILED message that fails again has made no progress —
+        // revert instead of rewriting Failure→InProgress→Failure and
+        // re-emitting `ExecutionStateChangedEvent`, so event-indexed
+        // consumers (executors, explorers, monitoring) never double-count a
+        // failure and wallets/tools relying on transaction reverts get a
+        // clean no-progress signal. Returning `Err` rolls back this
+        // invocation, including the `InProgress` write above, mirroring the
+        // EVM `revert NoStateProgressMade(messageId, err)`.
+        if execution_result.is_err() && current_state == MessageExecutionState::Failure {
+            return Err(CCIPError::NoStateProgressMade);
+        }
+
         // Set final state based on outcome
         let (final_state, return_data) = match execution_result {
             Ok(()) => (MessageExecutionState::Success, Bytes::new(&env)),

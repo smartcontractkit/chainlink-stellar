@@ -142,6 +142,7 @@ pub enum CCIPError {
     RequiredCCVMissing = 116,
     InvalidOptionalThreshold = 117,
     OptionalCCVQuorumNotReached = 118,
+    NoStateProgressMade = 119,
     OnlyRegistryModuleOrOwner = 201,
     OnlyAdministrator = 202,
     OnlyPendingAdministrator = 203,

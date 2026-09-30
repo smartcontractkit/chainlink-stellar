@@ -239,6 +239,58 @@ fn test_source_chain_config_zero_selector_fails() {
     client.apply_source_chain_cfg_updates(&updates);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_source_chain_config_empty_onramp_entry_fails() {
+    // INV-LCFG-11: an empty OnRamp allowlist entry must be rejected at config
+    // time (EVM `OffRamp.applySourceChainConfigUpdates` — `onRamp.length == 0`
+    // reverts `ZeroAddressNotAllowed`).
+    let (env, owner, client) = setup_env();
+    let static_config = default_static_config(&env);
+    client.initialize(&owner, &static_config);
+
+    let mut on_ramps = Vec::new(&env);
+    on_ramps.push_back(Bytes::new(&env));
+    let args = SourceChainConfigArgs {
+        source_chain_selector: 123,
+        router: Address::generate(&env),
+        is_enabled: true,
+        on_ramps,
+        default_ccvs: vec![&env, Address::generate(&env)],
+        lane_mandated_ccvs: Vec::new(&env),
+    };
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #808)")] // ZeroAddressNotAllowed
+fn test_source_chain_config_zero_onramp_entry_fails() {
+    // INV-LCFG-11: the zero-address encoding (all-zero bytes) must be rejected
+    // at config time (EVM — `onRampHash == EMPTY_ENCODED_ADDRESS_HASH` reverts
+    // `ZeroAddressNotAllowed`).
+    let (env, owner, client) = setup_env();
+    let static_config = default_static_config(&env);
+    client.initialize(&owner, &static_config);
+
+    let mut on_ramps = Vec::new(&env);
+    on_ramps.push_back(Bytes::from_array(&env, &[0u8; 32]));
+    let args = SourceChainConfigArgs {
+        source_chain_selector: 123,
+        router: Address::generate(&env),
+        is_enabled: true,
+        on_ramps,
+        default_ccvs: vec![&env, Address::generate(&env)],
+        lane_mandated_ccvs: Vec::new(&env),
+    };
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(args);
+    client.apply_source_chain_cfg_updates(&updates);
+}
+
 // ============================================================
 // execute() — validation paths
 // ============================================================
@@ -534,6 +586,7 @@ fn test_execute_reexecute_after_failure_succeeds() {
     let ccvs = Vec::new(&env);
     let verifier_results = Vec::new(&env);
 
+    // First attempt fails ⇒ recorded as `Failure` (with the state event).
     assert!(client
         .try_execute(&encoded, &ccvs, &verifier_results, &0u32)
         .is_ok());
@@ -542,9 +595,16 @@ fn test_execute_reexecute_after_failure_succeeds() {
         MessageExecutionState::Failure
     );
 
-    assert!(client
-        .try_execute(&encoded, &ccvs, &verifier_results, &0u32)
-        .is_ok());
+    // Retry fails again ⇒ EVM `NoStateProgressMade` parity (`OffRamp.sol:249-253`,
+    // INV-EXEC-7): the retry reverts instead of rewriting Failure→InProgress→Failure
+    // and re-emitting `ExecutionStateChangedEvent`. The revert rolls back the retry's
+    // own writes, so the state stays `Failure` — still retryable.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a failed retry of an already-FAILED message must revert: {:?}",
+        res
+    );
     assert_eq!(
         client.get_execution_state(&message_id),
         MessageExecutionState::Failure

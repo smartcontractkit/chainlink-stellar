@@ -15,6 +15,8 @@ flowchart LR
 	click chainlink-automation href "https://github.com/smartcontractkit/chainlink-automation"
 	chainlink-canton
 	click chainlink-canton href "https://github.com/smartcontractkit/chainlink-canton"
+	chainlink-canton/authentication
+	click chainlink-canton/authentication href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-canton/contracts/v2
 	click chainlink-canton/contracts/v2 href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-ccip/chains/evm --> ccip-contract-examples/chains/evm
@@ -61,6 +63,8 @@ flowchart LR
 	chainlink-deployments-framework --> ccip-owner-contracts
 	chainlink-deployments-framework --> chainlink-aptos
 	chainlink-deployments-framework --> chainlink-canton
+	chainlink-deployments-framework --> chainlink-canton/authentication
+	chainlink-deployments-framework --> chainlink-canton/contracts/v2
 	chainlink-deployments-framework --> chainlink-ccip/chains/evm
 	chainlink-deployments-framework --> chainlink-ccip/chains/solana
 	chainlink-deployments-framework --> chainlink-ccip/chains/solana/gobindings
@@ -137,7 +141,6 @@ flowchart LR
 	chainlink-stellar/ccv --> chainlink-stellar/deployment
 	chainlink-stellar/ccv --> chainlink-stellar/relayer
 	click chainlink-stellar/ccv href "https://github.com/smartcontractkit/chainlink-stellar"
-	chainlink-stellar/deployment --> chainlink-canton/contracts/v2
 	chainlink-stellar/deployment --> chainlink-ccv
 	chainlink-stellar/deployment --> chainlink-ccv/deployment
 	click chainlink-stellar/deployment href "https://github.com/smartcontractkit/chainlink-stellar"
@@ -174,6 +177,7 @@ flowchart LR
 
 	subgraph chainlink-canton-repo[chainlink-canton]
 		 chainlink-canton
+		 chainlink-canton/authentication
 		 chainlink-canton/contracts/v2
 	end
 	click chainlink-canton-repo href "https://github.com/smartcontractkit/chainlink-canton"
@@ -274,6 +278,8 @@ flowchart LR
 	click chainlink-automation href "https://github.com/smartcontractkit/chainlink-automation"
 	chainlink-canton
 	click chainlink-canton href "https://github.com/smartcontractkit/chainlink-canton"
+	chainlink-canton/authentication
+	click chainlink-canton/authentication href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-canton/contracts/v2 --> go-daml
 	click chainlink-canton/contracts/v2 href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-ccip
@@ -332,6 +338,7 @@ flowchart LR
 	chainlink-data-streams
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
+	chainlink-deployments-framework --> chainlink-canton/authentication
 	chainlink-deployments-framework --> chainlink-protos/op-catalog
 	chainlink-deployments-framework --> chainlink-testing-framework/seth
 	chainlink-deployments-framework --> mcms
@@ -512,6 +519,7 @@ flowchart LR
 
 	subgraph chainlink-canton-repo[chainlink-canton]
 		 chainlink-canton
+		 chainlink-canton/authentication
 		 chainlink-canton/contracts/v2
 	end
 	click chainlink-canton-repo href "https://github.com/smartcontractkit/chainlink-canton"

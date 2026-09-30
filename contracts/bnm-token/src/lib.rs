@@ -3,10 +3,11 @@
 //! # CCIP BnM Token
 //!
 //! A custom Soroban token implementing the full `token::StellarAssetInterface`
-//! (the 21-method SAC superset), so the existing `BurnMintTokenPool` can mint
-//! on inbound bridge messages and burn on outbound ones with **no pool-side
-//! changes** — the pool calls `token::StellarAssetClient::mint` /
-//! `token::Client::burn`, both of which this contract exposes.
+//! (the 21-method SAC superset) plus an owner/minter split with multiple
+//! minters, so the existing `BurnMintTokenPool` can mint on inbound bridge
+//! messages and burn on outbound ones, and a second pool can be minting
+//! during a zero-downtime pool migration. Full design:
+//! `docs/token-ownership-and-minters.md`.
 //!
 //! BnM is CCIP's cross-chain **test token** (EVM `BurnMintERC20` /
 //! `BurnMintERC677`). On Stellar it is the **remotely-issued burn-mint** leg of
@@ -14,35 +15,56 @@
 //! time, and supply grows/shrinks 1:1 with bridge flow (mint on inbound, burn
 //! on outbound).
 //!
+//! ## Owner / minters split (EVM parity)
+//!
+//! EVM `CrossChainToken` splits mint authority (`MINTER_ROLE` on the pool)
+//! from the power to re-grant it (`BURN_MINT_ADMIN_ROLE` / two-step
+//! `DEFAULT_ADMIN_ROLE` → MCMS). This contract mirrors that split with the
+//! fleet's shared `Ownable` trait:
+//!
+//! - **Owner** — the deployer initially, MCMS after the two-step
+//!   `transfer_ownership` → `accept_ownership`. Gates `set_admin`,
+//!   `add_minter`, `remove_minter`, `set_authorized`.
+//! - **Minters** — an ordered `MINTERS: Vec<Address>` set; `MINTERS[0]` is the
+//!   **primary minter**, which the SAC read `admin()` returns. The burn-mint
+//!   pool after the `set_admin` handoff (was: the deployer). Secondary
+//!   minters exist for the pool migration overlap window.
+//! - `mint(to, amount)` keeps the fixed SAC ABI and authorizes the primary
+//!   minter only — with no caller argument the token can authenticate exactly
+//!   one stored address. `mint_as(caller, to, amount)` is the multi-minter
+//!   path: the caller passes itself explicitly, `caller.require_auth()` proves
+//!   it is in the call chain, and membership in `MINTERS` is then checked (the
+//!   `advanced-pool-hooks` explicit-caller pattern).
+//! - `set_admin(new)` is **owner-gated** (was admin-gated): `new` becomes
+//!   `MINTERS[0]`, the old primary is demoted out of the set, and `new` is
+//!   repositioned to the front if it was already a secondary minter.
+//!
 //! ## Divergences from EVM BnM (deliberate)
 //!
 //! - **Decimals = 7**, the Stellar SAC convention (EVM BnM is 18).
 //! - **`drip(to)` mints `0.1` token** (`10⁶` at 7 decimals) to the explicit
 //!   `to` address, permissionlessly. EVM `BurnMintERC20WithDrip.drip(to)` mints
 //!   `1` token; the `0.1` amount is per the Stellar spec. The signature
-//!   (`drip(to)`, no auth, explicit recipient) matches EVM.
+//!   (`drip(to)`, no auth, explicit recipient) matches EVM. `drip` stays
+//!   permissionless and deliberately out of the owner/minters governance.
 //! - **No transfer authorization gating.** EVM BnM is a plain ERC20 (no
 //!   `set_authorized` transfer lock); this contract keeps `set_authorized` /
 //!   `authorized` for SAC interface fidelity but does **not** gate transfers on
 //!   it (`authorized` always returns `true`).
-//!
-//! ## Burn-mint mint authority
-//!
-//! The pool can only call `mint` once it is the token's admin. The deployer
-//! initializes the token as admin, then calls `set_admin(pool)` (admin-gated)
-//! to hand mint authority to the burn-mint pool — exactly the SAC
-//! `set_admin` handoff used in `burn-mint-pool` tests.
 
 mod events;
 
 use events::{
-    ApproveEvent, BurnEvent, ClawbackEvent, DripEvent, MintEvent, SetAdminEvent,
-    SetAuthorizedEvent, TransferEvent,
+    ApproveEvent, BurnEvent, DripEvent, MintEvent, SetAdminEvent, SetAuthorizedEvent, TransferEvent,
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env,
-    MuxedAddress, String, Symbol,
+    MuxedAddress, String, Symbol, Vec,
 };
+
+use common_authorization::Ownable;
+use common_error::CCIPError;
+use common_guard::initializable::Initializable;
 
 // ============================================================
 // Storage keys
@@ -50,9 +72,15 @@ use soroban_sdk::{
 
 /// One-shot initialization guard (instance storage).
 const INIT: Symbol = symbol_short!("INIT");
-/// Current token admin — the only address that may mint / clawback / set
-/// authorized / re-assign admin (instance storage).
-const ADMIN: Symbol = symbol_short!("ADMIN");
+/// Token owner — gates `set_admin` / `add_minter` / `remove_minter` /
+/// `set_authorized` (instance storage; the `Ownable` trait's key).
+const OWNER: Symbol = symbol_short!("OWNER");
+/// Pending owner during the two-step ownership transfer (instance storage).
+const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+/// Ordered minters set (instance storage). `MINTERS[0]` is the primary minter
+/// — what the SAC read `admin()` returns. Secondary minters (migration overlap
+/// window) follow.
+const MINTERS: Symbol = symbol_short!("MINTERS");
 /// Token name (instance storage).
 const NAME: Symbol = symbol_short!("NAME");
 /// Token symbol (instance storage).
@@ -90,10 +118,25 @@ pub enum BnmError {
     /// `transfer_from` / `burn_from` with `amount` exceeding the spender's
     /// allowance.
     InsufficientAllowance = 4,
-    /// A debit (transfer / burn / clawback) was given a negative amount.
+    /// A credit/debit entrypoint (`mint` / `approve` / `transfer` / `burn`)
+    /// was given a negative amount.
     NegativeAmount = 5,
     /// A read entrypoint was called before `initialize`.
     NotInitialized = 6,
+    /// An intentionally-disabled entrypoint was invoked — clawback is not
+    /// supported (BnM is a plain ERC20-style test token, matching EVM
+    /// `BurnMintERC20`, which has no clawback).
+    UnsupportedOperation = 7,
+    /// `mint_as` invoked by an address that is not in the minters set.
+    NotMinter = 8,
+    /// `add_minter` on an address already in the minters set.
+    MinterAlreadyExists = 9,
+    /// `remove_minter` on an address not in the minters set.
+    MinterNotFound = 10,
+    /// `remove_minter` on the primary minter — use `set_admin` instead (the
+    /// old primary must be demoted by replacing the primary, not removed as
+    /// a secondary).
+    CannotRemovePrimaryMinter = 11,
 }
 
 // ============================================================
@@ -102,6 +145,22 @@ pub enum BnmError {
 
 #[contract]
 pub struct BnmTokenContract;
+
+/// One-shot `INIT` guard shared by the token's own `initialize` and the
+/// `Ownable` trait's `init_owner` (the token's `initialize` seeds both).
+#[contractimpl]
+impl Initializable for BnmTokenContract {
+    const INITIALIZED: Symbol = INIT;
+}
+
+/// Owner/minter split (EVM `DEFAULT_ADMIN_ROLE` parity): two-step
+/// `transfer_ownership` → `accept_ownership` moves control to MCMS while the
+/// minters set (the pool) is left untouched.
+#[contractimpl(contracttrait)]
+impl Ownable for BnmTokenContract {
+    const OWNER: Symbol = OWNER;
+    const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
 
 #[contractimpl(contracttrait)]
 impl token::StellarAssetInterface for BnmTokenContract {
@@ -119,6 +178,10 @@ impl token::StellarAssetInterface for BnmTokenContract {
     fn approve(env: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
         from.require_auth();
         require_initialized(&env);
+
+        if amount < 0 {
+            env.panic_with_error(BnmError::NegativeAmount);
+        }
 
         // SAC rule: expiration may not be in the past unless clearing to 0.
         if amount != 0 && expiration_ledger < env.ledger().sequence() {
@@ -229,23 +292,37 @@ impl token::StellarAssetInterface for BnmTokenContract {
     }
 
     fn set_admin(env: Env, new_admin: Address) {
-        let admin = require_admin(&env);
-        admin.require_auth();
-        env.storage().instance().set(&ADMIN, &new_admin);
-        SetAdminEvent { admin, new_admin }.publish(&env);
+        require_owner(&env);
+        let previous = primary_minter(&env);
+
+        // `new_admin` becomes MINTERS[0]; the old primary is demoted out of
+        // the set. A `new_admin` that was already a secondary minter (the
+        // migration overlap flow) is repositioned to the front, not
+        // duplicated.
+        let current = minters(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        updated.push_back(new_admin.clone());
+        for m in current.iter() {
+            if m != new_admin && m != previous {
+                updated.push_back(m);
+            }
+        }
+        env.storage().instance().set(&MINTERS, &updated);
+
+        SetAdminEvent {
+            admin: previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     fn admin(env: Env) -> Address {
         require_initialized(&env);
-        env.storage()
-            .instance()
-            .get(&ADMIN)
-            .unwrap_or_else(|| env.panic_with_error(BnmError::NotInitialized))
+        primary_minter(&env)
     }
 
     fn set_authorized(env: Env, id: Address, authorize: bool) {
-        let admin = require_admin(&env);
-        admin.require_auth();
+        require_owner(&env);
         env.storage()
             .persistent()
             .set(&DataKey::Authorized(id.clone()), &authorize);
@@ -261,25 +338,19 @@ impl token::StellarAssetInterface for BnmTokenContract {
     }
 
     fn mint(env: Env, to: Address, amount: i128) {
-        let admin = require_admin(&env);
-        admin.require_auth();
+        let primary = primary_minter(&env);
+        primary.require_auth();
         credit(&env, &to, amount);
         MintEvent { to, amount }.publish(&env);
     }
 
-    fn clawback(env: Env, from: Address, amount: i128) {
-        let admin = require_admin(&env);
-        admin.require_auth();
-        if amount < 0 {
-            env.panic_with_error(BnmError::NegativeAmount);
-        }
-        debit(&env, &from, amount);
-        ClawbackEvent {
-            admin,
-            from,
-            amount,
-        }
-        .publish(&env);
+    fn clawback(env: Env, _from: Address, _amount: i128) {
+        // Not supported: BnM is a plain ERC20-style test token (matching EVM
+        // `BurnMintERC20`, which has no clawback). The entrypoint exists only
+        // because the StellarAssetInterface ABI requires it; every caller —
+        // owner included — traps with UnsupportedOperation. Nobody can ever
+        // seize BnM balances.
+        env.panic_with_error(BnmError::UnsupportedOperation);
     }
 
     fn trust(env: Env, addr: Address) {
@@ -293,10 +364,10 @@ impl token::StellarAssetInterface for BnmTokenContract {
 
 #[contractimpl]
 impl BnmTokenContract {
-    /// One-time initialization. Sets the token admin (the deployer, who later
-    /// hands off to the burn-mint pool via `set_admin`) and the ERC20 metadata.
-    /// No initial supply is minted — BnM is remotely-issued; supply tracks
-    /// bridge flow.
+    /// One-time initialization. Sets the token owner **and** primary minter
+    /// (the deployer, who later hands off to the burn-mint pool via the
+    /// owner-gated `set_admin`) and the ERC20 metadata. No initial supply is
+    /// minted — BnM is remotely-issued; supply tracks bridge flow.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -308,7 +379,12 @@ impl BnmTokenContract {
             return Err(BnmError::AlreadyInitialized);
         }
         env.storage().instance().set(&INIT, &true);
-        env.storage().instance().set(&ADMIN, &admin);
+        if let Err(e) = <Self as Ownable>::init_owner(&env, &admin) {
+            env.panic_with_error(e);
+        }
+        let mut initial_minters: Vec<Address> = Vec::new(&env);
+        initial_minters.push_back(admin.clone());
+        env.storage().instance().set(&MINTERS, &initial_minters);
         env.storage().instance().set(&NAME, &name);
         env.storage().instance().set(&SYMBOL, &symbol);
         env.storage().instance().set(&DECIMALS, &decimals);
@@ -323,7 +399,8 @@ impl BnmTokenContract {
     /// Permissionless faucet: mints `0.1` token (`10⁶` at 7 decimals) to the
     /// explicit `to` address. No `require_auth` — anyone may call it, matching
     /// EVM `BurnMintERC20WithDrip.drip(to)`. The amount (0.1, not EVM's 1) is
-    /// the deliberate Stellar-spec divergence.
+    /// the deliberate Stellar-spec divergence. `drip` is deliberately out of
+    /// the owner/minters governance.
     pub fn drip(env: Env, to: Address) {
         require_initialized(&env);
         const DRIP_AMOUNT: i128 = 1_000_000; // 0.1 * 10^7
@@ -333,6 +410,70 @@ impl BnmTokenContract {
             amount: DRIP_AMOUNT,
         }
         .publish(&env);
+    }
+
+    /// Multi-minter mint path (the pool's path). `caller` passes itself
+    /// explicitly; `caller.require_auth()` proves it is in the call chain
+    /// (only the invoking contract can satisfy that), and membership in
+    /// `MINTERS` is then checked — the `advanced-pool-hooks`
+    /// explicit-caller pattern. Any minter (primary or secondary) may mint
+    /// through this entrypoint; there is no owner gate.
+    pub fn mint_as(env: Env, caller: Address, to: Address, amount: i128) {
+        require_initialized(&env);
+        // Membership first, so non-minters get the typed NotMinter error
+        // instead of a host auth failure.
+        if !is_minter(&env, &caller) {
+            env.panic_with_error(BnmError::NotMinter);
+        }
+        caller.require_auth();
+        credit(&env, &to, amount);
+        MintEvent { to, amount }.publish(&env);
+    }
+
+    /// Adds a **secondary** minter (owner-gated) — the migration overlap
+    /// window: a new pool can be minting while the old one still is, before
+    /// `set_admin(newPool)` re-points the primary. Mirrors EVM
+    /// `grantMintAndBurnRoles` under `BURN_MINT_ADMIN_ROLE`.
+    pub fn add_minter(env: Env, minter: Address) -> Result<(), BnmError> {
+        require_owner(&env);
+        if is_minter(&env, &minter) {
+            return Err(BnmError::MinterAlreadyExists);
+        }
+        let mut updated = minters(&env);
+        updated.push_back(minter);
+        env.storage().instance().set(&MINTERS, &updated);
+        Ok(())
+    }
+
+    /// Removes a **secondary** minter (owner-gated). The primary minter is
+    /// demoted via `set_admin` instead (replacing the primary), not removed
+    /// here.
+    pub fn remove_minter(env: Env, minter: Address) -> Result<(), BnmError> {
+        require_owner(&env);
+        if minter == primary_minter(&env) {
+            return Err(BnmError::CannotRemovePrimaryMinter);
+        }
+        let current = minters(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        let mut found = false;
+        for m in current.iter() {
+            if m == minter {
+                found = true;
+            } else {
+                updated.push_back(m);
+            }
+        }
+        if !found {
+            return Err(BnmError::MinterNotFound);
+        }
+        env.storage().instance().set(&MINTERS, &updated);
+        Ok(())
+    }
+
+    /// Read: the ordered minters set, primary (`MINTERS[0]`) first.
+    pub fn get_minters(env: Env) -> Vec<Address> {
+        require_initialized(&env);
+        minters(&env)
     }
 }
 
@@ -346,13 +487,39 @@ fn require_initialized(env: &Env) {
     }
 }
 
-/// Returns the current admin, panicking with `NotInitialized` if unset.
-fn require_admin(env: &Env) -> Address {
-    require_initialized(env);
+/// Requires the stored owner's authorization. Panics with `CCIPError::NotOwner`
+/// (the `Ownable` trait's error) if unset, or a host auth failure if the owner
+/// did not authorize this invocation.
+fn require_owner(env: &Env) {
+    if let Err(e) = <BnmTokenContract as Ownable>::require_owner(env) {
+        env.panic_with_error(e);
+    }
+}
+
+/// Returns the ordered minters set, panicking with `NotInitialized` if unset.
+fn minters(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
-        .get(&ADMIN)
+        .get(&MINTERS)
         .unwrap_or_else(|| env.panic_with_error(BnmError::NotInitialized))
+}
+
+/// Returns the primary minter (`MINTERS[0]`) — what the SAC read `admin()`
+/// returns and the only address the fixed-ABI `mint` authorizes.
+fn primary_minter(env: &Env) -> Address {
+    minters(env)
+        .get(0)
+        .unwrap_or_else(|| env.panic_with_error(BnmError::NotInitialized))
+}
+
+/// True iff `addr` is in the minters set (primary or secondary).
+fn is_minter(env: &Env, addr: &Address) -> bool {
+    for m in minters(env).iter() {
+        if m == *addr {
+            return true;
+        }
+    }
+    false
 }
 
 /// True iff the `(from, spender)` allowance entry has expired (and so reads as
@@ -368,9 +535,13 @@ fn allowance_expired(env: &Env, from: &Address, spender: &Address) -> bool {
     }
 }
 
-/// Credits `amount` to `to`. Mints supply (no debit source). `amount` may be
-/// any non-negative i128.
+/// Credits `amount` to `to`. Mints supply (no debit source). Panics on a
+/// negative amount — a negative mint must not silently debit the recipient
+/// (the guard here makes `mint` (and any future caller) negative-safe).
 fn credit(env: &Env, to: &Address, amount: i128) {
+    if amount < 0 {
+        env.panic_with_error(BnmError::NegativeAmount);
+    }
     let bal: i128 = env
         .storage()
         .persistent()
