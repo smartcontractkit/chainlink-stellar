@@ -320,6 +320,8 @@ impl LinkTokenContract {
         if env.storage().instance().has(&INIT) {
             return Err(LinkError::AlreadyInitialized);
         }
+
+        admin.require_auth();
         env.storage().instance().set(&INIT, &true);
         env.storage().instance().set(&ADMIN, &admin);
         env.storage().instance().set(&NAME, &name);

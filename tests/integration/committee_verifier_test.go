@@ -293,7 +293,7 @@ func TestCommitteeVerifier(t *testing.T) {
 		// 1000 LINK (1e10 at 7 decimals) to itself: no trustline setup, unlike
 		// the SAC route (deployIntegrationTestSAC).
 		linkClient, feeToken := deployLinkToken(ctx, t, projectRoot, deployer, deployerAddr, "cv-withdraw")
-		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(1_000_000_000_000)); err != nil {
+		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(10_000_000_000)); err != nil {
 			t.Fatalf("LinkToken Mint(deployer, 1000 LINK): %v", err)
 		}
 

@@ -417,7 +417,7 @@ func TestTokenPool(t *testing.T) {
 		// lock-release pool takes custody via the lockbox, not mint authority),
 		// so it mints the initial liquidity directly.
 		linkClient, linkToken := deployLinkToken(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt)
-		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(1_000_000_000_000)); err != nil {
+		if err := linkClient.Mint(ctx, deployerAddr, big.NewInt(10_000_000_000)); err != nil {
 			t.Fatalf("LinkToken Mint(deployer, 1000 LINK): %v", err) // 1000 LINK @ 7dp, mirroring deployIntegrationTestSAC
 		}
 		stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, inboundSalt, linkToken)
