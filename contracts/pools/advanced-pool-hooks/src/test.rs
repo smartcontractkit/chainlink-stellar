@@ -1062,7 +1062,11 @@ impl MockPolicyEngineContract {
         Ok(())
     }
 
-    pub fn run(env: Env, payload: Payload) -> Result<(), CCIPError> {
+    pub fn run(env: Env, target: Address, payload: Payload) -> Result<(), CCIPError> {
+        // A real engine authenticates the asserted target with `require_auth`
+        // — the in-call-tree address is the actual direct caller, the
+        // Soroban analogue of EVM `msg.sender` (see the trait docs).
+        target.require_auth();
         if env
             .storage()
             .instance()
@@ -1079,9 +1083,11 @@ impl MockPolicyEngineContract {
         Ok(())
     }
 
-    pub fn check(env: Env, _payload: Payload) -> Result<(), CCIPError> {
+    pub fn check(env: Env, _target: Address, _payload: Payload) -> Result<(), CCIPError> {
         // Offchain pre-validation (EVM `IPolicyEngine.check`): rejects iff `run`
-        // on the same payload would. No recording — `check` is a pure view.
+        // with the same target + payload would. No recording — `check` is a
+        // pure view; the target is asserted, not authenticated (offchain there
+        // is no call tree, matching EVM's unauthenticated `eth_call`).
         if env
             .storage()
             .instance()
@@ -1368,30 +1374,22 @@ fn test_set_policy_engine_same_value_noop() {
     // Re-set the same value. `env.events()` reflects only the most recent
     // top-level call (see the force-detach test), so read the event log
     // IMMEDIATELY after this call, before any other client call clobbers it.
+    // A no-op must emit NO events at all — not just no attach event, or a
+    // buggy detach-then-fail path (detach + PolicyEngineDetachFailed) would
+    // still pass.
     client.set_policy_engine(&Some(mock_addr.clone()));
-    let attached_topic = Symbol::new(&env, "aph_PolicyEngineAttached");
-    let mut saw_attached = false;
+    let mut saw_any = false;
     let evs = env.events().all().filter_by_contract(&client.address);
     for e in evs.events().iter() {
-        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body else {
-            continue;
-        };
-        for t in v0.topics.iter() {
-            let s: Symbol = t
-                .clone()
-                .try_into_val(&env)
-                .unwrap_or(Symbol::new(&env, ""));
-            if s == attached_topic {
-                saw_attached = true;
-            }
+        if let soroban_sdk::xdr::ContractEventBody::V0(ref _v0) = e.body {
+            saw_any = true;
         }
     }
-    assert!(
-        !saw_attached,
-        "same-value set must not emit PolicyEngineAttached"
-    );
-    // No re-attach: the engine's attach count stays at the initial 1.
+    assert!(!saw_any, "same-value set must emit no events at all");
+    // No re-attach and no detach: both engine call counters stay at their
+    // post-initial-set values (attach 1, detach 0).
     assert_eq!(mock_client.attach_count(), 1);
+    assert_eq!(mock_client.detach_count(), 0);
 }
 
 #[test]
@@ -1445,11 +1443,13 @@ impl NoDetachEngineContract {
         Ok(())
     }
 
-    pub fn run(_env: Env, _payload: Payload) -> Result<(), CCIPError> {
+    pub fn run(env: Env, target: Address, _payload: Payload) -> Result<(), CCIPError> {
+        target.require_auth();
+        let _ = &env; // no bookkeeping needed — the hooks only checks success
         Ok(())
     }
 
-    pub fn check(_env: Env, _payload: Payload) -> Result<(), CCIPError> {
+    pub fn check(_env: Env, _target: Address, _payload: Payload) -> Result<(), CCIPError> {
         Ok(())
     }
 
@@ -1485,7 +1485,9 @@ fn test_preflight_allowlist_and_policy_engine() {
 fn test_policy_engine_check_round_trips() {
     // `PolicyEngineClient::check` (EVM `IPolicyEngine.check`): offchain
     // pre-validation — Ok when the run would pass, Err when it would reject.
-    let (env, _client, _owner) = setup();
+    // The target is passed explicitly (EVM: tooling simulates `check` with
+    // `from = target`, since the engine keys policies by its `msg.sender`).
+    let (env, hooks_client, _owner) = setup();
     let (mock_addr, mock_client) = register_mock_engine(&env);
     let engine_client = common_interfaces::policy_engine::PolicyEngineClient::new(&env, &mock_addr);
     let payload = Payload {
@@ -1499,10 +1501,10 @@ fn test_policy_engine_check_round_trips() {
         context: Bytes::new(&env),
     };
 
-    engine_client.check(&payload);
+    engine_client.check(&hooks_client.address, &payload);
 
     mock_client.set_revert_on_run(&true);
-    let r = engine_client.try_check(&payload);
+    let r = engine_client.try_check(&hooks_client.address, &payload);
     match r {
         Ok(Ok(())) => panic!("check must not pass when the run would reject"),
         Err(Ok(e)) => assert_eq!(e, CCIPError::Unauthorized),

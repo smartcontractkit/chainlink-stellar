@@ -4,9 +4,10 @@
 //! A contract a target (e.g. `AdvancedPoolHooks`) attaches to so that ACE
 //! policies can evaluate that target's operations. The target builds a
 //! [`Payload`] and calls [`PolicyEngineInterface::run`]; the engine looks up the
-//! extractor registered for `payload.selector`, decodes `payload.data` into named
-//! [`Parameter`]s, and runs the configured policy chain — reverting to reject
-//! the operation (which, for pool hooks, blocks the transfer, mirroring EVM
+//! policy chain configured for the `target` + `payload.selector` pair, uses the
+//! extractor registered for `payload.selector` to decode `payload.data` into
+//! named [`Parameter`]s, and runs the chain — reverting to reject the operation
+//! (which, for pool hooks, blocks the transfer, mirroring EVM
 //! `PolicyRunRejected` propagation).
 //!
 //! The engine is **generic across all attached targets**: it never inspects
@@ -104,9 +105,21 @@ pub enum PolicyResult {
 
 /// Cross-contract client interface for a policy engine (EVM `IPolicyEngine`).
 ///
-/// `attach` / `detach` take the target address explicitly with `require_auth`,
-/// because Soroban gives the callee no `msg.sender` to read — the same
-/// explicit-caller pattern used by `PoolHooksInterface::preflight_check`.
+/// Every method that identifies the target (`run` / `check` / `attach` /
+/// `detach`) takes the target address explicitly, because Soroban gives the
+/// callee no `msg.sender` to read — the same explicit-caller pattern used by
+/// `PoolHooksInterface::preflight_check`. On EVM the engine instead reads its
+/// own `msg.sender`, which equals the target both on-chain (`run`: the target
+/// calls the engine) and offchain (`check`: tooling simulates with
+/// `from = target`). The Soroban equivalents of that authentication:
+///
+/// - `run` (on-chain): the engine MUST `target.require_auth()` — Soroban
+///   authenticates an in-contract address iff it is in the current call tree,
+///   so this proves the asserted `target` is the actual direct caller. Without
+///   it, any third party could run policies under a forged target.
+/// - `check` (offchain): there is no call tree to authenticate against, so the
+///   `target` is asserted by the caller — exactly the EVM semantics, where an
+///   offchain `check` is an unauthenticated `eth_call` with `from = target`.
 ///
 /// Only the target-facing surface is defined here (`run` / `check` / `attach` /
 /// `detach` / `type_and_version`). EVM `IPolicyEngine` also carries the
@@ -114,15 +127,20 @@ pub enum PolicyResult {
 /// on the engine itself, not on the seam a target calls, so it is out of scope.
 #[contractclient(name = "PolicyEngineClient")]
 pub trait PolicyEngineInterface {
-    /// Run the policy chain for `payload`. Reverts (returns `Err` / aborts) when
-    /// a policy rejects — for pool hooks this blocks the transfer (EVM parity).
-    fn run(env: soroban_sdk::Env, payload: Payload) -> Result<(), CCIPError>;
+    /// Run the policy chain configured for `target` + `payload.selector` over
+    /// `payload`. `target` is the caller's own address (the attached contract);
+    /// the engine authenticates it with `require_auth` (see the trait docs).
+    /// Reverts (returns `Err` / aborts) when a policy rejects — for pool hooks
+    /// this blocks the transfer (EVM parity).
+    fn run(env: soroban_sdk::Env, target: Address, payload: Payload) -> Result<(), CCIPError>;
 
-    /// Offchain pre-validation of `payload` (EVM `check`): returns `Err` iff
-    /// [`Self::run`] on the same payload would reject. Lets senders learn a
-    /// transfer would be blocked without submitting it. Targets never call this;
-    /// it is on the seam for offchain tooling against the future engine.
-    fn check(env: soroban_sdk::Env, payload: Payload) -> Result<(), CCIPError>;
+    /// Offchain pre-validation of `payload` for `target` (EVM `check`): returns
+    /// `Err` iff [`Self::run`] with the same `target` and `payload` would
+    /// reject. Lets senders learn a transfer would be blocked without
+    /// submitting it. Targets never call this; it is on the seam for offchain
+    /// tooling against the future engine. `target` is asserted by the caller —
+    /// there is no call tree offchain (see the trait docs).
+    fn check(env: soroban_sdk::Env, target: Address, payload: Payload) -> Result<(), CCIPError>;
 
     /// Register the calling target with this engine (EVM `attach`).
     /// `target` is the attaching contract's own address; it must authenticate.

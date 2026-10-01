@@ -774,10 +774,15 @@ impl AdvancedPoolHooksContract {
             context,
         };
         let client = PolicyEngineClient::new(env, &pe);
-        // Non-`try_` run: a policy rejection reverts/aborts, propagating up and
-        // blocking the transfer — EVM `policyEngine.run` revert parity. The
-        // pool already treats any hooks failure as an abort.
-        client.run(&payload);
+        // `target` = this contract's own address — on EVM the engine reads its
+        // `msg.sender` (the hooks contract) to key the policy chain; Soroban
+        // has no `msg.sender`, so the target is passed explicitly and the
+        // engine authenticates it with `require_auth` (it is in the call tree
+        // as the direct caller). Non-`try_` run: a policy rejection
+        // reverts/aborts, propagating up and blocking the transfer — EVM
+        // `policyEngine.run` revert parity. The pool already treats any hooks
+        // failure as an abort.
+        client.run(&env.current_contract_address(), &payload);
         Ok(())
     }
 }
