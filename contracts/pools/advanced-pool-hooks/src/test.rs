@@ -1063,9 +1063,9 @@ impl MockPolicyEngineContract {
     }
 
     pub fn run(env: Env, target: Address, payload: Payload) -> Result<(), CCIPError> {
-        // A real engine authenticates the asserted target with `require_auth`
-        // — the in-call-tree address is the actual direct caller, the
-        // Soroban analogue of EVM `msg.sender` (see the trait docs).
+        // A real engine requires `target.require_auth()` — this proves the
+        // target authorized the run, not that it is the direct caller
+        // (trusted-relay model, see the trait docs).
         target.require_auth();
         if env
             .storage()

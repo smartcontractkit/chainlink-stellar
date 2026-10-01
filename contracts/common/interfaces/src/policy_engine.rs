@@ -111,15 +111,41 @@ pub enum PolicyResult {
 /// `PoolHooksInterface::preflight_check`. On EVM the engine instead reads its
 /// own `msg.sender`, which equals the target both on-chain (`run`: the target
 /// calls the engine) and offchain (`check`: tooling simulates with
-/// `from = target`). The Soroban equivalents of that authentication:
+/// `from = target`).
 ///
-/// - `run` (on-chain): the engine MUST `target.require_auth()` — Soroban
-///   authenticates an in-contract address iff it is in the current call tree,
-///   so this proves the asserted `target` is the actual direct caller. Without
-///   it, any third party could run policies under a forged target.
+/// # Security model — target isolation is authorization-based, not
+/// caller-identity-based
+///
+/// Soroban (protocol 25) exposes no host function returning the immediate
+/// invoker of a call — the platform limitation documented on
+/// `common_authorization`'s `require_authorized_caller`, which this seam
+/// follows. Consequently an engine **cannot** establish that `target` is the
+/// direct caller of `run`:
+///
+/// - `run` (on-chain): the engine MUST `target.require_auth()`. This proves
+///   `target` **authorized this invocation** — directly, or via delegated
+///   authorization attached through invoker-contract auth trees — **not** that
+///   it is the immediate caller. A relay contract that `target` invokes can
+///   call the engine with `target`'s authorization attached, and so run the
+///   target's policy chain under the target's identity. Dropping the
+///   `require_auth` would widen this from "the target, or code the target
+///   invoked/authorized" to "any contract, with no target participation at
+///   all", so it remains mandatory — this is a **trusted-relay model**:
+///   engines and deployments must treat any contract a target invokes as
+///   trusted to act under that target's identity, and targets should invoke
+///   the engine directly (as `AdvancedPoolHooks` does, with no contract in
+///   between).
 /// - `check` (offchain): there is no call tree to authenticate against, so the
 ///   `target` is asserted by the caller — exactly the EVM semantics, where an
 ///   offchain `check` is an unauthenticated `eth_call` with `from = target`.
+///
+/// This is the closest Soroban equivalent of EVM's `msg.sender` isolation the
+/// platform supports, and matches the security posture the codebase already
+/// standardizes on for its caller gates (`require_authorized_caller`). If a
+/// future protocol/SDK release exposes the immediate invoker, an engine can
+/// tighten `run` to require `target == invoker` internally — the explicit
+/// `target` argument makes the seam forward-compatible with that check without
+/// a signature change.
 ///
 /// Only the target-facing surface is defined here (`run` / `check` / `attach` /
 /// `detach` / `type_and_version`). EVM `IPolicyEngine` also carries the
@@ -128,10 +154,11 @@ pub enum PolicyResult {
 #[contractclient(name = "PolicyEngineClient")]
 pub trait PolicyEngineInterface {
     /// Run the policy chain configured for `target` + `payload.selector` over
-    /// `payload`. `target` is the caller's own address (the attached contract);
-    /// the engine authenticates it with `require_auth` (see the trait docs).
-    /// Reverts (returns `Err` / aborts) when a policy rejects — for pool hooks
-    /// this blocks the transfer (EVM parity).
+    /// `payload`. `target` is the caller's own address (the attached
+    /// contract); the engine must `target.require_auth()` — an authorization
+    /// proof, not a direct-caller proof (trusted-relay model, see the trait
+    /// docs). Reverts (returns `Err` / aborts) when a policy rejects — for
+    /// pool hooks this blocks the transfer (EVM parity).
     fn run(env: soroban_sdk::Env, target: Address, payload: Payload) -> Result<(), CCIPError>;
 
     /// Offchain pre-validation of `payload` for `target` (EVM `check`): returns
