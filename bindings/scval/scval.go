@@ -649,6 +649,16 @@ func HexToContractStrkey(hexAddr string) (string, error) {
 	return strkey.Encode(strkey.VersionByteContract, raw)
 }
 
+// BytesToContractStrkey converts a raw 32-byte contract ID to a Stellar
+// contract strkey (C...). It is the raw-bytes counterpart of
+// HexToContractStrkey; the input must be exactly 32 bytes.
+func BytesToContractStrkey(raw []byte) (string, error) {
+	if len(raw) != 32 {
+		return "", fmt.Errorf("expected 32-byte contract ID, got %d bytes", len(raw))
+	}
+	return strkey.Encode(strkey.VersionByteContract, raw)
+}
+
 // AddressVecFromScVal extracts raw 32-byte addresses from a Vec<Address> ScVal.
 func AddressVecFromScVal(val xdr.ScVal) ([][]byte, error) {
 	vec, ok := val.GetVec()

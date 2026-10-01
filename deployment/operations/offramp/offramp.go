@@ -139,3 +139,31 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetSourceChainConfigInput identifies an OffRamp source chain config read.
+type GetSourceChainConfigInput struct {
+	ContractID          string `json:"contract_id"`
+	SourceChainSelector uint64 `json:"source_chain_selector"`
+}
+
+// GetSourceChainConfig reads OffRamp `get_source_chain_config` for one source
+// chain. It returns (nil, nil) when the source chain has no config yet — the
+// contract errors with SourceChainNotEnabled (#100) for unconfigured lanes,
+// which callers treat as "not configured, apply fresh values" (EVM
+// read-before-write parity).
+var GetSourceChainConfig = cldfops.NewOperation(
+	"offramp:get-source-chain-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the OffRamp source chain config for one source chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetSourceChainConfigInput) (*offrampbindings.SourceChainConfig, error) {
+		c := offrampbindings.NewOffRampClient(d.Invoker, in.ContractID)
+		out, err := c.GetSourceChainConfig(b.GetContext(), in.SourceChainSelector)
+		if err != nil {
+			if stellarops.IsContractErrorCode(err, stellarops.SourceChainNotEnabledCode) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return out, nil
+	},
+)

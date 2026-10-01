@@ -1,6 +1,7 @@
 package scval
 
 import (
+	"encoding/hex"
 	"math/big"
 	"testing"
 
@@ -257,4 +258,26 @@ func TestI256RoundTrip(t *testing.T) {
 	}
 	_, err = I256SliceToScVal([]*big.Int{belowMin})
 	require.Error(t, err)
+}
+
+func TestBytesToContractStrkey(t *testing.T) {
+	raw := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+
+	encoded, err := BytesToContractStrkey(raw)
+	require.NoError(t, err)
+
+	// Round-trips back to the same raw bytes.
+	decoded, err := strkey.Decode(strkey.VersionByteContract, encoded)
+	require.NoError(t, err)
+	require.Equal(t, raw, decoded)
+
+	// Agrees with the hex form of the same contract ID.
+	hexEncoded, err := HexToContractStrkey("0x" + hex.EncodeToString(raw))
+	require.NoError(t, err)
+	require.Equal(t, hexEncoded, encoded)
+
+	// Rejects non-32-byte input.
+	_, err = BytesToContractStrkey(raw[:31])
+	require.ErrorContains(t, err, "expected 32-byte contract ID")
 }

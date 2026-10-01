@@ -545,12 +545,15 @@ func RunStellarCCIPFullDeploy(
 	// EVM parity (and Solana parity): `DeployChainContracts` deploys and
 	// initializes only — ramp lane configs are lane-configuration-time wiring,
 	// applied with the remote chain's real ramp addresses resolved from the
-	// datastore. Stellar's lane-time wiring lives in ccvchain Chain.PostConnect
-	// (ApplyDestChainConfigUpdates + ApplySourceChainCfgUpdates, datastore
-	// backed). There is no valid placeholder for a deploy-time provisional
-	// entry: the OffRamp rejects an all-zero onramp encoding with
-	// `ZeroAddressNotAllowed` (#808, EVM `OffRamp.applySourceChainConfigUpdates`
-	// parity), and a nonzero fake value would silently corrupt the allowlist.
+	// datastore. Stellar's lane-time wiring has two homes: the shared CLD path
+	// (StellarConfigureChainForLanes, invoked via the
+	// ConfigureChainsForLanesFromTopology changeset) and the devenv path (ccvchain
+	// Chain.PostConnect, ApplyDestChainConfigUpdates +
+	// ApplySourceChainCfgUpdates, datastore backed). There is no valid
+	// placeholder for a deploy-time provisional entry: the OffRamp rejects an
+	// all-zero onramp encoding with `ZeroAddressNotAllowed` (#808, EVM
+	// `OffRamp.applySourceChainConfigUpdates` parity), and a nonzero fake value
+	// would silently corrupt the allowlist.
 
 	onRampEntries := make([]routerbindings.OnRampEntry, 0, len(remoteSelectors))
 	offRampEntries := make([]routerbindings.OffRampEntry, 0, len(remoteSelectors))

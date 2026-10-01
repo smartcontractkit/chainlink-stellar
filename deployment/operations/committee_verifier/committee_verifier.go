@@ -78,6 +78,34 @@ var ApplySignatureConfigs = cldfops.NewOperation(
 	},
 )
 
+// GetSignatureConfigInput identifies a Committee Verifier signature quorum read.
+type GetSignatureConfigInput struct {
+	ContractID          string `json:"contract_id"`
+	SourceChainSelector uint64 `json:"source_chain_selector"`
+}
+
+// GetSignatureConfig reads Committee Verifier `get_signature_config` for one
+// source chain. It returns (nil, nil) when the source chain has no signature
+// quorum yet — the contract errors with SourceSignersNotConfigured (#19) for
+// unconfigured sources, which callers treat as "not configured, apply fresh
+// values" (EVM read-before-write parity with committee_verifier.GetSignatureConfig).
+var GetSignatureConfig = cldfops.NewOperation(
+	"committee-verifier:get-signature-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the Committee Verifier signature quorum config for one source chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetSignatureConfigInput) (*cvbindings.SignatureQuorumConfig, error) {
+		c := cvbindings.NewCommitteeVerifierClient(d.Invoker, in.ContractID)
+		out, err := c.GetSignatureConfig(b.GetContext(), in.SourceChainSelector)
+		if err != nil {
+			if stellarops.IsContractErrorCode(err, stellarops.SourceSignersNotConfiguredCode) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return out, nil
+	},
+)
+
 // WithdrawFeeTokensInput lists fee token contract IDs to withdraw to the configured fee aggregator.
 type WithdrawFeeTokensInput struct {
 	ContractID string   `json:"contract_id"`
