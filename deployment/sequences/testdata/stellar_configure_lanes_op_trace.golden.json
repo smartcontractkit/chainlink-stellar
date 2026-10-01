@@ -1,0 +1,235 @@
+[
+  {
+    "id": "router:get-onramp",
+    "input": {
+      "contract_id": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF",
+      "dest_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "offramp:get-source-chain-config",
+    "input": {
+      "contract_id": "CABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVX",
+      "source_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "onramp:get-dest-chain-config",
+    "input": {
+      "contract_id": "CABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARHO",
+      "dest_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "executor:get-dest-chain-config",
+    "input": {
+      "contract_id": "CACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABN3Q",
+      "dest_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "fee_quoter:get-dest-chain-config",
+    "input": {
+      "contract_id": "CACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4JJ",
+      "dest_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "router:get-offramps",
+    "input": {
+      "contract_id": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF"
+    }
+  },
+  {
+    "id": "offramp:apply-source-chain-cfg-updates",
+    "input": {
+      "contract_id": "CABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVX",
+      "updates": [
+        {
+          "DefaultCcvs": [
+            "CADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7M3"
+          ],
+          "IsEnabled": true,
+          "LaneMandatedCcvs": null,
+          "OnRamps": [
+            "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8="
+          ],
+          "Router": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF",
+          "SourceChainSelector": 16015286601757825753
+        }
+      ]
+    }
+  },
+  {
+    "id": "onramp:apply-dest-chain-config-updates",
+    "input": {
+      "contract_id": "CABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARHO",
+      "updates": [
+        {
+          "AddressBytesLength": 20,
+          "BaseExecutionGasCost": 175000,
+          "DefaultCcvs": [
+            "CADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7M3"
+          ],
+          "DefaultExecutor": "CACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABN3Q",
+          "DestChainSelector": 16015286601757825753,
+          "ExecutionFeeUsdCents": 5,
+          "LaneMandatedCcvs": null,
+          "MessageNetworkFeeUsdCents": 10,
+          "OffRamp": "sLGys7S1tre4ubq7vL2+v8DBwsM=",
+          "Router": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF",
+          "TokenNetworkFeeUsdCents": 25,
+          "TokenReceiverAllowed": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "executor:apply-dest-chain-updates",
+    "input": {
+      "contract_id": "CACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABN3Q",
+      "to_remove": [],
+      "to_add": [
+        {
+          "Config": {
+            "Enabled": true,
+            "UsdCentsFee": 5
+          },
+          "DestChainSelector": 16015286601757825753
+        }
+      ]
+    }
+  },
+  {
+    "id": "fee-quoter:apply-dest-chain-configs",
+    "input": {
+      "contract_id": "CACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4JJ",
+      "configs": [
+        {
+          "Config": {
+            "DefaultTokenDestGas": 50000,
+            "DefaultTokenFeeUsd": 50,
+            "DefaultTxGasLimit": 200000,
+            "DestGasOverhead": 350000,
+            "DestGasPerPayloadByte": 16,
+            "IsEnabled": true,
+            "LinkPremiumPercent": 90,
+            "MaxDataBytes": 50000,
+            "MaxPerMsgGasLimit": 4000000,
+            "NetworkFeeUsdCents": 100
+          },
+          "DestChainSelector": 16015286601757825753
+        }
+      ]
+    }
+  },
+  {
+    "id": "committee-verifier:get-signature-config",
+    "input": {
+      "contract_id": "CADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7M3",
+      "source_chain_selector": 16015286601757825753
+    }
+  },
+  {
+    "id": "committee-verifier:apply-signature-configs",
+    "input": {
+      "contract_id": "CADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7M3",
+      "remove_selectors": [],
+      "signature_quorum_configs": [
+        {
+          "Signers": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17,
+              17
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34,
+              34
+            ]
+          ],
+          "SourceChainSelector": 16015286601757825753,
+          "Threshold": 2
+        }
+      ]
+    }
+  },
+  {
+    "id": "router:apply-ramp-updates",
+    "input": {
+      "contract_id": "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF",
+      "on_ramp_updates": [
+        {
+          "DestChainSelector": 16015286601757825753,
+          "Onramp": "CABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARHO"
+        }
+      ],
+      "off_ramp_removes": [],
+      "off_ramp_adds": [
+        {
+          "Offramp": "CABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVX",
+          "SourceChainSelector": 16015286601757825753
+        }
+      ]
+    }
+  }
+]

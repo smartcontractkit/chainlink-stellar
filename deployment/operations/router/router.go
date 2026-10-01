@@ -135,3 +135,47 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetOnrampInput identifies a Router on-ramp routing read.
+type GetOnrampInput struct {
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
+}
+
+// GetOnramp reads Router `get_onramp` for one destination chain. It returns
+// (nil, nil) when no OnRamp is routed — the contract errors with
+// UnsupportedDestinationChain (#63) — which callers treat as "not routed, add
+// the entry" (EVM read-before-write parity).
+var GetOnramp = cldfops.NewOperation(
+	"router:get-onramp",
+	stellarops.ContractDeploymentVersion,
+	"Reads the Router OnRamp address routed to one destination chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetOnrampInput) (*string, error) {
+		c := routerbindings.NewRouterClient(d.Invoker, in.ContractID)
+		out, err := c.GetOnramp(b.GetContext(), in.DestChainSelector)
+		if err != nil {
+			if stellarops.IsContractErrorCode(err, stellarops.UnsupportedDestinationChainCode) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return &out, nil
+	},
+)
+
+// GetOfframpsInput identifies a Router off-ramp table read.
+type GetOfframpsInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetOfframps reads the Router's full off-ramp routing table. An empty table
+// (freshly deployed Router) returns an empty slice without error.
+var GetOfframps = cldfops.NewOperation(
+	"router:get-offramps",
+	stellarops.ContractDeploymentVersion,
+	"Reads the Router off-ramp routing table",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetOfframpsInput) ([]routerbindings.OffRampEntry, error) {
+		c := routerbindings.NewRouterClient(d.Invoker, in.ContractID)
+		return c.GetOfframps(b.GetContext())
+	},
+)

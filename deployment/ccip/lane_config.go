@@ -86,6 +86,8 @@ func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]by
 }
 
 // BuildOnRampDestConfigs builds datastore-backed OnRamp destination chain configs.
+// These builders serve the devenv path (ccvchain Chain.PostConnect); the shared
+// CLD lane path builds its args in sequences.StellarConfigureChainForLanes.
 // The remote chain's OffRamp must already be deployed and recorded: a
 // zero-address placeholder is not a valid entry (the ramp contracts reject
 // zero encodings, EVM `ZeroAddressNotAllowed` parity), so lane wiring is

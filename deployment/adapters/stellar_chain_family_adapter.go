@@ -18,6 +18,8 @@ import (
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
+
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
 // StellarChainFamilyAdapter implements ccvadapters.ChainFamily for CCIP 2.0.
@@ -106,7 +108,11 @@ func (a *StellarChainFamilyAdapter) GetTestRouter(ds datastore.DataStore, chainS
 }
 
 func (a *StellarChainFamilyAdapter) ResolveExecutor(ds datastore.DataStore, chainSelector uint64, qualifier string) (string, error) {
-	toAddress := func(ref datastore.AddressRef) (string, error) { return ref.Address, nil }
+	// ResolveExecutor feeds ConfigureChainForLanesInput's DefaultExecutor and CCV
+	// lists, which the stellar sequence consumes as strkey contract IDs; convert
+	// the datastore's 0x-hex address so callers get a usable C… form. The
+	// sequence's localContractStrkey still tolerates 0x-hex for other callers.
+	toAddress := func(ref datastore.AddressRef) (string, error) { return scval.HexToContractStrkey(ref.Address) }
 	return datastore_utils.FindAndFormatRef(ds, stellarccip.ExecutorProxyDatastoreRef(qualifier).PartialAddressRef(), chainSelector, toAddress)
 }
 
