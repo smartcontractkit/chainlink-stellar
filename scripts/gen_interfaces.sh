@@ -73,6 +73,7 @@ CONTRACTS=(
   "pools_token_lock_box|token_lock_box|TokenLockBox|0|auth_,lockbox_"
   "pools_siloed_lock_release_pool|siloed_lock_release_pool|SiloedLockReleasePool|0|auth_,pool_"
   "pools_advanced_pool_hooks|advanced_pool_hooks|AdvancedPoolHooks|0|auth_,aph_"
+  "pools_advanced_pool_hooks_extractor|advanced_pool_hooks_extractor|AdvancedPoolHooksExtractor|0|"
   "mcms|mcms|Mcms|0|auth_,mcms_"
   "timelock|timelock|Timelock|0|tl_"
   "forwarder|forwarder|cre|0|auth_,forwarder_"
@@ -312,6 +313,24 @@ patch_advanced_pool_hooks_interfaces() {
   ' "$f"
 }
 
+# advanced_pool_hooks_extractor references Payload / Parameter (via the IExtractor
+# `extract` signature) and, nested inside those, PolicyData / PoolHooksPayloadData /
+# PreflightPayload / PostflightPayload / PolicyValue / LockOrBurnIn / ReleaseOrMintIn
+# (defined in the hand-written policy_engine.rs / pool_hooks.rs / token_pool.rs
+# interfaces, linked via common-interfaces) in its trait signatures, but its own wasm
+# spec does not embed those external type definitions, so prune_interface drops them
+# and the Go generator emits undefined types. Insert the canonical definitions
+# (mirroring policy_engine.rs / pool_hooks.rs / token_pool.rs) if absent.
+patch_advanced_pool_hooks_extractor_interfaces() {
+  local f="$1"
+  perl -i -0pe '
+    unless (/pub struct Payload/s) {
+      my $types = "#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PreflightPayload {\n    pub lock_or_burn_in: LockOrBurnIn,\n    pub requested_finality: u32,\n    pub amount_post_fee: i128,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PostflightPayload {\n    pub release_or_mint_in: ReleaseOrMintIn,\n    pub local_amount: i128,\n    pub requested_finality: u32,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PoolHooksPayloadData {\n    Preflight(PreflightPayload),\n    Postflight(PostflightPayload),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyData {\n    PoolHooks(PoolHooksPayloadData),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Payload {\n    pub selector: soroban_sdk::Symbol,\n    pub sender: soroban_sdk::Address,\n    pub data: PolicyData,\n    pub context: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyValue {\n    Address(soroban_sdk::Address),\n    I128(i128),\n    U64(u64),\n    U32(u32),\n    Bytes(soroban_sdk::Bytes),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Parameter {\n    pub name: soroban_sdk::Symbol,\n    pub value: PolicyValue,\n}\n";
+      s/(\n\}\n)((?:#\[[^\n]*\]\n)+pub enum CCIPError)/$1 . $types . $2/se;
+    }
+  ' "$f"
+}
+
 do_build=true
 for arg in "$@"; do
   case "$arg" in
@@ -363,6 +382,9 @@ for entry in "${CONTRACTS[@]}"; do
   fi
   if [[ "$output_module" == "advanced_pool_hooks" ]]; then
     patch_advanced_pool_hooks_interfaces "$out_path"
+  fi
+  if [[ "$output_module" == "advanced_pool_hooks_extractor" ]]; then
+    patch_advanced_pool_hooks_extractor_interfaces "$out_path"
   fi
 done
 

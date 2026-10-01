@@ -16,6 +16,7 @@
 #![no_std]
 
 pub mod advanced_pool_hooks;
+pub mod advanced_pool_hooks_extractor;
 pub mod bnm_token;
 pub mod ccip_receiver;
 pub mod committee_verifier;

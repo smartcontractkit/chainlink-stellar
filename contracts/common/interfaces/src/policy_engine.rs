@@ -107,11 +107,22 @@ pub enum PolicyResult {
 /// `attach` / `detach` take the target address explicitly with `require_auth`,
 /// because Soroban gives the callee no `msg.sender` to read — the same
 /// explicit-caller pattern used by `PoolHooksInterface::preflight_check`.
+///
+/// Only the target-facing surface is defined here (`run` / `check` / `attach` /
+/// `detach` / `type_and_version`). EVM `IPolicyEngine` also carries the
+/// engine-side management surface (`setExtractor`, `addPolicy`, …); that lives
+/// on the engine itself, not on the seam a target calls, so it is out of scope.
 #[contractclient(name = "PolicyEngineClient")]
 pub trait PolicyEngineInterface {
     /// Run the policy chain for `payload`. Reverts (returns `Err` / aborts) when
     /// a policy rejects — for pool hooks this blocks the transfer (EVM parity).
     fn run(env: soroban_sdk::Env, payload: Payload) -> Result<(), CCIPError>;
+
+    /// Offchain pre-validation of `payload` (EVM `check`): returns `Err` iff
+    /// [`Self::run`] on the same payload would reject. Lets senders learn a
+    /// transfer would be blocked without submitting it. Targets never call this;
+    /// it is on the seam for offchain tooling against the future engine.
+    fn check(env: soroban_sdk::Env, payload: Payload) -> Result<(), CCIPError>;
 
     /// Register the calling target with this engine (EVM `attach`).
     /// `target` is the attaching contract's own address; it must authenticate.
