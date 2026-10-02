@@ -22,6 +22,9 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
       - name: Setup integration test dependencies
         uses: ./.github/actions/setup-integration
 
