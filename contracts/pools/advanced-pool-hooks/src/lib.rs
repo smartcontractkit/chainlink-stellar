@@ -28,13 +28,16 @@
 //! - Threshold-amount mechanism: `set_threshold_amount` + base/threshold CCV
 //!   resolution in `get_required_ccvs`.
 //! - `get_ccv_config` / `get_all_ccv_configs` readers.
-//!
-//! Deferred parity gaps (documented):
-//! - **Policy engine** — EVM runs `IPolicyEngine.run` in both preflight and
-//!   postflight. `preflight_check` is allowlist-only and `postflight_check` is
-//!   a no-op here; there is no `set_policy_engine` surface yet.
-//!
-//! Shipped (EVM parity):
+//! - **Policy engine** — the full EVM `s_policyEngine` surface: the engine is
+//!   set/cleared owner-only via `set_policy_engine` (strict) or
+//!   `force_set_policy_engine` (tolerating a reverting old-engine detach, EVM
+//!   `setPolicyEngineAllowFailedDetach`), read back via `get_policy_engine`,
+//!   and run with the preflight/postflight payload in both `preflight_check`
+//!   and `postflight_check` (EVM `IPolicyEngine.run`). Dormant when unset, as
+//!   on EVM `address(0)`. No engine contract exists on Stellar yet — these
+//!   calls target the `PolicyEngineInterface` seam
+//!   (`common_interfaces::policy_engine`), ready to be pointed at a real
+//!   engine once one ships.
 //! - **Authorized-callers invocation gating** — EVM `AdvancedPoolHooks extends
 //!   AuthorizedCallers` and calls `_validateCaller()` at the top of preflight
 //!   and postflight so only the configured pools may invoke them. Soroban has no
@@ -52,6 +55,22 @@
 //! Diverged (Soroban cannot support faithfully):
 //! - **`address(0)` sentinel** — `include_defaults: bool` replaces EVM's
 //!   `address(0)` sentinel throughout, since Soroban `Address` has no zero form.
+//! - **Policy-engine detach reason bytes** — EVM's
+//!   `PolicyEngineDetachReverted(engine, err)` / `PolicyEngineDetachFailed(engine,
+//!   reason)` carry the revert reason; Soroban's typed `try_` call API does not
+//!   surface it cheaply, so the error/event carry only the engine address.
+//! - **Policy-engine target isolation** — EVM's engine reads its own
+//!   `msg.sender` (this contract) on `run`, so only the direct caller's policy
+//!   chain can run. Soroban exposes no immediate-invoker host function (see
+//!   `common_authorization`'s `require_authorized_caller`), so the seam
+//!   carries the target explicitly and the engine enforces
+//!   `target.require_auth()` — an authorization proof, not direct-caller
+//!   identity: a relay this contract invoked could assert its identity
+//!   (trusted-relay model, documented on `PolicyEngineInterface`). This
+//!   contract invokes the engine directly, with no contract in between.
+//! - **Postflight policy context** — EVM passes `releaseOrMintIn.offchainTokenData`
+//!   as the run context; that field is unused in v2+ (always empty), and
+//!   `ReleaseOrMintIn` here has no such field, so empty `Bytes` is passed.
 #![no_std]
 
 mod events;
@@ -764,10 +783,19 @@ impl AdvancedPoolHooksContract {
             context,
         };
         let client = PolicyEngineClient::new(env, &pe);
-        // Non-`try_` run: a policy rejection reverts/aborts, propagating up and
-        // blocking the transfer — EVM `policyEngine.run` revert parity. The
-        // pool already treats any hooks failure as an abort.
-        client.run(&payload);
+        // `target` = this contract's own address — on EVM the engine reads its
+        // `msg.sender` (the hooks contract) to key the policy chain; Soroban
+        // has no `msg.sender`, so the target is passed explicitly and the
+        // engine requires `target.require_auth()`. That proves the hooks
+        // authorized the run, not that it is the direct caller — a relay this
+        // contract invoked could assert its identity (trusted-relay model, see
+        // `PolicyEngineInterface`'s security notes). This contract invokes the
+        // engine directly with no contract in between, so no relay can sit in
+        // this path. Non-`try_` run: a policy rejection reverts/aborts,
+        // propagating up and blocking the transfer — EVM `policyEngine.run`
+        // revert parity. The pool already treats any hooks failure as an
+        // abort.
+        client.run(&env.current_contract_address(), &payload);
         Ok(())
     }
 }

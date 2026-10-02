@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -1249,8 +1250,23 @@ func (d *Deployer) SubmitClassicOperation(ctx context.Context, op txnbuild.Opera
 
 // DeploySACToken deploys a Soroban Asset Contract (SAC) wrapper for a classic
 // Stellar asset and returns the resulting contract ID (C… strkey).
-// The contract address is deterministic based on the network passphrase and asset.
+// The contract address is deterministic based on the network passphrase and
+// asset, so if a SAC for the asset already exists it is adopted as-is.
 func (d *Deployer) DeploySACToken(ctx context.Context, asset xdr.Asset) (string, error) {
+	contractID, err := ComputeSACContractID(d.networkPassphrase, asset)
+	if err != nil {
+		return "", fmt.Errorf("compute SAC contract ID: %w", err)
+	}
+	key, err := ContractInstanceLedgerKey(contractID)
+	if err != nil {
+		return "", err
+	}
+	if _, err = d.fetchLedgerEntry(ctx, key); err == nil {
+		return contractID, nil
+	} else if !errors.Is(err, ErrLedgerEntryNotFound) {
+		return "", fmt.Errorf("check existing SAC: %w", err)
+	}
+
 	src, err := d.getSourceAccount(ctx)
 	if err != nil {
 		return "", fmt.Errorf("load source account: %w", err)
@@ -1274,11 +1290,6 @@ func (d *Deployer) DeploySACToken(ctx context.Context, asset xdr.Asset) (string,
 
 	if _, err = d.buildAndSubmitTransaction(ctx, src, op); err != nil {
 		return "", fmt.Errorf("deploy SAC: %w", err)
-	}
-
-	contractID, err := ComputeSACContractID(d.networkPassphrase, asset)
-	if err != nil {
-		return "", fmt.Errorf("compute SAC contract ID: %w", err)
 	}
 	return contractID, nil
 }

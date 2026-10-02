@@ -64,6 +64,9 @@ CONTRACTS=(
   "token_lock_box|TokenLockBox|token_lock_box|0"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"
   "advanced_pool_hooks|AdvancedPoolHooks|advanced_pool_hooks|0|"
+  # advanced_pool_hooks_extractor: both fns are pure views (EVM IExtractor
+  # extract/type_and_version are `external pure/view`), so both simulate.
+  "advanced_pool_hooks_extractor|AdvancedPoolHooksExtractor|advanced_pool_hooks_extractor|0||extract,type_and_version"
   "mcms|Mcms|mcms|0"
   "timelock|Timelock|timelock|0|"
   "forwarder|Forwarder|cre|0|"

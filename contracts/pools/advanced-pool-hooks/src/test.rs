@@ -9,7 +9,7 @@ use crate::types::CCVConfigArg;
 use crate::{AdvancedPoolHooksContract, AdvancedPoolHooksContractClient};
 use common_error::CCIPError;
 use common_interfaces::policy_engine::{Payload, PolicyData};
-use common_interfaces::pool_hooks::PoolHooksPayloadData;
+use common_interfaces::pool_hooks::{PoolHooksPayloadData, PreflightPayload};
 use common_interfaces::token_pool::{LockOrBurnIn, MessageDirection, ReleaseOrMintIn};
 
 const REMOTE_CHAIN: u64 = 5009297550715157269;
@@ -499,14 +499,15 @@ fn test_apply_allowlist_updates_adds_and_removes() {
 }
 
 // ============================================================
-// postflight (deferred policy -> no-op)
+// postflight with no engine attached (dormant policy -> no-op)
 // ============================================================
 
 #[test]
-fn test_postflight_is_noop() {
+fn test_postflight_noop_without_engine() {
     let (env, client, _owner) = setup();
     let caller = authorize_caller(&client);
-    // Non-try call panics on Err; reaching the end means Ok (no-op).
+    // No engine attached -> the policy run is skipped; reaching the end
+    // means Ok (EVM address(0) short-circuit).
     client.postflight_check(
         &caller,
         &ReleaseOrMintIn {
@@ -1014,7 +1015,7 @@ fn test_upgrade_by_non_owner_rejected() {
 // ============================================================
 
 /// In-workspace mock policy engine. Implements the `PolicyEngineInterface` ABI
-/// (`attach`/`detach`/`run`/`type_and_version`) so the hooks' `PolicyEngineClient`
+/// (`attach`/`detach`/`run`/`check`/`type_and_version`) so the hooks' `PolicyEngineClient`
 /// can call it cross-contract. Records calls + the last `run` payload, and can
 /// be configured to revert on `detach` (adversarial old engine) or reject on
 /// `run` (policy rejection), to exercise the detach escape hatch and the
@@ -1061,7 +1062,11 @@ impl MockPolicyEngineContract {
         Ok(())
     }
 
-    pub fn run(env: Env, payload: Payload) -> Result<(), CCIPError> {
+    pub fn run(env: Env, target: Address, payload: Payload) -> Result<(), CCIPError> {
+        // A real engine requires `target.require_auth()` — this proves the
+        // target authorized the run, not that it is the direct caller
+        // (trusted-relay model, see the trait docs).
+        target.require_auth();
         if env
             .storage()
             .instance()
@@ -1075,6 +1080,22 @@ impl MockPolicyEngineContract {
         env.storage()
             .instance()
             .set(&MOCK_LAST_PAYLOAD, &Some(payload));
+        Ok(())
+    }
+
+    pub fn check(env: Env, _target: Address, _payload: Payload) -> Result<(), CCIPError> {
+        // Offchain pre-validation (EVM `IPolicyEngine.check`): rejects iff `run`
+        // with the same target + payload would. No recording — `check` is a
+        // pure view; the target is asserted, not authenticated (offchain there
+        // is no call tree, matching EVM's unauthenticated `eth_call`).
+        if env
+            .storage()
+            .instance()
+            .get(&MOCK_REVERT_RUN)
+            .unwrap_or(false)
+        {
+            return Err(CCIPError::Unauthorized);
+        }
         Ok(())
     }
 
@@ -1340,4 +1361,154 @@ fn test_postflight_blocks_when_engine_rejects() {
     let caller = authorize_caller(&client);
     let rom = release_or_mint(&env);
     client.postflight_check(&caller, &rom, &0i128, &0u32);
+}
+
+#[test]
+fn test_set_policy_engine_same_value_noop() {
+    // EVM `test_setPolicyEngine_SameValue`: setting the same engine again is a
+    // no-op — no detach, no re-attach, and no events emitted.
+    let (env, client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr.clone()));
+
+    // Re-set the same value. `env.events()` reflects only the most recent
+    // top-level call (see the force-detach test), so read the event log
+    // IMMEDIATELY after this call, before any other client call clobbers it.
+    // A no-op must emit NO events at all — not just no attach event, or a
+    // buggy detach-then-fail path (detach + PolicyEngineDetachFailed) would
+    // still pass.
+    client.set_policy_engine(&Some(mock_addr.clone()));
+    let mut saw_any = false;
+    let evs = env.events().all().filter_by_contract(&client.address);
+    for e in evs.events().iter() {
+        if let soroban_sdk::xdr::ContractEventBody::V0(ref _v0) = e.body {
+            saw_any = true;
+        }
+    }
+    assert!(!saw_any, "same-value set must emit no events at all");
+    // No re-attach and no detach: both engine call counters stay at their
+    // post-initial-set values (attach 1, detach 0).
+    assert_eq!(mock_client.attach_count(), 1);
+    assert_eq!(mock_client.detach_count(), 0);
+}
+
+#[test]
+fn test_set_policy_engine_reverts_when_old_engine_has_no_detach() {
+    // EVM `test_setPolicyEngine_RevertWhen_OldEngineDoesNotImplementDetach`:
+    // an "engine" without a `detach` function fails the detach on the strict
+    // path — the Soroban `try_detach` invoke error counts as detach failure —
+    // so `set_policy_engine` reverts `PolicyEngineDetachReverted` (#806) and
+    // the engine is not swapped.
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let id = env.register(AdvancedPoolHooksContract, ());
+    let client = AdvancedPoolHooksContractClient::new(&env, &id);
+    client.initialize(&owner, &Vec::new(&env), &0i128, &Vec::new(&env), &None);
+
+    let no_detach_addr = env.register(NoDetachEngineContract, ());
+    let (real_addr, real_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(no_detach_addr.clone()));
+
+    let r = client.try_set_policy_engine(&Some(real_addr.clone()));
+    match r {
+        Ok(Ok(())) => panic!("set must not succeed when the old engine has no detach"),
+        Err(Ok(e)) => assert_eq!(e, CCIPError::PolicyEngineDetachReverted),
+        Ok(Err(_)) => panic!("unexpected conversion error"),
+        Err(Err(_)) => panic!("unexpected host error"),
+    }
+    assert_eq!(
+        client.get_policy_engine(),
+        Some(no_detach_addr),
+        "engine must not swap"
+    );
+    assert_eq!(
+        real_client.attach_count(),
+        0,
+        "new engine must not be attached"
+    );
+}
+
+/// A mock policy engine that implements the ABI **except** `detach` — standing
+/// in for EVM `MockPolicyEngineNoDetach` on the strict-detach path above.
+#[contract]
+pub struct NoDetachEngineContract;
+
+#[contractimpl]
+impl NoDetachEngineContract {
+    pub fn attach(env: Env, target: Address) -> Result<(), CCIPError> {
+        target.require_auth();
+        let _ = &env; // no bookkeeping needed — the hooks only checks success
+        Ok(())
+    }
+
+    pub fn run(env: Env, target: Address, _payload: Payload) -> Result<(), CCIPError> {
+        target.require_auth();
+        let _ = &env; // no bookkeeping needed — the hooks only checks success
+        Ok(())
+    }
+
+    pub fn check(_env: Env, _target: Address, _payload: Payload) -> Result<(), CCIPError> {
+        Ok(())
+    }
+
+    pub fn type_and_version(env: Env) -> String {
+        String::from_str(&env, "NoDetachEngine 1.0.0")
+    }
+}
+
+#[test]
+fn test_preflight_allowlist_and_policy_engine() {
+    // EVM `test_preflightCheck_AllowListAndPolicyEngine`: allowlist enabled AND
+    // an engine attached — the allowlisted sender passes both gates and the
+    // engine records the payload.
+    let (env, client, _owner, allowlist) = setup_with_allowlist(1);
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    client.set_policy_engine(&Some(mock_addr));
+    let caller = authorize_caller(&client);
+    let allowed = allowlist.get(0).unwrap();
+    let lob = lock_or_burn(&env, allowed.clone());
+    let token_args = Bytes::from_slice(&env, &[0x11, 0x22]);
+
+    client.preflight_check(&caller, &lob, &0u32, &token_args, &0i128);
+
+    let payload = mock_client
+        .last_payload()
+        .expect("engine run must record payload");
+    assert_eq!(payload.selector, Symbol::new(&env, "preflight_check"));
+    assert_eq!(payload.sender, caller);
+    assert_eq!(payload.context, token_args);
+}
+
+#[test]
+fn test_policy_engine_check_round_trips() {
+    // `PolicyEngineClient::check` (EVM `IPolicyEngine.check`): offchain
+    // pre-validation — Ok when the run would pass, Err when it would reject.
+    // The target is passed explicitly (EVM: tooling simulates `check` with
+    // `from = target`, since the engine keys policies by its `msg.sender`).
+    let (env, hooks_client, _owner) = setup();
+    let (mock_addr, mock_client) = register_mock_engine(&env);
+    let engine_client = common_interfaces::policy_engine::PolicyEngineClient::new(&env, &mock_addr);
+    let payload = Payload {
+        selector: Symbol::new(&env, "preflight_check"),
+        sender: Address::generate(&env),
+        data: PolicyData::PoolHooks(PoolHooksPayloadData::Preflight(PreflightPayload {
+            lock_or_burn_in: lock_or_burn(&env, Address::generate(&env)),
+            requested_finality: 0,
+            amount_post_fee: 0,
+        })),
+        context: Bytes::new(&env),
+    };
+
+    engine_client.check(&hooks_client.address, &payload);
+
+    mock_client.set_revert_on_run(&true);
+    let r = engine_client.try_check(&hooks_client.address, &payload);
+    match r {
+        Ok(Ok(())) => panic!("check must not pass when the run would reject"),
+        Err(Ok(e)) => assert_eq!(e, CCIPError::Unauthorized),
+        Ok(Err(_)) => panic!("unexpected conversion error"),
+        Err(Err(_)) => panic!("unexpected host error"),
+    }
 }
