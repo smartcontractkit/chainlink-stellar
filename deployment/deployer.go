@@ -664,8 +664,39 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 	}, nil
 }
 
-// buildAndSubmitTransaction builds, signs, and submits a transaction.
+// buildAndSubmitTransaction builds, signs, and submits a transaction. A
+// transaction the network includes but rejects at execution for exceeding its
+// declared resource budget is retried from a fresh simulation: the declared
+// budget comes from our pre-submission simulation, and under concurrent
+// deployment two transactions touching the same fresh ledger entry (e.g. two
+// tests uploading identical WASM bytes) can race — the second one's execution
+// pays an entry-exists cost its simulation, run before the first one landed,
+// did not. Re-simulating against the then-current ledger state converges: each
+// failed attempt means the conflicting transaction landed, so the next
+// simulation budgets the entry-exists path. A failed-but-included transaction
+// still consumes a source-account sequence number, so each retry re-fetches
+// the account.
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
+	const maxAttempts = 3
+	for attempt := 1; ; attempt++ {
+		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op)
+		if err == nil {
+			return meta, nil
+		}
+		var rle *resourceLimitExceededError
+		if !errors.As(err, &rle) || attempt == maxAttempts {
+			return nil, err
+		}
+		sourceAccount, err = d.getSourceAccount(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get source account for retry: %w", err)
+		}
+	}
+}
+
+// buildSimulateAndSubmitOnce performs a single build -> simulate -> (restore)
+// -> assemble -> submit round of buildAndSubmitTransaction.
+func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	// Establish a single deadline shared by the transaction's time-bound and the
 	// confirmation poll, so they are always in sync. After a successful auto-restore
 	// path, the deadline is refreshed (restore can consume most of the initial window).
@@ -837,6 +868,9 @@ func (d *Deployer) waitForTransaction(ctx context.Context, hash string, deadline
 				}
 				return &meta, nil
 			case "FAILED":
+				if isInvokeHostFunctionResourceLimitExceeded(result.ResultXDR) {
+					return nil, &resourceLimitExceededError{hash: hash, resultXDR: result.ResultXDR, diagnostics: result.DiagnosticEventsXDR}
+				}
 				return nil, fmt.Errorf("transaction failed (hash: %s, resultXDR: %q, diagnostics: %v)",
 					hash, result.ResultXDR, result.DiagnosticEventsXDR)
 			case "NOT_FOUND":
@@ -844,6 +878,48 @@ func (d *Deployer) waitForTransaction(ctx context.Context, hash string, deadline
 			}
 		}
 	}
+}
+
+// resourceLimitExceededError marks a transaction the network included but
+// rejected at execution for exceeding its declared resource budget (Soroban
+// InvokeHostFunctionResultCodeInvokeHostFunctionResourceLimitExceeded). The
+// declared budget came from our pre-submission simulation, so this is
+// simulation/execution drift — not a deterministic contract failure — and the
+// transaction can be rebuilt against the current ledger state and retried.
+type resourceLimitExceededError struct {
+	hash        string
+	resultXDR   string
+	diagnostics []string
+}
+
+func (e *resourceLimitExceededError) Error() string {
+	return fmt.Sprintf("transaction failed (hash: %s, resultXDR: %q, diagnostics: %v)",
+		e.hash, e.resultXDR, e.diagnostics)
+}
+
+// isInvokeHostFunctionResourceLimitExceeded reports whether resultXDR is a
+// failed transaction whose only operation is an invoke-host-function op that
+// exceeded its declared resource budget at execution.
+func isInvokeHostFunctionResourceLimitExceeded(resultXDR string) bool {
+	if resultXDR == "" {
+		return false
+	}
+	var result xdr.TransactionResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
+		return false
+	}
+	if result.Result.Code != xdr.TransactionResultCodeTxFailed ||
+		result.Result.Results == nil || len(*result.Result.Results) != 1 {
+		return false
+	}
+	opRes := (*result.Result.Results)[0]
+	if opRes.Code != xdr.OperationResultCodeOpInner || opRes.Tr == nil {
+		return false
+	}
+	if opRes.Tr.Type != xdr.OperationTypeInvokeHostFunction || opRes.Tr.InvokeHostFunctionResult == nil {
+		return false
+	}
+	return opRes.Tr.InvokeHostFunctionResult.Code == xdr.InvokeHostFunctionResultCodeInvokeHostFunctionResourceLimitExceeded
 }
 
 // feeBumpExtra returns stroops to add on top of minFee for a fee bump factor (>= 1).
