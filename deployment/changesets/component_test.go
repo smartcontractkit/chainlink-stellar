@@ -95,6 +95,22 @@ func TestVerifyPreconditions_MissingDependency(t *testing.T) {
 		{"receiver without router", func(e cldf.Environment) error {
 			return DeployCCIPReceiver{}.VerifyPreconditions(e, DeployCCIPReceiverConfig{ChainSelector: sel})
 		}, "deploy Router first"},
+		{"burn-mint pool without router", func(e cldf.Environment) error {
+			return DeployBurnMintPool{}.VerifyPreconditions(e, DeployBurnMintPoolConfig{
+				ChainSelector: sel, Qualifier: "BnM", Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", TokenDecimals: 7,
+			})
+		}, "deploy Router first"},
+		{"lock-release pool without router", func(e cldf.Environment) error {
+			return DeployLockReleasePool{}.VerifyPreconditions(e, DeployLockReleasePoolConfig{
+				ChainSelector: sel, Qualifier: "BnM", Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+				TokenDecimals: 7, LockBox: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+			})
+		}, "deploy Router first"},
+		{"siloed pool without router", func(e cldf.Environment) error {
+			return DeploySiloedLockReleasePool{}.VerifyPreconditions(e, DeploySiloedLockReleasePoolConfig{
+				ChainSelector: sel, Qualifier: "BnM", Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", TokenDecimals: 7,
+			})
+		}, "deploy Router first"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.verify(env)
@@ -111,6 +127,7 @@ func TestVerifyPreconditions_DependenciesPresent(t *testing.T) {
 		testRef(stellarccip.RMNProxyDatastoreRef(), sel),
 		testRef(stellarccip.FeeQuoterDatastoreRef(), sel),
 		testRef(stellarccip.RouterDatastoreRef(), sel),
+		testRef(stellarccip.RampRegistryDatastoreRef(), sel),
 	)
 
 	require.NoError(t, DeployRMNProxy{}.VerifyPreconditions(env, DeployRMNProxyConfig{ChainSelector: sel}))
@@ -122,6 +139,19 @@ func TestVerifyPreconditions_DependenciesPresent(t *testing.T) {
 		StorageLocations: [][]byte{{1}},
 	}))
 	require.NoError(t, DeployCCIPReceiver{}.VerifyPreconditions(env, DeployCCIPReceiverConfig{ChainSelector: sel}))
+	require.NoError(t, DeployBurnMintPool{}.VerifyPreconditions(env, DeployBurnMintPoolConfig{
+		ChainSelector: sel, Qualifier: "BnM",
+		Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", TokenDecimals: 7,
+	}))
+	require.NoError(t, DeployLockReleasePool{}.VerifyPreconditions(env, DeployLockReleasePoolConfig{
+		ChainSelector: sel, Qualifier: "BnM",
+		Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", TokenDecimals: 7,
+		LockBox: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP2KM",
+	}))
+	require.NoError(t, DeploySiloedLockReleasePool{}.VerifyPreconditions(env, DeploySiloedLockReleasePoolConfig{
+		ChainSelector: sel, Qualifier: "BnM",
+		Token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", TokenDecimals: 7,
+	}))
 }
 
 func TestVerifyPreconditions_DeployOnlyComponents(t *testing.T) {
@@ -135,6 +165,49 @@ func TestVerifyPreconditions_DeployOnlyComponents(t *testing.T) {
 	require.NoError(t, DeployRampRegistry{}.VerifyPreconditions(env, DeployRampRegistryConfig{ChainSelector: sel}))
 	require.NoError(t, DeployVVR{}.VerifyPreconditions(env, DeployVVRConfig{ChainSelector: sel}))
 	require.NoError(t, DeployExecutor{}.VerifyPreconditions(env, DeployExecutorConfig{ChainSelector: sel}))
+
+	// The peripheral components without datastore dependencies (the extractor
+	// is deploy-only and stateless; the tokens need no core refs).
+	require.NoError(t, DeployAdvancedPoolHooksExtractor{}.VerifyPreconditions(env, DeployAdvancedPoolHooksExtractorConfig{ChainSelector: sel}))
+	require.NoError(t, DeployBnmToken{}.VerifyPreconditions(env, DeployBnmTokenConfig{ChainSelector: sel}))
+	require.NoError(t, DeployLinkToken{}.VerifyPreconditions(env, DeployLinkTokenConfig{ChainSelector: sel}))
+}
+
+func TestVerifyPreconditions_PeripheralParams(t *testing.T) {
+	sel := chainsel.STELLAR_LOCALNET.Selector
+	env := testEnvironment(t, sel, true,
+		testRef(stellarccip.RMNProxyDatastoreRef(), sel),
+		testRef(stellarccip.RouterDatastoreRef(), sel),
+		testRef(stellarccip.RampRegistryDatastoreRef(), sel),
+	)
+	strkey := "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+
+	// The multi-instance components fail fast without a qualifier: two
+	// instances sharing one would collide on ref, salt and op report keys.
+	err := DeployAdvancedPoolHooks{}.VerifyPreconditions(env, DeployAdvancedPoolHooksConfig{ChainSelector: sel})
+	require.ErrorContains(t, err, "qualifier is required")
+	err = DeployTokenLockBox{}.VerifyPreconditions(env, DeployTokenLockBoxConfig{ChainSelector: sel, Token: strkey})
+	require.ErrorContains(t, err, "qualifier is required")
+	err = DeployBurnMintPool{}.VerifyPreconditions(env, DeployBurnMintPoolConfig{
+		ChainSelector: sel, Token: strkey, TokenDecimals: 7,
+	})
+	require.ErrorContains(t, err, "qualifier is required")
+
+	// The token-dependent components fail fast without the token.
+	err = DeployBurnMintPool{}.VerifyPreconditions(env, DeployBurnMintPoolConfig{
+		ChainSelector: sel, Qualifier: "BnM", TokenDecimals: 7,
+	})
+	require.ErrorContains(t, err, "token is required")
+	err = DeployBurnMintPool{}.VerifyPreconditions(env, DeployBurnMintPoolConfig{
+		ChainSelector: sel, Qualifier: "BnM", Token: strkey,
+	})
+	require.ErrorContains(t, err, "tokenDecimals is required")
+	err = DeployTokenLockBox{}.VerifyPreconditions(env, DeployTokenLockBoxConfig{ChainSelector: sel, Qualifier: "BnM"})
+	require.ErrorContains(t, err, "token is required")
+	err = DeployLockReleasePool{}.VerifyPreconditions(env, DeployLockReleasePoolConfig{
+		ChainSelector: sel, Qualifier: "BnM", Token: strkey, TokenDecimals: 7,
+	})
+	require.ErrorContains(t, err, "lockBox is required")
 }
 
 func TestVerifyPreconditions_FeeQuoterParams(t *testing.T) {

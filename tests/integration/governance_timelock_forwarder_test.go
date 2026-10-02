@@ -136,10 +136,11 @@ func waitForReady(t *testing.T, ctx context.Context, reader *timelockbindings.Ti
 // event methods, so governed config ops are proven by execution success (execute_batch returns
 // nil) and direct non-owner calls reverting; ownership is asserted via Owner/GetPendingOwner.
 func TestGovernanceTimelockForwarder(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, passphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 
 	proposerKP := keypair.MustRandom()
 	anyoneKP := keypair.MustRandom()

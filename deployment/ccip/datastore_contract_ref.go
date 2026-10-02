@@ -13,7 +13,15 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	aphops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/advanced_pool_hooks"
+	aphxops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/advanced_pool_hooks_extractor"
+	bnmops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/bnm_token"
+	bmpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
+	lnkops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/link_token"
+	lrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	rrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ramp_registry"
+	slrrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
+	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 )
 
 // DatastoreSorobanContractRef is the (Type, Version, Qualifier) triple used when
@@ -232,6 +240,77 @@ func ExecutorProxyDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(proxy.ContractType),
 		Version:   proxy.Version,
+		Qualifier: qualifier,
+	}
+}
+
+// Datastore refs for the CCIP peripheral components (tokens, token pools, and
+// the per-token hooks contracts). The BnM/LINK tokens and the stateless
+// extractor are singletons per chain (empty qualifier); the pools, the lock box,
+// and the hooks take a qualifier because more than one instance can live on a
+// chain (one per token) — pass the token symbol or another instance-identifying
+// string.
+
+func BnmTokenDatastoreRef() DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(bnmops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: "",
+	}
+}
+
+func LinkTokenDatastoreRef() DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(lnkops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: "",
+	}
+}
+
+func AdvancedPoolHooksDatastoreRef(qualifier string) DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(aphops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: qualifier,
+	}
+}
+
+func AdvancedPoolHooksExtractorDatastoreRef() DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(aphxops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: "",
+	}
+}
+
+func BurnMintPoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(bmpops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: qualifier,
+	}
+}
+
+func LockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(lrops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: qualifier,
+	}
+}
+
+func SiloedLockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(slrrops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: qualifier,
+	}
+}
+
+func TokenLockBoxDatastoreRef(qualifier string) DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(tlbops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: qualifier,
 	}
 }

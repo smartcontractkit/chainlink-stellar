@@ -27,10 +27,11 @@ var globalCurseSubject = [16]byte{
 }
 
 func TestRmnRemote(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	t.Log("Deploying RmnRemote contract...")
 	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-remote")
@@ -229,10 +230,11 @@ func TestRmnRemote(t *testing.T) {
 // TestRmnRemoteCurseAdmins exercises owner vs curse-admin authorization for curse,
 // uncurse, and apply_curse_admin_updates on a fresh RMN Remote deployment.
 func TestRmnRemoteCurseAdmins(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, ownerDep, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, ownerDep, rpcClient, passphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 
 	b := cldfops.NewBundle(
 		func() context.Context { return ctx },

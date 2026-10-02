@@ -87,10 +87,11 @@ func assertApplyOnrampUpdatesRejectsNonOwner(t *testing.T, ctx context.Context, 
 // strangers, and only succeeds via schedule → wait → execute. Execution is permissionless in the timelock
 // Only PROPOSER can schedule.
 func TestGovernanceTimelockRampRegistry(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, passphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 
 	proposerKP := keypair.MustRandom()
 	anyoneKP := keypair.MustRandom()

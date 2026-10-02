@@ -207,10 +207,11 @@ func bnmBalanceOrFatal(ctx context.Context, t *testing.T, client *bnmbindings.Bn
 // the lock-release lane (token_pool_test.go): there is no lockbox, and the
 // pool never holds the principal — its balance only moves by the fee accrual.
 func TestBnmTokenPoolOutbound(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const destChain = uint64(11111)
@@ -331,10 +332,11 @@ func TestBnmTokenPoolOutbound(t *testing.T) {
 // the receiver balance is minted out of nothing and the pool's own balance is
 // untouched — there is no lockbox to withdraw escrowed liquidity from.
 func TestBnmTokenPoolInbound(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localChain = uint64(11111)

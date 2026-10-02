@@ -56,10 +56,27 @@ type componentContract struct {
 	RefAddress string
 }
 
-// componentIdempotencyKey scopes component op reports to one network, so the
-// same deployer on two Stellar networks never reuses the other network's result.
-func componentIdempotencyKey(chainSelector uint64) string {
-	return strconv.FormatUint(chainSelector, 10)
+// componentIdempotencyKey scopes component op reports to one network and one
+// component instance, so neither the same deployer on two Stellar networks nor
+// two instances of a multi-instance component (per-token pools, per-token
+// hooks) on one network reuses another instance's result. instance is the
+// component's salt label for deploy ops and its qualifier for init ops.
+func componentIdempotencyKey(chainSelector uint64, instance string) string {
+	key := strconv.FormatUint(chainSelector, 10)
+	if instance != "" {
+		key += ":" + instance
+	}
+	return key
+}
+
+// componentSaltLabel builds a deterministic salt label that stays unique per
+// component instance, appending the qualifier for multi-instance components so
+// two instances never share a predicted contract ID.
+func componentSaltLabel(name, qualifier string) string {
+	if qualifier == "" {
+		return name
+	}
+	return name + "-" + qualifier
 }
 
 // resolveComponentContract applies skip layers 1 and 2 (design "Skip-if-exists"):
@@ -99,7 +116,7 @@ func resolveComponentContract(
 	}
 	if !exists {
 		out, err := execStellarCCIPOp(b, deps.StellarDeps, deployOp, stellarops.DeployInput{WasmPath: wasmPath, Salt: salt},
-			cldf_ops.WithIdempotencyKey[stellarops.DeployInput, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector)))
+			cldf_ops.WithIdempotencyKey[stellarops.DeployInput, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector, saltLabel)))
 		if err != nil {
 			return componentContract{}, fmt.Errorf("deploy %s: %w", ref.Type, err)
 		}
@@ -207,23 +224,51 @@ func deployAndInitialize(
 		}
 		out.Initialized = true
 	}
-	if contract.Deployed || contract.Adopted {
-		refs, err := componentRefs(ref, chainSelector, contract.ID)
-		if err != nil {
-			return ComponentDeployOutput{}, err
-		}
-		out.Refs = refs
-	} else if contract.FromRef && !strings.HasPrefix(contract.RefAddress, "0x") {
-		// A ref recorded by hand may carry the C… strkey instead of the hex the
-		// datastore readers (adapters, lane config) expect; rewrite the row to
-		// hex, as the orchestrator's old tail block did for every row.
-		refs, err := componentRefs(ref, chainSelector, contract.ID)
-		if err != nil {
-			return ComponentDeployOutput{}, err
-		}
-		out.Refs = refs
+	refs, err := componentRefsToRecord(contract, ref, chainSelector)
+	if err != nil {
+		return ComponentDeployOutput{}, err
 	}
+	out.Refs = refs
 	return out, nil
+}
+
+// deployStatelessComponent deploys a component with no initialize step — a
+// stateless contract exposing only pure views, so there is no owner() to read
+// and no third skip layer. Layers 1-2 (datastore ref, predicted contract ID +
+// WASM hash) provide the same rerun safety as the initialized components.
+func deployStatelessComponent(
+	ctx context.Context,
+	b cldf_ops.Bundle,
+	deps ComponentDeps,
+	deployOp *cldf_ops.Operation[stellarops.DeployInput, stellarops.DeployOutput, stellardeps.StellarDeps],
+	ref stellarccip.DatastoreSorobanContractRef,
+	chainSelector uint64,
+	saltLabel, wasmPath string,
+	existing []datastore.AddressRef,
+) (ComponentDeployOutput, error) {
+	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, existing)
+	if err != nil {
+		return ComponentDeployOutput{}, err
+	}
+	refs, err := componentRefsToRecord(contract, ref, chainSelector)
+	if err != nil {
+		return ComponentDeployOutput{}, err
+	}
+	return ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed, Refs: refs}, nil
+}
+
+// componentRefsToRecord returns the datastore refs a resolved component must
+// record: new deploys and adoptions always; a ref reuse only when the row was
+// hand-recorded as a strkey and needs the hex rewrite the datastore readers
+// (adapters, lane config) expect.
+func componentRefsToRecord(contract componentContract, ref stellarccip.DatastoreSorobanContractRef, chainSelector uint64) ([]datastore.AddressRef, error) {
+	if contract.Deployed || contract.Adopted {
+		return componentRefs(ref, chainSelector, contract.ID)
+	}
+	if contract.FromRef && !strings.HasPrefix(contract.RefAddress, "0x") {
+		return componentRefs(ref, chainSelector, contract.ID)
+	}
+	return nil, nil
 }
 
 // componentRefs returns the datastore refs a newly deployed or adopted contract

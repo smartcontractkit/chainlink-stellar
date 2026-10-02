@@ -32,12 +32,13 @@ import (
 // wired into the OnRamp DynamicConfig. The distribution/conservation subtests do not
 // depend on the mock and are the primary assertion.
 func TestOnRampFeeDistribution(t *testing.T) {
+	t.Parallel()
 	// Two shared sends (data-only + token) over one stack + one outbound wire, plus a
 	// sweep. 10m matches the other full-stack integration tests (WASM deploys + RPC).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localSourceChain = uint64(11111)

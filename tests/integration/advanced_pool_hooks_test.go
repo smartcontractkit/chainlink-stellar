@@ -67,13 +67,14 @@ func deployHooks(ctx context.Context, t *testing.T, projectRoot, deployerAddr st
 }
 
 func TestAdvancedPoolHooks(t *testing.T) {
+	t.Parallel()
 	// WASM deploys + RPC against the local quickstart sandbox. Other integration
 	// tests use 5-10m; this exercises a single lightweight contract plus one pool
 	// wiring, so 10m is comfortable headroom.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	t.Run("deploy, initialize, and verify readers", func(t *testing.T) {

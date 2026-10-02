@@ -19,10 +19,11 @@ import (
 )
 
 func TestOnRamp(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	t.Run("can deploy onramp contract", func(t *testing.T) {
 		// Deploy the OnRamp contract
@@ -292,10 +293,11 @@ func findReceiptByIssuer(t *testing.T, receipts []onrampbindings.Receipt, wantIs
 // non-zero value here would mean either an unintended executor payout or execution gas
 // being charged to a message that will not be executed — both severe economic bugs.
 func TestOnRampNoExecutionSentinelZeroExecutorFee(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localSourceChain = uint64(11111)
@@ -411,10 +413,11 @@ func TestOnRampNoExecutionSentinelZeroExecutorFee(t *testing.T) {
 // either the resolution path collapsed to no-exec behaviour or the gas price was
 // mis-seeded (L-12).
 func TestOnRampFunctionalExecutorChargesExecutionFee(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localSourceChain = uint64(11111)

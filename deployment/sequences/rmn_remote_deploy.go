@@ -71,7 +71,16 @@ func defaultOwner(owner, deployerAddress string) string {
 	return owner
 }
 
-// withComponentIdempotencyKey scopes a component op's reports to the chain.
+// withComponentIdempotencyKey scopes a singleton component op's reports to the
+// chain. Multi-instance components (per-token pools, per-token hooks) must use
+// withComponentInstanceIdempotencyKey instead.
 func withComponentIdempotencyKey[IN any](chainSelector uint64) cldf_ops.ExecuteOption[IN, stellardeps.StellarDeps] {
-	return cldf_ops.WithIdempotencyKey[IN, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector))
+	return cldf_ops.WithIdempotencyKey[IN, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector, ""))
+}
+
+// withComponentInstanceIdempotencyKey scopes a multi-instance component op's
+// reports to the chain and the instance (its qualifier), so deploying a second
+// pool or hooks contract never reuses the first instance's cached op report.
+func withComponentInstanceIdempotencyKey[IN any](chainSelector uint64, qualifier string) cldf_ops.ExecuteOption[IN, stellardeps.StellarDeps] {
+	return cldf_ops.WithIdempotencyKey[IN, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector, qualifier))
 }

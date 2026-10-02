@@ -128,12 +128,13 @@ func (s *fullStack) deployAdditionalLockReleasePool(
 // hooks-less token on the same lane uses only the lane default — both via the real
 // Router → OnRamp → pool → hooks → merge → receipts path on-network.
 func TestAdvancedPoolHooksOutboundSend(t *testing.T) {
+	t.Parallel()
 	// Two full sends (hooked-augment token + default-only token) over one stack +
 	// one outbound wire. 10m matches the other full-stack integration tests.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localSourceChain = uint64(11111)
@@ -384,10 +385,11 @@ func TestAdvancedPoolHooksOutboundSend(t *testing.T) {
 // into the required set, so execute fails when it is missing and succeeds when it is
 // supplied — proving the pool (not the lane) dictates inbound verification.
 func TestAdvancedPoolHooksInboundExecute(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localChain = uint64(11111)
