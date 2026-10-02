@@ -50,3 +50,10 @@ jobs:
       - name: Run unit tests (deployment module)
         working-directory: deployment
         run: go test -v -race -fullpath -shuffle on ./...
+
+      # The /capabilities directory is a separate, deliberately small Go module
+      # (capabilities/go.mod): the in-process Stellar chain capability used by
+      # cre-cli's `cre workflow simulate`.
+      - name: Run unit tests (capabilities module)
+        working-directory: capabilities
+        run: go test -v -race -fullpath -shuffle on ./...

@@ -22,6 +22,7 @@ members = [
   "contracts/rmn_remote",
   "contracts/router",
   "contracts/cre/forwarder",
+  "contracts/cre/mock_forwarder",
   "contracts/cre/test/read_fixture",
   "contracts/cre/test/receiver",
   "contracts/cre/test/rejecting_receiver",

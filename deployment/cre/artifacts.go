@@ -21,6 +21,11 @@ const (
 	// ForwarderWasm is the CRE forwarder (contracts/cre/forwarder).
 	ForwarderWasm = "forwarder.wasm"
 
+	// MockForwarderWasm is the permissionless CRE forwarder used by workflow
+	// simulation (contracts/cre/mock_forwarder). It skips DON signature
+	// verification.
+	MockForwarderWasm = "mock_forwarder.wasm"
+
 	// ReceiverWasm is the CRE test receiver (contracts/cre/test/receiver).
 	ReceiverWasm = "receiver.wasm"
 

@@ -76,6 +76,7 @@ CONTRACTS=(
   "mcms|mcms|Mcms|0|auth_,mcms_"
   "timelock|timelock|Timelock|0|tl_"
   "forwarder|forwarder|cre|0|auth_,forwarder_"
+  "mock_forwarder|mock_forwarder|MockForwarder|0|forwarder_"
   "data_feeds_cache|data_feeds_cache|DataFeedsCache|0|"
   "data_feeds_proxy|data_feeds_proxy|DataFeedsProxy|0|"
 )
