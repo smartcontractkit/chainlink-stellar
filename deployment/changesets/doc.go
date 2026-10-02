@@ -14,6 +14,19 @@
 //	        CommitteeVerifier (RMN Proxy + StorageLocations in its config)
 //	tier 3: ccip_receiver_example (Router)
 //
+// Peripheral components (one instance per token, identified by the config
+// Qualifier where several can share a chain):
+//
+//	        bnm_token, link_token (no datastore dependencies; the pool
+//	        changesets take the token strkey from config);
+//	        advanced_pool_hooks (issuer-owned hooks contract);
+//	        advanced_pool_hooks_extractor (stateless singleton, deploy-only);
+//	        token_lock_box (needs the token strkey in its config)
+//	Peripheral pools (need Router + RampRegistry + RMN Proxy from the
+//	        datastore, plus the token strkey — and, for the canonical
+//	        lock-release pool, the lock box strkey — in their config):
+//	        burn_mint_pool, lock_release_pool, siloed_lock_release_pool
+//
 // VerifyPreconditions returns "deploy <X> first" when a dependency ref is
 // missing from the datastore.
 //

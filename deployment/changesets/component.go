@@ -22,6 +22,14 @@ type componentDep struct {
 	ref  stellarccip.DatastoreSorobanContractRef
 }
 
+// poolStackDeps are the datastore dependencies every token pool changeset
+// resolves: the core CCIP stack a pool initializes against.
+var poolStackDeps = []componentDep{
+	{name: "Router", ref: stellarccip.RouterDatastoreRef()},
+	{name: "RampRegistry", ref: stellarccip.RampRegistryDatastoreRef()},
+	{name: "RMN Proxy", ref: stellarccip.RMNProxyDatastoreRef()},
+}
+
 // verifyComponent checks the shared preconditions of every component
 // changeset: the chain is in the environment, the datastore is loaded and
 // every dependency ref exists. Component-specific param checks run through
