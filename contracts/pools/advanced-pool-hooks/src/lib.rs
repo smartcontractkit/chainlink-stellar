@@ -59,6 +59,15 @@
 //!   `PolicyEngineDetachReverted(engine, err)` / `PolicyEngineDetachFailed(engine,
 //!   reason)` carry the revert reason; Soroban's typed `try_` call API does not
 //!   surface it cheaply, so the error/event carry only the engine address.
+//! - **Policy-engine target isolation** — EVM's engine reads its own
+//!   `msg.sender` (this contract) on `run`, so only the direct caller's policy
+//!   chain can run. Soroban exposes no immediate-invoker host function (see
+//!   `common_authorization`'s `require_authorized_caller`), so the seam
+//!   carries the target explicitly and the engine enforces
+//!   `target.require_auth()` — an authorization proof, not direct-caller
+//!   identity: a relay this contract invoked could assert its identity
+//!   (trusted-relay model, documented on `PolicyEngineInterface`). This
+//!   contract invokes the engine directly, with no contract in between.
 //! - **Postflight policy context** — EVM passes `releaseOrMintIn.offchainTokenData`
 //!   as the run context; that field is unused in v2+ (always empty), and
 //!   `ReleaseOrMintIn` here has no such field, so empty `Bytes` is passed.
@@ -774,10 +783,19 @@ impl AdvancedPoolHooksContract {
             context,
         };
         let client = PolicyEngineClient::new(env, &pe);
-        // Non-`try_` run: a policy rejection reverts/aborts, propagating up and
-        // blocking the transfer — EVM `policyEngine.run` revert parity. The
-        // pool already treats any hooks failure as an abort.
-        client.run(&payload);
+        // `target` = this contract's own address — on EVM the engine reads its
+        // `msg.sender` (the hooks contract) to key the policy chain; Soroban
+        // has no `msg.sender`, so the target is passed explicitly and the
+        // engine requires `target.require_auth()`. That proves the hooks
+        // authorized the run, not that it is the direct caller — a relay this
+        // contract invoked could assert its identity (trusted-relay model, see
+        // `PolicyEngineInterface`'s security notes). This contract invokes the
+        // engine directly with no contract in between, so no relay can sit in
+        // this path. Non-`try_` run: a policy rejection reverts/aborts,
+        // propagating up and blocking the transfer — EVM `policyEngine.run`
+        // revert parity. The pool already treats any hooks failure as an
+        // abort.
+        client.run(&env.current_contract_address(), &payload);
         Ok(())
     }
 }
