@@ -155,3 +155,32 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetDestChainConfigInput identifies a FeeQuoter destination chain config read.
+type GetDestChainConfigInput struct {
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
+}
+
+// GetDestChainConfig reads FeeQuoter `get_dest_chain_config` for one
+// destination chain. It returns (nil, nil) when the destination chain has no
+// config yet — the contract errors with DestinationChainNotEnabled (#25) for
+// unconfigured lanes, which callers treat as "not configured, apply fresh
+// values" (EVM read-before-write parity). Note the same fn name on OnRamp and
+// Executor renders a different code; stubbing by fn name alone is ambiguous.
+var GetDestChainConfig = cldfops.NewOperation(
+	"fee_quoter:get-dest-chain-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the FeeQuoter destination chain config for one destination chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetDestChainConfigInput) (*fqbindings.DestChainConfig, error) {
+		c := fqbindings.NewFeeQuoterClient(d.Invoker, in.ContractID)
+		out, err := c.GetDestChainConfig(b.GetContext(), in.DestChainSelector)
+		if err != nil {
+			if stellarops.IsContractErrorCode(err, stellarops.DestinationChainNotEnabledCode) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return out, nil
+	},
+)
