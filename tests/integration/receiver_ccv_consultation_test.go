@@ -41,10 +41,11 @@ import (
 // blob validates for any CCV that resolves to that verifier — letting a single signer
 // attest both VvrID and ccvB without a second committee.
 func TestOffRampReceiverCcvConsultation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localChainSelector, "recv-ccv", false)

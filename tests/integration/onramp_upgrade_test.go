@@ -166,10 +166,11 @@ func requireUpgradedEvent(
 //
 //	make build build-onramp-e2e-upgrade
 func TestOnRampUpgradeSwapsExecutableObservedViaSend(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	// Feature-enabled upgrade Wasm must be pre-built.

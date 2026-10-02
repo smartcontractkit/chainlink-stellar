@@ -22,10 +22,11 @@ import (
 // second run with an empty datastore (fresh bundle, no reports) adopts the
 // on-chain contract with zero deploy and initialize transactions.
 func TestTokenAdminRegistrySequenceSkipIfExists(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, passphrase, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, passphrase, _ := GetIsolatedTestEnv(ctx, t)
 
 	deps := sequences.ComponentDeps{
 		StellarDeps:       stellardeps.FromDeployer(deployer),

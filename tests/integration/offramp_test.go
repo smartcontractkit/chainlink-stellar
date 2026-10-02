@@ -68,10 +68,11 @@ func deployOffRampDependencies(
 }
 
 func TestOffRamp(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, _ := GetIsolatedTestEnv(ctx, t)
 
 	// Capture the current ledger before any subtest runs. The "initialize offramp"
 	// subtest below emits a StaticConfigSet event; the later "watch for
@@ -309,10 +310,11 @@ func TestOffRamp(t *testing.T) {
 // deployed via deployFullStack. These tests are separated from the basic TestOffRamp
 // suite because they require the full contract dependency chain.
 func TestOffRampExecute(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerKP.Address(), localChainSelector, "offramp-exec", false)
 

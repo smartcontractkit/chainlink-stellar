@@ -29,10 +29,11 @@ import (
 // succeeds when MCMS.execute invokes the timelock. execute_batch is permissionless: any submitter
 // may execute a ready operation (see contracts/timelock roles.rs).
 func TestMcmsMerkleTimelockScheduleAndExecute(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	pk, err := crypto.HexToECDSA(helpers.Anvil0SKHex)
 	if err != nil {

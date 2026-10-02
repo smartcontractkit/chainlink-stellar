@@ -45,13 +45,14 @@ func deployTestLockBox(ctx context.Context, t *testing.T, deployer *deployment.D
 }
 
 func TestTokenPool(t *testing.T) {
+	t.Parallel()
 	// Cap total test wall time (WASM deploys, RPC, event waits). Previously 20m when every subtest
 	// called deployFullStack; with two shared stacks, 10m matches headroom above other integration
 	// tests (5m) without keeping an oversized ceiling. Raise if CI flakes on slow uploads/RPC.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	t.Run("deploy and initialize lock-release pool", func(t *testing.T) {
@@ -717,10 +718,11 @@ func countBytes(haystack [][]byte, needle []byte) int {
 // (`add_remote_pool_accepts_inbound_from_new_pool`, `add_remote_pool_idempotent`,
 // `remove_remote_pool_rejects_inbound`); this test lifts them to the Go binding layer.
 func TestTokenPoolMultipleRemotePoolsCoexistence(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localSourceChain = uint64(11111)

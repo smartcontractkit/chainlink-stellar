@@ -51,3 +51,25 @@ func GetSharedTestEnv(ctx context.Context, t *testing.T) (string, *keypair.Full,
 	return sharedEnv.ProjectRoot, sharedEnv.DeployerKP, sharedEnv.Deployer,
 		sharedEnv.RPCClient, sharedEnv.NetworkPassphrase, sharedEnv.FriendbotURL
 }
+
+// GetIsolatedTestEnv returns the same values as GetSharedTestEnv but swaps the
+// shared deployer for a dedicated random keypair funded via Friendbot, so
+// tests that call t.Parallel cannot collide: every deterministic salt in the
+// suite is deployer-scoped, so a per-test deployer gives each test its own
+// contract IDs (and its own Stellar account sequence number). The underlying
+// container, RPC client, passphrase, and Friendbot stay shared — only the
+// signing identity is per-test. Tests needing the suite-wide deployer's
+// identity (none today) must use GetSharedTestEnv instead.
+func GetIsolatedTestEnv(ctx context.Context, t *testing.T) (string, *keypair.Full, *deployment.Deployer, *rpcclient.Client, string, string) {
+	t.Helper()
+	projectRoot, _, _, rpcClient, passphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+
+	kp, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("generate isolated deployer keypair: %v", err)
+	}
+	if err := helpers.FundViaFriendbot(friendbotURL, kp.Address()); err != nil {
+		t.Fatalf("fund isolated deployer %s: %v", kp.Address(), err)
+	}
+	return projectRoot, kp, deployment.NewDeployer(rpcClient, passphrase, kp), rpcClient, passphrase, friendbotURL
+}

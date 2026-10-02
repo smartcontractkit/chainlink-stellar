@@ -30,10 +30,11 @@ import (
 )
 
 func TestRouter(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	t.Run("deploy and initialize router", func(t *testing.T) {
 		t.Log("Deploying Router contract...")
@@ -297,10 +298,11 @@ func assertGetFeeRejectsBadExtraArgs(t *testing.T, err error) {
 
 // TestRouterCcipSendUnhappyPaths covers outbound Router flows that should fail before a successful send.
 func TestRouterCcipSendUnhappyPaths(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const (

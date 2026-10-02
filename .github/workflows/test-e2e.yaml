@@ -57,16 +57,59 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
 
+      # The dev images are cached so a cold runner does not pay the full 7-service
+      # CCV + 2-service Stellar rebuild (~19 min) every run. The CCV image cache key
+      # is the ccv pin recorded in the setup-chainlink-ccv action (REF/EXPECTED_SHA),
+      # so it only rotates when the pin is bumped — the common case is a cache hit.
+      # The Stellar image cache key hashes the whole Go tree plus both Dockerfiles,
+      # because the Dockerfiles build from `COPY . .`; it only hits when no relevant
+      # source changed, but then it saves two full Go builds.
+      - name: Restore CCV dev images
+        id: ccv-images
+        uses: actions/cache@v5
+        with:
+          path: /tmp/ccv-dev-images.tar.gz
+          key: ccv-dev-images-${{ hashFiles('.github/actions/setup-chainlink-ccv/action.yml') }}
+
+      - name: Load CCV dev images
+        if: steps.ccv-images.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/ccv-dev-images.tar.gz
+
       # This step assumes the `chainlink-ccv` is a sibling directory.
       - name: Build CCV Docker images
+        if: steps.ccv-images.outputs.cache-hit != 'true'
         run: make docker-ccv-dev
         env:
           DOCKER_BUILDKIT: 1
 
+      - name: Save CCV dev images
+        # Only push-to-main runs save: PR/merge-group runs restore the entry a
+        # main push created (same base), and PR-keyed entries would just fill
+        # the 10 GB repo cache with single-run duplicates.
+        if: steps.ccv-images.outputs.cache-hit != 'true' && github.event_name == 'push'
+        run: docker save verifier:dev token-verifier:dev executor:dev indexer:dev aggregator:dev pricer:dev ccv-fakes:dev | gzip > /tmp/ccv-dev-images.tar.gz
+
+      - name: Restore Stellar dev images
+        id: stellar-images
+        uses: actions/cache@v5
+        with:
+          path: /tmp/stellar-dev-images.tar.gz
+          key: stellar-dev-images-${{ hashFiles('Dockerfile.verifier', 'Dockerfile.executor', '**/*.go', '**/go.mod', '**/go.sum') }}
+
+      - name: Load Stellar dev images
+        if: steps.stellar-images.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/stellar-dev-images.tar.gz
+
       - name: Build Stellar Docker images
+        if: steps.stellar-images.outputs.cache-hit != 'true'
         run: |
           make docker-verifier
           make docker-executor
+
+      - name: Save Stellar dev images
+        # Only push-to-main runs save (see Save CCV dev images).
+        if: steps.stellar-images.outputs.cache-hit != 'true' && github.event_name == 'push'
+        run: docker save stellarcommittee-verifier:dev stellarexecutor:dev | gzip > /tmp/stellar-dev-images.tar.gz
 
       - name: Authenticate to AWS ECR (JD)
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2

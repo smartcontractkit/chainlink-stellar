@@ -253,10 +253,11 @@ func linkBalanceOrFatal(ctx context.Context, t *testing.T, client *linkbindings.
 //     lock_or_burn burns the post-fee dest_token_amount from the sender and
 //     accrues only the in-token fee on the pool's own balance (no lockbox).
 func TestLinkTokenPoolOutbound(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const destChain = uint64(11111)
@@ -385,10 +386,11 @@ func TestLinkTokenPoolOutbound(t *testing.T) {
 // of nothing by the POOL (not by any faucet), and the pool's own balance is
 // untouched — there is no lockbox to withdraw escrowed liquidity from.
 func TestLinkTokenPoolInbound(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, rpcClient, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const localChain = uint64(11111)
@@ -495,10 +497,11 @@ func TestLinkTokenPoolInbound(t *testing.T) {
 // two-step ownership propose/read/cancel legs; the positive overlap legs are
 // covered by the Rust test_two_pool_migration_overlap.
 func TestLinkTokenMinterRotation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	projectRoot, deployerKP, deployer, _, _, _ := GetSharedTestEnv(ctx, t)
+	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
 	const rotationSalt = "link-minter-rotation"

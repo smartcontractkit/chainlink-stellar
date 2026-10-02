@@ -2,6 +2,15 @@ name: Integration Tests
 
 # Runs all integration tests under tests/integration except TestTokenPool (token_pool_test.go
 # and siloed_pool_migration_test.go). Those run in test-integration-token-pool.yaml.
+#
+# The tests are split across four matrix shards (each on its own runner with its own
+# Stellar container) because they are Soroban-tx-latency bound and used to run strictly
+# serially in one job (~32 min). Rebalance the -run regexes below from live per-shard
+# timings when a shard grows lopsided. Within a shard, tests that call t.Parallel run
+# concurrently (-parallel 4); every test deploys from a per-test isolated deployer
+# (GetIsolatedTestEnv), so parallel runs cannot collide on deterministic contract IDs.
+#
+# Per-shard coverage profiles are merged in the coverage job with gocovmerge.
 
 on:
   merge_group:
@@ -18,7 +27,60 @@ permissions: {}
 
 jobs:
   test-integration:
-    name: Integration Tests (excl. Token Pool)
+    name: Integration Tests (${{ matrix.shard }})
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The four -run regexes partition all tests except TestTokenPool* (own
+        # workflow) and TestMain: ramps = 8, router-rmn-cv = 7,
+        # governance-changesets = 5, pools-hooks = 8.
+        include:
+          - shard: ramps
+            run: '^Test(OnRamp|OffRamp)'
+          - shard: router-rmn-cv
+            run: '^Test(Router|RmnRemote|CommitteeVerifier|VersionedVerifierResolver|TokenAdminRegistry)'
+          - shard: governance-changesets
+            run: '^Test(GovernanceTimelock|Mcms|Component|Peripheral)'
+          - shard: pools-hooks
+            run: '^Test(BnmTokenPool|LinkToken|AdvancedPoolHooks)'
+    steps:
+      - name: Setup integration test dependencies
+        uses: ./.github/actions/setup-integration
+        with:
+          # `make build` produces the standard release WASMs every integration
+          # test deploys from; `build-onramp-e2e-upgrade` builds the OnRamp
+          # e2e-upgrade-marker feature Wasm into an isolated target/e2e-upgrade
+          # dir, which TestOnRampUpgradeSwapsExecutableObservedViaSend upgrades
+          # to (see tests/integration/onramp_upgrade_test.go). Both are required
+          # by the ramps shard; the others only need `make build`, but the
+          # extra build is a single package and keeps one shared setup action.
+          build-targets: "build build-onramp-e2e-upgrade"
+
+      - name: Run integration tests
+        run: >
+          cd tests && go test -v -race -tags integration -fullpath -timeout 30m -shuffle on
+          -parallel 4
+          -run '${{ matrix.run }}'
+          -coverpkg=github.com/smartcontractkit/chainlink-stellar/bindings/contracts/...
+          -coverprofile=../coverage-integration-${{ matrix.shard }}.out ./integration/...
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration-${{ matrix.shard }}
+          path: coverage-integration-${{ matrix.shard }}.out
+          retention-days: 1
+
+  coverage:
+    name: Integration Tests coverage
+    needs: test-integration
+    if: ${{ always() && github.event_name == 'pull_request' }}
     permissions:
       contents: read
       pull-requests: write
@@ -27,32 +89,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Setup Rust toolchain
-        uses: ./.github/actions/setup-rust-toolchain
-        with:
-          wasm32-target: "true"
-
-      - name: Install Stellar CLI
-        uses: ./.github/actions/setup-stellar-cli
-
-      - name: Build contracts
-        # `make build` produces the standard release WASMs every integration
-        # test deploys from; `build-onramp-e2e-upgrade` builds the OnRamp
-        # e2e-upgrade-marker feature Wasm into an isolated target/e2e-upgrade
-        # dir, which TestOnRampUpgradeSwapsExecutableObservedViaSend upgrades
-        # to (see tests/integration/onramp_upgrade_test.go). Both are required.
-        run: make build build-onramp-e2e-upgrade
-
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
-      - name: Run integration tests
-        run: cd tests && go test -v -race -tags integration -fullpath -timeout 30m -shuffle on -skip '^TestTokenPool($|/)' -coverpkg=github.com/smartcontractkit/chainlink-stellar/bindings/contracts/... -coverprofile=../coverage-integration.out ./integration/...
+      - name: Download shard coverage profiles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-integration-*
+          merge-multiple: true
+
+      - name: Merge coverage profiles
+        run: |
+          go install github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c
+          gocovmerge coverage-integration-*.out > coverage-integration.out
 
       - name: Write full coverage to job summary
-        if: github.event_name == 'pull_request'
         run: |
           echo '## Integration Test Coverage (excl. Token Pool)' >> $GITHUB_STEP_SUMMARY
           echo '' >> $GITHUB_STEP_SUMMARY
@@ -61,7 +114,6 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Post coverage comment
-        if: github.event_name == 'pull_request'
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -78,7 +130,6 @@ jobs:
           sed -i 's/^          //' coverage-summary.md
 
       - name: Post sticky comment
-        if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: integration-coverage

@@ -29,10 +29,11 @@ import (
 // operations bundle, no cached reports) sends no transactions and records no
 // new refs — the skip layers do all the work.
 func TestComponentChangesetsApplyAllTwice(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	_, _, _, _, passphrase, _ := GetSharedTestEnv(ctx, t)
+	_, _, _, _, passphrase, _ := GetIsolatedTestEnv(ctx, t)
 	sel := chainsel.STELLAR_LOCALNET.Selector
 
 	// A dedicated random signer: the component salt labels are fixed, so

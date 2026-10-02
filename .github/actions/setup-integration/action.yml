@@ -1,0 +1,39 @@
+# Common setup for every integration test job: repo checkout, pinned Rust
+# toolchain with the wasm32 target, Stellar CLI, the release WASM build, and
+# Go. Shard jobs of test-integration.yaml and test-integration-token-pool.yaml
+# all start from this.
+#
+# NOTE: local `uses:` inside a composite action resolve against the workflow's
+# repository root (actions/runner#1348), not this action's directory, so the
+# sibling actions below are referenced via ./.github/actions/....
+name: Setup integration test dependencies
+description: Checkout + Rust (wasm32) + Stellar CLI + release WASMs + Go for integration tests.
+
+inputs:
+  build-targets:
+    description: Make targets that build the release WASMs (e.g. "build", or "build build-onramp-e2e-upgrade").
+    required: false
+    default: "build"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+    - name: Setup Rust toolchain
+      uses: ./.github/actions/setup-rust-toolchain
+      with:
+        wasm32-target: "true"
+
+    - name: Install Stellar CLI
+      uses: ./.github/actions/setup-stellar-cli
+
+    - name: Build contracts
+      shell: bash
+      run: make ${{ inputs.build-targets }}
+
+    - name: Setup Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      with:
+        go-version-file: go.mod
