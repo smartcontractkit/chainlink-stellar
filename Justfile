@@ -100,8 +100,14 @@ test-go-ccv:
     cd ccv && go test -v -race -fullpath -shuffle on -coverprofile=coverage-ccv.out ./...
     cd ccv && go tool cover -func=coverage-ccv.out
 
+# Run Go unit tests (capabilities module) with coverage
+# capabilities/ is its own small Go module: FakeStellarChain for `cre workflow simulate`.
+test-go-capabilities:
+    cd capabilities && go test -v -race -fullpath -shuffle on -coverprofile=coverage-capabilities.out ./...
+    cd capabilities && go tool cover -func=coverage-capabilities.out
+
 # Run all Go unit tests
-test-go-all: test-go test-go-tests test-go-bindings test-go-deployment test-go-relayer test-go-ccv
+test-go-all: test-go test-go-tests test-go-bindings test-go-deployment test-go-relayer test-go-ccv test-go-capabilities
 
 # Run Go integration tests (requires running Stellar localnet)
 test-go-integration:

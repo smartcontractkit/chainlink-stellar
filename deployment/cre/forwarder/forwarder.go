@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -27,6 +28,31 @@ func DeployForwarder(ctx context.Context, deployer *deployment.Deployer, owner s
 	client := crebindings.NewForwarderClient(deployer, contractID)
 	if err := client.Initialize(ctx, owner); err != nil {
 		return "", fmt.Errorf("initialize forwarder %s (owner %s): %w", contractID, owner, err)
+	}
+	return contractID, nil
+}
+
+// DeployMockForwarder uploads + instantiates the permissionless MockForwarder
+// used by workflow simulation, then extends its instance and code to the
+// network's maximum TTL
+func DeployMockForwarder(ctx context.Context, deployer *deployment.Deployer, wasm []byte, salt [32]byte) (string, error) {
+	if deployer == nil {
+		return "", fmt.Errorf("deployer is nil")
+	}
+	if len(wasm) == 0 {
+		return "", fmt.Errorf("mock forwarder wasm is empty")
+	}
+	contractID, err := deployer.DeployContractBytes(ctx, wasm, salt)
+	if err != nil {
+		return "", fmt.Errorf("deploy mock forwarder wasm: %w", err)
+	}
+	instanceKey, err := deployment.ContractInstanceLedgerKey(contractID)
+	if err != nil {
+		return contractID, err
+	}
+	codeKey := deployment.ContractCodeLedgerKey(xdr.Hash(sha256.Sum256(wasm)))
+	if _, err := deployer.ExtendTTLToMax(ctx, []xdr.LedgerKey{instanceKey, codeKey}); err != nil {
+		return contractID, fmt.Errorf("extend TTL of mock forwarder %s: %w", contractID, err)
 	}
 	return contractID, nil
 }
