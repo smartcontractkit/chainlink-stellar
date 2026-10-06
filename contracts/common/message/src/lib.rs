@@ -604,23 +604,29 @@ impl MessageIdCompute for CcipMessageV1 {}
 
 impl CcipMessageV1 {
     /// Compute the CCV-and-executor hash from CCV addresses and executor address.
-    /// Matches protocol.ComputeCCVAndExecutorHash() in Go.
+    /// Matches computeCcvAndExecutorHash in tests/integration/ccip_v1_wire.go.
     /// Format: keccak256(addressLength(1) || ccv1 || ccv2 || ... || executor)
     ///
-    /// All addresses must have the same byte length (derived from the executor).
+    /// Addresses are hashed as their full ScVal XDR encodings, which include the
+    /// address type discriminant — a contract address and an account address
+    /// sharing the same 32-byte key hash differently (INV-ENC-13 / report L-5;
+    /// unlike [`Self::address_raw_bytes`], which is reserved for same-type
+    /// comparisons like the no-execution sentinel). Every Stellar address XDR
+    /// encoding is 40 bytes, preserving the uniform-length assumption of the
+    /// format.
     pub fn compute_ccv_and_executor_hash(
         env: &Env,
         ccv_addresses: &Vec<Address>,
         executor: &Address,
     ) -> BytesN<32> {
-        let executor_bytes = Self::address_raw_bytes(env, executor.clone());
+        let executor_bytes = executor.to_xdr(env);
         let addr_len = executor_bytes.len() as u8;
 
         let mut encoded = Bytes::new(env);
         encoded.append(&Bytes::from_array(env, &[addr_len]));
 
         for ccv in ccv_addresses.iter() {
-            encoded.append(&Self::address_raw_bytes(env, ccv));
+            encoded.append(&ccv.to_xdr(env));
         }
 
         encoded.append(&executor_bytes);

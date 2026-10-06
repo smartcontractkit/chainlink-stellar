@@ -47,11 +47,10 @@ struct FeeBreakdown {
     message_fee: MessageFeeResult,
     /// Per-CCV fee responses (used for receipts + execution-gas-limit sum).
     ccv_fee_responses: Vec<FeeResponse>,
-    /// Executor flat fee in USD cents (from `Executor::get_fee`; 0 for no-exec).
-    executor_flat_usd_cents: u128,
-    /// Priced execution-gas cost in USD cents (via `quote_gas_for_exec`; 0 for no-exec).
-    exec_cost_usd_cents: u128,
-    /// Executor flat fee + exec cost, converted to fee-token units, for H-3
+    /// Executor fee in fee-token smallest units = the flat `Executor::get_fee`
+    /// USD-cent fee premium-converted (EVM `feeMultiplier`, OnRamp.sol:1093)
+    /// + the priced execution-gas USD-cent cost converted BARE
+    /// (OnRamp.sol:1094-1097; INV-FEE-13). For the receipt (L-7) and the H-3
     /// distribution transfer to the executor contract (0 for no-exec).
     executor_fee_tokens: i128,
     /// True iff the executor field is the no-execution sentinel (zero executor
@@ -73,19 +72,16 @@ struct FeeBreakdown {
     /// `percentMultiplier` (`FeeQuoter.sol` L337). Carried for the per-receipt
     /// distribution conversions in `forward_from_router`.
     premium_multiplier: u32,
-    /// Network-fee USD cents selected from the OnRamp's own split
+    /// Network fee in fee-token smallest units = the OnRamp's own split
     /// (`message_network_fee_usd_cents` when there is no token transfer,
-    /// `token_network_fee_usd_cents` otherwise) — the SAME source field the network
-    /// fee receipt records (M-11 / INV-FEE-11/12 parity with EVM
-    /// `OnRamp.forwardFromRouter`, which selects the split once and uses it for both
-    /// charge and receipt). Carried so `forward_from_router` builds the receipt from
-    /// the identical value the charge premium-converted.
-    network_fee_usd_cents: u32,
-    /// Network fee in fee-token smallest units = `network_fee_usd_cents`
-    /// premium-converted (EVM applies `feeMultiplier` to the network-fee receipt,
-    /// `OnRamp.sol:1089-1090`). The charged total adds this to the additional slice,
-    /// so charge == premium_convert(receipt network field), matching the CCV/pool
-    /// slices (receipt in USD cents, charge premium-converted from the same field).
+    /// `token_network_fee_usd_cents` otherwise) premium-converted (EVM applies
+    /// `feeMultiplier` to the network-fee receipt, `OnRamp.sol:1089-1090`;
+    /// M-11 / INV-FEE-11/12 parity with EVM `OnRamp.forwardFromRouter`, which
+    /// selects the split once and uses it for both charge and receipt). The
+    /// charged total adds this to the additional slice and the network fee
+    /// receipt records this same value, so charge == receipt network field —
+    /// matching the CCV/pool/executor receipts, which are also converted to
+    /// fee-token units at emission (report L-7).
     network_fee_tokens: i128,
 }
 
@@ -223,8 +219,9 @@ impl OnRampContract {
     // ========================================
 
     /// Computes total required fee (fee token base units) plus FeeQuoter message fee and
-    /// per-CCV [`FeeResponse`] values. Shared by [`Self::get_fee`] and [`Self::forward_from_router`]
-    /// so `Router::ccip_send` does not need a separate top-level `get_fee` call (Track A).
+    /// per-CCV [`FeeResponse`] values. Shared by [`Self::get_fee`] and [`Self::forward_from_router`],
+    /// which `Router::ccip_send` calls back-to-back (get_fee to quote and pull exactly the
+    /// quote, then forward_from_router with the same amount — Track A / report L-8).
     ///
     /// `merged_ccvs` and `merged_ccv_args` MUST be the final outbound plan (user + lane +
     /// pool-required + default fallback), produced by [`Self::build_merged_outbound_ccv_lists`].
@@ -522,8 +519,6 @@ impl OnRampContract {
             total_fee,
             message_fee,
             ccv_fee_responses,
-            executor_flat_usd_cents,
-            exec_cost_usd_cents,
             executor_fee_tokens,
             is_no_exec,
             execution_gas_limit,
@@ -531,7 +526,6 @@ impl OnRampContract {
             pool_dest_bytes_overhead,
             pool_fee_usd_cents,
             premium_multiplier,
-            network_fee_usd_cents,
             network_fee_tokens,
         })
     }
@@ -771,7 +765,9 @@ impl OnRampContract {
     /// # Arguments
     /// * `dest_chain_selector` - Destination chain identifier
     /// * `message` - The message to send
-    /// * `fee_token_amount` - Amount of fee token provided by router
+    /// * `fee_token_amount` - Amount of fee token provided by router (the Router
+    ///   quotes this via `get_fee` and pulls exactly the quote from the sender —
+    ///   report L-8)
     /// * `original_sender` - The original initiator of the CCIP request
     ///
     /// # Returns
@@ -927,11 +923,21 @@ impl OnRampContract {
             // `get_fee` call (the fee config is unchanged by `lock_or_burn`).
             // The wire amount is the post-fee `dest_token_amount` returned by the
             // pool (INV-POOL-10), not the full `token_amount.amount`.
+            // L-7 / INV-FIN: the pool receipt records the pool-fee slice
+            // premium-converted into fee-token smallest units at emission —
+            // EVM `OnRamp._getReceipts` applies `feeMultiplier` to every
+            // receipt before emitting it (OnRamp.sol:1086-1101), so the
+            // off-chain reader sees fee-token amounts, not USD cents.
+            let pool_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
+                breakdown.pool_fee_usd_cents,
+                breakdown.premium_multiplier,
+                message_fee.fee_token_price,
+            )? as i128;
             token_pool_receipt = Some(Receipt {
                 issuer: pool_address.clone(),
                 dest_gas_limit: breakdown.pool_dest_gas_limit,
                 dest_bytes_overhead: breakdown.pool_dest_bytes_overhead,
-                fee_token_amount: breakdown.pool_fee_usd_cents as i128,
+                fee_token_amount: pool_fee_tokens,
                 extra_args: extra_args.token_args.clone(),
             });
 
@@ -1011,7 +1017,9 @@ impl OnRampContract {
         // Token pool receipt is present iff `token_transfer` is non-empty (same condition as
         // `message.TokenTransferLength` on the canonical MessageV1).
 
-        // Invoke verifiers to get verification blobs and generate receipts
+        // Invoke verifiers to get verification blobs and generate receipts.
+        // L-7: the fee-token price and premium multiplier are threaded in so
+        // every CCV receipt is emitted in fee-token smallest units (EVM parity).
         let (verifier_blobs, mut receipts) = Self::get_ccv_blobs_and_receipts_internal(
             &env,
             dest_chain_selector,
@@ -1023,6 +1031,8 @@ impl OnRampContract {
             &merged_ccv_args,
             &ccv_fee_responses,
             fee_token_amount,
+            message_fee.fee_token_price,
+            breakdown.premium_multiplier,
         )?;
 
         if let Some(r) = token_pool_receipt {
@@ -1031,10 +1041,12 @@ impl OnRampContract {
 
         // Executor receipt (always before the network fee receipt). The issuer is
         // the (possibly sentinel) executor address — the no-execution sentinel is
-        // left in place (M-7 / INV-NOEXEC-2). `fee_token_amount` stores USD cents
-        // (the receipt convention used by every receipt); the executor slice is
-        // the flat `Executor::get_fee` fee + the priced execution-gas cost (both 0
-        // for the no-execution sentinel).
+        // left in place (M-7 / INV-NOEXEC-2). L-7: `fee_token_amount` is in
+        // fee-token smallest units — `breakdown.executor_fee_tokens`, which
+        // premium-converts the flat `Executor::get_fee` fee (EVM `feeMultiplier`,
+        // OnRamp.sol:1093) and adds the priced execution-gas cost converted BARE
+        // (OnRamp.sol:1094-1097; INV-FEE-13). Both slices are 0 for the
+        // no-execution sentinel.
         receipts.push_back(Receipt {
             issuer: extra_args.executor.clone(),
             dest_gas_limit: dest_config
@@ -1044,32 +1056,29 @@ impl OnRampContract {
             // `destBytesOverhead = message.data.length` (the payload bytes priced
             // into the executor exec-cost above). Was 0.
             dest_bytes_overhead: message.data.len() as u32,
-            fee_token_amount: (breakdown
-                .executor_flat_usd_cents
-                .checked_add(breakdown.exec_cost_usd_cents)
-                .ok_or(CCIPError::InvalidFeeCalculation)?) as i128,
+            fee_token_amount: breakdown.executor_fee_tokens,
             extra_args: extra_args.executor_args.clone(),
         });
 
-        // M-11 / INV-FEE-11/12: the network fee receipt records the SAME OnRamp-split
+        // M-11 / INV-FEE-11/12: the network fee receipt records the same OnRamp-split
         // value the charge premium-converted (`breakdown.network_fee_usd_cents`), so
-        // charge == premium_convert(receipt network field) — matching EVM
+        // charge == receipt network field — matching EVM
         // `OnRamp.forwardFromRouter`, which selects the split once and uses it for both
         // (OnRamp.sol:286-288 → `_getReceipts`:1089-1100). EVM selects by token presence
         // (mutually exclusive: message-only vs token), not additive — confirmed against
-        // the EVM reference, resolving the prior TODO. The receipt stores USD cents by
-        // the Stellar receipt convention (shared with the CCV/pool/executor receipts,
-        // which are premium-converted at distribution); the network fee is left on the
-        // OnRamp for sweep, so it is never re-converted — its raw-USD-cent value is
-        // reconciled with the charged `network_fee_tokens` via this shared source field.
-        let network_fee_usd_cents = breakdown.network_fee_usd_cents;
+        // the EVM reference, resolving the prior TODO. L-7: the receipt is emitted in
+        // fee-token smallest units (`breakdown.network_fee_tokens`, the identical
+        // premium-converted value the charge added to the total). The network fee is
+        // still LEFT on the OnRamp for sweep to `fee_aggregator`, so the receipt value
+        // is exactly the amount awaiting sweep.
+        let network_fee_tokens = breakdown.network_fee_tokens;
 
         // Network fee receipt (always last)
         receipts.push_back(Receipt {
             issuer: dest_config.router.clone(),
             dest_gas_limit: 0,
             dest_bytes_overhead: 0,
-            fee_token_amount: network_fee_usd_cents as i128,
+            fee_token_amount: network_fee_tokens,
             extra_args: Bytes::new(&env),
         });
 
@@ -1100,55 +1109,42 @@ impl OnRampContract {
         //
         // Receipt ordering: [CCV_0..CCV_N, TokenPool?, Executor, NetworkFee], so the
         // first `n_ccvs` receipts are CCVs and the pool receipt (if any) sits at
-        // index `n_ccvs`. M-10 / INV-FEE-13: each CCV/pool slice is converted
-        // per-receipt with the EVM `feeMultiplier` (`usd_cents_to_fee_token_with_
-        // premium`, `breakdown.premium_multiplier`) — the same multiplier
-        // `compute_outbound_fee_breakdown` applied to the charged total — so for a
-        // LINK fee token (discount) the distributed sum stays ≤
-        // `breakdown.additional_in_fee_token` and the OnRamp (funded with
-        // `fee_token_amount ≥ total_fee`) is never over-drawn. The executor slice
-        // is transferred as `breakdown.executor_fee_tokens` (already premium-aware:
-        // flat discounted, exec cost not). Floor division keeps
-        // `Σ premium_convert(each) ≤ premium_convert(Σ)`.
+        // index `n_ccvs`. L-7: since every receipt now carries its slice already
+        // premium-converted into fee-token smallest units (the same multiplier
+        // `compute_outbound_fee_breakdown` applied to the charged total), each
+        // distribution transfers its receipt's `fee_token_amount` directly — no
+        // second conversion, so the transferred amount is by construction the
+        // recorded amount and the OnRamp (funded with
+        // `fee_token_amount ≥ total_fee`) is never over-drawn.
         if fee_token_amount > 0 {
             let fee_token_client = token::Client::new(&env, &message.fee_token);
             let onramp_address = env.current_contract_address();
             let n_ccvs = merged_ccvs.len();
 
             // H-3: CCV fees → each CCV's resolver (receipt issuer = the VVR). Skip
-            // when the CCV charged no fee or the converted amount rounds to 0.
+            // when the CCV charged no fee (receipt amount 0).
             for i in 0..n_ccvs {
                 let receipt = receipts.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
-                let ccv_usd_cents = receipt.fee_token_amount as u128;
-                if ccv_usd_cents == 0 {
-                    continue;
-                }
-                let ccv_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
-                    ccv_usd_cents,
-                    breakdown.premium_multiplier,
-                    message_fee.fee_token_price,
-                )?;
-                if ccv_fee_tokens > 0 {
-                    fee_token_client.transfer(&onramp_address, &receipt.issuer, &ccv_fee_tokens);
+                if receipt.fee_token_amount > 0 {
+                    fee_token_client.transfer(
+                        &onramp_address,
+                        &receipt.issuer,
+                        &receipt.fee_token_amount,
+                    );
                 }
             }
 
             // H-3: pool fee → the token pool (receipt issuer). The pool receipt sits
             // at index `n_ccvs` and is present iff this is a token transfer. Stellar
             // pools are all V2 post-H-13, so the pool fee is always transferred
-            // (EVM's V1 leave-it-for-sweep branch is N/A). Skip when it rounds to 0.
-            if !message.token_amounts.is_empty() && breakdown.pool_fee_usd_cents > 0 {
+            // (EVM's V1 leave-it-for-sweep branch is N/A). Skip when it is 0.
+            if !message.token_amounts.is_empty() {
                 let pool_receipt = receipts.get(n_ccvs).ok_or(CCIPError::CCVLengthMismatch)?;
-                let pool_fee_tokens = fee_math::usd_cents_to_fee_token_with_premium(
-                    breakdown.pool_fee_usd_cents,
-                    breakdown.premium_multiplier,
-                    message_fee.fee_token_price,
-                )?;
-                if pool_fee_tokens > 0 {
+                if pool_receipt.fee_token_amount > 0 {
                     fee_token_client.transfer(
                         &onramp_address,
                         &pool_receipt.issuer,
-                        &pool_fee_tokens,
+                        &pool_receipt.fee_token_amount,
                     );
                 }
             }
@@ -1642,6 +1638,8 @@ impl OnRampContract {
         merged_ccv_args: &Vec<Bytes>,
         ccv_fee_responses: &Vec<FeeResponse>,
         fee_token_amount: i128,
+        fee_token_price: u128,
+        premium_multiplier: u32,
     ) -> Result<(Vec<Bytes>, Vec<Receipt>), CCIPError> {
         if merged_ccvs.len() != merged_ccv_args.len()
             || ccv_fee_responses.len() != merged_ccvs.len()
@@ -1666,8 +1664,15 @@ impl OnRampContract {
                 issuer: ccv,
                 dest_gas_limit: ccv_fee_response.dest_gas_limit,
                 dest_bytes_overhead: ccv_fee_response.dest_bytes_overhead,
-                // fee is in USD cents
-                fee_token_amount: ccv_fee_response.fee as i128,
+                // L-7: the CCV fee is quoted in USD cents by the verifier's
+                // `get_fee`; the receipt records it premium-converted into
+                // fee-token smallest units, like EVM `OnRamp._getReceipts`
+                // applies `feeMultiplier` to every receipt (OnRamp.sol:1086-1101).
+                fee_token_amount: fee_math::usd_cents_to_fee_token_with_premium(
+                    ccv_fee_response.fee as u128,
+                    premium_multiplier,
+                    fee_token_price,
+                )? as i128,
                 extra_args: ccv_args.clone(),
             });
 

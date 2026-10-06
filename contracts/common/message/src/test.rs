@@ -1,6 +1,8 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{
+    testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, BytesN, Env, TryFromVal, Vec,
+};
 
 use crate::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, MessageIdCompute,
@@ -584,6 +586,31 @@ fn test_compute_ccv_and_executor_hash_multiple_ccvs() {
 
     // Swapping CCV order must produce a different hash
     assert_ne!(hash_ab, hash_ba);
+}
+
+#[test]
+fn test_compute_ccv_and_executor_hash_account_vs_contract_same_key() {
+    // INV-ENC-13 / report L-5: the hash covers the full ScVal XDR encoding,
+    // which carries the address type discriminant — so a contract address and
+    // an account address sharing the same 32-byte key hash differently.
+    use soroban_sdk::xdr::{AccountId, ContractId, Hash, PublicKey, ScAddress, Uint256};
+
+    let env = Env::default();
+    let key = [7u8; 32];
+    let account = Address::try_from_val(
+        &env,
+        &ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(key)))),
+    )
+    .unwrap();
+    let contract =
+        Address::try_from_val(&env, &ScAddress::Contract(ContractId(Hash(key)))).unwrap();
+    let executor = Address::generate(&env);
+
+    let hash_account =
+        CcipMessageV1::compute_ccv_and_executor_hash(&env, &vec![&env, account], &executor);
+    let hash_contract =
+        CcipMessageV1::compute_ccv_and_executor_hash(&env, &vec![&env, contract], &executor);
+    assert_ne!(hash_account, hash_contract);
 }
 
 #[test]

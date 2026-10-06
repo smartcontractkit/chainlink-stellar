@@ -113,12 +113,11 @@ func (c *RouterClient) IsOwner(ctx context.Context, addr string) (bool, error) {
 }
 
 // CcipSend calls the ccip_send function on the contract.
-func (c *RouterClient) CcipSend(ctx context.Context, sender string, destChainSelector uint64, message StellarToAnyMessage, feeTokenAmount *big.Int) ([32]byte, error) {
+func (c *RouterClient) CcipSend(ctx context.Context, sender string, destChainSelector uint64, message StellarToAnyMessage) ([32]byte, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(sender),
 		scval.Uint64ToScVal(destChainSelector),
 		scval.MustToScVal(message.ToScVal()),
-		scval.I128ToScVal(feeTokenAmount),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "ccip_send", args)

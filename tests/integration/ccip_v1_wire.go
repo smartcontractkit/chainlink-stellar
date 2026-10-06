@@ -106,22 +106,26 @@ func sorobanScValXDR(v xdr.ScVal) ([]byte, error) {
 }
 
 // computeCcvAndExecutorHash matches contracts/common/message::CcipMessageV1::compute_ccv_and_executor_hash:
-// keccak256( [len_executor_u8] || raw(ccv_0) || ... || raw(executor) ).
+// keccak256( [len_executor_u8] || xdr(ccv_0) || ... || xdr(executor) ), where each address is
+// its full ScVal XDR encoding (type discriminant included — contract vs account differ).
 func computeCcvAndExecutorHash(ccvs []string, executorStrkey string) ([32]byte, error) {
-	execRaw, err := sorobanAddressRaw32(executorStrkey)
+	execXDR, err := sorobanScValXDR(scval.AddressToScVal(executorStrkey))
 	if err != nil {
-		return [32]byte{}, fmt.Errorf("executor raw: %w", err)
+		return [32]byte{}, fmt.Errorf("executor xdr: %w", err)
+	}
+	if len(execXDR) > 255 {
+		return [32]byte{}, fmt.Errorf("executor XDR longer than 255 bytes: %d", len(execXDR))
 	}
 	var b []byte
-	b = append(b, byte(len(execRaw)))
+	b = append(b, byte(len(execXDR)))
 	for _, c := range ccvs {
-		raw, err := sorobanAddressRaw32(c)
+		raw, err := sorobanScValXDR(scval.AddressToScVal(c))
 		if err != nil {
-			return [32]byte{}, fmt.Errorf("ccv raw %s: %w", c, err)
+			return [32]byte{}, fmt.Errorf("ccv xdr %s: %w", c, err)
 		}
 		b = append(b, raw...)
 	}
-	b = append(b, execRaw...)
+	b = append(b, execXDR...)
 	h := crypto.Keccak256(b)
 	var out [32]byte
 	copy(out[:], h)

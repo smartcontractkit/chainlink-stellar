@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -339,4 +340,27 @@ func TestGetBlocksHeaders(t *testing.T) {
 		require.Nil(t, headers)
 		assert.Contains(t, err.Error(), "exceeds uint32")
 	})
+}
+
+func TestToBytes32(t *testing.T) {
+	// Even-length hex with and without 0x prefix decodes.
+	for _, in := range []string{
+		"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+	} {
+		out, err := toBytes32(in)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef}, out[:8])
+	}
+
+	// Odd-length hex must be rejected, not silently left-padded (report L-6):
+	// a truncated hash should surface as an error, not decode into a shifted value.
+	_, err := toBytes32("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "odd-length hex string")
+
+	// Over-length hex is still rejected.
+	_, err = toBytes32("0x"+strings.Repeat("ab", 33))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hex string too long")
 }

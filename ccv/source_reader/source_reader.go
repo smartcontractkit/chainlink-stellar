@@ -591,10 +591,11 @@ func toBytes32(hexStr string) (protocol.Bytes32, error) {
 		hexStr = "0x" + strings.TrimPrefix(hexStr, "0X")
 	}
 
-	// Allow odd-length hex by left-padding if needed.
+	// Reject odd-length hex rather than silently left-padding it: a truncated
+	// hash should surface as an error, not decode into a shifted value.
 	h := strings.TrimPrefix(hexStr, "0x")
 	if len(h)%2 == 1 {
-		h = "0" + h
+		return protocol.Bytes32{}, fmt.Errorf("odd-length hex string: %s", hexStr)
 	}
 	if len(h) > 64 {
 		return protocol.Bytes32{}, fmt.Errorf("hex string too long: %s", hexStr)

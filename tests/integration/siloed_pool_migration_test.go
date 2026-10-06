@@ -108,7 +108,7 @@ func testTokenPoolSiloedMigration(
 			t.Fatalf("GetLatestLedger: %v", err)
 		}
 
-		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		if err != nil {
 			t.Fatalf("Router CcipSend after migration (v2 pool): %v", err)
 		}
@@ -138,7 +138,7 @@ func testTokenPoolSiloedMigration(
 
 		// Old pool is no longer an allowed lock box caller; TAR pointed at v1 should fail ccip_send.
 		setTokenPoolOrFatal(ctx, t, stack, sacToken, oldPoolID)
-		_, err = stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		_, err = stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		assertHostContractErrorContainsCode(t, err, slrbindings.CCIPErrorTokenHandlingError)
 		t.Logf("ccip_send correctly rejected for decommissioned pool v1: %v", err)
 

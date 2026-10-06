@@ -319,7 +319,7 @@ fn test_remove_onramp_pauses_lane() {
     );
     assert!(
         client
-            .try_ccip_send(&sender, &dest_chain_selector, &message, &0i128)
+            .try_ccip_send(&sender, &dest_chain_selector, &message)
             .is_err(),
         "ccip_send must revert while the lane is paused"
     );
@@ -613,7 +613,7 @@ fn test_ccip_send_full_flow() {
     let required_fee = router_client.get_fee(&evm_chain_selector, &message);
     fee_token_admin_client.mint(&sender, &(required_fee * 2)); // extra buffer
 
-    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message, &required_fee);
+    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message);
 
     // ---- Verify message ID is non-zero (32 bytes) ----
     let zero_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
@@ -655,7 +655,7 @@ fn test_ccip_send_unsupported_chain() {
     };
 
     // Should panic with UnsupportedDestinationChain (error #4)
-    let result = router_client.try_ccip_send(&sender, &999u64, &message, &0i128);
+    let result = router_client.try_ccip_send(&sender, &999u64, &message);
     assert!(result.is_err(), "Should fail for unsupported chain");
 }
 

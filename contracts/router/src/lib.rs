@@ -131,19 +131,25 @@ impl RouterContract {
 
     /// Send a cross-chain message via CCIP.
     ///
-    /// This is the main entry point for sending CCIP messages. It:
+    /// Soroban analogue of EVM
+    /// [`Router.ccipSend`](https://github.com/smartcontractkit/chainlink-ccip/blob/develop/chains/evm/contracts/Router.sol)
+    /// (L-8 / INV-FIN: full `IRouterClient.ccipSend(destChainSelector, message)`
+    /// signature parity — no fee amount argument). This is the main entry point
+    /// for sending CCIP messages. It:
     /// 1. Verifies the sender's authorization
     /// 2. Checks RMN curse status
     /// 3. Looks up the OnRamp for the destination chain
-    /// 4. Transfers fee tokens to OnRamp (when fee > 0)
-    /// 5. Calls OnRamp.forward_from_router (which validates fee before side effects)
+    /// 4. Quotes the fee from the OnRamp (`get_fee`) and pulls EXACTLY the quote
+    ///    from the sender to the OnRamp (when fee > 0) — the caller can never
+    ///    overpay or underpay; there is nothing to refund
+    /// 5. Calls OnRamp.forward_from_router with the quoted amount (which
+    ///    validates fee before side effects)
     /// 6. Returns the message ID
     ///
     /// # Arguments
     /// * `sender` - The original sender of the message (must authorize)
     /// * `dest_chain_selector` - Destination chain identifier
     /// * `message` - The message to send (includes receiver, data, tokens, fee_token, extra_args)
-    /// * `fee_token_amount` - Amount of fee tokens to pay
     ///
     /// # Returns
     /// The unique message ID (32-byte hash)
@@ -152,14 +158,13 @@ impl RouterContract {
     /// * `NotInitialized` - If contract is not initialized
     /// * `UnsupportedDestinationChain` - If destination is not configured
     /// * `BadRMNSignal` - If the network is cursed
-    /// * `InsufficientFeeTokenAmount` - If fee provided is less than required
+    /// * `InsufficientFeeTokenAmount` - If the sender cannot cover the quoted fee
     /// * `OnRampError` - If the OnRamp returns an error
     pub fn ccip_send(
         env: Env,
         sender: Address,
         dest_chain_selector: u64,
         message: StellarToAnyMessage,
-        fee_token_amount: i128,
     ) -> Result<BytesN<32>, CCIPError> {
         // Verify the sender's identity (Soroban equivalent of EVM's msg.sender)
         sender.require_auth();
@@ -178,11 +183,17 @@ impl RouterContract {
         let onramp = Self::get_onramp_internal(&env, dest_chain_selector)?;
         let onramp_client = OnRampClient::new(&env, &onramp);
 
-        // Track A: fee sufficiency is enforced inside `OnRamp::forward_from_router` (single
-        // fee breakdown per send). Callers SHOULD still use `get_fee` off-chain to quote.
-        // Transfer fee tokens from sender to OnRamp.
+        // L-8 / INV-FIN: quote the fee on-chain and pull EXACTLY the quote — EVM
+        // `Router.ccipSend` has no fee-amount argument (`IRouterClient.ccipSend`):
+        // `feeTokenAmount = getFee(...)`, then `safeTransferFrom(msg.sender,
+        // onRamp, feeTokenAmount)` (Router.sol:132-137). Pulling exactly the
+        // quote removes both overpay (the old caller-specified full-amount pull
+        // with no refund) and underpay (the OnRamp rejects below-total funding).
+        // The quote also runs the OnRamp's pre-flight validations (dest config,
+        // curse is checked above) before any token transfer.
         // The sender has authorized `ccip_send` above; `OnRamp::forward_from_router` additionally
         // requires `sender.require_auth_for_args` for the same outbound tuple (see OnRamp).
+        let fee_token_amount = onramp_client.get_fee(&dest_chain_selector, &message);
         if fee_token_amount > 0 {
             let fee_token_client = token::Client::new(&env, &message.fee_token);
             fee_token_client.transfer(&sender, &onramp, &fee_token_amount);

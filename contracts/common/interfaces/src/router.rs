@@ -17,7 +17,6 @@ pub trait RouterInterface {
         sender: soroban_sdk::Address,
         dest_chain_selector: u64,
         message: StellarToAnyMessage,
-        fee_token_amount: i128,
     ) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
     fn get_config(env: soroban_sdk::Env) -> Result<RouterConfig, CCIPError>;
     fn get_onramp(
