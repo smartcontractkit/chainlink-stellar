@@ -101,6 +101,7 @@ func testTokenPoolSiloedMigration(
 		}
 
 		senderBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
+		feeBefore := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
 		lockBoxBeforeSend := sacBalanceOrFatal(ctx, t, deployer, sacToken, assets.LockBoxID)
 
 		latest, err := rpcClient.GetLatestLedger(ctx)
@@ -114,6 +115,13 @@ func testTokenPoolSiloedMigration(
 		}
 		if msgID == [32]byte{} {
 			t.Fatal("CcipSend returned empty message_id")
+		}
+
+		// L-8: the Router quotes via get_fee and pulls EXACTLY the quote — the
+		// fee-token debit must equal the get_fee quote (no over-pull, no refund).
+		feeAfter := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
+		if got := new(big.Int).Sub(big.NewInt(feeBefore), big.NewInt(feeAfter)); got.Cmp(requiredFee) != 0 {
+			t.Fatalf("fee-token debit %s != get_fee quote %s", got.String(), requiredFee.String())
 		}
 
 		const eventWait = 30 * time.Second

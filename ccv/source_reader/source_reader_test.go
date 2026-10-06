@@ -343,7 +343,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 }
 
 func TestToBytes32(t *testing.T) {
-	// Even-length hex with and without 0x prefix decodes.
+	// Exactly 64 hex characters (32 bytes), with and without 0x prefix, decodes.
 	for _, in := range []string{
 		"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 		"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -353,14 +353,16 @@ func TestToBytes32(t *testing.T) {
 		assert.Equal(t, []byte{0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef}, out[:8])
 	}
 
-	// Odd-length hex must be rejected, not silently left-padded (report L-6):
-	// a truncated hash should surface as an error, not decode into a shifted value.
-	_, err := toBytes32("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "odd-length hex string")
-
-	// Over-length hex is still rejected.
-	_, err = toBytes32("0x"+strings.Repeat("ab", 33))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hex string too long")
+	// Anything other than exactly 64 hex characters must be rejected, not
+	// silently padded into a different 32-byte hash (report L-6): odd-length
+	// truncated (63), even-length truncated (32), and over-length (66).
+	for _, in := range []string{
+		"0x" + strings.Repeat("ab", 31) + "a", // 63: odd-length truncation
+		"0x" + strings.Repeat("ab", 16),      // 32: even-length truncation
+		"0x" + strings.Repeat("ab", 33),      // 66: over-length
+	} {
+		_, err := toBytes32(in)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be exactly 64 characters")
+	}
 }
