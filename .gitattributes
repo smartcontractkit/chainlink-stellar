@@ -8,3 +8,5 @@
 # generator). Collapsed in PR review — review the generator instead.
 bindings/contracts/** linguist-generated=true
 contracts/common/interfaces/src/*.rs linguist-generated=true
+
+**go.sum linguist-generated=true
