@@ -2041,33 +2041,46 @@ fn test_message_base_priced_into_calldata_size() {
     );
 
     // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
-    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. Every
-    // receipt records its slice in USD cents (the Stellar receipt convention;
-    // see the executor/network receipt construction in lib.rs), and with executor
-    // flat fee 0 the executor receipt is exactly the priced execution-gas cost.
-    // So it must EQUAL the quoter's quote for calldata_size = 143 and STRICTLY
-    // EXCEED the quote for calldata_size = 0 (the no-BASE counterfactual) —
-    // proving the OnRamp bills BASE into calldata_size.
+    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. With
+    // executor flat fee 0 the executor receipt is exactly the priced
+    // execution-gas cost, converted BARE (no premium slice; OnRamp.sol:1094-1097
+    // parity, report L-7). So it must EQUAL the quoter's quote for
+    // calldata_size = 143 — converted with the same fee_math helper and the
+    // oracle's own price — and STRICTLY EXCEED the converted quote for
+    // calldata_size = 0 (the no-BASE counterfactual) — proving the OnRamp bills
+    // BASE into calldata_size.
     let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
     assert_eq!(
         receipts_base.len(),
         3,
         "data-only ⇒ [CCV, Executor, Network]"
     );
+    // L-7: receipts carry fee-token smallest units, so convert both oracle
+    // quotes (USD cents) through fee_math with each oracle's own fee-token price.
+    let expected_base = fee_math::usd_cents_to_fee_token(
+        oracle_base.gas_cost_usd_cents,
+        oracle_base.fee_token_price,
+    )
+    .expect("convert oracle(143) exec cost to fee token");
+    let expected_zero = fee_math::usd_cents_to_fee_token(
+        oracle_zero.gas_cost_usd_cents,
+        oracle_zero.fee_token_price,
+    )
+    .expect("convert oracle(0) exec cost to fee token");
     let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
     assert_eq!(
-        exec_fee_base, oracle_base.gas_cost_usd_cents as i128,
+        exec_fee_base, expected_base,
         "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) into \
-         calldata_size: executor receipt (USD cents, flat fee 0)={} must equal \
-         oracle(143)={}, and exceed oracle(0)={}",
-        exec_fee_base, oracle_base.gas_cost_usd_cents, oracle_zero.gas_cost_usd_cents,
+         calldata_size: executor receipt (fee-token units, flat fee 0)={} must \
+         equal oracle(143)={}, and exceed oracle(0)={}",
+        exec_fee_base, expected_base, expected_zero,
     );
     assert!(
-        (exec_fee_base as u128) > oracle_zero.gas_cost_usd_cents,
+        exec_fee_base > expected_zero,
         "empty-data executor receipt must exceed the no-BASE (calldata_size = 0) \
          counterfactual: receipt={} oracle(0)={}",
         exec_fee_base,
-        oracle_zero.gas_cost_usd_cents,
+        expected_zero,
     );
 
     // Adding 100 bytes of data grows calldata_size by 100 ⇒ fee strictly rises.
@@ -2477,6 +2490,10 @@ fn rebind_pool_to_mock(lane: &TokenTransferLane, mock_pool: &Address) {
 fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let env = Env::default();
     env.mock_all_auths();
+    // Full token-transfer lane built inline (not via
+    // `setup_token_transfer_lane_with_pool`) — same L-8 double-quote budget
+    // rationale, so lift the budget here too.
+    env.budget().reset_unlimited();
 
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
