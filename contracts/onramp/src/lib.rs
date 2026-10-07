@@ -388,14 +388,19 @@ impl OnRampContract {
         //   + MESSAGE_V1_REMOTE_CHAIN_ADDRESSES * remoteChainAddressLengthBytes
         //   + numberOfTokens * (TOKEN_TRANSFER base + remoteChainAddressLengthBytes*2)
         // `dataLength` is `message.data.len()` (the EVM message payload is the same
-        // on source and destination with the V1 codec). The `BASE` portion is EVM
-        // `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` = the fixed MessageV1 framing (79) + the
-        // 32-byte `sender` + 32-byte `onramp` source-address content. Stellar encodes
-        // those two addresses as 32-byte raw Soroban keys
-        // (`CcipMessageV1::address_raw_bytes`), so its derived base is 79 + 32 + 32
-        // = 143 — equal to EVM's constant by derivation, not copy (see
-        // `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`). The
-        // `MESSAGE_V1_REMOTE_CHAIN_ADDRESSES (=2)` term bills the fixed content of
+        // on source and destination with the V1 codec). The `BASE` portion is the
+        // fixed MessageV1 framing (79) + the on-wire content of the two SOURCE-side
+        // address fields `sender` and `onramp`. `forward_from_router` populates
+        // both with `Address::to_xdr` — a full 40-byte XDR encoding (8 bytes of
+        // ScVal/ScAddress discriminants + the 32-byte key), not a raw key — and the
+        // codec appends those bytes verbatim, so the derived Stellar base is
+        // 79 + 40 + 40 = 159. EVM's `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (139) plays
+        // the identical role with its own source encoding (32+32 abi-padded
+        // 20-byte addresses): parity is structural — each chain's base is its
+        // framing plus the bytes its wire format actually carries for those two
+        // fields — not numeric equality (see
+        // `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`).
+        // The `MESSAGE_V1_REMOTE_CHAIN_ADDRESSES (=2)` term bills the fixed content of
         // the two DEST-side address fields `receiver` and `offramp`, whose encoding
         // width is the dest chain's `address_bytes_length` (EVM
         // `remoteChainAddressLengthBytes` from `DestChainConfig`). The
@@ -404,10 +409,10 @@ impl OnRampContract {
         // single-token, and the wire `token_transfer` blob is optional), so
         // `numberOfTokens ∈ {0, 1}`. Its fixed source-side framing +
         // `src_pool`/`src_token` content is the derived
-        // `TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE` (103 — equal to EVM's
-        // `TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE` by derivation, not copy); the two
-        // dest-side fields (`dest_token`, `token_receiver`) are billed at
-        // `address_bytes_length`, matching EVM's
+        // `TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE` (119 = 39 framing +
+        // two 40-byte `Address::to_xdr` fields, same XDR reality as the message
+        // base above); the two dest-side fields (`dest_token`, `token_receiver`)
+        // are billed at `address_bytes_length`, matching EVM's
         // `remoteChainAddressLengthBytes * 2` per transfer.
         let remote_address_bytes = dest_config.address_bytes_length;
         let mut executor_dest_bytes_overhead: u32 = message.data.len() as u32;
