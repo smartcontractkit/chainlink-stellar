@@ -62,7 +62,7 @@ var (
 	promStellarTxmFeeInclusion = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "stellar_txm_fee_inclusion_stroops",
 		Help:    "Inclusion fee paid (in stroops)",
-		Buckets: []float64{100, 200, 500, 1000, 5000, 10000, 50000, 100000, 1000000, 5000000, 20000000},
+		Buckets: []float64{100, 200, 500, 1000, 5000, 10000, 50000, 100000, 1000000, 5000000, 20000000, 200000000},
 	}, []string{"chainID"})
 
 	promStellarTxmFeeResource = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -155,7 +155,7 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 	}
 
 	feeInclusion, err := meter.Int64Histogram("stellar_txm_fee_inclusion_stroops",
-		metric.WithExplicitBucketBoundaries(100, 200, 500, 1000, 5000, 10000, 50000, 100000, 1000000, 5000000, 20000000),
+		metric.WithExplicitBucketBoundaries(100, 200, 500, 1000, 5000, 10000, 50000, 100000, 1000000, 5000000, 20000000, 200000000),
 	)
 	if err != nil {
 		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_fee_inclusion_stroops: %w", err))
