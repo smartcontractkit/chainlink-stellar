@@ -738,18 +738,54 @@ impl MockTokenPool {
         }
     }
 
+    /// Make `release_or_mint` TRAP (L-10 pool path: the offramp calls the pool without a
+    /// try-catch — a deliberate, documented divergence from EVM's `TokenHandlingError`
+    /// FAILURE recording — so a trapping pool reverts the whole execute tx). Cleared for
+    /// the retry leg of the pool-trap regression test.
+    pub fn set_trap_release(env: Env, trap: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "traprel"), &trap);
+    }
+
     pub fn release_or_mint(
         env: Env,
         _caller: Address,
         input: ReleaseOrMintIn,
         _requested_finality: u32,
     ) -> Result<ReleaseOrMintOut, CCIPError> {
+        let trap: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "traprel"))
+            .unwrap_or(false);
+        if trap {
+            env.panic_with_error(CCIPError::TokenHandlingError);
+        }
+        // Count invocations so the L-10 regression tests can assert exactly one
+        // COMMITTED release across a failure+retry cycle (a release inside a tx that
+        // traps is rolled back together with the rest of that tx's writes).
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "relcnt"))
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "relcnt"), &(count + 1));
         env.storage()
             .instance()
             .set(&Symbol::new(&env, "lastrecv"), &input.receiver);
         Ok(ReleaseOrMintOut {
             destination_amount: input.amount,
         })
+    }
+
+    pub fn release_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "relcnt"))
+            .unwrap_or(0)
     }
 
     pub fn last_receiver(env: Env) -> Address {
@@ -924,6 +960,312 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         receiver_contract,
         "empty token_receiver must fall back to message.receiver"
     );
+}
+
+// ============================================================
+// L-10: post-release failures must trap — no double release on retry
+// ============================================================
+
+/// Fixture for the L-10 regression tests: an initialized OffRamp with a mock
+/// registry→pool lane, a mock VVR→always-Ok verifier as the lane default CCV, the minimal
+/// TestRouter wired as the lane router, and a configurable TestReceiver as the message
+/// receiver (V2 receiver surface + settable `ccip_receive` failure + delivery counter).
+fn setup_l10_lane() -> (
+    Env,
+    OffRampContractClient<'static>,
+    TestReceiverClient<'static>,
+    MockTokenPoolClient<'static>,
+    Address,
+    Address,
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    // Mock registry → mock pool (counting + trappable `release_or_mint`).
+    let registry_id = env.register(MockTokenAdminRegistry, ());
+    let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
+    let pool_id = env.register(MockTokenPool, ());
+    let pool_client = MockTokenPoolClient::new(&env, &pool_id);
+    registry_client.set_pool(&Address::generate(&env), &pool_id);
+
+    // Mock VVR → always-Ok verifier so `verify_ccv_quorum` passes on the lane default.
+    let verifier_id = env.register(MockVerifier, ());
+    let vvr_id = env.register(MockVvr, ());
+    MockVvrClient::new(&env, &vvr_id).set_verifier(&verifier_id);
+
+    let static_config = StaticConfig {
+        chain_selector: EXEC_TEST_DEST_CHAIN,
+        rmn_proxy: rmn_proxy_id,
+        token_admin_registry: registry_id,
+    };
+
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    client.initialize(&owner, &static_config);
+
+    // The lane router is the minimal TestRouter (real `route_message` forwarding shape),
+    // so a receiver `ccip_receive` failure surfaces exactly as it does in production.
+    let router_id = env.register(TestRouter, ());
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router_id, vvr_id.clone(), onramp, true);
+
+    let receiver_contract = env.register(TestReceiver, ());
+    let receiver_client = TestReceiverClient::new(&env, &receiver_contract);
+
+    (
+        env,
+        client,
+        receiver_client,
+        pool_client,
+        vvr_id,
+        receiver_contract,
+    )
+}
+
+/// Build an L-10 message: routing runs (non-empty `data`), `token_transfer` and `data`
+/// contents chosen by the caller, empty `token_receiver` (fallback to `message.receiver`).
+fn l10_message(
+    env: &Env,
+    offramp_contract: &Address,
+    receiver_contract: &Address,
+    token_transfer: Bytes,
+    data: Bytes,
+) -> CcipMessageV1 {
+    CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(env, &[0u8; 32]),
+        onramp_address: sample_onramp_bytes(env),
+        offramp_address: offramp_address_field_from_contract(env, offramp_contract),
+        sender: Bytes::from_array(env, &[2u8; 20]),
+        receiver: offramp_address_field_from_contract(env, receiver_contract),
+        dest_blob: Bytes::new(env),
+        token_transfer,
+        data,
+    }
+}
+
+/// L-10 (EVM parity, `OffRamp.sol:401-402` — "If CCIP receiver execution is not
+/// successful, revert the call including token transfers"): a token-carrying message whose
+/// receiver fails AFTER a successful `release_or_mint` must TRAP (full-tx rollback), not
+/// record a retryable `Failure`. Soroban `Err` returns do not roll back writes, so the
+/// pre-fix behavior — return the receiver error and record `Failure` with the mint already
+/// committed — let a re-execution (allowed from `Failure`) run `release_or_mint` a second
+/// time: double token delivery. Trapping rolls the release back with the tx; the message
+/// stays `Untouched`, and retrying after the receiver is fixed delivers exactly once.
+#[test]
+fn test_execute_token_message_receiver_failure_traps_and_rolls_back_release() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    // The receiver rejects `ccip_receive` on the first attempt. The flag is set in its own
+    // committed tx, so it survives the whole-tx rollback of the trapping execute below.
+    receiver_client.set_should_fail(&true);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    // Token + data: routing runs after the release, so the receiver failure is post-release.
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    // First attempt: the receiver fails after the pool already released ⇒ the whole tx
+    // must revert instead of committing the release plus a retryable Failure.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "post-release receiver failure must trap (L-10 / OffRamp.sol:401-402): {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "the trap must roll back the execution-state write too — no retryable Failure with committed tokens"
+    );
+    assert!(
+        pool_client.try_last_receiver().is_err(),
+        "the release/mint must roll back with the trapping tx"
+    );
+    assert_eq!(
+        pool_client.release_count(),
+        0,
+        "no release may survive the trapping tx"
+    );
+    assert_eq!(receiver_client.receive_count(), 0);
+
+    // Fix the receiver (separate committed tx) and retry: exactly one release, once delivered.
+    receiver_client.set_should_fail(&false);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "retry after the receiver is fixed must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.last_receiver(), receiver_contract);
+    assert_eq!(
+        pool_client.release_count(),
+        1,
+        "exactly one committed release across the failure+retry cycle — no double release"
+    );
+    assert_eq!(
+        receiver_client.receive_count(),
+        1,
+        "exactly one committed delivery"
+    );
+}
+
+/// L-10 counterpart: a data-only receiver failure has no tokens to roll back, so it must
+/// still record a retryable `Failure` — EVM parity, where the sub-call revert undoes
+/// nothing and only the outer frame's FAILURE write survives. A later retry (re-execution
+/// from `Failure` is allowed) delivers exactly once.
+#[test]
+fn test_execute_data_only_receiver_failure_records_retryable_failure() {
+    let (env, client, receiver_client, _pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    receiver_client.set_should_fail(&true);
+
+    // Data-only: no token transfer, non-empty data so routing runs.
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        Bytes::new(&env),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    // First attempt: records Failure — must NOT trap (nothing was released to roll back).
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "data-only receiver failure must record a retryable Failure, not trap: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+    assert_eq!(receiver_client.receive_count(), 0);
+
+    // Retry after the receiver is fixed: Failure → Success, delivered exactly once.
+    receiver_client.set_should_fail(&false);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "retry from Failure after the receiver is fixed must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(receiver_client.receive_count(), 1);
+}
+
+/// L-10 pool path (user-confirmed deliberate divergence): the offramp calls
+/// `release_or_mint` WITHOUT a try-catch, so a trapping pool reverts the whole execute tx
+/// (message stays `Untouched`, retryable by resubmission). EVM instead records a FAILURE
+/// with `TokenHandlingError` (`OffRamp.sol:820-835`) — an observability-only divergence;
+/// retryability is equivalent. Clearing the trap and resubmitting delivers exactly once.
+#[test]
+fn test_execute_pool_release_trap_reverts_whole_tx() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_trap_release(&true);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    // The pool traps mid-release ⇒ the whole tx reverts; nothing is committed.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a trapping pool must revert the whole execute tx (retryable by resubmission): {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched
+    );
+    assert!(pool_client.try_last_receiver().is_err());
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+
+    // Clear the trap (separate committed tx) and resubmit: exactly once.
+    pool_client.set_trap_release(&false);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "resubmission after the pool trap clears must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
 }
 
 // ============================================================
@@ -1775,6 +2117,15 @@ impl TestReceiver {
             .set(&Symbol::new(&env, "required_ccvs"), &required_ccvs);
     }
 
+    /// Toggle `ccip_receive` failure for the L-10 regression tests. The flag is set from
+    /// OUTSIDE the execute tx (its own committed tx), so it survives the whole-tx rollback
+    /// of a trapping execute attempt — a receiver-side flip would roll back with the trap.
+    pub fn set_should_fail(env: Env, should_fail: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "shouldfail"), &should_fail);
+    }
+
     pub fn get_ccvs_and_finality_config(
         env: Env,
         _source_chain_selector: u64,
@@ -1799,10 +2150,36 @@ impl TestReceiver {
     }
 
     pub fn ccip_receive(env: Env, message: AnyToStellarMessage) -> Result<(), CCIPError> {
+        let should_fail: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "shouldfail"))
+            .unwrap_or(false);
+        if should_fail {
+            // Typed error, matching how the real Router surfaces a receiver's rejected
+            // `ccip_receive` (it catches the `Err` and returns `ReceiverError`).
+            return Err(CCIPError::ReceiverError);
+        }
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "rcvcnt"))
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "rcvcnt"), &(count + 1));
         env.storage()
             .instance()
             .set(&Symbol::new(&env, "last_msg_id"), &message.message_id);
         Ok(())
+    }
+
+    /// Number of COMMITTED successful deliveries (writes inside a trapping tx roll back).
+    pub fn receive_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "rcvcnt"))
+            .unwrap_or(0)
     }
 
     pub fn last_received_message_id(env: Env) -> BytesN<32> {

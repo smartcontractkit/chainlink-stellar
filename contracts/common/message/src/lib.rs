@@ -355,6 +355,27 @@ pub const MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE: u32 = MESSAGE_V1_BASE_SIZE + 32 +
 // constant it mirrors (`MESSAGE_V1_EVM_SOURCE_BASE_SIZE == 143`).
 const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 143);
 
+/// Fixed on-wire byte overhead a Stellar-source `CcipTokenTransferV1` carries,
+/// mirroring EVM `MessageV1Codec.TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE`. The
+/// fixed framing is version(1) + amount(32) + the four 1-byte length prefixes
+/// (src_pool, src_token, dest_token, token_receiver) + extra_data's 2-byte
+/// length prefix = 39, plus the fixed content of the two SOURCE-side address
+/// fields `src_pool` and `src_token`: each is a 32-byte raw Soroban address
+/// key. EVM reaches the same 32+32 by abi.encoding its 20-byte addresses to 32
+/// (`MessageV1Codec.TOKEN_TRANSFER_V1_BASE_SIZE` = 39). So 39 + 32 + 32 = 103,
+/// equal to EVM's constant by derivation rather than copy. The two
+/// destination-side fields (`dest_token`, `token_receiver`) are
+/// dest-chain-specific and are billed separately via the dest chain's
+/// `address_bytes_length` (EVM `OnRamp._getExecutionFee`'s
+/// `numberOfTokens * (TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE +
+/// remoteChainAddressLengthBytes * 2)` term).
+pub const TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE: u32 = 39 + 32 + 32;
+
+// Compile-time guarantee that the derived Stellar source token-transfer base
+// matches the EVM constant it mirrors
+// (`TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE == 103`).
+const _: () = assert!(TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE == 103);
+
 /// Canonical token transfer encoding for CCIP v1.7.
 ///
 /// Matches protocol.TokenTransfer.Encode() byte layout:
