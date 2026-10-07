@@ -68,7 +68,7 @@ var (
 	promStellarTxmFeeResource = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "stellar_txm_fee_resource_stroops",
 		Help:    "Resource fee charged (in stroops)",
-		Buckets: []float64{10000, 50000, 100000, 500000, 1000000, 5000000},
+		Buckets: []float64{10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 50000000, 200000000, 2000000000},
 	}, []string{"chainID"})
 )
 
@@ -162,7 +162,7 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 	}
 
 	feeResource, err := meter.Int64Histogram("stellar_txm_fee_resource_stroops",
-		metric.WithExplicitBucketBoundaries(10000, 50000, 100000, 500000, 1000000, 5000000),
+		metric.WithExplicitBucketBoundaries(10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 50000000, 200000000, 2000000000),
 	)
 	if err != nil {
 		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_fee_resource_stroops: %w", err))
