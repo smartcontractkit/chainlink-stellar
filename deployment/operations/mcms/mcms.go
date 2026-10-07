@@ -176,3 +176,30 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetConfigVersionInput identifies the MCMS instance to read the on-chain
+// config version from.
+type GetConfigVersionInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetConfigVersionOutput is the current MCMS config version, used by MCMSReader
+// so proposals carry the version set_config has bumped to.
+type GetConfigVersionOutput struct {
+	ConfigVersion uint64 `json:"config_version"`
+}
+
+// GetConfigVersion calls MCMS `get_config_version` (simulation, read-only).
+var GetConfigVersion = cldfops.NewOperation(
+	"mcms:get-config-version",
+	stellarops.ContractDeploymentVersion,
+	"Reads the current MCMS config version via simulation",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetConfigVersionInput) (GetConfigVersionOutput, error) {
+		c := mcmsbindings.NewMcmsClient(d.Invoker, in.ContractID)
+		version, err := c.GetConfigVersion(b.GetContext())
+		if err != nil {
+			return GetConfigVersionOutput{}, err
+		}
+		return GetConfigVersionOutput{ConfigVersion: version}, nil
+	},
+)
