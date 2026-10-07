@@ -1007,7 +1007,7 @@ func TestStellarTxm_BroadcastPipeline_RejectsUntrustedMinResourceFee(t *testing.
 	}{
 		{name: "zero MinResourceFee", minResourceFee: 0},
 		{name: "negative MinResourceFee", minResourceFee: -1},
-		{name: "MinResourceFee above configured cap", minResourceFee: 5_000_000},
+		{name: "MinResourceFee above configured cap", minResourceFee: 3_000_000_000},
 		{name: "MinResourceFee above per-request cap", minResourceFee: 80_000, perTxCap: 50_000},
 	}
 

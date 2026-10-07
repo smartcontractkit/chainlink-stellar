@@ -118,7 +118,7 @@ func TestResolve_StellarFeeDefaults(t *testing.T) {
 	cfg.Resolve()
 
 	assert.Equal(t, int64(100), *cfg.BaseInclusionFee, "MinBaseFee = 100 stroops")
-	assert.Equal(t, int64(100_000), *cfg.MaxInclusionFee, "cap at 0.01 XLM")
+	assert.Equal(t, int64(20_000_000), *cfg.MaxInclusionFee, "cap at 2 XLM")
 	assert.Equal(t, 1.5, *cfg.FeeBumpMultiplier, "1.5x geometric bump")
 	assert.Equal(t, int64(15_000), *cfg.ResourceFeeBuffer, "~15%% buffer over typical MinResourceFee")
 	assert.Equal(t, int64(10_000), *cfg.RestoreFeeBuffer, "restore fee buffer")

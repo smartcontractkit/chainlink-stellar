@@ -148,7 +148,7 @@ func TestFeeStrategy_NewFromConfig(t *testing.T) {
 	fs := NewFeeStrategyFromConfig(cfg)
 
 	assert.Equal(t, int64(100), fs.BaseInclusionFee)
-	assert.Equal(t, int64(100_000), fs.MaxInclusionFee)
+	assert.Equal(t, int64(20_000_000), fs.MaxInclusionFee)
 	assert.Equal(t, 1.5, fs.BumpMultiplier)
 	assert.Equal(t, int64(15_000), fs.ResourceFeeBuffer)
 }
