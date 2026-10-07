@@ -154,7 +154,7 @@ func TestOnRampFeeDistribution(t *testing.T) {
 		}
 		startLedger := latest.Sequence
 
-		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		if err != nil {
 			t.Fatalf("Router CcipSend (data-only): %v", err)
 		}
@@ -187,7 +187,7 @@ func TestOnRampFeeDistribution(t *testing.T) {
 		}
 		for i, r := range rcpts {
 			if r.FeeTokenAmount == nil || r.FeeTokenAmount.Sign() <= 0 {
-				t.Errorf("receipt[%d] fee_token_amount must be > 0 (USD cents), got %v", i, r.FeeTokenAmount)
+				t.Errorf("receipt[%d] fee_token_amount must be > 0 (fee-token smallest units), got %v", i, r.FeeTokenAmount)
 			}
 		}
 
@@ -302,7 +302,7 @@ func TestOnRampFeeDistribution(t *testing.T) {
 		}
 		startLedger := latest.Sequence
 
-		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		if err != nil {
 			t.Fatalf("Router CcipSend (token): %v", err)
 		}

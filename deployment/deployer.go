@@ -665,17 +665,20 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 }
 
 // buildAndSubmitTransaction builds, signs, and submits a transaction. A
-// transaction the network includes but rejects at execution for exceeding its
-// declared resource budget is retried from a fresh simulation: the declared
-// budget comes from our pre-submission simulation, and under concurrent
-// deployment two transactions touching the same fresh ledger entry (e.g. two
-// tests uploading identical WASM bytes) can race — the second one's execution
-// pays an entry-exists cost its simulation, run before the first one landed,
-// did not. Re-simulating against the then-current ledger state converges: each
-// failed attempt means the conflicting transaction landed, so the next
-// simulation budgets the entry-exists path. A failed-but-included transaction
-// still consumes a source-account sequence number, so each retry re-fetches
-// the account.
+// transaction the network rejects for simulation/inclusion drift — either
+// included but rejected at execution for exceeding its declared resource
+// budget (resourceLimitExceededError), or rejected at inclusion with
+// txInsufficientFee (insufficientFeeRejectedError) — is retried from a fresh
+// simulation: the declared budget and fee come from our pre-submission
+// simulation, and under concurrent deployment two transactions touching the
+// same fresh ledger entry (e.g. two tests uploading identical WASM bytes) can
+// race — the second one's execution pays an entry-exists cost (or fee) its
+// simulation, run before the first one landed, did not. Re-simulating against
+// the then-current ledger state converges: each failed attempt means the
+// conflicting transaction landed, so the next simulation budgets the
+// entry-exists path. A failed-but-included transaction still consumes a source
+// account sequence number (a rejected one does not), so each retry re-fetches
+// the account either way.
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	const maxAttempts = 3
 	for attempt := 1; ; attempt++ {
@@ -684,7 +687,8 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 			return meta, nil
 		}
 		var rle *resourceLimitExceededError
-		if !errors.As(err, &rle) || attempt == maxAttempts {
+		var ifr *insufficientFeeRejectedError
+		if (!errors.As(err, &rle) && !errors.As(err, &ifr)) || attempt == maxAttempts {
 			return nil, err
 		}
 		sourceAccount, err = d.getSourceAccount(ctx)
@@ -820,6 +824,18 @@ func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transacti
 		return nil, fmt.Errorf("%stransaction submission failed: server overloaded, try again later", label)
 	case "ERROR":
 		if submitResult.ErrorResultXDR != "" {
+			// A txInsufficientFee rejection means the fee assembled from our
+			// simulation no longer covers the inclusion-time required fee —
+			// the same concurrent-deployment drift resourceLimitExceededError
+			// captures at the instruction level (e.g. a sibling upload of
+			// identical WASM bytes landed between our simulation and
+			// inclusion). Retryable: the transaction was never executed.
+			if isTxInsufficientFee(submitResult.ErrorResultXDR) {
+				return nil, &insufficientFeeRejectedError{
+					label:     label,
+					resultXDR: submitResult.ErrorResultXDR,
+				}
+			}
 			return nil, fmt.Errorf("%stransaction rejected: %v (diagnostics: %v)", label, submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
 		}
 		return nil, fmt.Errorf("%stransaction rejected with status ERROR", label)
@@ -895,6 +911,37 @@ type resourceLimitExceededError struct {
 func (e *resourceLimitExceededError) Error() string {
 	return fmt.Sprintf("transaction failed (hash: %s, resultXDR: %q, diagnostics: %v)",
 		e.hash, e.resultXDR, e.diagnostics)
+}
+
+// insufficientFeeRejectedError marks a transaction the network rejected at
+// inclusion with txInsufficientFee — it was never executed, hence no
+// diagnostics. The fee came from our pre-submission simulation, and under
+// concurrent deployment the ledger can shift before inclusion (e.g. a sibling
+// upload of identical WASM bytes landing first), changing the required fee —
+// the same simulation/inclusion drift resourceLimitExceededError captures at
+// the instruction level. The transaction consumed nothing, so it can be
+// rebuilt against the current ledger state and retried; re-simulating
+// converges the same way.
+type insufficientFeeRejectedError struct {
+	label     string
+	resultXDR string
+}
+
+func (e *insufficientFeeRejectedError) Error() string {
+	return fmt.Sprintf("%stransaction rejected (txInsufficientFee): %v", e.label, e.resultXDR)
+}
+
+// isTxInsufficientFee reports whether resultXDR is a transaction result the
+// network rejected with txInsufficientFee.
+func isTxInsufficientFee(resultXDR string) bool {
+	if resultXDR == "" {
+		return false
+	}
+	var result xdr.TransactionResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
+		return false
+	}
+	return result.Result.Code == xdr.TransactionResultCodeTxInsufficientFee
 }
 
 // isInvokeHostFunctionResourceLimitExceeded reports whether resultXDR is a

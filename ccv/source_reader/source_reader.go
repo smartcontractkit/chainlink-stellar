@@ -591,13 +591,13 @@ func toBytes32(hexStr string) (protocol.Bytes32, error) {
 		hexStr = "0x" + strings.TrimPrefix(hexStr, "0X")
 	}
 
-	// Allow odd-length hex by left-padding if needed.
+	// Require exactly 64 hex characters (32 bytes): both callers pass 32-byte
+	// ledger hashes, so a shorter (odd- or even-length) value is a truncated
+	// hash that must surface as an error, not silently zero-tail into a
+	// different 32-byte hash (report L-6).
 	h := strings.TrimPrefix(hexStr, "0x")
-	if len(h)%2 == 1 {
-		h = "0" + h
-	}
-	if len(h) > 64 {
-		return protocol.Bytes32{}, fmt.Errorf("hex string too long: %s", hexStr)
+	if len(h) != 64 {
+		return protocol.Bytes32{}, fmt.Errorf("hex string must be exactly 64 characters (32 bytes), got %d: %s", len(h), hexStr)
 	}
 
 	decoded, err := hex.DecodeString(h)

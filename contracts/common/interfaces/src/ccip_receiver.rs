@@ -58,7 +58,6 @@ pub trait ExampleCcipReceiverInterface {
         receiver: soroban_sdk::Bytes,
         data: soroban_sdk::Bytes,
         fee_token: soroban_sdk::Address,
-        fee_token_amount: i128,
     ) -> Result<soroban_sdk::BytesN<32>, CCIPError>;
     fn apply_ccv_config_updates(
         env: soroban_sdk::Env,

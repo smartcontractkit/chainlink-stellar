@@ -67,7 +67,7 @@ func sendAndScanMarker(
 	require.NoError(t, err)
 	require.Positive(t, requiredFee.Sign(), "total fee must be positive (CCV+network)")
 
-	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 	require.NoError(t, err)
 	require.NotEqual(t, [32]byte{}, msgID, "CcipSend returned empty message_id")
 

@@ -4,7 +4,6 @@ package ccip_receiver
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -348,14 +347,13 @@ func (c *ExampleCcipReceiverClient) GetRemoteChainConfig(ctx context.Context, ch
 }
 
 // SendDataPayFeeToken calls the send_data_pay_fee_token function on the contract.
-func (c *ExampleCcipReceiverClient) SendDataPayFeeToken(ctx context.Context, caller string, destChainSelector uint64, receiver []byte, data []byte, feeToken string, feeTokenAmount *big.Int) ([32]byte, error) {
+func (c *ExampleCcipReceiverClient) SendDataPayFeeToken(ctx context.Context, caller string, destChainSelector uint64, receiver []byte, data []byte, feeToken string) ([32]byte, error) {
 	args := []xdr.ScVal{
 		scval.AddressToScVal(caller),
 		scval.Uint64ToScVal(destChainSelector),
 		scval.BytesToScVal(receiver),
 		scval.BytesToScVal(data),
 		scval.AddressToScVal(feeToken),
-		scval.I128ToScVal(feeTokenAmount),
 	}
 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "send_data_pay_fee_token", args)

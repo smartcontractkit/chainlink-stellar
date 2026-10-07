@@ -1608,12 +1608,8 @@ impl TokenTransferLane {
         assert!(required_fee > 0, "quoted fee must be positive");
         self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
         self.transfer_token_sac.mint(&self.sender, &1_000_000);
-        self.router_client.ccip_send(
-            &self.sender,
-            &self.evm_chain_selector,
-            &message,
-            &required_fee,
-        );
+        self.router_client
+            .ccip_send(&self.sender, &self.evm_chain_selector, &message);
         receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
     }
 
@@ -1642,12 +1638,8 @@ impl TokenTransferLane {
         assert!(required_fee > 0, "quoted fee must be positive");
         self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
         self.transfer_token_sac.mint(&self.sender, &1_000_000);
-        self.router_client.ccip_send(
-            &self.sender,
-            &self.evm_chain_selector,
-            &message,
-            &required_fee,
-        );
+        self.router_client
+            .ccip_send(&self.sender, &self.evm_chain_selector, &message);
         let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
         let encoded = encoded_message_from_last_onramp_event(env, &self.onramp_id);
         (receipts, encoded)
@@ -1725,6 +1717,15 @@ fn setup_token_transfer_lane() -> TokenTransferLane {
 fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTransferLane {
     let env = Env::default();
     env.mock_all_auths();
+    // L-8: `Router::ccip_send` now quotes via `onramp.get_fee` itself before
+    // `forward_from_router` (EVM `Router.ccipSend` parity), so a full send runs
+    // the fee pipeline (pool + CCV + executor cross-contract quotes) twice —
+    // on top of the whole deployment stack this setup accumulates into one
+    // Env's budget. The heavier token-transfer sends exceed the default
+    // Soroban test budget. Lift it here (same rationale as the H-3 fee-dist
+    // lane below); the budget is per-test accumulated state, not a production
+    // per-tx limit, so nothing is masked. Data-only lanes keep Env::default().
+    env.budget().reset_unlimited();
 
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
@@ -2040,33 +2041,46 @@ fn test_message_base_priced_into_calldata_size() {
     );
 
     // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
-    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. Every
-    // receipt records its slice in USD cents (the Stellar receipt convention;
-    // see the executor/network receipt construction in lib.rs), and with executor
-    // flat fee 0 the executor receipt is exactly the priced execution-gas cost.
-    // So it must EQUAL the quoter's quote for calldata_size = 143 and STRICTLY
-    // EXCEED the quote for calldata_size = 0 (the no-BASE counterfactual) —
-    // proving the OnRamp bills BASE into calldata_size.
+    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. With
+    // executor flat fee 0 the executor receipt is exactly the priced
+    // execution-gas cost, converted BARE (no premium slice; OnRamp.sol:1094-1097
+    // parity, report L-7). So it must EQUAL the quoter's quote for
+    // calldata_size = 143 — converted with the same fee_math helper and the
+    // oracle's own price — and STRICTLY EXCEED the converted quote for
+    // calldata_size = 0 (the no-BASE counterfactual) — proving the OnRamp bills
+    // BASE into calldata_size.
     let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
     assert_eq!(
         receipts_base.len(),
         3,
         "data-only ⇒ [CCV, Executor, Network]"
     );
+    // L-7: receipts carry fee-token smallest units, so convert both oracle
+    // quotes (USD cents) through fee_math with each oracle's own fee-token price.
+    let expected_base = fee_math::usd_cents_to_fee_token(
+        oracle_base.gas_cost_usd_cents,
+        oracle_base.fee_token_price,
+    )
+    .expect("convert oracle(143) exec cost to fee token");
+    let expected_zero = fee_math::usd_cents_to_fee_token(
+        oracle_zero.gas_cost_usd_cents,
+        oracle_zero.fee_token_price,
+    )
+    .expect("convert oracle(0) exec cost to fee token");
     let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
     assert_eq!(
-        exec_fee_base, oracle_base.gas_cost_usd_cents as i128,
+        exec_fee_base, expected_base,
         "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) into \
-         calldata_size: executor receipt (USD cents, flat fee 0)={} must equal \
-         oracle(143)={}, and exceed oracle(0)={}",
-        exec_fee_base, oracle_base.gas_cost_usd_cents, oracle_zero.gas_cost_usd_cents,
+         calldata_size: executor receipt (fee-token units, flat fee 0)={} must \
+         equal oracle(143)={}, and exceed oracle(0)={}",
+        exec_fee_base, expected_base, expected_zero,
     );
     assert!(
-        (exec_fee_base as u128) > oracle_zero.gas_cost_usd_cents,
+        exec_fee_base > expected_zero,
         "empty-data executor receipt must exceed the no-BASE (calldata_size = 0) \
          counterfactual: receipt={} oracle(0)={}",
         exec_fee_base,
-        oracle_zero.gas_cost_usd_cents,
+        expected_zero,
     );
 
     // Adding 100 bytes of data grows calldata_size by 100 ⇒ fee strictly rises.
@@ -2341,12 +2355,8 @@ fn test_forward_from_router_empty_pool_falls_back_to_defaults() {
     // Fund the sender for the fee + the token transfer, then send.
     lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
     lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
-    lane.router_client.ccip_send(
-        &lane.sender,
-        &lane.evm_chain_selector,
-        &message,
-        &required_fee,
-    );
+    lane.router_client
+        .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
 
     // Extract the encoded on-wire message IMMEDIATELY after `ccip_send` (before any
     // further contract call clears the event view) and assert the committed hash is
@@ -2450,12 +2460,8 @@ fn test_forward_from_router_nonempty_pool_does_not_fold_defaults() {
 
     lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
     lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
-    lane.router_client.ccip_send(
-        &lane.sender,
-        &lane.evm_chain_selector,
-        &message,
-        &required_fee,
-    );
+    lane.router_client
+        .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
 
     let encoded = encoded_message_from_last_onramp_event(env, &lane.onramp_id);
     let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
@@ -2484,6 +2490,10 @@ fn rebind_pool_to_mock(lane: &TokenTransferLane, mock_pool: &Address) {
 fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let env = Env::default();
     env.mock_all_auths();
+    // Full token-transfer lane built inline (not via
+    // `setup_token_transfer_lane_with_pool`) — same L-8 double-quote budget
+    // rationale, so lift the budget here too.
+    env.budget().reset_unlimited();
 
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
@@ -2644,7 +2654,7 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     fee_token_sac.mint(&sender, &(required_fee * 2));
     transfer_token_sac.mint(&sender, &1_000_000);
 
-    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message, &required_fee);
+    let message_id = router_client.ccip_send(&sender, &evm_chain_selector, &message);
     assert_ne!(
         message_id,
         BytesN::from_array(&env, &[0u8; 32]),
@@ -2672,7 +2682,7 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
 
     // H-3 / INV-FEE-19: the executor fee (flat 25 cents + priced exec gas) is
     // transferred to the Executor contract at send time. The executor receipt
-    // carries the same amount (USD cents) and must be positive.
+    // carries the same amount (fee-token smallest units, L-7) and must be positive.
     let executor_receipt_fee = receipts.get(2).unwrap().fee_token_amount;
     assert!(
         executor_receipt_fee > 0,
@@ -2764,12 +2774,8 @@ impl FeeDistLane {
         if !message.token_amounts.is_empty() {
             self.transfer_token_sac.mint(&self.sender, &1_000_000);
         }
-        self.router_client.ccip_send(
-            &self.sender,
-            &self.evm_chain_selector,
-            &message,
-            &required_fee,
-        );
+        self.router_client
+            .ccip_send(&self.sender, &self.evm_chain_selector, &message);
         let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
         (receipts, message, required_fee)
     }
@@ -2832,7 +2838,8 @@ where
     // This lane wires two fee-charging CCVs (extra cross-contract get_fee /
     // forward_to_verifier calls) on top of the full token-transfer path, which
     // exceeds the default Soroban test budget. Lift the budget for the H-3
-    // distribution tests only (the rest of the suite keeps `Env::default()`).
+    // distribution tests (as `setup_token_transfer_lane_with_pool` also does
+    // since L-8; the rest of the suite keeps `Env::default()`).
     env.budget().reset_unlimited();
 
     let owner = Address::generate(&env);
@@ -3067,12 +3074,14 @@ fn test_send_distributes_ccv_fees_to_resolvers() {
     assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
     assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
     assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
-    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
-    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
 
     let price = lane.fee_token_price(&message);
     let expected_a = fee_math::usd_cents_to_fee_token(30_u128, price).expect("convert ccv_a fee");
     let expected_b = fee_math::usd_cents_to_fee_token(70_u128, price).expect("convert ccv_b fee");
+    // L-7: receipts carry fee-token smallest units, premium-converted from the
+    // verifier's USD-cent quote (non-LINK lane: pm = 100 ⇒ bare == premium).
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, expected_a);
+    assert_eq!(receipts.get(1).unwrap().fee_token_amount, expected_b);
 
     // Balance checks are contract calls — run after all event extraction.
     let fee_token_client = token::Client::new(env, &lane.fee_token);
@@ -3119,12 +3128,14 @@ fn test_ccv_accepts_allowed_fee_token_and_distributes() {
     assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
     assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
     assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
-    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
-    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
 
     let price = lane.fee_token_price(&message);
     let expected_a = fee_math::usd_cents_to_fee_token(30_u128, price).expect("convert ccv_a fee");
     let expected_b = fee_math::usd_cents_to_fee_token(70_u128, price).expect("convert ccv_b fee");
+    // L-7: receipts carry fee-token smallest units, premium-converted from the
+    // verifier's USD-cent quote (non-LINK lane: pm = 100 ⇒ bare == premium).
+    assert_eq!(receipts.get(0).unwrap().fee_token_amount, expected_a);
+    assert_eq!(receipts.get(1).unwrap().fee_token_amount, expected_b);
 
     let fee_token_client = token::Client::new(env, &lane.fee_token);
     assert_eq!(
@@ -3213,7 +3224,7 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
         fee_token: lane.fee_token.clone(),
         extra_args: Bytes::new(env),
     };
-    let (receipts, _message, _required_fee) = lane.send(message);
+    let (receipts, sent_message, _required_fee) = lane.send(message);
 
     // [issuer_ccv, Pool, Executor, Network] — the lane default CCVs are NOT
     // required for the issuer's token.
@@ -3223,7 +3234,13 @@ fn test_token_issuer_uses_own_ccv_for_token_pool_via_advanced_hooks() {
         "expected issuer-ccv + pool + executor + network (lane defaults excluded)"
     );
     assert_eq!(receipts.get(0).unwrap().issuer, issuer_ccv);
-    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 40);
+    // L-7: the issuer-CCV receipt carries its 40-USD-cent fee premium-converted
+    // into fee-token smallest units (non-LINK lane: pm = 100 ⇒ bare == premium).
+    assert_eq!(
+        receipts.get(0).unwrap().fee_token_amount,
+        fee_math::usd_cents_to_fee_token(40_u128, lane.fee_token_price(&sent_message))
+            .expect("convert issuer ccv fee")
+    );
     assert_eq!(receipts.get(1).unwrap().issuer, lane.pool_id);
 
     // The Chainlink-controlled lane defaults must not be required for the
@@ -3539,11 +3556,13 @@ fn test_send_distributes_pool_fee_to_pool() {
         "expected 2 CCV + pool + executor + network"
     );
     assert_eq!(receipts.get(2).unwrap().issuer, lane.pool_id);
-    assert_eq!(receipts.get(2).unwrap().fee_token_amount, 5000);
 
     let price = lane.fee_token_price(&message);
     let expected_pool =
         fee_math::usd_cents_to_fee_token(5000_u128, price).expect("convert pool fee");
+    // L-7: the pool receipt carries the premium-converted fee-token amount
+    // (non-LINK lane: pm = 100 ⇒ bare == premium).
+    assert_eq!(receipts.get(2).unwrap().fee_token_amount, expected_pool);
 
     let fee_token_client = token::Client::new(env, &lane.fee_token);
     assert_eq!(
@@ -3625,9 +3644,9 @@ fn test_withdraw_fee_tokens_sweeps_network_fee_residual() {
 
 /// INV-FEE-13: with a LINK fee token (premium 90), each CCV fee is transferred to
 /// its VVR in the DISCOUNTED fee-token amount `usd_cents_to_fee_token_with_premium(
-/// fee, 90, price)`, not the bare conversion. The receipt still carries USD cents
-/// (30/70) — only the converted/distributed amount changes. Data-only isolates the
-/// CCV slice (no pool row).
+/// fee, 90, price)`, not the bare conversion. L-7: the receipt also carries the
+/// discounted fee-token amount (EVM `_getReceipts` converts every receipt through
+/// the `feeMultiplier`). Data-only isolates the CCV slice (no pool row).
 #[test]
 fn test_send_distributes_ccv_fees_with_link_premium() {
     let lane = setup_fee_dist_lane_impl(true, 90);
@@ -3635,11 +3654,8 @@ fn test_send_distributes_ccv_fees_with_link_premium() {
 
     let (receipts, message, _required_fee) = lane.send_data_only();
     assert_eq!(receipts.len(), 4, "expected 2 CCV + executor + network");
-    // Receipts still carry USD cents (off-chain parsing is unchanged).
     assert_eq!(receipts.get(0).unwrap().issuer, lane.ccv_a);
     assert_eq!(receipts.get(1).unwrap().issuer, lane.ccv_b);
-    assert_eq!(receipts.get(0).unwrap().fee_token_amount, 30);
-    assert_eq!(receipts.get(1).unwrap().fee_token_amount, 70);
 
     let price = lane.fee_token_price(&message);
     // Discounted (premium 90) — strictly less than the bare conversion.
@@ -3651,6 +3667,18 @@ fn test_send_distributes_ccv_fees_with_link_premium() {
     assert!(
         expected_a < bare_a,
         "LINK premium must discount the CCV fee vs the bare conversion"
+    );
+
+    // L-7: receipts carry the DISCOUNTED fee-token amount (INV-FEE-13).
+    assert_eq!(
+        receipts.get(0).unwrap().fee_token_amount,
+        expected_a,
+        "ccv_a receipt must carry the premium-discounted fee-token amount"
+    );
+    assert_eq!(
+        receipts.get(1).unwrap().fee_token_amount,
+        expected_b,
+        "ccv_b receipt must carry the premium-discounted fee-token amount"
     );
 
     let fee_token_client = token::Client::new(env, &lane.fee_token);
@@ -3681,7 +3709,6 @@ fn test_send_distributes_pool_fee_with_link_premium() {
         "expected 2 CCV + pool + executor + network"
     );
     assert_eq!(receipts.get(2).unwrap().issuer, lane.pool_id);
-    assert_eq!(receipts.get(2).unwrap().fee_token_amount, 5000);
 
     let price = lane.fee_token_price(&message);
     let expected_pool =
@@ -3690,6 +3717,13 @@ fn test_send_distributes_pool_fee_with_link_premium() {
     assert!(
         expected_pool < bare_pool,
         "LINK premium must discount the pool fee vs the bare conversion"
+    );
+
+    // L-7: the pool receipt carries the DISCOUNTED fee-token amount.
+    assert_eq!(
+        receipts.get(2).unwrap().fee_token_amount,
+        expected_pool,
+        "pool receipt must carry the premium-discounted fee-token amount"
     );
 
     let fee_token_client = token::Client::new(env, &lane.fee_token);
@@ -3854,9 +3888,11 @@ fn test_executor_receipt_prices_payload_bytes() {
 
 /// INV-FEE-14: gas routes to the EXECUTOR (non-premium), not to the fee
 /// aggregator. After a data-only send:
-///   - the executor's fee-token balance == `with_premium(flat, pm, price)` +
-///     `bare(exec_cost, price)` — the exec-cost (gas) slice is converted with the
-///     BARE helper (no LINK discount), exactly `executor_fee_tokens`;
+///   - the executor's fee-token balance == the executor receipt's
+///     `fee_token_amount`, which IS `executor_fee_tokens` = `with_premium(flat,
+///     pm, price)` + `bare(exec_cost, price)` (L-7: receipts carry fee-token
+///     units; the exec-cost/gas slice is converted with the BARE helper, no
+///     LINK discount) and is transferred verbatim at distribution;
 ///   - the OnRamp holds the NETWORK-only message fee + flat-fee floor dust (NO gas
 ///     term — gas is no longer in `get_message_fee`), i.e. the residual equals
 ///     `with_premium(message_network_fee_usd_cents) + (with_premium(125) -
@@ -3882,19 +3918,24 @@ fn test_gas_routes_to_executor_not_fee_aggregator() {
     let exec_receipt = receipts.get(2).unwrap();
     // Executor flat fee (from `Executor::get_fee` = 25, per `setup_executor`).
     const EXECUTOR_FLAT_USD: u128 = 25;
-    let exec_cost_usd = (exec_receipt.fee_token_amount as u128) - EXECUTOR_FLAT_USD;
-
-    let expected_executor =
-        fee_math::usd_cents_to_fee_token_with_premium(EXECUTOR_FLAT_USD, pm, price)
-            .expect("flat")
-            .checked_add(fee_math::usd_cents_to_fee_token(exec_cost_usd, price).expect("exec_cost"))
-            .unwrap();
+    // L-7: the receipt IS executor_fee_tokens = flat (premium; pm = 100 ⇒
+    // bare) + exec_cost (BARE, non-premium) in fee-token units — the gas
+    // slice routes to the executor, not to the fee aggregator. (The bare-vs-
+    // premium split itself is proven on the LINK lane in
+    // `test_link_gas_not_discounted`, where the two helpers diverge; here
+    // pm = 100 makes them bit-identical.)
+    let flat_tokens =
+        fee_math::usd_cents_to_fee_token_with_premium(EXECUTOR_FLAT_USD, pm, price).expect("flat");
+    assert!(
+        exec_receipt.fee_token_amount > flat_tokens as i128,
+        "executor receipt must carry the priced exec-cost (gas) slice on top of the flat fee"
+    );
 
     let fee_token_client = token::Client::new(env, &lane.fee_token);
     assert_eq!(
         fee_token_client.balance(&lane.default_executor),
-        expected_executor,
-        "executor must receive flat (premium) + exec_cost (BARE, non-premium) — gas routes to executor"
+        exec_receipt.fee_token_amount,
+        "executor must receive its receipt's fee-token amount (flat premium + exec_cost BARE) — gas routes to executor"
     );
 
     // Residual = network-only message fee + flat-fee floor dust (no gas term).
@@ -3951,25 +3992,32 @@ fn test_gas_routes_to_executor_not_fee_aggregator() {
 /// split, selected by token presence — `message_network_fee_usd_cents` (50) for a
 /// data-only send, `token_network_fee_usd_cents` (100) for a token-transfer send —
 /// NOT a single fee-quoter `network_fee_usd_cents`. The network receipt is always
-/// last and carries the USD-cent source slice verbatim, so asserting 50 (data-only)
-/// then 100 (token-transfer) on the same lane directly pins the source-selection
-/// switch. A regression to the legacy single-source model (or a swap of the two
-/// split fields) would flip one of these.
+/// last and carries the premium-converted value of the selected slice (L-7; the
+/// non-LINK lane's pm = 100 makes the premium helper bit-identical to the bare
+/// one), so asserting convert(50) (data-only) then convert(100) (token-transfer)
+/// on the same lane directly pins the source-selection switch. A regression to
+/// the legacy single-source model (or a swap of the two split fields) would flip
+/// one of these.
 #[test]
 fn test_network_fee_source_selected_by_token_presence() {
     let lane = setup_fee_dist_lane(); // non-LINK, pm = 100
 
     // Data-only: receipts are [ccv_a, ccv_b, executor, network] (len 4); the network
     // receipt (idx 3) carries the message_network_fee_usd_cents slice = 50.
-    let (data_receipts, _, _) = lane.send_data_only();
+    let (data_receipts, data_message, _) = lane.send_data_only();
     assert_eq!(
         data_receipts.len(),
         4,
         "data-only: 2 CCV + executor + network"
     );
+    let price = lane.fee_token_price(&data_message);
+    let expected_message_network =
+        fee_math::usd_cents_to_fee_token(50_u128, price).expect("convert message network fee");
+    let expected_token_network =
+        fee_math::usd_cents_to_fee_token(100_u128, price).expect("convert token network fee");
     let data_network = data_receipts.get(3).unwrap();
     assert_eq!(
-        data_network.fee_token_amount, 50,
+        data_network.fee_token_amount, expected_message_network,
         "data-only network receipt must carry message_network_fee_usd_cents (50), \
          not token_network_fee_usd_cents (100) — source selected by token ABSENCE"
     );
@@ -3984,7 +4032,7 @@ fn test_network_fee_source_selected_by_token_presence() {
     );
     let token_network = token_receipts.get(4).unwrap();
     assert_eq!(
-        token_network.fee_token_amount, 100,
+        token_network.fee_token_amount, expected_token_network,
         "token-transfer network receipt must carry token_network_fee_usd_cents (100), \
          not message_network_fee_usd_cents (50) — source selected by token PRESENCE"
     );
@@ -3995,9 +4043,10 @@ fn test_network_fee_source_selected_by_token_presence() {
 /// different network fees for an identical data-only send — proving the protocol
 /// fee is sourced per-destination-chain, not a single global constant. The TT-vs-
 /// messaging axis is covered by `test_network_fee_source_selected_by_token_presence`;
-/// this isolates the per-lane axis. Non-LINK fee token ⇒ premium multiplier 100,
-/// so the network receipt's `fee_token_amount` equals the configured USD-cents value
-/// (matching the assertion style of the TT-vs-messaging test above).
+/// this isolates the per-lane axis. Non-LINK fee token ⇒ premium multiplier 100, so
+/// each network receipt's `fee_token_amount` is the bare premium conversion of its
+/// lane's configured USD-cents value (matching the assertion style of the
+/// TT-vs-messaging test above).
 #[test]
 fn test_protocol_network_fee_is_variable_by_lane() {
     // Lane A: message network fee = 50 (the historical default-lane value).
@@ -4007,18 +4056,23 @@ fn test_protocol_network_fee_is_variable_by_lane() {
 
     // Data-only isolates the network slice — receipts are [ccv_a, ccv_b, executor,
     // network]; the network receipt is the last (index 3).
-    let (receipts_a, _, _) = lane_a.send_data_only();
-    let (receipts_b, _, _) = lane_b.send_data_only();
+    let (receipts_a, msg_a, _) = lane_a.send_data_only();
+    let (receipts_b, msg_b, _) = lane_b.send_data_only();
 
     let net_a = receipts_a.get(3).unwrap().fee_token_amount;
     let net_b = receipts_b.get(3).unwrap().fee_token_amount;
 
+    let expected_a = fee_math::usd_cents_to_fee_token(50_u128, lane_a.fee_token_price(&msg_a))
+        .expect("50 cents");
+    let expected_b = fee_math::usd_cents_to_fee_token(200_u128, lane_b.fee_token_price(&msg_b))
+        .expect("200 cents");
+
     assert_eq!(
-        net_a, 50,
+        net_a, expected_a,
         "lane A network receipt must carry its per-lane message_network_fee_usd_cents (50)"
     );
     assert_eq!(
-        net_b, 200,
+        net_b, expected_b,
         "lane B network receipt must carry its per-lane message_network_fee_usd_cents (200)"
     );
     assert_ne!(
@@ -4048,23 +4102,36 @@ fn test_link_gas_not_discounted() {
     const EXECUTOR_FLAT_USD: u128 = 25;
 
     let exec_receipt = receipts.get(2).unwrap();
-    let exec_cost_usd = (exec_receipt.fee_token_amount as u128) - EXECUTOR_FLAT_USD;
+    // L-7: the executor receipt carries fee-token units = flat (premium 90 ⇒
+    // discounted) + exec-cost (BARE, not discounted). Recover the exec-cost USD
+    // cents from the token amount for the counterfactual below:
+    // exec_cost_tokens = floor(exec_cents * 1e34 / price), so
+    // recovered = floor(exec_cost_tokens * price / 1e34) is exec_cents or
+    // exec_cents − 1 — at most one cent of floor dust.
+    let flat_discounted =
+        fee_math::usd_cents_to_fee_token_with_premium(EXECUTOR_FLAT_USD, PM, price).expect("flat");
+    let exec_cost_tokens = exec_receipt.fee_token_amount - flat_discounted;
     assert!(
-        exec_cost_usd > 0,
+        exec_cost_tokens > 0,
         "exec-cost must be positive for the not-discounted assertion to be meaningful"
     );
+    const SCALE: u128 = 10_u128.pow(34);
+    let exec_cost_usd = (exec_cost_tokens as u128) * price / SCALE;
+    // The 10% discount margin (0.1 × exec_cost) must exceed the ≤1-cent
+    // recovery dust for the strict-greater proof below to be sound.
+    assert!(
+        exec_cost_usd >= 20,
+        "exec-cost ({} cents) must be ≥ 20 cents so the discount margin dwarfs the recovery dust",
+        exec_cost_usd
+    );
 
-    let executor_balance =
-        fee_math::usd_cents_to_fee_token_with_premium(EXECUTOR_FLAT_USD, PM, price)
-            .expect("flat")
-            .checked_add(fee_math::usd_cents_to_fee_token(exec_cost_usd, price).expect("exec_cost"))
-            .unwrap();
-
+    // The distribution transfers the receipt value verbatim (L-7).
+    let executor_balance = exec_receipt.fee_token_amount;
     let fee_token_client = token::Client::new(env, &lane.fee_token);
     assert_eq!(
         fee_token_client.balance(&lane.default_executor),
         executor_balance,
-        "executor = flat (discounted) + exec_cost (BARE) — gas not discounted (INV-FEE-14)"
+        "executor = receipt = flat (discounted) + exec_cost (BARE) — gas not discounted (INV-FEE-14)"
     );
 
     // If the gas slice were discounted too, the executor balance would be at most
@@ -4415,12 +4482,8 @@ impl DataOnlyLane {
             .get_fee(&self.evm_chain_selector, &message);
         assert!(required_fee > 0, "quoted fee must be positive");
         self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
-        self.router_client.ccip_send(
-            &self.sender,
-            &self.evm_chain_selector,
-            &message,
-            &required_fee,
-        );
+        self.router_client
+            .ccip_send(&self.sender, &self.evm_chain_selector, &message);
         receipts_from_last_onramp_ccip_event(env, &self.onramp_id)
     }
 
@@ -4444,12 +4507,8 @@ impl DataOnlyLane {
             .get_fee(&self.evm_chain_selector, &message);
         assert!(required_fee > 0, "quoted fee must be positive");
         self.fee_token_sac.mint(&self.sender, &(required_fee * 2));
-        self.router_client.ccip_send(
-            &self.sender,
-            &self.evm_chain_selector,
-            &message,
-            &required_fee,
-        );
+        self.router_client
+            .ccip_send(&self.sender, &self.evm_chain_selector, &message);
         let receipts = receipts_from_last_onramp_ccip_event(env, &self.onramp_id);
         let encoded = encoded_message_from_last_onramp_event(env, &self.onramp_id);
         (receipts, encoded)
@@ -5188,12 +5247,9 @@ fn test_ccip_send_rejects_wrong_length_token_receiver() {
     assert!(required_fee > 0, "quoted fee must be positive");
     lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
     lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
-    let _ = lane.router_client.ccip_send(
-        &lane.sender,
-        &lane.evm_chain_selector,
-        &message,
-        &required_fee,
-    );
+    let _ = lane
+        .router_client
+        .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
 }
 
 /// M-2 positive: a sender-specified `token_receiver` of the correct length (20) is accepted.
@@ -5232,12 +5288,8 @@ fn test_ccip_send_accepts_correct_length_token_receiver() {
     assert!(required_fee > 0, "quoted fee must be positive");
     lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
     lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
-    lane.router_client.ccip_send(
-        &lane.sender,
-        &lane.evm_chain_selector,
-        &message,
-        &required_fee,
-    );
+    lane.router_client
+        .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
 
     // ccip_send did not trap; a full 4-receipt token send was emitted.
     let receipts = receipts_from_last_onramp_ccip_event(env, &lane.onramp_id);

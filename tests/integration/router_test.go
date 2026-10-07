@@ -361,11 +361,12 @@ func TestRouterCcipSendUnhappyPaths(t *testing.T) {
 
 		// Use simulation so the RPC error includes Error(Contract, #62); InvokeContract can
 		// surface a generic "transaction failed" after submit without the code in the string.
+		// L-8: ccip_send takes (sender, dest_chain_selector, message) — the Router
+		// quotes via get_fee and pulls the fee itself; there is no fee argument.
 		args := []xdr.ScVal{
 			scval.AddressToScVal(deployerAddr),
 			scval.Uint64ToScVal(remoteDestChain),
 			scval.MustToScVal(baseMsg.ToScVal()),
-			scval.I128ToScVal(fee),
 		}
 		_, err = deployer.SimulateContract(ctx, stack.RouterID, "ccip_send", args)
 		assertHostContractErrorContainsCode(t, err, routerbindings.CCIPErrorBadRMNSignal)

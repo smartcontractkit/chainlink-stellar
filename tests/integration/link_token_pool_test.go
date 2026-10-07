@@ -335,7 +335,7 @@ func TestLinkTokenPoolOutbound(t *testing.T) {
 	}
 	startLedger := latest.Sequence
 
-	tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 	if err != nil {
 		t.Fatalf("Router CcipSend (with LINK token): %v", err)
 	}

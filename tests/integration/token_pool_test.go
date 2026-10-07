@@ -259,7 +259,7 @@ func TestTokenPool(t *testing.T) {
 			}
 			startLedger := latest.Sequence
 
-			messageID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msgNoTokens, feeNoTokens)
+			messageID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msgNoTokens)
 			if err != nil {
 				t.Fatalf("Router CcipSend (no tokens): %v", err)
 			}
@@ -294,7 +294,7 @@ func TestTokenPool(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetLatestLedger (token send): %v", err)
 			}
-			tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+			tokenMsgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 			if err != nil {
 				t.Fatalf("Router CcipSend (with SAC token): %v", err)
 			}
