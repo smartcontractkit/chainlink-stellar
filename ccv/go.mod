@@ -13,9 +13,9 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260915214759-02f2214d5823
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
 	github.com/smartcontractkit/chainlink-deployments-framework v0.123.3
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
-	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
-	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-00010101000000-000000000000
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098
+	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261005072841-71e45e418098
+	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-20261005072841-71e45e418098
 	github.com/stellar/go-stellar-sdk v0.7.3
 	github.com/stretchr/testify v1.12.1
 )
@@ -275,9 +275,6 @@ replace (
 	// Gotron-sdk fork required by chainlink-deployments-framework
 	github.com/fbsobreira/gotron-sdk => github.com/smartcontractkit/chainlink-tron/relayer/gotron-sdk v0.0.5-0.20251014124537-af6b1684fe15
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
-	github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings
-	github.com/smartcontractkit/chainlink-stellar/deployment => ../deployment
-	github.com/smartcontractkit/chainlink-stellar/relayer => ../relayer
 	// chainlink-evm's generated codec code (internal_types_codecgen.go) uses
 	// codec1978.GenVersion and codec1978.GenHelper which exist in v1.2.12 but
 	// were removed in v1.3.0.  chainlink-ccv (via integration/pkg/contracttransmitter)

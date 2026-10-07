@@ -58,6 +58,8 @@ flowchart LR
 	click chainlink-common/keystore href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-common/pkg/chipingress
 	click chainlink-common/pkg/chipingress href "https://github.com/smartcontractkit/chainlink-common"
+	chainlink-common/pkg/monitoring
+	click chainlink-common/pkg/monitoring href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-data-streams
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
@@ -144,7 +146,9 @@ flowchart LR
 	chainlink-stellar/deployment --> chainlink-ccv
 	chainlink-stellar/deployment --> chainlink-ccv/deployment
 	click chainlink-stellar/deployment href "https://github.com/smartcontractkit/chainlink-stellar"
-	chainlink-stellar/relayer
+	chainlink-stellar/relayer --> chainlink-common/pkg/monitoring
+	chainlink-stellar/relayer --> chainlink-framework/multinode
+	chainlink-stellar/relayer --> chainlink-stellar/bindings
 	click chainlink-stellar/relayer href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-sui
 	click chainlink-sui href "https://github.com/smartcontractkit/chainlink-sui"
@@ -200,6 +204,7 @@ flowchart LR
 		 chainlink-common
 		 chainlink-common/keystore
 		 chainlink-common/pkg/chipingress
+		 chainlink-common/pkg/monitoring
 	end
 	click chainlink-common-repo href "https://github.com/smartcontractkit/chainlink-common"
 
@@ -408,6 +413,8 @@ flowchart LR
 	click chainlink-stellar href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/bindings
 	click chainlink-stellar/bindings href "https://github.com/smartcontractkit/chainlink-stellar"
+	chainlink-stellar/capabilities --> chainlink-common
+	click chainlink-stellar/capabilities href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/ccv --> chainlink-stellar/deployment
 	chainlink-stellar/ccv --> chainlink-stellar/relayer
 	click chainlink-stellar/ccv href "https://github.com/smartcontractkit/chainlink-stellar"
@@ -591,6 +598,7 @@ flowchart LR
 	subgraph chainlink-stellar-repo[chainlink-stellar]
 		 chainlink-stellar
 		 chainlink-stellar/bindings
+		 chainlink-stellar/capabilities
 		 chainlink-stellar/ccv
 		 chainlink-stellar/deployment
 		 chainlink-stellar/relayer

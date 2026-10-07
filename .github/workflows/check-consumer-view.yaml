@@ -1,0 +1,52 @@
+name: Check Consumer View
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  consumer-view:
+    name: Check Consumer View
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Consumer view = how external repos resolve these modules: no filesystem
+      # replaces, sibling modules fetched at their pinned pseudo-versions.
+      - name: No filesystem replaces in any go.mod
+        run: |
+          if matches=$(grep -rEn --include=go.mod '=>[[:space:]]*\.\.?/' .); then
+            echo "::error::filesystem replace found - intra-repo pins must be honest (go.work covers local development)"
+            echo "$matches"
+            exit 1
+          fi
+
+      # Cross-module PRs compile sibling changes through go.work; fetching the
+      # siblings at their pinned versions would false-fail them, so the
+      # consumer-view build runs on main only.
+      - name: Build every module in consumer view
+        if: github.event_name != 'pull_request'
+        run: |
+          for m in . bindings capabilities ccv deployment relayer tests; do
+            echo "::group::go build $m"
+            (cd "$m" && GOWORK=off go build ./...)
+            echo "::endgroup::"
+          done

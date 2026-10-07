@@ -4,6 +4,10 @@
 
 set -e
 
+# Module mode: the repo-root go.work would otherwise switch go commands to
+# workspace mode and change the committed go.md graph.
+export GOWORK=off
+
 echo "# smartcontractkit Go modules
 ## Main module
 \`\`\`mermaid

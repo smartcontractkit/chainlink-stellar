@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/stellar-dev-images.tar.gz
-          key: stellar-dev-images-${{ hashFiles('Dockerfile.verifier', 'Dockerfile.executor', '**/*.go', '**/go.mod', '**/go.sum') }}
+          key: stellar-dev-images-${{ hashFiles('Dockerfile.verifier', 'Dockerfile.executor', '**/*.go', '**/go.mod', '**/go.sum', 'go.work', 'go.work.sum') }}
 
       - name: Load Stellar dev images
         if: steps.stellar-images.outputs.cache-hit == 'true'

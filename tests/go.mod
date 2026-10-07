@@ -17,9 +17,10 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260915214759-02f2214d5823
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
 	github.com/smartcontractkit/chainlink-deployments-framework v0.123.3
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
-	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
-	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098
+	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-20261005072841-71e45e418098
+	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261005072841-71e45e418098
+	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-20261005072841-71e45e418098 // indirect
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.8
 	github.com/stellar/go-stellar-sdk v0.7.3
 	github.com/stretchr/testify v1.12.1
@@ -546,18 +547,6 @@ replace (
 	// dskit's kv/memberlist. replace directives do not propagate to consumers,
 	// so mirror it here to keep dskit compiling.
 	github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20251126142931-6f9f62ab6f86
-	// mcms (pulled transitively via chainlink-ccip) requires the root
-	// chainlink-stellar module at a published pseudo-version whose tree still
-	// contains relayer/* (predating the relayer/ submodule split). Redirect that
-	// require to the local root, whose module excludes relayer/ (it is its own
-	// module), so relayer/* resolves only from the relayer submodule above and
-	// there is no ambiguous-import collision. tests/ itself does not import the
-	// root module (go mod why confirms), so this replace only neutralizes the
-	// stale published version.
-	github.com/smartcontractkit/chainlink-stellar => ../
-	github.com/smartcontractkit/chainlink-stellar/ccv => ../ccv
-	github.com/smartcontractkit/chainlink-stellar/deployment => ../deployment
-	github.com/smartcontractkit/chainlink-stellar/relayer => ../relayer
 	// chainlink-evm's generated codec code (internal_types_codecgen.go) uses
 	// codec1978.GenVersion and codec1978.GenHelper which exist in v1.2.12 but
 	// were removed in v1.3.0.  chainlink-ccv/build/devenv transitively requires
@@ -565,4 +554,9 @@ replace (
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
 
-replace github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings
+// chainlink-stellar (required transitively via mcms) resolves to a tagged
+// version (v0.0.7 family) whose tree predates the relayer/ and tests/ module
+// splits, so its relayer/* and tests/* packages collide with the standalone
+// relayer and tests modules. A require at a v0.0.0- pseudo-version cannot
+// outrank a tagged version under MVS, so force the post-split commit here.
+replace github.com/smartcontractkit/chainlink-stellar => github.com/smartcontractkit/chainlink-stellar v0.0.0-20261005072841-71e45e418098

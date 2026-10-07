@@ -10,6 +10,10 @@ coverage.out
 integration.test
 *.test
 
+# Workspace files (image builds run in module mode; see ENV GOWORK=off)
+go.work
+go.work.sum
+
 # Editor & local tooling
 .idea/
 .vscode/
