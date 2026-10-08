@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"encoding/json"
 	"fmt"
 
 	frameworkdatastore "github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -43,9 +44,20 @@ func (StellarMCMSReader) GetChainMetadata(e cldf.Environment, chainSelector uint
 	if err != nil {
 		return mcmstypes.ChainMetadata{}, fmt.Errorf("get_op_count: %w", err)
 	}
+	configVersionRep, err := cldfops.ExecuteOperation(e.OperationsBundle, mcmsops.GetConfigVersion, deps, mcmsops.GetConfigVersionInput{ContractID: ref.Address})
+	if err != nil {
+		return mcmstypes.ChainMetadata{}, fmt.Errorf("get_config_version: %w", err)
+	}
+	// The encoder hashes the configVersion from these fields; keeping it in sync
+	// with the chain is what makes SetRoot succeed after the first set_config.
+	additionalFields, err := json.Marshal(map[string]uint64{"configVersion": configVersionRep.Output.ConfigVersion})
+	if err != nil {
+		return mcmstypes.ChainMetadata{}, fmt.Errorf("marshal additional fields: %w", err)
+	}
 	return mcmstypes.ChainMetadata{
-		StartingOpCount: rep.Output.OpCount,
-		MCMAddress:      ref.Address,
+		StartingOpCount:  rep.Output.OpCount,
+		MCMAddress:       ref.Address,
+		AdditionalFields: additionalFields,
 	}, nil
 }
 
