@@ -134,9 +134,10 @@ jobs:
       - name: Run E2E tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        # TestStellarTCAPI runs in test-e2e-tcapi.yaml against its own devenv;
-        # -skip keeps the two jobs from duplicating each other.
-        run: cd tests && go test -v -timeout 25m -skip TestStellarTCAPI ./e2e/...
+        # The tcapi tests (TestStellarTCAPI, TestStellarToEVMTCAPI) run in
+        # test-e2e-tcapi.yaml against its own devenv; -skip keeps the two jobs
+        # from duplicating each other.
+        run: cd tests && go test -v -timeout 25m -skip 'TestStellar(ToEVM)?TCAPI' ./e2e/...
 
       - name: Dump container logs
         if: failure()
