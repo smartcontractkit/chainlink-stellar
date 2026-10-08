@@ -25,6 +25,7 @@ use common_helpers::{
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
     ToBytes, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, MESSAGE_V1_VERSION,
+    TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE,
 };
 #[cfg(feature = "e2e-upgrade-marker")]
 use events::E2EUpgradeMarker;
@@ -60,6 +61,13 @@ struct FeeBreakdown {
     /// `gas_limit`). A message property — computed always, priced only when
     /// auto-executing (H-5 / INV-FEE-10).
     execution_gas_limit: u32,
+    /// Executor receipt's `dest_bytes_overhead` (INV-FEE-14, EVM
+    /// `_getExecutionFee` OnRamp.sol:1129-1148): BASE + dataLength +
+    /// executorArgs.length + 2×`address_bytes_length` + the token-transfer
+    /// framing term. Carried so `forward_from_router` emits it on the executor
+    /// receipt and so Σ receipt `dest_bytes_overhead` equals the priced
+    /// `calldata_size` (EVM `bytesOverheadSum`).
+    executor_dest_bytes_overhead: u32,
     /// Token-pool fee slice for the first token transfer, resolved EVM-style
     /// (`OnRamp._getReceipts` L1028-1053): from `IPoolV2.getFee` when the pool's
     /// config is enabled, else from `FeeQuoter.get_token_transfer_fee`. Carried
@@ -374,32 +382,62 @@ impl OnRampContract {
         // no-exec sentinel (L1094). Calling it here regardless yields
         // `premium_multiplier` for the CCV/pool/executor-flat conversions below
         // even on the no-exec path (those fees still need the LINK discount).
-        let mut calldata_size: u32 = message.data.len() as u32;
+        // INV-FEE-14 (EVM `OnRamp._getExecutionFee`, `OnRamp.sol` L1129-1148): the
+        // executor receipt's `destBytesOverhead` =
+        //   BASE + dataLength + executorArgs.length
+        //   + MESSAGE_V1_REMOTE_CHAIN_ADDRESSES * remoteChainAddressLengthBytes
+        //   + numberOfTokens * (TOKEN_TRANSFER base + remoteChainAddressLengthBytes*2)
+        // `dataLength` is `message.data.len()` (the EVM message payload is the same
+        // on source and destination with the V1 codec). The `BASE` portion is the
+        // fixed MessageV1 framing (79) + the on-wire content of the two SOURCE-side
+        // address fields `sender` and `onramp`. `forward_from_router` populates
+        // both with `Address::to_xdr` — a full 40-byte XDR encoding (8 bytes of
+        // ScVal/ScAddress discriminants + the 32-byte key), not a raw key — and the
+        // codec appends those bytes verbatim, so the derived Stellar base is
+        // 79 + 40 + 40 = 159. EVM's `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (139) plays
+        // the identical role with its own source encoding (32+32 abi-padded
+        // 20-byte addresses): parity is structural — each chain's base is its
+        // framing plus the bytes its wire format actually carries for those two
+        // fields — not numeric equality (see
+        // `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`).
+        // The `MESSAGE_V1_REMOTE_CHAIN_ADDRESSES (=2)` term bills the fixed content of
+        // the two DEST-side address fields `receiver` and `offramp`, whose encoding
+        // width is the dest chain's `address_bytes_length` (EVM
+        // `remoteChainAddressLengthBytes` from `DestChainConfig`). The
+        // `numberOfTokens` term bills the token-transfer framing: a Stellar-source
+        // message carries at most one on-wire token transfer (`token_amounts` is
+        // single-token, and the wire `token_transfer` blob is optional), so
+        // `numberOfTokens ∈ {0, 1}`. Its fixed source-side framing +
+        // `src_pool`/`src_token` content is the derived
+        // `TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE` (119 = 39 framing +
+        // two 40-byte `Address::to_xdr` fields, same XDR reality as the message
+        // base above); the two dest-side fields (`dest_token`, `token_receiver`)
+        // are billed at `address_bytes_length`, matching EVM's
+        // `remoteChainAddressLengthBytes * 2` per transfer.
+        let remote_address_bytes = dest_config.address_bytes_length;
+        let mut executor_dest_bytes_overhead: u32 = message.data.len() as u32;
+        executor_dest_bytes_overhead =
+            executor_dest_bytes_overhead.saturating_add(extra_args.executor_args.len() as u32);
+        executor_dest_bytes_overhead = executor_dest_bytes_overhead
+            .saturating_add(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE)
+            .saturating_add(remote_address_bytes.saturating_mul(2));
+        if !message.token_amounts.is_empty() {
+            executor_dest_bytes_overhead = executor_dest_bytes_overhead.saturating_add(
+                TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE
+                    .saturating_add(remote_address_bytes.saturating_mul(2)),
+            );
+        }
+
+        // `bytesOverheadSum` (EVM `OnRamp._getReceipts`, L989-1066) = the executor
+        // receipt's `destBytesOverhead` + Σ CCV `dest_bytes_overhead` + pool
+        // `dest_bytes_overhead`.
+        let mut calldata_size: u32 = executor_dest_bytes_overhead;
         for i in 0..ccv_fee_responses.len() {
             if let Some(r) = ccv_fee_responses.get(i) {
                 calldata_size = calldata_size.saturating_add(r.dest_bytes_overhead);
             }
         }
         calldata_size = calldata_size.saturating_add(pool_dest_bytes_overhead);
-
-        // INV-FEE-14 (EVM `OnRamp.sol` L1066 + L1134-1138): EVM's
-        // `bytesOverheadSum` includes the executor receipt's `destBytesOverhead =
-        // BASE + dataLength + executorArgs.length + numberOfTokens*(...token...)`.
-        // `dataLength` is already in `calldata_size` (the seed above); the CCV/pool
-        // overheads are added above; `executor_args.len()` is the unambiguous subset
-        // (EVM adds it unconditionally, `GenericExtraArgsV3.executor_args: Bytes` is
-        // in scope). The `BASE` portion is EVM `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` =
-        // the fixed MessageV1 framing (79) + the 32-byte `sender` + 32-byte `onramp`
-        // source-address content. Stellar encodes those two addresses as 32-byte raw
-        // Soroban keys (`CcipMessageV1::address_raw_bytes`), so its derived base is
-        // 79 + 32 + 32 = 143 — equal to EVM's constant by derivation, not copy (see
-        // `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`). Adding it bills the
-        // same fixed overhead EVM bills, preserving fee parity. The
-        // `numberOfTokens*(TOKEN_TRANSFER base + dest addr bytes)` term is a separate
-        // token-transfer-framing gap, still open — see
-        // `docs/h-items-parity-followup.md` §2.
-        calldata_size = calldata_size.saturating_add(extra_args.executor_args.len() as u32);
-        calldata_size = calldata_size.saturating_add(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE);
 
         let gas_quote = fee_quoter.quote_gas_for_exec(
             &dest_chain_selector,
@@ -522,6 +560,7 @@ impl OnRampContract {
             executor_fee_tokens,
             is_no_exec,
             execution_gas_limit,
+            executor_dest_bytes_overhead,
             pool_dest_gas_limit,
             pool_dest_bytes_overhead,
             pool_fee_usd_cents,
@@ -1052,10 +1091,14 @@ impl OnRampContract {
             dest_gas_limit: dest_config
                 .base_execution_gas_cost
                 .saturating_add(extra_args.gas_limit),
-            // INV-FEE-14: EVM `_getExecutionFee` sets the executor receipt's
-            // `destBytesOverhead = message.data.length` (the payload bytes priced
-            // into the executor exec-cost above). Was 0.
-            dest_bytes_overhead: message.data.len() as u32,
+            // INV-FEE-14 (EVM `_getExecutionFee`, OnRamp.sol:1129-1148): the
+            // executor receipt's `destBytesOverhead` is the full executor formula
+            // — BASE (143) + dataLength + executorArgs.length
+            // + 2×`address_bytes_length` + the token-transfer framing term — not
+            // just the payload length. With the CCV/pool receipts' own overheads,
+            // Σ receipt `dest_bytes_overhead` equals the `bytesOverheadSum` priced
+            // into the executor exec-cost above (EVM OnRamp.sol:989-1066).
+            dest_bytes_overhead: breakdown.executor_dest_bytes_overhead,
             fee_token_amount: breakdown.executor_fee_tokens,
             extra_args: extra_args.executor_args.clone(),
         });

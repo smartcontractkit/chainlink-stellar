@@ -431,37 +431,82 @@ impl OffRampContract {
         let has_receive_gas = message.ccip_receive_gas_limit > 0;
 
         if has_data || has_receive_gas {
-            let receiver_contract = Self::ccip_receiver_contract_address(env, &message.receiver)?;
-
-            // Fail before touching the Router: receiver must exist on-ledger and be a Wasm contract
-            // (plain accounts / Stellar asset contracts cannot implement `ccip_receive`).
-            match receiver_contract.executable() {
-                Some(Executable::Wasm(_)) => {}
-                None => return Err(CCIPError::ReceiverDoesNotExist),
-                Some(Executable::Account) | Some(Executable::StellarAsset) => {
-                    return Err(CCIPError::ReceiverNotWasmContract);
-                }
-            }
-
-            let any2stellar = AnyToStellarMessage {
-                message_id: message_id.clone(),
-                source_chain_selector: message.source_chain_selector,
-                sender: message.sender.clone(),
-                data: message.data.clone(),
-                dest_token_amounts,
-            };
-
-            Self::route_message(
+            let routing_result = Self::route_verified_message(
                 env,
-                &source_config.router,
-                &env.current_contract_address(),
-                message.source_chain_selector,
-                &receiver_contract,
-                &any2stellar,
-            )?;
+                message,
+                message_id,
+                dest_token_amounts,
+                source_config,
+            );
+
+            if let Err(e) = routing_result {
+                if message.token_transfer.len() > 0 {
+                    // L-10 / EVM parity (`OffRamp.sol:401-402`: "If CCIP receiver
+                    // execution is not successful, revert the call including token
+                    // transfers"): tokens were already released/minted above, and a
+                    // Soroban `Err` return does NOT roll back those writes — only a
+                    // host trap reverts the transaction. Returning the error here
+                    // would record a retryable `Failure` with the tokens still
+                    // committed, so a re-execution (allowed from `Failure`) would
+                    // release/mint them a SECOND time. Trapping instead rolls the
+                    // whole transaction back — the release/mint included — leaving
+                    // the message `Untouched` and retryable by resubmission, which
+                    // is exactly EVM's semantics (EVM's receiver-error revert undoes
+                    // the token transfers; only the outer frame's FAILURE write
+                    // survives, and there is nothing left to double-spend on retry).
+                    env.panic_with_error(e);
+                }
+                // Token-less (data-only) messages: nothing was released, so
+                // recording a retryable `Failure` is safe and matches EVM, where a
+                // receiver error on a message with no token transfers reverts the
+                // execution sub-call (rolling back nothing) and the outer frame
+                // records FAILURE.
+                return Err(e);
+            }
         }
 
         Ok(())
+    }
+
+    /// Validate the receiver and route a verified message through the Router
+    /// (EVM `_callReceiver` analogue). Returns `Err` for `execute_single_message`
+    /// to either trap on (tokens already released — full rollback required) or
+    /// record as a retryable `Failure` (token-less).
+    fn route_verified_message(
+        env: &Env,
+        message: &CcipMessageV1,
+        message_id: &BytesN<32>,
+        dest_token_amounts: Vec<TokenAmount>,
+        source_config: &SourceChainConfig,
+    ) -> Result<(), CCIPError> {
+        let receiver_contract = Self::ccip_receiver_contract_address(env, &message.receiver)?;
+
+        // Fail before touching the Router: receiver must exist on-ledger and be a Wasm contract
+        // (plain accounts / Stellar asset contracts cannot implement `ccip_receive`).
+        match receiver_contract.executable() {
+            Some(Executable::Wasm(_)) => {}
+            None => return Err(CCIPError::ReceiverDoesNotExist),
+            Some(Executable::Account) | Some(Executable::StellarAsset) => {
+                return Err(CCIPError::ReceiverNotWasmContract);
+            }
+        }
+
+        let any2stellar = AnyToStellarMessage {
+            message_id: message_id.clone(),
+            source_chain_selector: message.source_chain_selector,
+            sender: message.sender.clone(),
+            data: message.data.clone(),
+            dest_token_amounts,
+        };
+
+        Self::route_message(
+            env,
+            &source_config.router,
+            &env.current_contract_address(),
+            message.source_chain_selector,
+            &receiver_contract,
+            &any2stellar,
+        )
     }
 
     /// Decode `CcipMessageV1.receiver` bytes as a Soroban **contract** [`Address`].
@@ -1090,12 +1135,34 @@ impl OffRampContract {
         args.push_back(receiver.into_val(env));
         args.push_back(message.clone().into_val(env));
 
-        env.invoke_contract::<Result<(), CCIPError>>(
+        // `try_invoke_contract` at the offramp→router seam mirrors EVM's outer-frame
+        // try/catch around `_callReceiver` (`OffRamp.sol:399-409`): the Router surfaces
+        // receiver failures as typed `CCIPError`s (its own `try_invoke_contract` on
+        // `ccip_receive`, router/src/lib.rs:273-282), and those must reach
+        // `execute_single_message` as typed errors — recorded as a retryable `Failure`
+        // for token-less messages (EVM parity) or trapped by the L-10 post-release
+        // guard for token-carrying ones. The prior non-try `invoke_contract` PANICS on
+        // ANY callee error — typed `Err` returns included (a host-level failure
+        // carrying the callee's error status; caller writes made before the invoke
+        // roll back with it) — so the `?` that followed was unreachable dead code:
+        // every router-returned error already trapped the whole `execute` tx, silently
+        // skipping EVM's FAILURE recording. Same idiom as the receiver consult
+        // (`get_ccvs_and_finality_config`, lib.rs:763).
+        match env.try_invoke_contract::<Result<(), CCIPError>, InvokeError>(
             router,
             &Symbol::new(env, "route_message"),
             args,
-        )?;
-        Ok(())
+        ) {
+            Ok(Ok(Ok(()))) => Ok(()),
+            // The router returned a typed error — receiver failure surfaced by
+            // `Router.route_message`, curse check, authorization, ... — propagate it.
+            Ok(Ok(Err(e))) => Err(e),
+            // The router trapped or returned a non-convertible value — mirror EVM's
+            // catch-all (`OffRamp.sol` catches any revert/panic from `_callReceiver`)
+            // as a generic `ReceiverError`, recorded/trapped like any other routing
+            // failure rather than reverting the whole `execute` tx.
+            _ => Err(CCIPError::ReceiverError),
+        }
     }
 
     // ========================================
@@ -1150,6 +1217,16 @@ impl OffRampContract {
         };
         let receiver_address = Self::address_from_token_bytes(env, receiver_bytes)?;
 
+        // Deliberate divergence from EVM's letter, documented so a future parity
+        // sweep doesn't re-flag it: EVM `OffRamp._releaseOrMintSingleToken`
+        // (`OffRamp.sol:820-835`) wraps `releaseOrMint` in try/catch and re-raises
+        // `TokenHandlingError`, which the outer `execute` catches to record a
+        // retryable FAILURE. Here the call stays NON-try (user-confirmed decision):
+        // a pool failure — host trap OR typed `Err` (non-try client methods panic on
+        // ANY callee error, including typed errors; only `try_` variants receive
+        // them as values) — reverts the whole `execute` transaction (message stays
+        // `Untouched`, retryable by resubmission) — outcome-equivalent retryability,
+        // at the cost of no on-chain FAILURE record/event for pool errors.
         let release_result = pool_client.release_or_mint(
             &env.current_contract_address(),
             &ReleaseOrMintIn {

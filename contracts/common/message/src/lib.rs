@@ -340,20 +340,56 @@ pub const MESSAGE_V1_VERSION: u8 = 1;
 /// user-specified, tokenTransfer is optional) and are billed separately.
 pub const MESSAGE_V1_BASE_SIZE: u32 = 1 + 8 + 8 + 8 + 4 + 4 + 4 + 32 + 1 + 1 + 1 + 1 + 2 + 2 + 2;
 
+/// Wire size of a Soroban `Address` serialized with `Address::to_xdr` (both
+/// contract and account addresses): 4-byte `ScVal` type discriminant +
+/// 4-byte `ScAddress` discriminant + 32-byte key = 40 bytes. The onramp's
+/// `forward_from_router` populates the SOURCE-side message address fields with
+/// `Address::to_xdr` and the encoders append those bytes verbatim, so 40 — not
+/// the raw 32-byte key — is what a Stellar source actually puts on the wire.
+const SOROBAN_ADDRESS_XDR_SIZE: u32 = 4 + 4 + 32;
+
 /// Fixed on-wire byte overhead a Stellar-source `CcipMessageV1` always carries,
 /// mirroring EVM `MessageV1Codec.MESSAGE_V1_EVM_SOURCE_BASE_SIZE`. It is the
 /// framing above plus the fixed content of the two SOURCE-side address fields
-/// `sender` and `onramp`: each is a 32-byte raw Soroban address key
-/// (`CcipMessageV1::address_raw_bytes`). EVM reaches the same 32+32 by
-/// abi.encoding its 20-byte addresses to 32; Stellar addresses are natively 32.
-/// So 79 + 32 + 32 = 143, equal to EVM's constant by derivation rather than
-/// copy. The OnRamp bills this once into the executor receipt's `calldata_size`
-/// (EVM `OnRamp._getReceipts` executor `destBytesOverhead` parity).
-pub const MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE: u32 = MESSAGE_V1_BASE_SIZE + 32 + 32;
+/// `sender` and `onramp`: each is a full 40-byte `Address::to_xdr` encoding
+/// (`SOROBAN_ADDRESS_XDR_SIZE`). So 79 + 40 + 40 = 159. EVM's constant uses
+/// its own source encoding (abi-encoded 20-byte addresses padded to 32, i.e.
+/// 139 = 75 + 32 + 32): the constants are structurally equal — each chain's
+/// source base is its framing plus the on-wire size of its two source
+/// addresses — but not numerically, because the Stellar wire format carries
+/// the XDR discriminants. The OnRamp bills this once into the executor
+/// receipt's `calldata_size` (EVM `OnRamp._getReceipts` executor
+/// `destBytesOverhead` parity).
+pub const MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE: u32 =
+    MESSAGE_V1_BASE_SIZE + SOROBAN_ADDRESS_XDR_SIZE + SOROBAN_ADDRESS_XDR_SIZE;
 
-// Compile-time guarantee that the derived Stellar source base matches the EVM
-// constant it mirrors (`MESSAGE_V1_EVM_SOURCE_BASE_SIZE == 143`).
-const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 143);
+// Compile-time guarantee that the derived Stellar source base reflects the
+// actual wire encoding: framing + two full 40-byte `Address::to_xdr` fields.
+const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 159);
+
+/// Fixed on-wire byte overhead a Stellar-source `CcipTokenTransferV1` carries,
+/// mirroring EVM `MessageV1Codec.TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE`. The
+/// fixed framing is version(1) + amount(32) + the four 1-byte length prefixes
+/// (src_pool, src_token, dest_token, token_receiver) + extra_data's 2-byte
+/// length prefix = 39 (equal to EVM's `TOKEN_TRANSFER_V1_BASE_SIZE`), plus the
+/// fixed content of the two SOURCE-side address fields `src_pool` and
+/// `src_token`: each is a full 40-byte `Address::to_xdr` encoding
+/// (`SOROBAN_ADDRESS_XDR_SIZE`). So 39 + 40 + 40 = 119. EVM's constant uses
+/// its own source encoding (32+32 abi-padded addresses, i.e. 103): structurally
+/// equal by derivation, numerically different because the Stellar wire format
+/// carries the XDR discriminants. The two destination-side fields
+/// (`dest_token`, `token_receiver`) are dest-chain-specific and are billed
+/// separately via the dest chain's `address_bytes_length` (EVM
+/// `OnRamp._getExecutionFee`'s `numberOfTokens *
+/// (TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE +
+/// remoteChainAddressLengthBytes * 2)` term).
+pub const TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE: u32 =
+    39 + SOROBAN_ADDRESS_XDR_SIZE + SOROBAN_ADDRESS_XDR_SIZE;
+
+// Compile-time guarantee that the derived Stellar source token-transfer base
+// reflects the actual wire encoding: framing + two full 40-byte
+// `Address::to_xdr` fields.
+const _: () = assert!(TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE == 119);
 
 /// Canonical token transfer encoding for CCIP v1.7.
 ///

@@ -20,8 +20,12 @@ use common_helpers::fee_math;
 use common_interfaces::committee_verifier::FeeResponse;
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
-    TokenAmount,
+    TokenAmount, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE,
 };
+
+/// `address_bytes_length` used by every EVM-dest lane in this suite (all
+/// `DestChainConfig` fixtures set 20).
+const EVM_DEST_ADDRESS_BYTES: u32 = 20;
 use common_pool::{ChainUpdate, RateLimitConfig};
 use executor::{
     types::{
@@ -1924,7 +1928,7 @@ fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
 /// raises the executor receipt's `fee_token_amount` over the empty-`executor_args`
 /// baseline — i.e. `executor_args.len()` is priced into the execution-gas cost.
 /// (The `BASE` portion of the executor `destBytesOverhead` is now ALSO added —
-/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 143; see
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 159; see
 /// `test_message_base_priced_into_calldata_size`. The delta here isolates only the
 /// `executor_args.len()` term because BASE is constant across both sends.) The
 /// executor's own `get_fee` returns a constant flat fee independent of
@@ -1977,9 +1981,10 @@ fn test_executor_args_len_priced_into_calldata_size() {
 
 /// INV-FEE-14 BASE (EVM `OnRamp.sol` L1134-1138 executor `destBytesOverhead`):
 /// EVM's `bytesOverheadSum` includes the fixed `MESSAGE_V1_EVM_SOURCE_BASE_SIZE`
-/// = 143 (79 framing + 32-byte sender + 32-byte onRamp). Stellar derives the
-/// identical 143 from its own wire encoding
-/// (`common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE`) and bills it into
+/// = 139 (75 framing + 32-byte abi-padded sender + 32-byte onRamp). Stellar
+/// derives its own base, 159 (79 framing + two full 40-byte `Address::to_xdr`
+/// sender/onRamp fields — the bytes its wire format actually carries), from
+/// `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` and bills it into
 /// `calldata_size`. This test proves the wiring in isolation.
 ///
 /// EVM parity REQUIRES `base_execution_gas_cost != 0`: EVM `OnRamp.sol:633`
@@ -1989,8 +1994,8 @@ fn test_executor_args_len_priced_into_calldata_size() {
 /// Instead we isolate it with a fee-quoter oracle: with executor flat fee 0,
 /// `gas_limit` 0, the zero-overhead mock CCV, no pool, and empty `data` and
 /// `executor_args`, the OnRamp's `calldata_size` is exactly
-/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (143), so its executor receipt exec
-/// cost must EQUAL the quoter's quote for `calldata_size = 143` and STRICTLY
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (159), so its executor receipt exec
+/// cost must EQUAL the quoter's quote for `calldata_size = 159` and STRICTLY
 /// EXCEED the quote for `calldata_size = 0` (the no-BASE counterfactual, only
 /// reachable via a direct quoter call since the OnRamp always adds BASE). A
 /// second send adding 100 bytes of `data` raises the receipt by the 100-byte
@@ -2021,34 +2026,37 @@ fn test_message_base_priced_into_calldata_size() {
 
     // Fee-quoter oracle: exec cost (USD cents) + fee-token price for the SAME
     // gas budget the OnRamp will pass (`execution_gas_limit = base_gas`), at
-    // calldata_size = 0 (BASE not priced) vs. 143 (BASE priced in). Both use one
-    // `quote_gas_for_exec` call so the price is identical to the OnRamp's.
+    // calldata_size = 0 (BASE not priced) vs. 199 (BASE priced in: 159 +
+    // 2×`address_bytes_length` for the receiver/offRamp dest-address term).
+    // Both use one `quote_gas_for_exec` call so the price is identical to the
+    // OnRamp's.
+    let data_only_overhead = MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE + 2 * EVM_DEST_ADDRESS_BYTES;
     let oracle_zero = lane
         .fee_quoter_client
         .quote_gas_for_exec(&dest, &base_gas, &0, &fee_token);
     let oracle_base = lane.fee_quoter_client.quote_gas_for_exec(
         &dest,
         &base_gas,
-        &MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE,
+        &data_only_overhead,
         &fee_token,
     );
     assert!(
         oracle_base.gas_cost_usd_cents > oracle_zero.gas_cost_usd_cents,
-        "MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) must add exec-gas cost at \
-         dest_gas_per_payload_byte=16: base={} zero={}",
+        "data-only executor overhead (BASE 159 + 2×20 = 199) must add exec-gas \
+         cost at dest_gas_per_payload_byte=16: base={} zero={}",
         oracle_base.gas_cost_usd_cents,
         oracle_zero.gas_cost_usd_cents,
     );
 
     // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
-    // calldata_size == MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) alone. With
-    // executor flat fee 0 the executor receipt is exactly the priced
+    // calldata_size == BASE (159) + 2×20 (receiver/offRamp dest-address term)
+    // = 199. With executor flat fee 0 the executor receipt is exactly the priced
     // execution-gas cost, converted BARE (no premium slice; OnRamp.sol:1094-1097
     // parity, report L-7). So it must EQUAL the quoter's quote for
-    // calldata_size = 143 — converted with the same fee_math helper and the
+    // calldata_size = 199 — converted with the same fee_math helper and the
     // oracle's own price — and STRICTLY EXCEED the converted quote for
     // calldata_size = 0 (the no-BASE counterfactual) — proving the OnRamp bills
-    // BASE into calldata_size.
+    // BASE + the dest-address term into calldata_size.
     let receipts_base = lane.send_data_only_custom(Bytes::new(env), mk_args(0));
     assert_eq!(
         receipts_base.len(),
@@ -2061,7 +2069,7 @@ fn test_message_base_priced_into_calldata_size() {
         oracle_base.gas_cost_usd_cents,
         oracle_base.fee_token_price,
     )
-    .expect("convert oracle(143) exec cost to fee token");
+    .expect("convert oracle(159) exec cost to fee token");
     let expected_zero = fee_math::usd_cents_to_fee_token(
         oracle_zero.gas_cost_usd_cents,
         oracle_zero.fee_token_price,
@@ -2070,9 +2078,9 @@ fn test_message_base_priced_into_calldata_size() {
     let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
     assert_eq!(
         exec_fee_base, expected_base,
-        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (143) into \
-         calldata_size: executor receipt (fee-token units, flat fee 0)={} must \
-         equal oracle(143)={}, and exceed oracle(0)={}",
+        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (159) + the \
+         2×20 dest-address term into calldata_size: executor receipt (fee-token \
+         units, flat fee 0)={} must equal oracle(199)={}, and exceed oracle(0)={}",
         exec_fee_base, expected_base, expected_zero,
     );
     assert!(
@@ -2093,6 +2101,99 @@ fn test_message_base_priced_into_calldata_size() {
          100-byte calldata delta on top of BASE: with_data={} base={}",
         exec_fee_with_data,
         exec_fee_base,
+    );
+}
+
+/// INV-FEE-14 full-formula parity (EVM `OnRamp._getExecutionFee`,
+/// `OnRamp.sol:1134-1139` + `MessageV1Codec.sol:19-36`): the executor receipt's
+/// `dest_bytes_overhead` must equal the EVM formula
+///   source BASE (Stellar: 159, EVM: 139)
+///   + dataLength + executorArgs.length
+///   + MESSAGE_V1_REMOTE_CHAIN_ADDRESSES (2) × addressBytesLength
+///   + numberOfTokens × (source TOKEN_TRANSFER base (Stellar: 119, EVM: 103)
+///                       + 2 × addressBytesLength)
+/// computed independently here from the same inputs. The Stellar constants
+/// stand in for the EVM ones: the formula shape is identical, and each
+/// chain's base is its framing plus the on-wire bytes its source encoding
+/// actually carries for the two source-address fields (EVM: 32+32
+/// abi-padded; Stellar: 40+40 full `Address::to_xdr`, compile-time asserted
+/// in `common-message`). Matrix: data-only vs 1-token send,
+/// empty vs non-empty executor_args, on an EVM-dest lane
+/// (`address_bytes_length` = 20). This is the validation the INV-FEE-14 design
+/// gate required: the composition is pinned to the EVM formula term-by-term,
+/// not a blind constant copy.
+#[test]
+fn test_executor_dest_bytes_overhead_matches_evm_formula() {
+    // EVM OnRamp.sol:1134-1139, transcribed with the EVM source-size constants
+    // replaced by their Stellar counterparts (159/119 — the actual Stellar
+    // wire encoding, see the doc comment above).
+    let evm_formula = |data_len: u32,
+                       executor_args_len: u32,
+                       number_of_tokens: u32,
+                       address_bytes_length: u32| {
+        MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE
+            + data_len
+            + executor_args_len
+            + 2 * address_bytes_length
+            + number_of_tokens
+                * (TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE + 2 * address_bytes_length)
+    };
+    let data_len = b"token send with data".len() as u32; // 21
+
+    // 1-token send with default extra_args (empty executor_args) ⇒
+    // numberOfTokens = 1.
+    let lane = setup_token_transfer_lane();
+    let receipts = lane.send();
+    let exec = TokenTransferLane::executor_receipt(&receipts);
+    assert_eq!(
+        exec.dest_bytes_overhead,
+        evm_formula(data_len, 0, 1, EVM_DEST_ADDRESS_BYTES),
+        "1-token send, empty executor_args: 159 + 21 + 0 + 2×20 + (119 + 2×20) = 379"
+    );
+
+    // Same send with 128 bytes of executor_args ⇒ +128.
+    let env = &lane.env;
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::from_array(env, &[0xaau8; 128]),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts_with_args, _) = lane.send_with_extra_args(extra_args.to_xdr(env));
+    let exec_with_args = TokenTransferLane::executor_receipt(&receipts_with_args);
+    assert_eq!(
+        exec_with_args.dest_bytes_overhead,
+        evm_formula(data_len, 128, 1, EVM_DEST_ADDRESS_BYTES),
+        "1-token send, 128-byte executor_args: 379 + 128 = 507"
+    );
+
+    // Data-only send (numberOfTokens = 0), 100 bytes of data, empty
+    // executor_args. Data-only ⇒ [CCV, Executor, Network] ⇒ executor at idx 1.
+    let do_lane = setup_data_only_lane_with_base_gas(0, 0, 50_000);
+    let do_env = &do_lane.env;
+    let mk_args = |executor_args: Bytes| GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(do_env),
+        ccv_args: Vec::new(do_env),
+        executor: do_lane.default_executor.clone(),
+        executor_args,
+        token_receiver: Bytes::new(do_env),
+        token_args: Bytes::new(do_env),
+    };
+    let receipts_data_only = do_lane.send_data_only_custom(
+        Bytes::from_array(do_env, &[0xbbu8; 100]),
+        mk_args(Bytes::new(do_env)),
+    );
+    let exec_data_only = receipts_data_only.get(1).unwrap();
+    assert_eq!(
+        exec_data_only.dest_bytes_overhead,
+        evm_formula(100, 0, 0, EVM_DEST_ADDRESS_BYTES),
+        "data-only send, 100 bytes of data: 159 + 100 + 0 + 2×20 = 299"
     );
 }
 
@@ -3838,14 +3939,16 @@ fn test_link_lane_no_overdraw_conservation() {
     );
 }
 
-/// INV-FEE-14: the executor receipt's `dest_bytes_overhead` is the payload length
-/// (EVM `_getExecutionFee`: `destBytesOverhead = message.data.length`), and the
-/// payload bytes are priced — non-premium — into the executor exec-cost. Two
-/// data-only sends that differ ONLY in `data.len()` must produce executor receipts
-/// whose USD-cent value (flat + exec_cost) is strictly higher for the larger
-/// payload, and whose `dest_bytes_overhead` equals the payload length. Data-only
-/// ⇒ no pool receipt, so `calldata_size` is just `data.len()` (the mock CCVs report
-/// zero `dest_bytes_overhead`).
+/// INV-FEE-14: the executor receipt's `dest_bytes_overhead` is the full EVM
+/// `_getExecutionFee` formula (`OnRamp.sol:1134-1139`): BASE (159) + dataLength +
+/// executorArgs.length + 2×`address_bytes_length` + the token-transfer framing
+/// term — for a data-only send with empty executor_args on this EVM-dest lane
+/// (`address_bytes_length` = 20), that is `data.len() + 159 + 40`. The payload
+/// bytes are priced — non-premium — into the executor exec-cost: two data-only
+/// sends that differ ONLY in `data.len()` must produce executor receipts whose
+/// USD-cent value (flat + exec_cost) is strictly higher for the larger payload.
+/// Data-only ⇒ no pool receipt; the mock CCVs report zero `dest_bytes_overhead`,
+/// so `calldata_size` = the executor formula alone.
 #[test]
 fn test_executor_receipt_prices_payload_bytes() {
     let lane = setup_fee_dist_lane(); // non-LINK, premium_multiplier = 100
@@ -3867,10 +3970,18 @@ fn test_executor_receipt_prices_payload_bytes() {
     let exec_small = receipts_small.get(2).unwrap();
     let exec_large = receipts_large.get(2).unwrap();
 
-    // INV-FEE-14 executor-receipt fix: dest_bytes_overhead == payload length.
-    assert_eq!(exec_small.dest_bytes_overhead, 5, "short payload = 5 bytes");
+    // INV-FEE-14 executor-receipt parity: dest_bytes_overhead = data.len() + BASE
+    // + 2×address_bytes_length (data-only: no token term, empty executor_args).
+    let expected_overhead =
+        |data_len: u32| data_len + MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE + 2 * EVM_DEST_ADDRESS_BYTES;
     assert_eq!(
-        exec_large.dest_bytes_overhead, 500,
+        exec_small.dest_bytes_overhead,
+        expected_overhead(5),
+        "short payload = 5 bytes"
+    );
+    assert_eq!(
+        exec_large.dest_bytes_overhead,
+        expected_overhead(500),
         "large payload = 500 bytes"
     );
 
