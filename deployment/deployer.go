@@ -50,6 +50,7 @@ type stellarRPCClient interface {
 	GetTransaction(ctx context.Context, req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error)
 	GetLedgerEntries(ctx context.Context, req protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error)
 	GetEvents(ctx context.Context, req protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
+	GetLatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error)
 }
 
 // TxSigner abstracts transaction signing so the Deployer can use either an

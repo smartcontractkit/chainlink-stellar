@@ -26,6 +26,7 @@ type mockRPC struct {
 	GetTransactionFn      func(ctx context.Context, req protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error)
 	GetLedgerEntriesFn    func(ctx context.Context, req protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error)
 	GetEventsFn           func(ctx context.Context, req protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
+	GetLatestLedgerFn     func(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error)
 }
 
 func (m *mockRPC) SimulateTransaction(ctx context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
@@ -61,6 +62,13 @@ func (m *mockRPC) GetEvents(ctx context.Context, req protocolrpc.GetEventsReques
 		return m.GetEventsFn(ctx, req)
 	}
 	return protocolrpc.GetEventsResponse{}, fmt.Errorf("GetEvents not mocked")
+}
+
+func (m *mockRPC) GetLatestLedger(ctx context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
+	if m.GetLatestLedgerFn != nil {
+		return m.GetLatestLedgerFn(ctx)
+	}
+	return protocolrpc.GetLatestLedgerResponse{}, fmt.Errorf("GetLatestLedger not mocked")
 }
 
 // ---------------------------------------------------------------------------

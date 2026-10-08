@@ -194,6 +194,122 @@ func TestExtendTTLToMax_NoKeys(t *testing.T) {
 	require.Error(t, err)
 }
 
+// atTargetLedger wires a fixed latest-ledger sequence into the mock.
+func atTargetLedger(t *testing.T, mock *mockRPC, latestLedger uint32) {
+	t.Helper()
+	mock.GetLatestLedgerFn = func(context.Context) (protocolrpc.GetLatestLedgerResponse, error) {
+		return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedger}, nil
+	}
+}
+
+func TestExtendTTLTo_Success(t *testing.T) {
+	d, mock, _, keys := extendFixture(t)
+	const latestLedger = uint32(1_000)
+	const target = uint32(1_000_000)
+	atTargetLedger(t, mock, latestLedger)
+
+	var simulated, sent []xdr.TransactionEnvelope
+	mock.SimulateTransactionFn = func(_ context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		simulated = append(simulated, decodeEnvelope(t, req.Transaction))
+		return extendSim(t, keys, 50_000), nil
+	}
+	mock.SendTransactionFn = func(_ context.Context, req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		sent = append(sent, decodeEnvelope(t, req.Transaction))
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "abc"}, nil
+	}
+	mock.GetTransactionFn = func(_ context.Context, _ protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+		return successGetTxResponse(t), nil
+	}
+
+	got, err := d.ExtendTTLTo(context.Background(), keys, target)
+	require.NoError(t, err)
+	require.Equal(t, []uint32{900, 800}, got)
+
+	require.Len(t, simulated, 1)
+	require.Equal(t, keys, simulated[0].V1.Tx.Ext.SorobanData.Resources.Footprint.ReadOnly)
+
+	require.Len(t, sent, 1)
+	op := sent[0].V1.Tx.Operations[0].Body.MustExtendFootprintTtlOp()
+	require.Equal(t, target, uint32(op.ExtendTo), "ExtendTo equals the requested target TTL")
+	require.Equal(t, xdr.Int64(50_000+12_500), sent[0].V1.Tx.Ext.SorobanData.ResourceFee)
+}
+
+func TestExtendTTLTo_AlreadyAtTargetSendsNothing(t *testing.T) {
+	d, mock, _, keys := extendFixture(t)
+	const latestLedger = uint32(500)
+	const target = uint32(300)
+	atTargetLedger(t, mock, latestLedger)
+
+	var calls int
+	mock.SimulateTransactionFn = func(context.Context, protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		calls++
+		return extendSim(t, keys, 50_000), nil
+	}
+	mock.SendTransactionFn = func(context.Context, protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		calls++
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "abc"}, nil
+	}
+
+	got, err := d.ExtendTTLTo(context.Background(), keys, target)
+	require.NoError(t, err)
+	require.Equal(t, []uint32{900, 800}, got, "live-until is still reported in key order")
+	require.Zero(t, calls, "no transaction is built or sent when every entry already meets the target")
+}
+
+func TestExtendTTLTo_TargetMustStayBelowMax(t *testing.T) {
+	d, _, _, keys := extendFixture(t)
+	for _, target := range []uint32{testMaxEntryTTL, testMaxEntryTTL + 1} {
+		_, err := d.ExtendTTLTo(context.Background(), keys, target)
+		require.ErrorContains(t, err, "must stay below the network maximum")
+	}
+}
+
+func TestExtendTTLTo_FeeOverflowsUint32Cap(t *testing.T) {
+	d, mock, _, keys := extendFixture(t)
+	atTargetLedger(t, mock, 1_000)
+
+	var sent int
+	mock.SimulateTransactionFn = func(context.Context, protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		return extendSim(t, keys, 4_000_000_000), nil
+	}
+	mock.SendTransactionFn = func(context.Context, protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		sent++
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "abc"}, nil
+	}
+
+	_, err := d.ExtendTTLTo(context.Background(), keys, 1_000_000)
+	require.ErrorContains(t, err, "exceeds the uint32 transaction fee cap")
+	require.Zero(t, sent, "nothing is submitted when the buffered fee cannot fit a regular transaction")
+}
+
+func TestSimulateExtendTTL(t *testing.T) {
+	d, mock, _, keys := extendFixture(t)
+	const latestLedger = uint32(100)
+	const target = uint32(1_000_000)
+	atTargetLedger(t, mock, latestLedger)
+
+	var sent int
+	mock.SimulateTransactionFn = func(context.Context, protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+		return extendSim(t, keys, 50_000), nil
+	}
+	mock.SendTransactionFn = func(context.Context, protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+		sent++
+		return protocolrpc.SendTransactionResponse{Status: "PENDING", Hash: "abc"}, nil
+	}
+
+	fee, atTarget, err := d.SimulateExtendTTL(context.Background(), keys, target)
+	require.NoError(t, err)
+	require.False(t, atTarget)
+	require.Equal(t, int64(50_000), fee)
+	require.Zero(t, sent, "simulation never submits")
+
+	// Same entries, target already met: fee 0, atTarget true.
+	fee, atTarget, err = d.SimulateExtendTTL(context.Background(), keys, 400)
+	require.NoError(t, err)
+	require.True(t, atTarget)
+	require.Zero(t, fee)
+}
+
 func TestContractWasmHash(t *testing.T) {
 	mock := &mockRPC{}
 	d := newTestDeployer(t, mock)

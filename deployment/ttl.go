@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -79,6 +80,9 @@ func (d *Deployer) ContractInstanceState(ctx context.Context, contractID string)
 // ContractCodeLedgerKey of the instance's WASM hash as well.
 //
 // Archived entries are restored first when auto-restore is enabled.
+//
+// The fee of a maximum extension can exceed the uint32 transaction-fee cap for
+// large code entries; ExtendTTLTo reaches a chosen target instead.
 func (d *Deployer) ExtendTTLToMax(ctx context.Context, keys []xdr.LedgerKey) ([]uint32, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("no ledger keys to extend")
@@ -88,8 +92,77 @@ func (d *Deployer) ExtendTTLToMax(ctx context.Context, keys []xdr.LedgerKey) ([]
 		return nil, err
 	}
 	// ExtendTo is relative to the current ledger and must stay below MaxEntryTtl.
-	extendTo := maxTTL - 1
+	return d.extendTTL(ctx, keys, maxTTL-1)
+}
 
+// ExtendTTLTo extends the given persistent ledger entries until their
+// remaining TTL reaches targetTTL ledgers, in one ExtendFootprintTtl
+// transaction paid by the deployer, and returns each entry's live-until ledger
+// afterwards, in key order. When every entry already has at least targetTTL
+// ledgers of life left, no transaction is sent. Extending is permissionless:
+// no contract auth is involved.
+//
+// targetTTL must stay below the network's MaxEntryTtl; use ExtendTTLToMax to
+// reach the maximum. A target that keeps the simulated fee (plus the fee
+// buffer) under the uint32 transaction-fee cap fits in a single transaction.
+//
+// Archived entries are restored first when auto-restore is enabled.
+func (d *Deployer) ExtendTTLTo(ctx context.Context, keys []xdr.LedgerKey, targetTTL uint32) ([]uint32, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("no ledger keys to extend")
+	}
+	maxTTL, err := d.maxEntryTTL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if targetTTL >= maxTTL {
+		return nil, fmt.Errorf("target TTL %d must stay below the network maximum %d; use ExtendTTLToMax to reach it", targetTTL, maxTTL)
+	}
+	atTarget, err := d.entriesAtTTL(ctx, keys, targetTTL)
+	if err != nil {
+		return nil, err
+	}
+	if atTarget {
+		return d.liveUntilLedgers(ctx, keys)
+	}
+	return d.extendTTL(ctx, keys, targetTTL)
+}
+
+// SimulateExtendTTL previews ExtendTTLTo without submitting anything. It
+// returns the simulated minimum resource fee, or atTarget=true when every
+// entry already has at least targetTTL ledgers of life left (fee 0).
+func (d *Deployer) SimulateExtendTTL(ctx context.Context, keys []xdr.LedgerKey, targetTTL uint32) (fee int64, atTarget bool, err error) {
+	if len(keys) == 0 {
+		return 0, false, errors.New("no ledger keys to extend")
+	}
+	maxTTL, err := d.maxEntryTTL(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if targetTTL >= maxTTL {
+		return 0, false, fmt.Errorf("target TTL %d must stay below the network maximum %d", targetTTL, maxTTL)
+	}
+	atTarget, err = d.entriesAtTTL(ctx, keys, targetTTL)
+	if err != nil {
+		return 0, false, err
+	}
+	if atTarget {
+		return 0, true, nil
+	}
+	_, sim, err := d.simulateExtend(ctx, keys, targetTTL, time.Now().Add(d.txnTimeBound))
+	if err != nil {
+		return 0, false, err
+	}
+	if sim.RestorePreamble != nil {
+		return 0, false, errors.New("ledger entries are archived; restore them before extending")
+	}
+	return sim.MinResourceFee, false, nil
+}
+
+// extendTTL submits one ExtendFootprintTtl transaction that extends keys to
+// extendTo ledgers from the current ledger, restoring archived entries first
+// when auto-restore is enabled, and returns each key's live-until ledger.
+func (d *Deployer) extendTTL(ctx context.Context, keys []xdr.LedgerKey, extendTo uint32) ([]uint32, error) {
 	deadline := time.Now().Add(d.txnTimeBound)
 	seq, sim, err := d.simulateExtend(ctx, keys, extendTo, deadline)
 	if err != nil {
@@ -116,6 +189,12 @@ func (d *Deployer) ExtendTTLToMax(ctx context.Context, keys []xdr.LedgerKey) ([]
 		return nil, fmt.Errorf("failed to decode extend soroban data: %w", err)
 	}
 	sorobanData.ResourceFee += xdr.Int64(d.resourceFeeBump(sim.MinResourceFee))
+	// A regular Soroban transaction cannot declare a fee above uint32; only
+	// fee-bump transactions get the int64 range. Reject the extension here
+	// with the remedy instead of failing opaquely at submit time.
+	if int64(sorobanData.ResourceFee)+int64(txnbuild.MinBaseFee) > math.MaxUint32 {
+		return nil, fmt.Errorf("extend fee %d stroops exceeds the uint32 transaction fee cap; lower the target TTL or extend fewer entries per transaction", int64(sorobanData.ResourceFee)+int64(txnbuild.MinBaseFee))
+	}
 	tx, err := d.buildExtendTransaction(seq, extendTo, sorobanData, deadline)
 	if err != nil {
 		return nil, err
@@ -125,6 +204,25 @@ func (d *Deployer) ExtendTTLToMax(ctx context.Context, keys []xdr.LedgerKey) ([]
 		return nil, fmt.Errorf("extend transaction failed: %w", err)
 	}
 	return d.liveUntilLedgers(ctx, keys)
+}
+
+// entriesAtTTL reports whether every key's entry has at least ttl ledgers of
+// life left, relative to the latest closed ledger.
+func (d *Deployer) entriesAtTTL(ctx context.Context, keys []xdr.LedgerKey, ttl uint32) (bool, error) {
+	latest, err := d.rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get latest ledger: %w", err)
+	}
+	liveUntil, err := d.liveUntilLedgers(ctx, keys)
+	if err != nil {
+		return false, err
+	}
+	for _, lu := range liveUntil {
+		if int64(lu)-int64(latest.Sequence) < int64(ttl) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // simulateExtend simulates a draft ExtendFootprintTtl transaction with keys as
