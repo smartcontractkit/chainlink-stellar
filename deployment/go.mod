@@ -14,7 +14,7 @@ require (
 	github.com/smartcontractkit/chainlink-ccv/deployment v0.1.1-0.20260901122814-abf56d76c31b
 	github.com/smartcontractkit/chainlink-deployments-framework v0.123.3
 	github.com/smartcontractkit/chainlink-protos/job-distributor v0.20.0
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098
 	github.com/smartcontractkit/mcms v0.55.2
 	github.com/stellar/go-stellar-sdk v0.7.3
 	github.com/stretchr/testify v1.12.1
@@ -250,12 +250,9 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
 
-// Replace directives: transitive replaces for the deployment tree's dependency
-// graph (gotron-sdk fork, gogo/protobuf, ugorji/codec) plus the local bindings
-// sibling. The deployment module no longer imports the root module (the
-// StellarTransmitterKeyName const it needed was moved here to break the old
-// ccv <-> deployment cycle), so there is no root replace. bindings is a published
-// module and is pinned by pseudo-version.
+// Replace directives for the deployment tree's transitive dependency graph
+// (gotron-sdk fork, gogo/protobuf, ugorji/codec). bindings is consumed via a
+// versioned require; the root go.work uses the local tree for development.
 replace (
 	// Gotron-sdk fork required by chainlink-deployments-framework.
 	github.com/fbsobreira/gotron-sdk => github.com/smartcontractkit/chainlink-tron/relayer/gotron-sdk v0.0.5-0.20251014124537-af6b1684fe15
@@ -265,5 +262,3 @@ replace (
 	// were removed in v1.3.0; force v1.2.12.
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
-
-replace github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings

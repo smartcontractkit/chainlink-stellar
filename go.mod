@@ -5,7 +5,7 @@ go 1.26.7
 require (
 	github.com/smartcontractkit/chainlink-ccv v0.13.0
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
-	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
+	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-20261005072841-71e45e418098
 )
 
 require (
@@ -56,7 +56,7 @@ require (
 	github.com/smartcontractkit/chainlink-protos/chainlink-ccv/message-rules v0.0.0-20260505131349-78e491b80735 // indirect
 	github.com/smartcontractkit/chainlink-protos/orchestrator v0.11.0 // indirect
 	github.com/smartcontractkit/chainlink-protos/svr v1.3.0 // indirect
-	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000 // indirect
+	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261005072841-71e45e418098 // indirect
 	github.com/smartcontractkit/wsrpc v0.8.5-0.20250502134807-c57d3d995945 // indirect
 	github.com/stellar/go-stellar-sdk v0.7.3 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
@@ -210,7 +210,11 @@ require (
 	github.com/smartcontractkit/chainlink-protos/chainlink-ccv/verifier v0.0.0-20251211142334-5c3421fe2c8d // indirect
 	github.com/smartcontractkit/chainlink-protos/cre/go v0.0.0-20260916140808-f5d22b3cb3ee // indirect
 	github.com/smartcontractkit/chainlink-protos/linking-service/go v0.0.0-20260512230622-65f10f4cd305 // indirect
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632 // indirect
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098 // indirect
+	// Pin-up: the published ccv module requires relayer at a placeholder version,
+	// and ccv's tests import relayer/mocks, so the root module must carry a
+	// fetchable relayer version for `go mod tidy` to resolve.
+	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-20261005072841-71e45e418098 // indirect
 	github.com/smartcontractkit/freeport v0.1.3-0.20250828155247-add56fa28aad // indirect
 	github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342 // indirect
 	github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a // indirect
@@ -269,22 +273,13 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// Replace directives for transitive dependencies + local sibling modules.
-// The ccv/ tree is its own Go module (github.com/smartcontractkit/chainlink-stellar/ccv);
-// it holds the Stellar CCV adapter + is imported by the root cmd binaries
-// (committee-verifier, executor), so it is consumed via a local replace. ccv in turn
-// imports the deployment/ and relayer/ sibling modules, and local replaces do not
-// propagate from dependencies, so root must mirror those replaces too.
-// The relayer/ tree is its own Go module (github.com/smartcontractkit/chainlink-stellar/relayer);
-// it is the clean production relayer binary (no deployment/ccip/mcms deps), consumed by
-// the ccv module's tests via relayer/mocks.
+// Replace directives for transitive dependencies only; the intra-repo sibling
+// modules are consumed via versioned requires, and the root go.work uses the
+// local trees for development.
 replace (
 	// Gotron-sdk fork required by chainlink-deployments-framework
 	github.com/fbsobreira/gotron-sdk => github.com/smartcontractkit/chainlink-tron/relayer/gotron-sdk v0.0.5-0.20251014124537-af6b1684fe15
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
-	github.com/smartcontractkit/chainlink-stellar/ccv => ./ccv
-	github.com/smartcontractkit/chainlink-stellar/deployment => ./deployment
-	github.com/smartcontractkit/chainlink-stellar/relayer => ./relayer
 	// chainlink-evm's generated codec code (internal_types_codecgen.go) uses
 	// codec1978.GenVersion and codec1978.GenHelper which exist in v1.2.12 but
 	// were removed in v1.3.0.  chainlink-ccv (via integration/pkg/contracttransmitter)
@@ -293,5 +288,3 @@ replace (
 	// since been removed from the root module; the v1.3.x pull comes from chainlink-ccv.)
 	github.com/ugorji/go/codec => github.com/ugorji/go/codec v1.2.12
 )
-
-replace github.com/smartcontractkit/chainlink-stellar/bindings => ./bindings

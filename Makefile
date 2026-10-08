@@ -113,6 +113,6 @@ down:
 
 tidy:
 	go install github.com/jmank88/gomods@v0.1.7
-	gomods tidy
+	GOWORK=off gomods tidy
 	go install github.com/jmank88/modgraph@v0.1.4
 	./scripts/modgraph.sh > go.md

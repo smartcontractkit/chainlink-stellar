@@ -1235,6 +1235,14 @@ github.com/smartcontractkit/chainlink-protos/orchestrator v0.11.0 h1:NXKTdIESAiC
 github.com/smartcontractkit/chainlink-protos/orchestrator v0.11.0/go.mod h1:m/A3lqD7ms/RsQ9BT5P2uceYY0QX5mIt4KQxT2G6qEo=
 github.com/smartcontractkit/chainlink-protos/svr v1.3.0 h1:vOw+MbXtkPK8l/hA7uLASIgCwv05YzmuoIMuOXPa+g0=
 github.com/smartcontractkit/chainlink-protos/svr v1.3.0/go.mod h1:TcOliTQU6r59DwG4lo3U+mFM9WWyBHGuFkkxQpvSujo=
+github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098 h1:gFe6t6i9283xHx2nsBA604rpKxn932504sbxPERpe24=
+github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261005072841-71e45e418098/go.mod h1:fYWA2unezrM6+9LvEtHHMpdvwIZS7vY0gCk6iyWxSbU=
+github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-20261005072841-71e45e418098 h1:EaI5G/3gNwa5PXA1P7tVjnb+TY3CW6+9MtwfcEVB75k=
+github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-20261005072841-71e45e418098/go.mod h1:MTvXU8z83i7Pj5E+axOPh3h9X2Q+dgc2K8k44h5zdjo=
+github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261005072841-71e45e418098 h1:nSF1fHlK6XK+niNovWE0plvWhT9oesnmFgiW5SZMfBI=
+github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261005072841-71e45e418098/go.mod h1:76Hb0sAJlHKZJE+q1NJFbm2fiCo0nIWTQSUgIKx6dOE=
+github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-20261005072841-71e45e418098 h1:vvO4nu5z3kBtLWcuojRQC3a4naY1ZGH4mTsUOXLegY0=
+github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-20261005072841-71e45e418098/go.mod h1:pbSvc1fXb+78yVBLtIJ4c9gk+XVBqduyA3+vRV2ixto=
 github.com/smartcontractkit/chainlink-sui v0.0.0-20260630144638-b69f16bdddd8 h1:3exBy63KSpPPrJok93HmDzECh/iMtNv0cWyPPH8u1aw=
 github.com/smartcontractkit/chainlink-sui v0.0.0-20260630144638-b69f16bdddd8/go.mod h1:EhVSzBDITnheg03bg1TRdaoMDY5GkLjepmbuIq2+qPY=
 github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.8 h1:kndQqDVEVgVN4k1JKFZEi5XsXsMjKOjxi9gKQosj3ss=
