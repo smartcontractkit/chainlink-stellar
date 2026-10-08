@@ -257,6 +257,9 @@ type E2ETestEnv struct {
 	IndexerMonitor     *ccv.IndexerMonitor
 	FriendbotURL       string
 	CLDFEnv            *cldfdeployment.Environment
+	// Lib is the ccv lib this env was built from, for consumers of the
+	// chain-agnostic surfaces (tcapi test cases, V3Source/V3Destination).
+	Lib ccv.Lib
 }
 
 func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configOutputPath string, stellarChainID string, stellarSelector uint64) *E2ETestEnv {
@@ -388,6 +391,7 @@ func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configO
 		IndexerMonitor:     indexerMonitor,
 		FriendbotURL:       friendbotURL,
 		CLDFEnv:            cldfEnv,
+		Lib:                lib,
 	}
 }
 
