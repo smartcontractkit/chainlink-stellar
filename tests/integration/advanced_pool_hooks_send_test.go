@@ -275,7 +275,7 @@ func TestAdvancedPoolHooksOutboundSend(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetLatestLedger: %v", err)
 		}
-		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		if err != nil {
 			t.Fatalf("Router CcipSend: %v", err)
 		}

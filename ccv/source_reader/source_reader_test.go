@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -339,4 +340,29 @@ func TestGetBlocksHeaders(t *testing.T) {
 		require.Nil(t, headers)
 		assert.Contains(t, err.Error(), "exceeds uint32")
 	})
+}
+
+func TestToBytes32(t *testing.T) {
+	// Exactly 64 hex characters (32 bytes), with and without 0x prefix, decodes.
+	for _, in := range []string{
+		"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+	} {
+		out, err := toBytes32(in)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef}, out[:8])
+	}
+
+	// Anything other than exactly 64 hex characters must be rejected, not
+	// silently padded into a different 32-byte hash (report L-6): odd-length
+	// truncated (63), even-length truncated (32), and over-length (66).
+	for _, in := range []string{
+		"0x" + strings.Repeat("ab", 31) + "a", // 63: odd-length truncation
+		"0x" + strings.Repeat("ab", 16),      // 32: even-length truncation
+		"0x" + strings.Repeat("ab", 33),      // 66: over-length
+	} {
+		_, err := toBytes32(in)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be exactly 64 characters")
+	}
 }

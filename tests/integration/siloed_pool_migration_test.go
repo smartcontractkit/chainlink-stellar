@@ -101,6 +101,7 @@ func testTokenPoolSiloedMigration(
 		}
 
 		senderBefore := sacBalanceOrFatal(ctx, t, deployer, sacToken, deployerAddr)
+		feeBefore := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
 		lockBoxBeforeSend := sacBalanceOrFatal(ctx, t, deployer, sacToken, assets.LockBoxID)
 
 		latest, err := rpcClient.GetLatestLedger(ctx)
@@ -108,12 +109,19 @@ func testTokenPoolSiloedMigration(
 			t.Fatalf("GetLatestLedger: %v", err)
 		}
 
-		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		if err != nil {
 			t.Fatalf("Router CcipSend after migration (v2 pool): %v", err)
 		}
 		if msgID == [32]byte{} {
 			t.Fatal("CcipSend returned empty message_id")
+		}
+
+		// L-8: the Router quotes via get_fee and pulls EXACTLY the quote — the
+		// fee-token debit must equal the get_fee quote (no over-pull, no refund).
+		feeAfter := sacBalanceOrFatal(ctx, t, deployer, feeToken, deployerAddr)
+		if got := new(big.Int).Sub(big.NewInt(feeBefore), big.NewInt(feeAfter)); got.Cmp(requiredFee) != 0 {
+			t.Fatalf("fee-token debit %s != get_fee quote %s", got.String(), requiredFee.String())
 		}
 
 		const eventWait = 30 * time.Second
@@ -138,7 +146,7 @@ func testTokenPoolSiloedMigration(
 
 		// Old pool is no longer an allowed lock box caller; TAR pointed at v1 should fail ccip_send.
 		setTokenPoolOrFatal(ctx, t, stack, sacToken, oldPoolID)
-		_, err = stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+		_, err = stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 		assertHostContractErrorContainsCode(t, err, slrbindings.CCIPErrorTokenHandlingError)
 		t.Logf("ccip_send correctly rejected for decommissioned pool v1: %v", err)
 

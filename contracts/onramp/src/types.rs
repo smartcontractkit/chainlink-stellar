@@ -133,7 +133,11 @@ pub struct Receipt {
     pub dest_gas_limit: u32,
     /// Byte overhead for destination chain
     pub dest_bytes_overhead: u32,
-    /// Fee amount in fee token (smallest denomination)
+    /// Fee amount in fee token (smallest denomination). Converted at emission
+    /// from the component's USD-cent fee via the fee-quoter `feeMultiplier`
+    /// (EVM `OnRamp._getReceipts`, OnRamp.sol:1086-1101; report L-7) — except
+    /// the executor receipt's exec-cost slice, which is converted BARE
+    /// (OnRamp.sol:1094-1097; INV-FEE-13).
     pub fee_token_amount: i128,
     /// Extra arguments passed through
     pub extra_args: Bytes,

@@ -359,7 +359,7 @@ func TestOnRampNoExecutionSentinelZeroExecutorFee(t *testing.T) {
 	}
 	startLedger := latest.Sequence
 
-	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 	if err != nil {
 		t.Fatalf("Router CcipSend (no-exec sentinel should be accepted): %v", err)
 	}
@@ -487,7 +487,7 @@ func TestOnRampFunctionalExecutorChargesExecutionFee(t *testing.T) {
 	}
 	startLedger := latest.Sequence
 
-	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg, requiredFee)
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
 	if err != nil {
 		t.Fatalf("Router CcipSend (use-default sentinel should be accepted): %v", err)
 	}

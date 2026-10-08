@@ -13,8 +13,8 @@ BroadcastChanSize = 100 # Default
 ConfirmPollInterval = '3s' # Default
 # BaseInclusionFee is the starting inclusion fee (in stroops) for the first broadcast attempt. 100 stroops = MinBaseFee.
 BaseInclusionFee = 100 # Default
-# MaxInclusionFee is the cap (in stroops) the inclusion fee can be bumped to. 100_000 stroops = 0.01 XLM.
-MaxInclusionFee = 100000 # Default
+# MaxInclusionFee is the cap (in stroops) the inclusion fee can be bumped to. 200_000_000 stroops = 20 XLM. Fees are seeded from network fee stats, so the cap only binds during surge pricing.
+MaxInclusionFee = 200000000 # Default
 # MaxResourceFee is the cap (in stroops) on the Soroban resource fee, used when a request does not set its own cap. A per-request cap overrides it. 2_000_000_000 stroops = 200 XLM. Excess is refunded so there is no risk to setting a high value.
 MaxResourceFee = 2000000000 # Default
 # FeeBumpMultiplier is the geometric multiplier applied to the inclusion fee on each retry attempt.

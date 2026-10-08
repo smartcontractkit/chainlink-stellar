@@ -157,7 +157,7 @@ func (c *Chain) SendChainMessage(ctx context.Context, destChain uint64, msg ccip
 	}
 	c.logger.Info().Str("requiredFee", requiredFee.String()).Msg("Fee quote from Router (SendChainMessage)")
 
-	messageID, err := c.routerClient.CcipSend(ctx, sender, destChain, routerMsg, requiredFee)
+	messageID, err := c.routerClient.CcipSend(ctx, sender, destChain, routerMsg)
 	if err != nil {
 		return cciptestinterfaces.MessageSentEvent{}, nil, fmt.Errorf("ccip_send: %w", err)
 	}

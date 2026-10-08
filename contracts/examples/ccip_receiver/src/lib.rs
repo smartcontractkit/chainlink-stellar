@@ -371,7 +371,10 @@ impl ExampleCcipReceiver {
             }))
     }
 
-    /// Data-only CCIP send using stored per-destination `extra_args`. `caller` is the Router `sender` and pays fees.
+    /// Data-only CCIP send using stored per-destination `extra_args`. `caller` is
+    /// the Router `sender` and pays fees. The Router quotes the fee via the
+    /// OnRamp's `get_fee` and pulls exactly the quote from `caller` (L-8), so no
+    /// fee amount is threaded through here.
     pub fn send_data_pay_fee_token(
         env: Env,
         caller: Address,
@@ -379,7 +382,6 @@ impl ExampleCcipReceiver {
         receiver: Bytes,
         data: Bytes,
         fee_token: Address,
-        fee_token_amount: i128,
     ) -> Result<BytesN<32>, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         caller.require_auth();
@@ -411,7 +413,7 @@ impl ExampleCcipReceiver {
         };
 
         let router_client = RouterClient::new(&env, &router);
-        Ok(router_client.ccip_send(&caller, &dest_chain_selector, &message, &fee_token_amount))
+        Ok(router_client.ccip_send(&caller, &dest_chain_selector, &message))
     }
 }
 
