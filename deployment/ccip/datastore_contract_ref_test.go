@@ -31,3 +31,17 @@ func TestDatastoreContractRef_onRampMetaStable(t *testing.T) {
 	require.NotNil(t, ref.Version)
 	assert.Equal(t, "", ref.Qualifier)
 }
+
+func TestCommitteeVerifierDatastoreRefWithQualifier(t *testing.T) {
+	defaultRef := CommitteeVerifierDatastoreRef()
+
+	emptyRef := CommitteeVerifierDatastoreRefWithQualifier("")
+	assert.Equal(t, defaultRef.Type, emptyRef.Type)
+	assert.Equal(t, defaultRef.Version, emptyRef.Version)
+	assert.Equal(t, DefaultCommitteeVerifierQualifier, emptyRef.Qualifier)
+
+	qualifiedRef := CommitteeVerifierDatastoreRefWithQualifier("mcms-governance-test")
+	assert.Equal(t, defaultRef.Type, qualifiedRef.Type)
+	assert.Equal(t, defaultRef.Version, qualifiedRef.Version)
+	assert.Equal(t, "mcms-governance-test", qualifiedRef.Qualifier)
+}

@@ -560,3 +560,29 @@ func TestDeployExecutor_WritesExecutorAndProxyRefs(t *testing.T) {
 	require.Equal(t, out.Refs[0].Address, out.Refs[1].Address)
 	require.Equal(t, []string{"executor:deploy", "executor:initialize", "stellar-deploy-executor"}, reportIDs(t, reporter))
 }
+
+func TestDeployCommitteeVerifier_QualifierInstances(t *testing.T) {
+	t.Parallel()
+	// An empty qualifier must keep the default instance's salt and ref exactly;
+	// a qualifier deploys a second, distinct instance.
+	wasmPath, b, _, _, deps := componentTestSetup(t, fakeLedger{})
+	owner := foreignOwnerAddress()
+
+	defaultOut, err := execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, WasmPath: wasmPath, Owner: owner,
+		StorageLocations: [][]byte{{0xAA}}, RmnProxy: predictedID(t, "rmn-proxy"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, predictedID(t, "committee-verifier"), defaultOut.ContractID)
+	require.Len(t, defaultOut.Refs, 1)
+	require.Equal(t, stellarccip.DefaultCommitteeVerifierQualifier, defaultOut.Refs[0].Qualifier)
+
+	qualifiedOut, err := execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, Qualifier: "mcms-governance-test", WasmPath: wasmPath, Owner: owner,
+		StorageLocations: [][]byte{{0xAA}}, RmnProxy: predictedID(t, "rmn-proxy"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, predictedID(t, "committee-verifier-mcms-governance-test"), qualifiedOut.ContractID)
+	require.Len(t, qualifiedOut.Refs, 1)
+	require.Equal(t, "mcms-governance-test", qualifiedOut.Refs[0].Qualifier)
+}

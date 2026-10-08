@@ -167,10 +167,20 @@ func VVRDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func CommitteeVerifierDatastoreRef() DatastoreSorobanContractRef {
+	return CommitteeVerifierDatastoreRefWithQualifier("")
+}
+
+// CommitteeVerifierDatastoreRefWithQualifier returns the committee-verifier
+// ref for one instance. An empty qualifier keeps the default instance, so
+// existing refs and salts keep resolving.
+func CommitteeVerifierDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
+	if qualifier == "" {
+		qualifier = DefaultCommitteeVerifierQualifier
+	}
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(committee_verifier.ContractType),
 		Version:   committee_verifier.Version,
-		Qualifier: DefaultCommitteeVerifierQualifier,
+		Qualifier: qualifier,
 	}
 }
 
