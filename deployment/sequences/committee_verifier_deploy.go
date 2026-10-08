@@ -16,8 +16,12 @@ import (
 // contract. StorageLocations is a required input (G4): the deploy never invents
 // one. AllowlistAdmin and FeeAggregator default to the owner, VersionTag to the
 // default committee-verifier tag, and RmnProxy is a required dependency.
+// An empty Qualifier deploys the default instance; a non-empty one deploys a
+// distinct instance (separate datastore ref, salt and op reports) for extra,
+// non-default verifiers.
 type DeployCommitteeVerifierInput struct {
 	ChainSelector     uint64                 `json:"chainSelector"`
+	Qualifier         string                 `json:"qualifier,omitempty"`
 	Owner             string                 `json:"owner,omitempty"`
 	WasmPath          string                 `json:"wasmPath"`
 	StorageLocations  [][]byte               `json:"storageLocations"`
@@ -56,7 +60,7 @@ var DeployCommitteeVerifier = cldf_ops.NewSequence(
 			return ComponentDeployOutput{}, fmt.Errorf("rmnProxy is required: deploy RMN Proxy first")
 		}
 		return deployAndInitialize(b.GetContext(), b, deps, cvops.Deploy,
-			stellarccip.CommitteeVerifierDatastoreRef(), in.ChainSelector, "committee-verifier", in.WasmPath, owner, in.ExistingAddresses,
+			stellarccip.CommitteeVerifierDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("committee-verifier", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
 			func(contractID string) error {
 				_, err := execStellarCCIPOp(b, deps.StellarDeps, cvops.Initialize, cvops.InitializeInput{
 					ContractID: contractID,
@@ -68,7 +72,7 @@ var DeployCommitteeVerifier = cldf_ops.NewSequence(
 					StorageLocations: in.StorageLocations,
 					RmnProxy:         in.RmnProxy,
 					VersionTag:       versionTag,
-				}, withComponentIdempotencyKey[cvops.InitializeInput](in.ChainSelector))
+				}, withComponentInstanceIdempotencyKey[cvops.InitializeInput](in.ChainSelector, in.Qualifier))
 				return err
 			})
 	},

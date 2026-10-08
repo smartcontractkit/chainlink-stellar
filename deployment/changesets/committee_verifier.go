@@ -18,9 +18,12 @@ var committeeVerifierDeps = []componentDep{
 // changeset. StorageLocations is a required input: the deploy never invents
 // one. AllowlistAdmin and FeeAggregator default to the owner and VersionTag
 // to the default committee-verifier tag. The RmnProxy strkey is resolved from
-// the environment datastore, not configured here.
+// the environment datastore, not configured here. An empty Qualifier deploys
+// the default instance; a non-empty one deploys a distinct, extra verifier
+// (its own datastore ref and salt).
 type DeployCommitteeVerifierConfig struct {
 	ChainSelector    uint64   `json:"chainSelector" yaml:"chainSelector"`
+	Qualifier        string   `json:"qualifier,omitempty" yaml:"qualifier,omitempty"`
 	Owner            string   `json:"owner,omitempty" yaml:"owner,omitempty"`
 	WasmPath         string   `json:"wasmPath,omitempty" yaml:"wasmPath,omitempty"`
 	StorageLocations [][]byte `json:"storageLocations" yaml:"storageLocations"`
@@ -49,6 +52,7 @@ func (DeployCommitteeVerifier) Apply(e cldf.Environment, cfg DeployCommitteeVeri
 		func(resolved map[string]string, wasmPath string, existing []datastore.AddressRef) sequences.DeployCommitteeVerifierInput {
 			return sequences.DeployCommitteeVerifierInput{
 				ChainSelector:     cfg.ChainSelector,
+				Qualifier:         cfg.Qualifier,
 				Owner:             cfg.Owner,
 				WasmPath:          wasmPath,
 				StorageLocations:  cfg.StorageLocations,
