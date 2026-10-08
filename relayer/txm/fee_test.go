@@ -116,7 +116,7 @@ func TestFeeStrategy_ResourceFee(t *testing.T) {
 		require.ErrorContains(t, err, "exceeds cap 1000000")
 	})
 
-	t.Run("per-request cap tightens the configured cap", func(t *testing.T) {
+	t.Run("per-request cap below the configured cap applies", func(t *testing.T) {
 		t.Parallel()
 		_, err := fs.ResourceFee(80_000, 10_000, 50_000)
 		require.ErrorContains(t, err, "exceeds cap 50000")
@@ -125,10 +125,27 @@ func TestFeeStrategy_ResourceFee(t *testing.T) {
 		assert.Equal(t, int64(90_000), fee)
 	})
 
-	t.Run("per-request cap cannot loosen the configured cap", func(t *testing.T) {
+	t.Run("per-request cap above the configured cap overrides it", func(t *testing.T) {
 		t.Parallel()
-		_, err := fs.ResourceFee(995_000, 10_000, 5_000_000)
+		fee, err := fs.ResourceFee(995_000, 10_000, 5_000_000)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1_005_000), fee)
+		_, err = fs.ResourceFee(4_995_000, 10_000, 5_000_000)
+		require.ErrorContains(t, err, "exceeds cap 5000000")
+	})
+
+	t.Run("per-request cap applies when no cap is configured", func(t *testing.T) {
+		t.Parallel()
+		uncapped := defaultFeeStrategy()
+		_, err := uncapped.ResourceFee(5_000_000, 0, 1_000_000)
 		require.ErrorContains(t, err, "exceeds cap 1000000")
+	})
+
+	t.Run("per-request cap above int64 range is clamped", func(t *testing.T) {
+		t.Parallel()
+		fee, err := fs.ResourceFee(5_000_000, 0, math.MaxUint64)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5_000_000), fee)
 	})
 
 	t.Run("uncapped when no cap is configured", func(t *testing.T) {

@@ -15,7 +15,7 @@ ConfirmPollInterval = '3s' # Default
 BaseInclusionFee = 100 # Default
 # MaxInclusionFee is the cap (in stroops) the inclusion fee can be bumped to. 200_000_000 stroops = 20 XLM. Fees are seeded from network fee stats, so the cap only binds during surge pricing.
 MaxInclusionFee = 200000000 # Default
-# MaxResourceFee is the cap (in stroops) on the Soroban resource fee. 2_000_000_000 stroops = 200 XLM. Excess is refunded so there is no risk to setting a high value.
+# MaxResourceFee is the cap (in stroops) on the Soroban resource fee, used when a request does not set its own cap. A per-request cap overrides it. 2_000_000_000 stroops = 200 XLM. Excess is refunded so there is no risk to setting a high value.
 MaxResourceFee = 2000000000 # Default
 # FeeBumpMultiplier is the geometric multiplier applied to the inclusion fee on each retry attempt.
 FeeBumpMultiplier = 1.5 # Default

@@ -43,9 +43,10 @@ func (f *FeeStrategy) Calculate(minResourceFee int64, attempt uint64) int64 {
 }
 
 // ResourceFee returns the resource fee (in stroops) to write into SorobanData: the RPC-reported
-// minimum plus a flat buffer, bounded by the tighter of MaxResourceFee and the per-request cap
-// (0 = uncapped). minResourceFee is untrusted RPC output, so a non-positive value or one over
-// the cap is an error rather than a signed envelope.
+// minimum plus a flat buffer, bounded by the per-request cap when set, otherwise by MaxResourceFee
+// (0 = uncapped). This mirrors the Solana TXM, where per-request limits override node config.
+// minResourceFee is untrusted RPC output, so a non-positive value or one over the cap is an error
+// rather than a signed envelope.
 func (f *FeeStrategy) ResourceFee(minResourceFee int64, buffer int64, perRequestMaxResourceFee uint64) (int64, error) {
 	if minResourceFee <= 0 {
 		return 0, fmt.Errorf("rpc reported non-positive MinResourceFee %d", minResourceFee)
@@ -59,10 +60,8 @@ func (f *FeeStrategy) ResourceFee(minResourceFee int64, buffer int64, perRequest
 	fee := minResourceFee + buffer
 
 	capFee := f.MaxResourceFee
-	if perRequestMaxResourceFee > 0 && perRequestMaxResourceFee <= math.MaxInt64 {
-		if capFee == 0 || int64(perRequestMaxResourceFee) < capFee {
-			capFee = int64(perRequestMaxResourceFee)
-		}
+	if perRequestMaxResourceFee > 0 {
+		capFee = int64(min(perRequestMaxResourceFee, math.MaxInt64))
 	}
 	if capFee > 0 && fee > capFee {
 		return 0, fmt.Errorf("resource fee %d stroops exceeds cap %d (MinResourceFee=%d, buffer=%d)", fee, capFee, minResourceFee, buffer)
