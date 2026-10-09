@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
@@ -362,6 +363,65 @@ func TestStellarConfigureChainForLanesIdempotent(t *testing.T) {
 	for _, id := range ids {
 		require.NotContains(t, id, "apply", "configured chain must not emit a write, got op %s", id)
 	}
+}
+
+// TestStellarConfigureChainForLanesAllowedFinality covers the committee
+// verifier's allowed-finality application (EVM ConfigureChainForLanes parity):
+// a non-zero input config is applied read-before-write, a matching on-chain
+// value emits no write, and a zero input config leaves the verifier untouched.
+func TestStellarConfigureChainForLanesAllowedFinality(t *testing.T) {
+	f := newLanesFixture(t)
+
+	withFinality := func(in *ccvadapters.ConfigureChainForLanesInput) {
+		in.CommitteeVerifiers[0].AllowedFinalityConfig = finality.Config{
+			WaitForFinality: true,
+			WaitForSafe:     true,
+			BlockDepth:      1,
+		}
+	}
+	stubCurrentFinality := func(inv *operationstest.RecordingInvoker, current uint32) {
+		v := scval.Uint32ToScVal(current)
+		inv.WithSimulateResultForContract(f.cvID, "get_allowed_finality_config", &v)
+	}
+
+	t.Run("writes when different", func(t *testing.T) {
+		inv := operationstest.NewRecordingInvoker()
+		stubLanesNotConfigured(t, inv, f)
+		stubCurrentFinality(inv, 0)
+
+		b, reporter := lanesBundle(t)
+		_, err := runStellarConfigureChainForLanes(b, stellardeps.StellarDeps{Invoker: inv}, f.input(t, withFinality))
+		require.NoError(t, err)
+		require.True(t, lanesHasOp(lanesOpIDs(t, reporter), "committee-verifier:set-allowed-finality-config"),
+			"an on-chain value of 0 with a non-zero desired config must emit the set")
+	})
+
+	t.Run("no write when equal", func(t *testing.T) {
+		inv := operationstest.NewRecordingInvoker()
+		stubLanesNotConfigured(t, inv, f)
+		stubCurrentFinality(inv, FamilyDefaultAllowedFinality)
+
+		b, reporter := lanesBundle(t)
+		_, err := runStellarConfigureChainForLanes(b, stellardeps.StellarDeps{Invoker: inv}, f.input(t, withFinality))
+		require.NoError(t, err)
+		require.False(t, lanesHasOp(lanesOpIDs(t, reporter), "committee-verifier:set-allowed-finality-config"),
+			"a matching on-chain value must not emit the set")
+	})
+
+	t.Run("zero input leaves verifier untouched", func(t *testing.T) {
+		// No get_allowed_finality_config stub at all: a read against the
+		// RecordingInvoker returns no value and the op errors, so the sequence
+		// reaching the verifier fails the test loudly.
+		inv := operationstest.NewRecordingInvoker()
+		stubLanesNotConfigured(t, inv, f)
+
+		b, reporter := lanesBundle(t)
+		_, err := runStellarConfigureChainForLanes(b, stellardeps.StellarDeps{Invoker: inv}, f.input(t, nil))
+		require.NoError(t, err)
+		for _, id := range lanesOpIDs(t, reporter) {
+			require.NotContains(t, id, "allowed-finality", "zero input config must not touch the verifier, got op %s", id)
+		}
+	})
 }
 
 // TestStellarConfigureChainForLanesGuards covers the sequence's fail-loud and

@@ -30,7 +30,8 @@ import (
 var registerOnce sync.Once
 
 // RegisterStellarDevenvComponents registers Stellar with chainlink-ccv **build/devenv**
-// (chain config loader, modifiers, ImplFactory, CLDF provider, extra-args serializers).
+// (chain config loader, modifiers, ImplFactory, CLDF provider, extra-args serializers,
+// AddressResolver and V3Source/V3Destination factories for tcapi test cases).
 // It does not replace deployment/adapters init; see package doc.
 func RegisterStellarDevenvComponents() {
 	registerOnce.Do(func() {
@@ -41,6 +42,11 @@ func RegisterStellarDevenvComponents() {
 			ChainConfigLoader: StellarChainConfigLoader,
 			VerifierModifier:  modifier.StellarVerifierModifier,
 			ExecutorModifier:  modifier.StellarExecutorModifier,
+			// tcapi plug-in surface: Stellar can send and receive V3 messages
+			// (V3SourceFactory/V3DestinationFactory, see v3_factories.go).
+			AddressResolver:      AddressResolver{},
+			V3SourceFactory:      NewV3Source,
+			V3DestinationFactory: NewV3Destination,
 			ExtraArgsSerializers: map[uint8]chainreg.ExtraArgsSerializer{
 				1: devenvccipevm.BuildEVMExtraArgsV1,
 				2: devenvccipevm.BuildEVMExtraArgsV2,

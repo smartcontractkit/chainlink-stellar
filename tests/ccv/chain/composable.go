@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
@@ -27,7 +28,53 @@ var (
 	_ cciptestinterfaces.ChainAsSource        = (*Chain)(nil)
 	_ cciptestinterfaces.ChainAsDestination   = (*Chain)(nil)
 	_ cciptestinterfaces.MessageV3Destination = (*Chain)(nil)
+	_ cciptestinterfaces.MessageV3Source      = (*Chain)(nil)
+	_ cciptestinterfaces.V3Source             = (*Chain)(nil)
 )
+
+// BuildV3ExtraArgs implements cciptestinterfaces.MessageV3Source: merges the
+// destination chain's executor args, token receiver, and token args into opts
+// and serializes everything into the Soroban GenericExtraArgsV3 XDR blob the
+// Stellar OnRamp parses. tcapi cases call this before BuildChainMessage, so
+// opts.CCVs/opts.Executor arrive hydrated from the SOURCE-side resolver
+// (ResolveV3SendAddresses) — 32-byte Soroban addresses that only the Stellar
+// encoding can express.
+func (c *Chain) BuildV3ExtraArgs(
+	opts cciptestinterfaces.MessageOptions,
+	destChain cciptestinterfaces.MessageV3Destination,
+	executorArgsParams any,
+	tokenReceiverParams any,
+	tokenArgsParams any,
+) (cciptestinterfaces.GenericExtraArgs, error) {
+	executorArgs, err := destChain.GetExecutorArgs(executorArgsParams)
+	if err != nil {
+		return nil, fmt.Errorf("get executor args from destination chain: %w", err)
+	}
+	opts.ExecutorArgs = executorArgs
+
+	tokenReceiver, err := destChain.GetTokenReceiver(tokenReceiverParams)
+	if err != nil {
+		return nil, fmt.Errorf("get token receiver from destination chain: %w", err)
+	}
+	opts.TokenReceiver = tokenReceiver
+
+	tokenArgs, err := destChain.GetTokenArgs(tokenArgsParams)
+	if err != nil {
+		return nil, fmt.Errorf("get token args from destination chain: %w", err)
+	}
+	opts.TokenArgs = tokenArgs
+
+	// CCIP devenv policy: allow out-of-order execution on the destination path.
+	// The Soroban GenericExtraArgsV3 struct has no OOO field today; this matches
+	// the fallback path in BuildChainMessage.
+	opts.OutOfOrderExecution = true
+
+	encoded, err := EncodeStellarSourceExtraArgsForOnRamp(c.vvrContractID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("encode V3 extra args for Stellar OnRamp: %w", err)
+	}
+	return cciptestinterfaces.GenericExtraArgs(encoded), nil
+}
 
 // BuildChainMessage implements cciptestinterfaces.ChainAsSource.
 //
@@ -35,26 +82,33 @@ var (
 // MessageOptions struct, and the source was responsible for serialising the
 // extra args. The new signature receives pre-serialised GenericExtraArgs from
 // the caller (load gun / scenario / CLI) along with destination-family
-// awareness via the (family, version) lookup. For Stellar-as-source the
-// pre-serialised extra args are not directly usable because the Stellar
-// OnRamp expects Soroban GenericExtraArgsV3 XDR rather than the destination's
-// wire format, so we ignore the provided extraArgs and re-encode using the
-// Stellar-side helper.
+// awareness via the (family, version) lookup.
+//
+// extraArgs produced by BuildV3ExtraArgs (or EncodeStellarSourceExtraArgsForOnRamp)
+// is already the Soroban GenericExtraArgsV3 XDR the Stellar OnRamp parses, so it
+// is used verbatim. Empty extraArgs (e.g. CCIP17 SendMessage with a data
+// provider) falls back to the out-of-order default encoding — a destination's
+// wire format (e.g. EVM ABI) is never usable here.
 func (c *Chain) BuildChainMessage(ctx context.Context, fields cciptestinterfaces.MessageFields, extraArgs cciptestinterfaces.GenericExtraArgs) (cciptestinterfaces.GenericChainMessage, error) {
 	_ = ctx
-	_ = extraArgs
 
-	// CCIP devenv policy: allow out-of-order execution on the destination
-	// path. The Soroban GenericExtraArgsV3 struct has no OOO field today; we
-	// pre-populate a MessageOptions so EncodeStellarSourceExtraArgsForOnRamp
-	// emits sensible defaults. Callers that need richer per-send overrides
-	// should construct the Soroban extraArgs externally.
-	encodedExtraArgs, err := EncodeStellarSourceExtraArgsForOnRamp(
-		c.vvrContractID,
-		cciptestinterfaces.MessageOptions{OutOfOrderExecution: true},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("encode extra args for Stellar OnRamp: %w", err)
+	var encodedExtraArgs []byte
+	if len(extraArgs) > 0 {
+		encodedExtraArgs = []byte(extraArgs)
+	} else {
+		// CCIP devenv policy: allow out-of-order execution on the destination
+		// path. The Soroban GenericExtraArgsV3 struct has no OOO field today;
+		// we pre-populate a MessageOptions so EncodeStellarSourceExtraArgsForOnRamp
+		// emits sensible defaults. Callers that need richer per-send overrides
+		// should construct the Soroban extraArgs externally.
+		var err error
+		encodedExtraArgs, err = EncodeStellarSourceExtraArgsForOnRamp(
+			c.vvrContractID,
+			cciptestinterfaces.MessageOptions{OutOfOrderExecution: true},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("encode extra args for Stellar OnRamp: %w", err)
+		}
 	}
 
 	return c.buildStellarMessageBody(fields, encodedExtraArgs)
@@ -165,13 +219,58 @@ func (c *Chain) SendChainMessage(ctx context.Context, destChain uint64, msg ccip
 		Str("messageID", common.HexEncode(messageID[:])).
 		Msg("CCIP message sent from Stellar via Router (SendChainMessage)")
 
+	// Populate ReceiptIssuers from the OnRamp CCIPMessageSent event (EVM parity:
+	// there the send tx receipt carries the event synchronously; on Stellar we
+	// wait for the ledger that includes the send tx). tcapi cases assert the
+	// receipt-issuer count (CCV + executor + network = 3 for a 1-CCV data-only
+	// send), so the send fails loudly if the event cannot be observed. CcipSend
+	// blocks until tx inclusion, so scan from a couple of ledgers before the
+	// current latest: a ledger closing in between must not hide the event.
+	latestLedger, err := c.rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		return cciptestinterfaces.MessageSentEvent{}, nil,
+			fmt.Errorf("get latest ledger for sent-event wait: %w", err)
+	}
+	startLedger := latestLedger.Sequence
+	if startLedger > sentEventLookbackLedgers {
+		startLedger -= sentEventLookbackLedgers
+	}
+	wantMessageID := messageID
+	event, err := c.waitForCCIPMessageSentEvent(ctx, startLedger, sendReceiptWaitTimeout,
+		func(e *CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == destChain && e.MessageId == wantMessageID
+		})
+	if err != nil {
+		return cciptestinterfaces.MessageSentEvent{}, nil,
+			fmt.Errorf("wait for sent event to populate receipt issuers: %w", err)
+	}
+	receiptIssuers := make([]protocol.UnknownAddress, 0, len(event.Receipts))
+	for i, r := range event.Receipts {
+		raw, decErr := strkey.Decode(strkey.VersionByteContract, r.Issuer)
+		if decErr != nil {
+			return cciptestinterfaces.MessageSentEvent{}, nil,
+				fmt.Errorf("decode receipt issuer %d %q: %w", i, r.Issuer, decErr)
+		}
+		receiptIssuers = append(receiptIssuers, protocol.UnknownAddress(raw))
+	}
+
 	// Soroban deployer does not currently plumb transaction hash through CcipSend; composable
 	// helpers treat tx hash as optional.
 	return cciptestinterfaces.MessageSentEvent{
-		MessageID: messageID,
-		Sender:    protocol.UnknownAddress([]byte(sender)),
+		MessageID:      messageID,
+		Sender:         protocol.UnknownAddress([]byte(sender)),
+		ReceiptIssuers: receiptIssuers,
 	}, nil, nil
 }
+
+// sendReceiptWaitTimeout bounds the CCIPMessageSent event wait in
+// SendChainMessage. Quickstart ledgers close every few seconds; the bound only
+// needs to cover ledger close plus event indexing.
+const sendReceiptWaitTimeout = 30 * time.Second
+
+// sentEventLookbackLedgers backs the start ledger of the CCIPMessageSent
+// event wait in SendChainMessage (see the comment there).
+const sentEventLookbackLedgers uint32 = 2
 
 // GetExecutorArgs implements cciptestinterfaces.MessageV3Destination.
 // Returns empty executor args for Stellar (executor args are destination-specific).

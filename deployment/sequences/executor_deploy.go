@@ -1,6 +1,9 @@
 package sequences
 
 import (
+	"encoding/binary"
+
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
@@ -8,6 +11,21 @@ import (
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 )
+
+// FamilyDefaultAllowedFinality is the raw allowed-finality value the stellar
+// chain family declares (adapters.StellarChainFamilyAdapter.GetDefaultFinalityConfig:
+// wait-for-finality | safe-flag | depth 1; keep in sync with it). EVM deploy
+// defaults apply the same kind of family default to executors (ccv
+// deploy_defaults.go defaultFinalityConfig), so the Executor deploys
+// permissive of every requested-finality mode the lane flows send (0, block
+// depth, safe flag). The default AllowedFinalityConfig of 0
+// (wait-for-finality only) makes the OnRamp's get_fee path — which
+// cross-calls Executor::get_fee — reject depth/safe requests with
+// InvalidRequestedFinality (#315).
+var FamilyDefaultAllowedFinality = func() uint32 {
+	raw := finality.Config{WaitForFinality: true, WaitForSafe: true, BlockDepth: 1}.Raw()
+	return binary.BigEndian.Uint32(raw[:])
+}()
 
 // DeployExecutorInput deploys and initializes the source-side Executor
 // contract. MaxCCVsPerMsg defaults to 2, AllowedFinalityConfig to 0,

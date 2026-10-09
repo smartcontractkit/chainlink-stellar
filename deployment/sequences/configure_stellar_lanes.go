@@ -2,6 +2,7 @@ package sequences
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -77,8 +78,11 @@ var ErrZeroAddressNotAllowed = errors.New("zero address not allowed")
 //   - FeeQuoter gas/token price updates (UpdatePrices): deploy seeds them and
 //     the offchain price updater owns them afterwards (Solana precedent).
 //   - CommitteeVerifier remote chain configs/allowlists/resolver routing:
-//     coalesced defaults here would clobber deploy-time values; this sequence
-//     only applies the signature quorums (see applyCommitteeVerifierSignatureQuorums).
+//     coalesced defaults here would clobber deploy-time values. The committee
+//     verifier writes this sequence does make are the signature quorums
+//     (applyCommitteeVerifierSignatureQuorums) and the verifier-global
+//     allowed-finality config (applyCommitteeVerifierAllowedFinality, EVM
+//     ConfigureChainForLanes parity).
 //   - RampRegistry sync: not reachable from ConfigureChainForLanesInput; would
 //     need a FamilyExtras change in chainlink-ccip (noted as a follow-up).
 //
@@ -113,12 +117,15 @@ var StellarConfigureChainForLanes = cldf_ops.NewSequence(
 // can drive it with a recording invoker instead of a live chain.
 func runStellarConfigureChainForLanes(b cldf_ops.Bundle, deps stellardeps.StellarDeps, input ccvadapters.ConfigureChainForLanesInput) (seq_core.OnChainOutput, error) {
 	// Local contract IDs arrive as raw 32-byte contract IDs (the adapter's
-	// toStellarAddressBytes); the operations take strkey C… IDs.
+	// toStellarAddressBytes); the operations take strkey C… IDs. The OnRamp
+	// arrives in its 40-byte message wire form instead (adapter
+	// GetOnRampAddress, matching the bytes the OnRamp writes into messages);
+	// decode the contract ID out of it, accepting the raw form too.
 	routerID, err := scval.BytesToContractStrkey(input.Router)
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("router address: %w", err)
 	}
-	onRampID, err := scval.BytesToContractStrkey(input.OnRamp)
+	onRampID, err := onRampStrkeyFromWireBytes(input.OnRamp)
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("onramp address: %w", err)
 	}
@@ -307,6 +314,15 @@ func runStellarConfigureChainForLanes(b cldf_ops.Bundle, deps stellardeps.Stella
 		return seq_core.OnChainOutput{}, err
 	}
 
+	// Committee verifier allowed-finality config (EVM ConfigureChainForLanes
+	// parity: the shared changeset populates each family's default via
+	// ChainFamilyAdapter.GetDefaultFinalityConfig; without this write the
+	// verifier stays at the deployed wait-for-finality-only default and
+	// rejects depth/safe-flag `get_fee` requests with InvalidRequestedFinality).
+	if err := applyCommitteeVerifierAllowedFinality(b, deps, input); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+
 	if len(onRampAdds) > 0 || len(offRampAdds) > 0 {
 		if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
 			ContractID:     routerID,
@@ -396,6 +412,41 @@ func applyCommitteeVerifierSignatureQuorums(b cldf_ops.Bundle, deps stellardeps.
 			SignatureQuorumConfigs: quorumConfigs,
 		}); err != nil {
 			return fmt.Errorf("apply signature quorum configs on chain %d: %w", input.ChainSelector, err)
+		}
+	}
+	return nil
+}
+
+// applyCommitteeVerifierAllowedFinality sets the verifier-global allowed-finality
+// config on each committee verifier (EVM `configure_chain_for_lanes.go` parity:
+// read current, write only when different, skip a zero input config so a caller
+// not managing finality through this sequence never clobbers an on-chain value).
+func applyCommitteeVerifierAllowedFinality(b cldf_ops.Bundle, deps stellardeps.StellarDeps, input ccvadapters.ConfigureChainForLanesInput) error {
+	for _, cvCfg := range input.CommitteeVerifiers {
+		if cvCfg.AllowedFinalityConfig.IsZero() {
+			continue
+		}
+		contractID, err := stellarCommitteeVerifierContractID(cvCfg.CommitteeVerifier)
+		if err != nil {
+			return fmt.Errorf("chain %d: %w", input.ChainSelector, err)
+		}
+
+		desiredRaw := cvCfg.AllowedFinalityConfig.Raw()
+		desired := binary.BigEndian.Uint32(desiredRaw[:])
+		current, err := execStellarCCIPOp(b, deps, cvops.GetAllowedFinalityConfig, cvops.GetAllowedFinalityConfigInput{
+			ContractID: contractID,
+		})
+		if err != nil {
+			return fmt.Errorf("get allowed finality config on chain %d: %w", input.ChainSelector, err)
+		}
+		if current == desired {
+			continue
+		}
+		if _, err := execStellarCCIPOp(b, deps, cvops.SetAllowedFinalityConfig, cvops.SetAllowedFinalityConfigInput{
+			ContractID:            contractID,
+			AllowedFinalityConfig: desired,
+		}); err != nil {
+			return fmt.Errorf("set allowed finality config on chain %d: %w", input.ChainSelector, err)
 		}
 	}
 	return nil
@@ -752,6 +803,23 @@ func nonZeroSourceOnRamps(sourceChainSelector uint64, onRamps [][]byte) ([][]byt
 		}
 	}
 	return onRamps, nil
+}
+
+// onRampStrkeyFromWireBytes accepts the local OnRamp in either its 40-byte
+// message wire form (how the adapter's GetOnRampAddress delivers it, matching
+// the bytes the OnRamp writes into its messages) or the raw 32-byte contract
+// ID, and returns the strkey the operations take. The wire form cannot be
+// passed through raw like the other local contracts: a 40-byte envelope is
+// not a contract ID.
+func onRampStrkeyFromWireBytes(b []byte) (string, error) {
+	if len(b) == 40 {
+		raw, err := scval.ContractIDFromWireBytes(b)
+		if err != nil {
+			return "", err
+		}
+		return scval.BytesToContractStrkey(raw)
+	}
+	return scval.BytesToContractStrkey(b)
 }
 
 // localContractStrkey accepts a local contract reference in either 0x-hex

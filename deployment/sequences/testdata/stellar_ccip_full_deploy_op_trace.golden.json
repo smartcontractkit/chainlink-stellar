@@ -656,7 +656,7 @@
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "max_ccvs_per_msg": 2,
         "dynamic_config": {
-          "AllowedFinalityConfig": 0,
+          "AllowedFinalityConfig": 65537,
           "CcvAllowlistEnabled": false,
           "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
         }
@@ -667,6 +667,7 @@
       "input": {
         "chainSelector": 17301180955411967724,
         "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/executor.wasm",
+        "allowedFinalityConfig": 65537,
         "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "existingAddresses": [
           {
