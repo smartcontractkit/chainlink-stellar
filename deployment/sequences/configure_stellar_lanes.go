@@ -2,6 +2,7 @@ package sequences
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -77,8 +78,11 @@ var ErrZeroAddressNotAllowed = errors.New("zero address not allowed")
 //   - FeeQuoter gas/token price updates (UpdatePrices): deploy seeds them and
 //     the offchain price updater owns them afterwards (Solana precedent).
 //   - CommitteeVerifier remote chain configs/allowlists/resolver routing:
-//     coalesced defaults here would clobber deploy-time values; this sequence
-//     only applies the signature quorums (see applyCommitteeVerifierSignatureQuorums).
+//     coalesced defaults here would clobber deploy-time values. The committee
+//     verifier writes this sequence does make are the signature quorums
+//     (applyCommitteeVerifierSignatureQuorums) and the verifier-global
+//     allowed-finality config (applyCommitteeVerifierAllowedFinality, EVM
+//     ConfigureChainForLanes parity).
 //   - RampRegistry sync: not reachable from ConfigureChainForLanesInput; would
 //     need a FamilyExtras change in chainlink-ccip (noted as a follow-up).
 //
@@ -307,6 +311,15 @@ func runStellarConfigureChainForLanes(b cldf_ops.Bundle, deps stellardeps.Stella
 		return seq_core.OnChainOutput{}, err
 	}
 
+	// Committee verifier allowed-finality config (EVM ConfigureChainForLanes
+	// parity: the shared changeset populates each family's default via
+	// ChainFamilyAdapter.GetDefaultFinalityConfig; without this write the
+	// verifier stays at the deployed wait-for-finality-only default and
+	// rejects depth/safe-flag `get_fee` requests with InvalidRequestedFinality).
+	if err := applyCommitteeVerifierAllowedFinality(b, deps, input); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+
 	if len(onRampAdds) > 0 || len(offRampAdds) > 0 {
 		if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
 			ContractID:     routerID,
@@ -396,6 +409,41 @@ func applyCommitteeVerifierSignatureQuorums(b cldf_ops.Bundle, deps stellardeps.
 			SignatureQuorumConfigs: quorumConfigs,
 		}); err != nil {
 			return fmt.Errorf("apply signature quorum configs on chain %d: %w", input.ChainSelector, err)
+		}
+	}
+	return nil
+}
+
+// applyCommitteeVerifierAllowedFinality sets the verifier-global allowed-finality
+// config on each committee verifier (EVM `configure_chain_for_lanes.go` parity:
+// read current, write only when different, skip a zero input config so a caller
+// not managing finality through this sequence never clobbers an on-chain value).
+func applyCommitteeVerifierAllowedFinality(b cldf_ops.Bundle, deps stellardeps.StellarDeps, input ccvadapters.ConfigureChainForLanesInput) error {
+	for _, cvCfg := range input.CommitteeVerifiers {
+		if cvCfg.AllowedFinalityConfig.IsZero() {
+			continue
+		}
+		contractID, err := stellarCommitteeVerifierContractID(cvCfg.CommitteeVerifier)
+		if err != nil {
+			return fmt.Errorf("chain %d: %w", input.ChainSelector, err)
+		}
+
+		desiredRaw := cvCfg.AllowedFinalityConfig.Raw()
+		desired := binary.BigEndian.Uint32(desiredRaw[:])
+		current, err := execStellarCCIPOp(b, deps, cvops.GetAllowedFinalityConfig, cvops.GetAllowedFinalityConfigInput{
+			ContractID: contractID,
+		})
+		if err != nil {
+			return fmt.Errorf("get allowed finality config on chain %d: %w", input.ChainSelector, err)
+		}
+		if current == desired {
+			continue
+		}
+		if _, err := execStellarCCIPOp(b, deps, cvops.SetAllowedFinalityConfig, cvops.SetAllowedFinalityConfigInput{
+			ContractID:            contractID,
+			AllowedFinalityConfig: desired,
+		}); err != nil {
+			return fmt.Errorf("set allowed finality config on chain %d: %w", input.ChainSelector, err)
 		}
 	}
 	return nil

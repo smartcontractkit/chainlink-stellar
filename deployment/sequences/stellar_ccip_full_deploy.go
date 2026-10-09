@@ -313,12 +313,15 @@ func RunStellarCCIPFullDeploy(
 	// The source-side fee/policy Executor (EVM Executor.sol parity). The OnRamp's
 	// get_fee path cross-calls Executor::get_fee on default_executor, so the
 	// contract must be deployed+initialized with the dest chain enabled and an
-	// allowed_finality_config that permits the requested finality devenv sends (0).
+	// allowed_finality_config that permits the requested finality the lane flows
+	// send (the stellar family default; EVM deploy defaults apply the same to
+	// executors — see FamilyDefaultAllowedFinality).
 	execOut, err := execComponentSequence(b, componentDeps, DeployExecutor, DeployExecutorInput{
-		ChainSelector:     selector,
-		WasmPath:          execWasmPath,
-		FeeAggregator:     feeAggregatorAddr,
-		ExistingAddresses: currentRefs,
+		ChainSelector:         selector,
+		WasmPath:              execWasmPath,
+		FeeAggregator:         feeAggregatorAddr,
+		AllowedFinalityConfig: FamilyDefaultAllowedFinality,
+		ExistingAddresses:     currentRefs,
 	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy Executor: %w", err)

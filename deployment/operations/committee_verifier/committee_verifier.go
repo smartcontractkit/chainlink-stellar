@@ -106,6 +106,44 @@ var GetSignatureConfig = cldfops.NewOperation(
 	},
 )
 
+// GetAllowedFinalityConfigInput identifies a Committee Verifier allowed-finality read.
+type GetAllowedFinalityConfigInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetAllowedFinalityConfig reads Committee Verifier `get_allowed_finality_config`
+// (EVM `BaseVerifier.getAllowedFinalityConfig`).
+var GetAllowedFinalityConfig = cldfops.NewOperation(
+	"committee-verifier:get-allowed-finality-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the Committee Verifier allowed finality config",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetAllowedFinalityConfigInput) (uint32, error) {
+		c := cvbindings.NewCommitteeVerifierClient(d.Invoker, in.ContractID)
+		return c.GetAllowedFinalityConfig(b.GetContext())
+	},
+)
+
+// SetAllowedFinalityConfigInput sets the verifier-global allowed finality.
+type SetAllowedFinalityConfigInput struct {
+	ContractID            string `json:"contract_id"`
+	AllowedFinalityConfig uint32 `json:"allowed_finality_config"`
+}
+
+// SetAllowedFinalityConfig calls Committee Verifier `set_allowed_finality_config`
+// (owner-gated, M-9 / INV-FIN-CCV-1/2; EVM `BaseVerifier.setAllowedFinalityConfig`).
+var SetAllowedFinalityConfig = cldfops.NewOperation(
+	"committee-verifier:set-allowed-finality-config",
+	stellarops.ContractDeploymentVersion,
+	"Sets the Committee Verifier allowed finality config",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetAllowedFinalityConfigInput) (stellarops.Void, error) {
+		c := cvbindings.NewCommitteeVerifierClient(d.Invoker, in.ContractID)
+		if err := c.SetAllowedFinalityConfig(b.GetContext(), in.AllowedFinalityConfig); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
 // WithdrawFeeTokensInput lists fee token contract IDs to withdraw to the configured fee aggregator.
 type WithdrawFeeTokensInput struct {
 	ContractID string   `json:"contract_id"`
