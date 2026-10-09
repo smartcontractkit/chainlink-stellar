@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -331,6 +332,72 @@ func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 
 	store := txm.accountStore.GetTxStore(testAddress)
 	assert.Equal(t, int64(107), store.GetNextSequence()) // 105 + 1 + 1 (used)
+}
+
+func TestStellarTxm_BroadcastPipeline_BadSeqWaitsWhileAccountIsBehind(t *testing.T) {
+	t.Parallel()
+
+	badSeq, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxBadSeq},
+	})
+	require.NoError(t, err)
+
+	const retryDelay = 100 * time.Millisecond
+	var mu sync.Mutex
+	var sendTimes []time.Time
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			mu.Lock()
+			sendTimes = append(sendTimes, time.Now())
+			mu.Unlock()
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badSeq}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(3)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(retryDelay),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		require.NoError(t, err)
+		return status == commontypes.Failed
+	}, 5*time.Second, 50*time.Millisecond, "tx should fail after the submit retry budget")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, sendTimes, 3)
+	for i := 1; i < len(sendTimes); i++ {
+		assert.GreaterOrEqual(t, sendTimes[i].Sub(sendTimes[i-1]), retryDelay,
+			"bad_seq with an unchanged on-chain sequence must wait SubmitRetryDelay before resending")
+	}
 }
 
 func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds(t *testing.T) {
