@@ -676,9 +676,13 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 // simulation, run before the first one landed, did not. Re-simulating against
 // the then-current ledger state converges: each failed attempt means the
 // conflicting transaction landed, so the next simulation budgets the
-// entry-exists path. A failed-but-included transaction still consumes a source
-// account sequence number (a rejected one does not), so each retry re-fetches
-// the account either way.
+// entry-exists path. A submission the node refuses outright with
+// TRY_AGAIN_LATER (serverOverloadedError — its queue was full, so the
+// transaction was never executed) is likewise retried, after a short backoff
+// so the resubmission does not land in the same full queue. A
+// failed-but-included transaction still consumes a source account sequence
+// number (a rejected one does not), so each retry re-fetches the account
+// either way.
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	const maxAttempts = 3
 	for attempt := 1; ; attempt++ {
@@ -688,8 +692,18 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		}
 		var rle *resourceLimitExceededError
 		var ifr *insufficientFeeRejectedError
-		if (!errors.As(err, &rle) && !errors.As(err, &ifr)) || attempt == maxAttempts {
+		var soe *serverOverloadedError
+		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe)) || attempt == maxAttempts {
 			return nil, err
+		}
+		if soe != nil {
+			// Nothing about the ledger changed — only back off far enough to
+			// let the node drain its submission queue.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * serverOverloadedBackoff):
+			}
 		}
 		sourceAccount, err = d.getSourceAccount(ctx)
 		if err != nil {
@@ -821,7 +835,7 @@ func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transacti
 	case "PENDING", "DUPLICATE":
 		// Transaction was accepted, continue to wait for confirmation
 	case "TRY_AGAIN_LATER":
-		return nil, fmt.Errorf("%stransaction submission failed: server overloaded, try again later", label)
+		return nil, &serverOverloadedError{label: label}
 	case "ERROR":
 		if submitResult.ErrorResultXDR != "" {
 			// A txInsufficientFee rejection means the fee assembled from our
@@ -930,6 +944,24 @@ type insufficientFeeRejectedError struct {
 func (e *insufficientFeeRejectedError) Error() string {
 	return fmt.Sprintf("%stransaction rejected (txInsufficientFee): %v", e.label, e.resultXDR)
 }
+
+// serverOverloadedError marks a transaction the node refused outright with
+// TRY_AGAIN_LATER: its submission queue was full, so the transaction was
+// never executed and consumed no sequence number. Purely transient — nothing
+// about the ledger changed, unlike the drift errors above — so the same
+// transaction can be resubmitted after a short backoff.
+type serverOverloadedError struct {
+	label string
+}
+
+func (e *serverOverloadedError) Error() string {
+	return fmt.Sprintf("%stransaction submission failed: server overloaded, try again later", e.label)
+}
+
+// serverOverloadedBackoff is the per-attempt wait before resubmitting a
+// transaction the node refused with TRY_AGAIN_LATER, scaled by the attempt
+// number so repeated refusals back off progressively.
+var serverOverloadedBackoff = time.Second
 
 // isTxInsufficientFee reports whether resultXDR is a transaction result the
 // network rejected with txInsufficientFee.

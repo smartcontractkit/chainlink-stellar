@@ -117,12 +117,15 @@ var StellarConfigureChainForLanes = cldf_ops.NewSequence(
 // can drive it with a recording invoker instead of a live chain.
 func runStellarConfigureChainForLanes(b cldf_ops.Bundle, deps stellardeps.StellarDeps, input ccvadapters.ConfigureChainForLanesInput) (seq_core.OnChainOutput, error) {
 	// Local contract IDs arrive as raw 32-byte contract IDs (the adapter's
-	// toStellarAddressBytes); the operations take strkey C… IDs.
+	// toStellarAddressBytes); the operations take strkey C… IDs. The OnRamp
+	// arrives in its 40-byte message wire form instead (adapter
+	// GetOnRampAddress, matching the bytes the OnRamp writes into messages);
+	// decode the contract ID out of it, accepting the raw form too.
 	routerID, err := scval.BytesToContractStrkey(input.Router)
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("router address: %w", err)
 	}
-	onRampID, err := scval.BytesToContractStrkey(input.OnRamp)
+	onRampID, err := onRampStrkeyFromWireBytes(input.OnRamp)
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("onramp address: %w", err)
 	}
@@ -800,6 +803,23 @@ func nonZeroSourceOnRamps(sourceChainSelector uint64, onRamps [][]byte) ([][]byt
 		}
 	}
 	return onRamps, nil
+}
+
+// onRampStrkeyFromWireBytes accepts the local OnRamp in either its 40-byte
+// message wire form (how the adapter's GetOnRampAddress delivers it, matching
+// the bytes the OnRamp writes into its messages) or the raw 32-byte contract
+// ID, and returns the strkey the operations take. The wire form cannot be
+// passed through raw like the other local contracts: a 40-byte envelope is
+// not a contract ID.
+func onRampStrkeyFromWireBytes(b []byte) (string, error) {
+	if len(b) == 40 {
+		raw, err := scval.ContractIDFromWireBytes(b)
+		if err != nil {
+			return "", err
+		}
+		return scval.BytesToContractStrkey(raw)
+	}
+	return scval.BytesToContractStrkey(b)
 }
 
 // localContractStrkey accepts a local contract reference in either 0x-hex
