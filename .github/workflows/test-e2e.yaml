@@ -139,7 +139,7 @@ jobs:
         # from duplicating each other. Note test-e2e-tcapi.yaml currently runs
         # only TestStellarToEVMTCAPI, so TestStellarTCAPI runs nowhere in CI
         # until its known cross-family failures are fixed.
-        run: cd tests && go test -v -timeout 25m -skip 'TestStellar(ToEVM)?TCAPI' ./e2e/...
+        run: cd tests && go test -v -timeout 20m -skip 'TestStellar(ToEVM)?TCAPI' ./e2e/...
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
       # (metrics noise every ~5s aside), so 5000 lines covers the entire run —

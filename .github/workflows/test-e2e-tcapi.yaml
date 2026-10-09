@@ -135,7 +135,7 @@ jobs:
       - name: Run TCAPI e2e tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        run: cd tests && go test -v -timeout 25m ./e2e/... -run 'TestStellarToEVMTCAPI'
+        run: cd tests && go test -v -timeout 15m ./e2e/... -run 'TestStellarToEVMTCAPI'
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
       # (metrics noise every ~5s aside), so 5000 lines covers the entire run —
