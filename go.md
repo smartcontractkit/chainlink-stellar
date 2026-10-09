@@ -20,6 +20,7 @@ flowchart LR
 	chainlink-canton/contracts/v2
 	click chainlink-canton/contracts/v2 href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-ccip/chains/evm --> ccip-contract-examples/chains/evm
+	chainlink-ccip/chains/evm --> chainlink-canton
 	chainlink-ccip/chains/evm --> chainlink-ccip/deployment
 	chainlink-ccip/chains/evm --> chainlink-deployments-framework
 	chainlink-ccip/chains/evm --> chainlink-evm
@@ -62,7 +63,6 @@ flowchart LR
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
 	chainlink-deployments-framework --> chainlink-aptos
-	chainlink-deployments-framework --> chainlink-canton
 	chainlink-deployments-framework --> chainlink-canton/authentication
 	chainlink-deployments-framework --> chainlink-canton/contracts/v2
 	chainlink-deployments-framework --> chainlink-ccip/chains/evm
@@ -338,7 +338,6 @@ flowchart LR
 	chainlink-data-streams
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
-	chainlink-deployments-framework --> chainlink-canton/authentication
 	chainlink-deployments-framework --> chainlink-protos/op-catalog
 	chainlink-deployments-framework --> chainlink-testing-framework/seth
 	chainlink-deployments-framework --> mcms
@@ -408,6 +407,8 @@ flowchart LR
 	click chainlink-stellar href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/bindings
 	click chainlink-stellar/bindings href "https://github.com/smartcontractkit/chainlink-stellar"
+	chainlink-stellar/capabilities --> chainlink-common
+	click chainlink-stellar/capabilities href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/ccv --> chainlink-stellar/deployment
 	chainlink-stellar/ccv --> chainlink-stellar/relayer
 	click chainlink-stellar/ccv href "https://github.com/smartcontractkit/chainlink-stellar"
@@ -491,6 +492,7 @@ flowchart LR
 	libocr --> go-sumtype2
 	click libocr href "https://github.com/smartcontractkit/libocr"
 	mcms --> chainlink-canton
+	mcms --> chainlink-canton/authentication
 	mcms --> chainlink-canton/contracts/v2
 	mcms --> chainlink-ccip/chains/solana
 	mcms --> chainlink-ccip/deployment
@@ -591,6 +593,7 @@ flowchart LR
 	subgraph chainlink-stellar-repo[chainlink-stellar]
 		 chainlink-stellar
 		 chainlink-stellar/bindings
+		 chainlink-stellar/capabilities
 		 chainlink-stellar/ccv
 		 chainlink-stellar/deployment
 		 chainlink-stellar/relayer
