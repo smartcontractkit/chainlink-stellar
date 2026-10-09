@@ -10,7 +10,7 @@ RequestTimeout = '30s' # Default
 # BroadcastChanSize is the buffer size of the channel that feeds the serial broadcast loop.
 BroadcastChanSize = 100 # Default
 # ConfirmPollInterval is the rate to poll GetTransaction for confirmation of submitted txs.
-ConfirmPollInterval = '3s' # Default
+ConfirmPollInterval = '1s' # Default
 # BaseInclusionFee is the starting inclusion fee (in stroops) for the first broadcast attempt. 100 stroops = MinBaseFee.
 BaseInclusionFee = 100 # Default
 # MaxInclusionFee is the cap (in stroops) the inclusion fee can be bumped to. 200_000_000 stroops = 20 XLM. Fees are seeded from network fee stats, so the cap only binds during surge pricing.
