@@ -40,6 +40,10 @@ type StellarTx struct {
 	Attempt       atomic.Uint64
 	InfraAttempts atomic.Uint64
 
+	// waiters counts EnqueueAndWait callers still blocked on Done; waited is set by the first one.
+	waiters atomic.Int32
+	waited  atomic.Bool
+
 	mu              sync.RWMutex
 	Status          commontypes.TransactionStatus
 	TerminalTime    time.Time // when status first became Finalized or Failed; zero if not yet terminal
@@ -56,6 +60,12 @@ type StellarTx struct {
 	// Done is closed when the transaction reaches a terminal state.
 	Done     chan struct{}
 	doneOnce sync.Once
+}
+
+// abandoned reports whether every EnqueueAndWait caller of tx has stopped waiting, so its
+// result has no consumer. Txs submitted with Enqueue alone are never abandoned.
+func (tx *StellarTx) abandoned() bool {
+	return tx.waited.Load() && tx.waiters.Load() == 0
 }
 
 // txFingerprint digests the parts of a request that change the signed envelope: source
@@ -151,6 +161,10 @@ const (
 	// DropReasonChannelFullNewRejected: the incoming tx was rejected because the
 	// channel was still full after an attempted oldest-evict (concurrent enqueue race).
 	DropReasonChannelFullNewRejected DropReason = "channel_full_new_rejected"
+
+	// DropReasonCallerAbandoned: every EnqueueAndWait caller stopped waiting (e.g. its
+	// context timed out), so the tx is no longer broadcast.
+	DropReasonCallerAbandoned DropReason = "caller_abandoned"
 )
 
 // RetryReason classifies why a transaction is being retried (post-submit lifecycle retries).

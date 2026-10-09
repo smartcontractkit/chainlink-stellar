@@ -205,7 +205,8 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 }
 
 // EnqueueAndWait submits a transaction and blocks until it reaches a terminal
-// state (Finalized, Failed) or the context is cancelled.
+// state (Finalized, Failed) or the context is cancelled. Once every caller waiting
+// on a tx has returned early, the tx is dropped instead of being (re)broadcast.
 func (s *StellarTxm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResult, error) {
 	txID, err := s.Enqueue(ctx, req)
 	if err != nil {
@@ -218,6 +219,10 @@ func (s *StellarTxm) EnqueueAndWait(ctx context.Context, req TxRequest) (*TxResu
 	if !ok {
 		return nil, fmt.Errorf("transaction %s not found after enqueue", txID)
 	}
+
+	tx.waiters.Add(1)
+	tx.waited.Store(true)
+	defer tx.waiters.Add(-1)
 
 	select {
 	case <-tx.Done:
@@ -466,6 +471,22 @@ func (s *StellarTxm) releaseSeqAndFailTx(ctx context.Context, txStore *TxStore, 
 	s.metrics.IncrementErrorTxs(ctx, metricReason)
 }
 
+// dropAbandoned fails a tx nobody waits for, so it stops holding the serial broadcast loop
+// and an account sequence. The caller must not hold a sequence for tx.
+func (s *StellarTxm) dropAbandoned(ctx context.Context, tx *StellarTx) {
+	tx.mu.Lock()
+	tx.ResultCode = string(DropReasonCallerAbandoned)
+	tx.mu.Unlock()
+
+	s.updateTransactionStatus(tx, commontypes.Failed)
+	s.metrics.IncrementDroppedTxs(ctx, DropReasonCallerAbandoned)
+
+	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
+	ctxLogger.Infow("dropping tx: every caller stopped waiting",
+		"attempt", s.getTransactionAttempt(tx),
+		"age", time.Since(tx.Timestamp).Round(time.Second))
+}
+
 func (s *StellarTxm) markBroadcastAt(tx *StellarTx) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
@@ -594,6 +615,10 @@ func (s *StellarTxm) broadcastLoop() {
 // seeded from feeTracker GetFeeStats Soroban percentiles.
 func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *StellarTx) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
+	if tx.abandoned() {
+		s.dropAbandoned(ctx, tx)
+		return
+	}
 	client, err := s.getClient(ctx)
 	if err != nil {
 		ctxLogger.Errorw("failed to get RPC client", "error", err)
@@ -652,6 +677,12 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 	restoreHandled := false
 
 	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
+		if tx.abandoned() {
+			txStore.Release(seq)
+			s.dropAbandoned(ctx, tx)
+			return
+		}
+
 		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq)
 		if err != nil {
 			ctxLogger.Errorw("simulation failed", "error", err)
