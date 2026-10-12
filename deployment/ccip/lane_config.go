@@ -65,7 +65,11 @@ func AddressBytesHex(ref datastore.AddressRef, selector uint64) ([]byte, error) 
 	return raw, nil
 }
 
-// CanonicalSourceOnRampBytes returns on-ramp bytes for OffRamp source config; left-pads EVM addresses to 32 bytes.
+// CanonicalSourceOnRampBytes returns the remote OnRamp bytes the local OffRamp
+// whitelists in its source chain config, in the form the source OnRamp actually
+// writes into its messages (the OffRamp matches them by hashing those message
+// bytes): left-padded 32 bytes for EVM, the 40-byte Address::to_xdr envelope
+// for Stellar.
 func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]byte, error) {
 	raw, err := AddressBytesHex(ref, selector)
 	if err != nil {
@@ -76,13 +80,16 @@ func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("get selector family for %d: %w", selector, err)
 	}
-	if family != chainsel.FamilyEVM {
+	switch family {
+	case chainsel.FamilyEVM:
+		padded := make([]byte, 32)
+		copy(padded[len(padded)-len(raw):], raw)
+		return padded, nil
+	case chainsel.FamilyStellar:
+		return scval.ContractAddressWireBytes(raw)
+	default:
 		return raw, nil
 	}
-
-	padded := make([]byte, 32)
-	copy(padded[len(padded)-len(raw):], raw)
-	return padded, nil
 }
 
 // BuildOnRampDestConfigs builds datastore-backed OnRamp destination chain configs.
