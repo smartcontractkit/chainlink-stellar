@@ -7,6 +7,8 @@ use soroban_sdk::{
     Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
+use crate::storage::LEDGER_THRESHOLD;
+use crate::types::TimelockDataKey;
 use crate::{
     Call, Calls, TimelockContract, TimelockContractClient, TimelockError, ADMIN_ROLE,
     BYPASSER_ROLE, CANCELLER_ROLE, PROPOSER_ROLE,
@@ -132,6 +134,47 @@ fn initialization_is_self_administered_and_roles_are_exact() {
     assert!(!client.has_role(&PROPOSER_ROLE, &client.address));
     assert_eq!(client.get_role_member(&ADMIN_ROLE, &0), client.address);
     assert_eq!(client.get_min_delay(), 100);
+}
+
+#[test]
+fn ttl_bump_extends_instance_and_role_keys_but_not_code() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    use soroban_sdk::testutils::Deployer as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let proposer = Address::generate(&env);
+    let client = register(&env);
+    let code_ttl_before = env.deployer().get_contract_code_ttl(&client.address);
+    assert!(code_ttl_before < LEDGER_THRESHOLD);
+
+    client.initialize(
+        &100,
+        &Vec::from_array(&env, [proposer.clone()]),
+        &Vec::from_array(&env, [Address::generate(&env)]),
+        &Vec::from_array(&env, [Address::generate(&env)]),
+    );
+
+    let (max_ttl, member_ttl) = env.as_contract(&client.address, || {
+        (
+            env.storage().max_ttl(),
+            env.storage()
+                .persistent()
+                .get_ttl(&TimelockDataKey::RoleMember(
+                    PROPOSER_ROLE,
+                    proposer.clone(),
+                )),
+        )
+    });
+    assert_eq!(
+        env.deployer().get_contract_instance_ttl(&client.address),
+        max_ttl
+    );
+    assert_eq!(member_ttl, max_ttl);
+    assert_eq!(
+        env.deployer().get_contract_code_ttl(&client.address),
+        code_ttl_before
+    );
 }
 
 #[test]
