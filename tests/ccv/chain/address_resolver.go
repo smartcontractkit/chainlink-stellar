@@ -31,9 +31,15 @@ func resolveRefAddress(ds datastore.DataStore, chainSelector uint64, ref stellar
 }
 
 // GetContractReceiver implements [chainreg.AddressResolver].
-// Stellar deploys a single ccip_receiver example contract (no per-qualifier
-// mock receivers exist), so every qualifier maps to it.
+// ""/"default" resolves the original unqualified ccip_receiver example
+// contract; any other qualifier resolves the receiver instance the full
+// deploy records under that qualifier (deployed only when the referenced
+// committees exist in the topology — otherwise lookup errors and the
+// requesting test case skips via HavePrerequisites).
 func (AddressResolver) GetContractReceiver(ds datastore.DataStore, chainSelector uint64, qualifier string) (protocol.UnknownAddress, error) {
+	if qualifier != "" && qualifier != "default" {
+		return resolveRefAddress(ds, chainSelector, stellarccip.CCIPReceiverDatastoreRefWithQualifier(qualifier), "ccip receiver")
+	}
 	return resolveRefAddress(ds, chainSelector, stellarccip.CCIPReceiverDatastoreRef(), "ccip receiver")
 }
 

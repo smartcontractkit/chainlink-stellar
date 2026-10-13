@@ -2,6 +2,7 @@ package sequences
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,10 +10,12 @@ import (
 	"strconv"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	recvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
@@ -446,6 +449,12 @@ func RunStellarCCIPFullDeploy(
 	// CV contract IDs are collected here and configured after the Router deploy
 	// (CommitteeVerifier RemoteChainConfig.Router requires the Router to exist).
 	committeeCVs := make([]struct{ qualifier, cvID string }, 0)
+	// stellarVvrIDs maps every committee qualifier covering this chain (the
+	// default included) to its stellar-side VVR contract ID — the dest-family
+	// CCV identities the qualified receivers' required/optional lists use.
+	stellarVvrIDs := map[string]string{
+		stellarccip.DefaultCommitteeVerifierQualifier: vvrContractID,
+	}
 	for _, qualifier := range nonDefaultCommitteeQualifiers(topology, selector) {
 		currentRefs, err = ds.AddressRefStore.Fetch()
 		if err != nil {
@@ -462,6 +471,7 @@ func RunStellarCCIPFullDeploy(
 			return seq_core.OnChainOutput{}, fmt.Errorf("deploy VVR %q: %w", qualifier, err)
 		}
 		committeeVvrContractID := committeeVvrOut.ContractID
+		stellarVvrIDs[qualifier] = committeeVvrContractID
 		if err := upsertComponentRefs(ds, committeeVvrOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
@@ -834,6 +844,94 @@ func RunStellarCCIPFullDeploy(
 			return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example EnableRemoteChain for source chain %d: %w", rs, err)
 		}
 	}
+
+	// --- Qualified CCIP receivers (tcapi receiver-verifier cases) ---
+	// Mirrors ccv's EVM buildMockReceivers matrix (build/devenv/evm/impl.go):
+	// each qualified instance is configured per remote source chain with the
+	// stellar-side (dest-family) VVR contract IDs of the committees it
+	// requires/allows, and the same permissive allowed-finality the EVM mock
+	// receivers get at deploy time. Multi-committee receivers deploy only when
+	// every referenced committee covers this chain. The default ("") receiver
+	// above stays as-is (its finality stays 0: the e2e FTF negative control
+	// relies on it).
+	hasCommittee := func(qualifier string) bool {
+		_, ok := stellarVvrIDs[qualifier]
+		return ok
+	}
+	qualifiedReceivers := make([]qualifiedReceiverPlan, 0, 3)
+	if hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:    stellarccip.SecondaryReceiverQualifier,
+			requiredCcvs: []string{stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier]},
+		})
+	}
+	if hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.TertiaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:         stellarccip.TertiaryReceiverQualifier,
+			requiredCcvs:      []string{stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier]},
+			optionalCcvs:      []string{stellarVvrIDs[stellarccip.TertiaryCommitteeVerifierQualifier]},
+			optionalThreshold: 1,
+		})
+	}
+	if hasCommittee(stellarccip.DefaultCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.TertiaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:    stellarccip.QuaternaryReceiverQualifier,
+			requiredCcvs: []string{stellarVvrIDs[stellarccip.DefaultCommitteeVerifierQualifier]},
+			optionalCcvs: []string{
+				stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier],
+				stellarVvrIDs[stellarccip.TertiaryCommitteeVerifierQualifier],
+			},
+			optionalThreshold: 1,
+		})
+	}
+	qualifiedFinalityRaw := finality.Config{BlockDepth: 1, WaitForSafe: true}.Raw()
+	qualifiedFinality := binary.BigEndian.Uint32(qualifiedFinalityRaw[:])
+	for _, qr := range qualifiedReceivers {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		qRecvOut, err := execComponentSequence(b, componentDeps, DeployCCIPReceiver, DeployCCIPReceiverInput{
+			ChainSelector:     selector,
+			WasmPath:          receiverWasmPath,
+			Router:            routerContractID,
+			Qualifier:         qr.qualifier,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy ccip_receiver_example %q: %w", qr.qualifier, err)
+		}
+		if err := upsertComponentRefs(ds, qRecvOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		for _, rs := range remoteSelectors {
+			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
+				ContractID:            qRecvOut.ContractID,
+				Caller:                ownerAddr,
+				RemoteChainSelector:   rs,
+				ExtraArgs:             placeholderExtra,
+				AllowedFinalityConfig: qualifiedFinality,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q EnableRemoteChain for source chain %d: %w", qr.qualifier, rs, err)
+			}
+			if _, err := execStellarCCIPOp(b, deps, recvops.ApplyCcvConfigUpdates, recvops.ApplyCcvConfigUpdatesInput{
+				ContractID: qRecvOut.ContractID,
+				Caller:     ownerAddr,
+				Updates: []recvbindings.CcvConfigUpdate{{
+					SourceChainSelector: rs,
+					RequiredCcvs:        qr.requiredCcvs,
+					OptionalCcvs:        qr.optionalCcvs,
+					OptionalThreshold:   qr.optionalThreshold,
+				}},
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q ApplyCcvConfigUpdates for source chain %d: %w", qr.qualifier, rs, err)
+			}
+		}
+		h.Logger().Info().Str("qualifier", qr.qualifier).Str("receiverContractID", qRecvOut.ContractID).Msg("Qualified CCIP receiver deployed and configured")
+	}
 	h.SetReceiver(receiverContractID)
 	h.Logger().Info().Str("receiverContractID", receiverContractID).Msg("CCIP receiver example deployed and initialized")
 
@@ -842,6 +940,17 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, err
 	}
 	return seq_core.OnChainOutput{Addresses: addrs}, nil
+}
+
+// qualifiedReceiverPlan mirrors one row of ccv's EVM buildMockReceivers matrix
+// (build/devenv/evm/impl.go): a receiver instance qualified by qualifier, whose
+// per-source-chain CCV config requires requiredCcvs and allows optionalCcvs
+// with optionalThreshold of them.
+type qualifiedReceiverPlan struct {
+	qualifier         string
+	requiredCcvs      []string
+	optionalCcvs      []string
+	optionalThreshold uint32
 }
 
 // nonDefaultCommitteeQualifiers returns the sorted qualifiers of committees

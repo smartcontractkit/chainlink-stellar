@@ -52,7 +52,7 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 		NOPTopology: &offchain.NOPTopology{
 			Committees: map[string]offchain.CommitteeConfig{
 				stellarccip.DefaultCommitteeVerifierQualifier: committeeFor(stellarccip.DefaultCommitteeVerifierQualifier),
-				"secondary":                                   committeeFor("secondary"),
+				"secondary": committeeFor("secondary"),
 			},
 		},
 	}
@@ -86,10 +86,20 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 	require.NotEqual(t, cvDefault, cvSecondary, "secondary CV must be a distinct contract")
 	require.NotEqual(t, vvrDefault, vvrSecondary, "secondary VVR must be a distinct contract")
 
-	// 55 = the 46 baseline reports plus 9 for the secondary pair: VVR and CV
+	// The secondary committee also gets a secondary-qualified ccip_receiver
+	// instance (the tcapi receiver-verifier cases), configured with the
+	// secondary VVR as its required CCV.
+	recvType := stellarccip.CCIPReceiverDatastoreRefWithQualifier("secondary").Type
+	recvDefault := requireRef(recvType, "")
+	recvSecondary := requireRef(recvType, "secondary")
+	require.NotEqual(t, recvDefault, recvSecondary, "secondary receiver must be a distinct contract")
+
+	// 60 = the 46 baseline reports plus 9 for the secondary pair: VVR and CV
 	// sequences (deploy + init + sequence report each), the two impl updates,
-	// and the secondary CV's remote chain config updates.
+	// and the secondary CV's remote chain config updates; plus 5 for the
+	// secondary-qualified receiver: deploy + init + sequence report, and its
+	// per-remote EnableRemoteChain + ApplyCcvConfigUpdates.
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	require.Len(t, reports, 55)
+	require.Len(t, reports, 60)
 }

@@ -3,6 +3,7 @@ package e2e_tests
 import (
 	"context"
 	"encoding/binary"
+	"os"
 	"testing"
 	"time"
 
@@ -28,9 +29,10 @@ import (
 // verifier, safe-tag finality, the secondary committee, and the custom
 // executor (a custom-qualified stellar executor NOP exists in the env). The
 // reverse lane (stellar_to_evm_tcapi_test.go, TestStellarToEVMTCAPI) runs the
-// same four. The other basic cases are excluded until fixed (max data size) or
-// until a ccv cross-family CCV identity mechanism lands (required/optional
-// receiver verifiers).
+// same four. The five receiver-verifier cases (required/optional receiver
+// CCVs) are wired below but gated behind TC_ENABLE_RECEIVER_VERIFIER_CASES=1
+// until they pass empirically on this mixed-family devenv; max data size
+// stays excluded until its ccv FeeQuoter fix lands.
 //
 // Contracts must be compiled before running (from the repo root):
 //
@@ -109,14 +111,32 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 		// a custom-qualified stellar executor NOP (stellar-executor-2 in
 		// env-stellar-evm.toml; the EVM source side's custom executor contract
 		// is deployed by ccv's EVM phase). max data size needs the ccv
-		// FeeQuoter calldata-overhead fix (not in the pinned ccv yet), and the
-		// required/optional receiver cases need a ccv-side cross-family CCV
-		// identity mechanism (see stellar_to_evm_tcapi_test.go).
+		// FeeQuoter calldata-overhead fix (not in the pinned ccv yet).
 		cases := []tcapi.TestCase{
 			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
 			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
 			basic.CustomExecutor(lib, src, dst, args),
+		}
+		// The receiver-verifier cases: the stellar full deploy now deploys
+		// qualified receivers (secondary/tertiary/quaternary) configured with
+		// the stellar-side VVR ids, matching this lane's dest. They are
+		// opt-in until they pass empirically — the receiver's required CCVs
+		// are the stellar-side VVR ids while the executor's report and the
+		// aggregator's stamped identity travel through the EVM-side offchain
+		// pipeline, so first exercise gates on cross-family identity
+		// agreement (executor ErrInsufficientVerifiers / empty
+		// VerifierDestAddress ⇒ ccv aggregator-config gap;
+		// CCVQuorumNotMet ⇒ stellar lane-config quorum gap). Enable with
+		// TC_ENABLE_RECEIVER_VERIFIER_CASES=1.
+		if os.Getenv("TC_ENABLE_RECEIVER_VERIFIER_CASES") != "" {
+			cases = append(cases,
+				basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
+				basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
+				basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
+				basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
+				basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
+			)
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {

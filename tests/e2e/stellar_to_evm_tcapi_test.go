@@ -1,6 +1,7 @@
 package e2e_tests
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -63,13 +64,8 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	t.Run("extra args v3 messaging", func(t *testing.T) {
 		// The four cases that pass on the EVM→Stellar lane (see
 		// TestEVMToStellarTCAPI): default verifier, safe-tag finality, the secondary
-		// committee, and the custom executor. The secondary-required receiver
-		// case is excluded for now: the receiver's required CCV is the EVM-side
-		// VVR while the executor submits the stellar-side VVR identity
-		// (truncated to 20 bytes by the EVM transmitter) — cross-family CCV
-		// identity agreement is a ccv-side gap (both directions; the dest
-		// OffRamp calls each matched CCV as a real on-chain VVR resolver). max
-		// data size is likewise excluded until its fix lands.
+		// committee, and the custom executor. max data size is likewise
+		// excluded until its fix lands.
 		//
 		// The custom executor case names the stellar-side custom executor
 		// (GetExecutor(stellar, "custom"), deployed by the full deploy via
@@ -85,6 +81,24 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
 			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
 			basic.CustomExecutor(lib, src, dst, args),
+		}
+		// The receiver-verifier cases: on this lane the dest is EVM, where
+		// ccv's EVM phase deploys the per-qualifier mock receivers
+		// (buildMockReceivers) configured with the EVM-side VVR ids, and the
+		// stellar source's executor report + aggregator stamps travel through
+		// the stellar offchain pipeline. They are opt-in until they pass
+		// empirically — cross-family CCV identity agreement between the
+		// executor's submitted identity and the EVM receivers' required CCVs
+		// has never been exercised on a mixed-family devenv. Enable with
+		// TC_ENABLE_RECEIVER_VERIFIER_CASES=1.
+		if os.Getenv("TC_ENABLE_RECEIVER_VERIFIER_CASES") != "" {
+			cases = append(cases,
+				basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
+				basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
+				basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
+				basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
+				basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
+			)
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
