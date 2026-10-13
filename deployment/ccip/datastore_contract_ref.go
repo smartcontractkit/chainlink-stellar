@@ -159,10 +159,20 @@ func TokenAdminRegistryDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func VVRDatastoreRef() DatastoreSorobanContractRef {
+	return VVRDatastoreRefWithQualifier("")
+}
+
+// VVRDatastoreRefWithQualifier returns the VVR ref for one committee instance.
+// An empty qualifier keeps the default instance, so existing refs and salts
+// keep resolving.
+func VVRDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
+	if qualifier == "" {
+		qualifier = DefaultCommitteeVerifierQualifier
+	}
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
 		Version:   versioned_verifier_resolver.Version,
-		Qualifier: DefaultCommitteeVerifierQualifier,
+		Qualifier: qualifier,
 	}
 }
 

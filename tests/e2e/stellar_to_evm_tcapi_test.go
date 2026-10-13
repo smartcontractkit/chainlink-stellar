@@ -14,29 +14,24 @@ import (
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-// TestStellarToEVMTCAPI runs ONE chain-agnostic tcapi basic case (EOA receiver
-// and default committee verifier) on the Stellar→EVM lane — the reverse of
-// TestStellarTCAPI. This is the pilot for Stellar-as-source: the case resolves
-// CCV/executor from the SOURCE-side (Stellar) resolver and encodes them through
-// the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban GenericExtraArgsV3
-// XDR), which is the encoding the Stellar OnRamp parses.
+// TestStellarToEVMTCAPI runs the chain-agnostic tcapi basic cases that pass on
+// the EVM→Stellar lane (default verifier, safe-tag finality, secondary
+// committee) on the Stellar→EVM lane — the reverse of TestStellarTCAPI. The
+// cases resolve CCV/executor from the SOURCE-side (Stellar) resolver and encode
+// them through the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban
+// GenericExtraArgsV3 XDR), which is the encoding the Stellar OnRamp parses.
 //
-// The remaining basic cases light up here once the same run is green; until
-// then this single case isolates the Stellar→EVM executor/aggregator wiring
-// (historically TODO'd in stellar_to_evm_exec_test.go) from the known EVM-side
-// tcapi issues on the opposite lane.
-//
-// Contracts must be compiled before running:
+// Contracts must be compiled before running (from the repo root):
 //
 //	make build
 //
-// Start the devenv from the chainlink-stellar root:
+// Start the devenv (from the tests dir, its own Go module):
 //
-//	CTF_CONFIGS=tests/env/env-stellar-evm.toml go run ./tests/testutils/cmd/devenv
+//	CTF_CONFIGS=env/env-stellar-evm.toml go run ./testutils/cmd/devenv
 //
-// Once the devenv is running, run the test:
+// Once the devenv is running, run the test (also from the tests dir):
 //
-//	go test -v -timeout 25m ./tests/e2e/... -run 'TestStellar(ToEVM)?TCAPI'
+//	go test -v -timeout 25m ./e2e/... -run 'TestStellar(ToEVM)?TCAPI'
 func TestStellarToEVMTCAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
@@ -65,12 +60,27 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	}
 
 	t.Run("extra args v3 messaging", func(t *testing.T) {
-		tc := basic.EOAReceiverDefaultVerifier(lib, src, dst, args)
-		if !tc.HavePrerequisites(ctx) {
-			t.Skipf("Skipping %s because current environment does not have the prerequisites", tc.Name())
+		// The three cases that pass on the EVM→Stellar lane (see
+		// TestStellarTCAPI): default verifier, safe-tag finality, and the
+		// secondary committee. The remaining basic cases stay out until their
+		// EVM→Stellar counterparts are fixed — custom executor and max data
+		// size fail there by design, and the required/optional receiver cases
+		// need contract support that neither lane has yet.
+		cases := []tcapi.TestCase{
+			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
+			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
+			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
 		}
-		subtestCtx := ccv.Plog.WithContext(t.Context())
-		_, runErr := tc.Run(subtestCtx)
-		require.NoError(t, runErr, tc.Name())
+		for _, tc := range cases {
+			if !tc.HavePrerequisites(ctx) {
+				t.Logf("Skipping %s because current environment does not have the prerequisites", tc.Name())
+				continue
+			}
+			t.Run(tc.Name(), func(t *testing.T) {
+				subtestCtx := ccv.Plog.WithContext(t.Context())
+				_, runErr := tc.Run(subtestCtx)
+				require.NoError(t, runErr, tc.Name())
+			})
+		}
 	})
 }

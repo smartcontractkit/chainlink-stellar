@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
@@ -377,6 +379,85 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates: %w", err)
 	}
 
+	// Non-default committees covering this chain (e.g. the tcapi secondary
+	// committee) each need their own VVR + CV pair: lane wiring resolves
+	// per-qualifier CV and VVR refs for every committee covering the chain.
+	// CV contract IDs are collected here and configured after the Router deploy
+	// (CommitteeVerifier RemoteChainConfig.Router requires the Router to exist).
+	committeeCVs := make([]struct{ qualifier, cvID string }, 0)
+	for _, qualifier := range nonDefaultCommitteeQualifiers(topology, selector) {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		committeeVvrOut, err := execComponentSequence(b, componentDeps, DeployVVR, DeployVVRInput{
+			ChainSelector:     selector,
+			Qualifier:         qualifier,
+			WasmPath:          vvrWasmPath,
+			FeeAggregator:     feeAggregatorAddr,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy VVR %q: %w", qualifier, err)
+		}
+		committeeVvrContractID := committeeVvrOut.ContractID
+		if err := upsertComponentRefs(ds, committeeVvrOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		// Per-qualifier storage location so two committees never share one.
+		committeeStorage := stellarutil.GenerateContractAddress(componentSaltLabel("storage-location", qualifier), h.NetworkPassphrase())
+		committeeCvOut, err := execComponentSequence(b, componentDeps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+			ChainSelector:     selector,
+			Qualifier:         qualifier,
+			WasmPath:          cvWasmPath,
+			StorageLocations:  [][]byte{committeeStorage},
+			RmnProxy:          rmnProxyContractID,
+			FeeAggregator:     feeAggregatorAddr,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy Committee Verifier %q: %w", qualifier, err)
+		}
+		committeeCvContractID := committeeCvOut.ContractID
+		committeeCVs = append(committeeCVs, struct{ qualifier, cvID string }{qualifier, committeeCvContractID})
+		if err := upsertComponentRefs(ds, committeeCvOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		h.Logger().Info().Str("qualifier", qualifier).Str("cvContractID", committeeCvContractID).Msg("Committee Verifier pair deployed and initialized")
+
+		committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
+		for _, remoteSelector := range allSelectors {
+			committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
+				DestChainSelector: remoteSelector,
+				Verifier:          &committeeCvContractID,
+			})
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
+			ContractID:      committeeVvrContractID,
+			Implementations: committeeOutbound,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates for %q: %w", qualifier, err)
+		}
+
+		committeeInbound := []vvrbindings.InboundImplementationUpdate{
+			{
+				Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
+				Verifier: &committeeCvContractID,
+			},
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
+			ContractID:      committeeVvrContractID,
+			Implementations: committeeInbound,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates for %q: %w", qualifier, err)
+		}
+	}
+
 	// Signature quorum configs are deliberately NOT applied here. Since the
 	// chainlink-ccv 2026-06-26 signing-key sync cutover, topology enrichment skips
 	// families whose bootstrappers push signing keys to JD on connect, so signer
@@ -543,6 +624,17 @@ func RunStellarCCIPFullDeploy(
 	}); err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
 	}
+	// Same configs on every non-default committee CV: quoting a message that
+	// names one of them (OnRamp get_fee → CV get_fee) errors with
+	// RemoteChainNotSupported unless the dest chain is in remote_chains.
+	for _, committeeCV := range committeeCVs {
+		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
+			ContractID: committeeCV.cvID,
+			Configs:    remoteChainConfigs,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier %q: %w", committeeCV.qualifier, err)
+		}
+	}
 
 	// No OnRamp DestChainConfig / OffRamp SourceChainConfig wiring happens here.
 	// EVM parity (and Solana parity): `DeployChainContracts` deploys and
@@ -668,4 +760,27 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, err
 	}
 	return seq_core.OnChainOutput{Addresses: addrs}, nil
+}
+
+// nonDefaultCommitteeQualifiers returns the sorted qualifiers of committees
+// whose chain_configs cover selector, excluding the default instance the
+// deploy above already handles. Mirrors the EVM side's committee selection in
+// ccv buildCommitteeVerifierParams (committee must have a chain_config for the
+// local chain).
+func nonDefaultCommitteeQualifiers(topology *offchain.EnvironmentTopology, selector uint64) []string {
+	if topology == nil || topology.NOPTopology == nil {
+		return nil
+	}
+	chainKey := strconv.FormatUint(selector, 10)
+	qualifiers := make([]string, 0, len(topology.NOPTopology.Committees))
+	for qualifier, committee := range topology.NOPTopology.Committees {
+		if qualifier == stellarccip.DefaultCommitteeVerifierQualifier {
+			continue
+		}
+		if _, ok := committee.ChainConfigs[chainKey]; ok {
+			qualifiers = append(qualifiers, qualifier)
+		}
+	}
+	sort.Strings(qualifiers)
+	return qualifiers
 }
