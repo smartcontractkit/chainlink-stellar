@@ -544,3 +544,54 @@ fn test_upgrade_by_non_admin_rejected() {
         Err(Ok(TimelockError::NotAuthorized))
     ));
 }
+
+#[test]
+fn scheduled_self_call_upgrades_the_timelock() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let role = Address::generate(&env);
+    let client = initialize(&env, 0, &role, &role, &role);
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    let batch = calls(
+        &env,
+        call(
+            &env,
+            &client.address,
+            "upgrade",
+            &[client.address.into_val(&env), hash.into_val(&env)],
+        ),
+    );
+    let operation_salt = salt(&env, 20);
+    client.schedule_batch(&role, &batch, &zero(&env), &operation_salt, &0);
+    client.execute_batch(&batch, &zero(&env), &operation_salt);
+
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(peeked, 0);
+}
+
+#[test]
+fn self_call_upgrade_rejects_a_foreign_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let bypasser = Address::generate(&env);
+    let client = initialize(&env, 0, &bypasser, &bypasser, &bypasser);
+    let batch = calls(
+        &env,
+        call(
+            &env,
+            &client.address,
+            "upgrade",
+            &[bypasser.into_val(&env), zero(&env).into_val(&env)],
+        ),
+    );
+    assert_eq!(
+        client.try_bypasser_execute_batch(&bypasser, &batch),
+        Err(Ok(TimelockError::NotAuthorized))
+    );
+}
