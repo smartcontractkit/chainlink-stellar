@@ -7,6 +7,8 @@ use soroban_sdk::{
     Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
+use crate::storage::LEDGER_THRESHOLD;
+use crate::types::TimelockDataKey;
 use crate::{
     Call, Calls, TimelockContract, TimelockContractClient, TimelockError, ADMIN_ROLE,
     BYPASSER_ROLE, CANCELLER_ROLE, PROPOSER_ROLE,
@@ -132,6 +134,47 @@ fn initialization_is_self_administered_and_roles_are_exact() {
     assert!(!client.has_role(&PROPOSER_ROLE, &client.address));
     assert_eq!(client.get_role_member(&ADMIN_ROLE, &0), client.address);
     assert_eq!(client.get_min_delay(), 100);
+}
+
+#[test]
+fn ttl_bump_extends_instance_and_role_keys_but_not_code() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    use soroban_sdk::testutils::Deployer as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let proposer = Address::generate(&env);
+    let client = register(&env);
+    let code_ttl_before = env.deployer().get_contract_code_ttl(&client.address);
+    assert!(code_ttl_before < LEDGER_THRESHOLD);
+
+    client.initialize(
+        &100,
+        &Vec::from_array(&env, [proposer.clone()]),
+        &Vec::from_array(&env, [Address::generate(&env)]),
+        &Vec::from_array(&env, [Address::generate(&env)]),
+    );
+
+    let (max_ttl, member_ttl) = env.as_contract(&client.address, || {
+        (
+            env.storage().max_ttl(),
+            env.storage()
+                .persistent()
+                .get_ttl(&TimelockDataKey::RoleMember(
+                    PROPOSER_ROLE,
+                    proposer.clone(),
+                )),
+        )
+    });
+    assert_eq!(
+        env.deployer().get_contract_instance_ttl(&client.address),
+        max_ttl
+    );
+    assert_eq!(member_ttl, max_ttl);
+    assert_eq!(
+        env.deployer().get_contract_code_ttl(&client.address),
+        code_ttl_before
+    );
 }
 
 #[test]
@@ -500,4 +543,55 @@ fn test_upgrade_by_non_admin_rejected() {
         client.try_upgrade(&proposer, &zero(&env)),
         Err(Ok(TimelockError::NotAuthorized))
     ));
+}
+
+#[test]
+fn scheduled_self_call_upgrades_the_timelock() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let role = Address::generate(&env);
+    let client = initialize(&env, 0, &role, &role, &role);
+    let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
+    let batch = calls(
+        &env,
+        call(
+            &env,
+            &client.address,
+            "upgrade",
+            &[client.address.into_val(&env), hash.into_val(&env)],
+        ),
+    );
+    let operation_salt = salt(&env, 20);
+    client.schedule_batch(&role, &batch, &zero(&env), &operation_salt, &0);
+    client.execute_batch(&batch, &zero(&env), &operation_salt);
+
+    assert_eq!(upgraded_event_hash(&env, &client.address), hash);
+    let peeked: u32 = env.invoke_contract(
+        &client.address,
+        &symbol_short!("peek"),
+        Vec::<Val>::new(&env),
+    );
+    assert_eq!(peeked, 0);
+}
+
+#[test]
+fn self_call_upgrade_rejects_a_foreign_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let bypasser = Address::generate(&env);
+    let client = initialize(&env, 0, &bypasser, &bypasser, &bypasser);
+    let batch = calls(
+        &env,
+        call(
+            &env,
+            &client.address,
+            "upgrade",
+            &[bypasser.into_val(&env), zero(&env).into_val(&env)],
+        ),
+    );
+    assert_eq!(
+        client.try_bypasser_execute_batch(&bypasser, &batch),
+        Err(Ok(TimelockError::NotAuthorized))
+    );
 }

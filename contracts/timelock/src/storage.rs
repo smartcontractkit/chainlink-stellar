@@ -8,12 +8,11 @@ use soroban_sdk::{symbol_short, Address, BytesN, Env, Symbol, Vec};
 pub const MIN_DELAY: Symbol = symbol_short!("MNDELAY");
 pub const BLOCKED_FUNCTIONS: Symbol = symbol_short!("BLKFUNCS");
 pub const LEDGER_THRESHOLD: u32 = 120_960;
-pub const LEDGER_BUMP: u32 = 6_307_200;
 
 fn extend_if_present(env: &Env, key: &impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     let st = env.storage().persistent();
     if st.has(key) {
-        st.extend_ttl(key, LEDGER_THRESHOLD, LEDGER_BUMP);
+        st.extend_ttl(key, LEDGER_THRESHOLD, env.storage().max_ttl());
     }
 }
 
@@ -134,10 +133,16 @@ pub fn set_min_delay(env: &Env, delay: u64) {
 /// Keys that have already archived are skipped (their `has` check is false); protocol-23
 /// restoration handles them on the next touch. The purpose is to keep live sharded keys from
 /// archiving during normal operation, so authorization/blocking reads never need a restore.
+///
+/// Extends the instance entry only, never the code entry. Code rent scales with module size, so
+/// extending it here would bill a large fee to whichever caller crosses the threshold. Ops tooling
+/// keeps the shared code entry alive.
 pub fn bump_ttls(env: &Env) {
-    env.storage()
-        .instance()
-        .extend_ttl(LEDGER_THRESHOLD, LEDGER_BUMP);
+    env.deployer().extend_ttl_for_contract_instance(
+        env.current_contract_address(),
+        LEDGER_THRESHOLD,
+        env.storage().max_ttl(),
+    );
     extend_if_present(env, &BLOCKED_FUNCTIONS);
 
     // Sharded role membership: the four roles are a fixed known set. Keep the per-role member
