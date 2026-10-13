@@ -1,7 +1,6 @@
 package sequences
 
 import (
-	"encoding/json"
 	"testing"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
@@ -12,6 +11,7 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	mcmsstellar "github.com/smartcontractkit/mcms/sdk/stellar"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stretchr/testify/require"
 )
@@ -31,10 +31,8 @@ func TestStellarAcceptOwnership_sequenceMetadata(t *testing.T) {
 func TestStellarMCMSTxAdditionalFields_isValidStellarJSON(t *testing.T) {
 	t.Parallel()
 	raw := stellarMCMSTxAdditionalFields()
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(raw, &m))
-	require.EqualValues(t, 1, m["version"])
-	require.Equal(t, "stellar", m["family"])
+	require.JSONEq(t, `{"family":"stellar","encodingVersion":1}`, string(raw))
+	require.NoError(t, mcmsstellar.ValidateAdditionalFields(raw))
 }
 
 func TestStellarTransferOwnershipViaMCMS_RejectsMissingStellarChain(t *testing.T) {
