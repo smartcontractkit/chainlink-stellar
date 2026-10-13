@@ -222,12 +222,23 @@ func stellarFeeQuoterDestChainConfigOverride(_ uint64) lanes.FeeQuoterDestChainC
 func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (ccipChangesets.ChainOverrides, error) {
 	// FeeQuoter family selector and DestGasOverhead are populated from the Stellar
 	// lane adapter defaults; overrides here only set fields that differ from those.
+	//
+	// BaseExecutionGasCost and CommitteeVerifierGasForVerification are deliberately
+	// NOT overridden: the lane changeset coalesces unset fields with the REMOTE
+	// chain family adapter's defaults (configure_chains_for_lanes_from_topology.go
+	// resolveRemoteChainConfig / mergeCommitteeVerifierRemoteChainConfig), which
+	// describe what executing on that remote actually costs. Overriding them with
+	// stellar-scale numbers under-budgets the on-wire execution_gas_limit of
+	// messages this chain sends: the ccv executor sizes its dest execute tx from
+	// that value, and on EVM the Router's CallWithExactGas then reverts
+	// NOT_ENOUGH_GAS_FOR_CALL (0x37c3be29) because the receiver's
+	// ccipReceiveGasLimit cannot be delivered. Leaving them unset matches the
+	// EVM family defaults (base 200_000, per-CCV 75_000) that green EVM↔EVM
+	// lanes use, for any remote family.
 	enabled := true
 	executorQualifier := devenvcommon.DefaultExecutorQualifier
 	return ccipChangesets.ChainOverrides{
-		CommitteeVerifierGasForVerification: ptrU32(10_000),
 		RemoteChainCfg: ccipChangesets.PartialRemoteChainConfig{
-			BaseExecutionGasCost: ptrU32(100_000),
 			FeeQuoterDestChainConfig: adapters.FeeQuoterDestChainConfigOverrides{
 				IsEnabled:                   &enabled,
 				MaxDataBytes:                ptrU32(30_000),

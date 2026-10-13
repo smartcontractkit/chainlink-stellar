@@ -247,10 +247,19 @@ func DevenvTestTokenDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func DefaultExecutorDatastoreRef() DatastoreSorobanContractRef {
+	return ExecutorDatastoreRefWithQualifier("")
+}
+
+// ExecutorDatastoreRefWithQualifier returns the executor contract row for the
+// given qualifier (empty means the default instance).
+func ExecutorDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
+	if qualifier == "" {
+		qualifier = DefaultExecutorQualifier
+	}
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(executor.ContractType),
 		Version:   executor.Version,
-		Qualifier: DefaultExecutorQualifier,
+		Qualifier: qualifier,
 	}
 }
 

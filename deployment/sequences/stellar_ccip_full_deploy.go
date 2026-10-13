@@ -352,6 +352,42 @@ func RunStellarCCIPFullDeploy(
 	}
 	h.Logger().Info().Str("contractID", executorContractID).Msg("Executor initialized and dest chains enabled")
 
+	// Non-default executor pools whose chain_configs cover this chain (e.g. the
+	// tcapi custom executor) each need their own Executor contract: the executor
+	// config adapters resolve per-qualifier refs (GetDeployedChains,
+	// DefaultExecutorAddress), and a pool qualifier with no stellar-side ref
+	// yields executor job specs with no stellar chain config, which the executor
+	// node rejects at proposal validation ("at least one chain must be
+	// configured"). EVM parity: ccv's EVM phase deploys the qualified custom
+	// executor on every chain and enables every remote chain on it (PostConnect).
+	for _, qualifier := range nonDefaultExecutorQualifiers(topology, selector) {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		poolExecOut, err := execComponentSequence(b, componentDeps, DeployExecutor, DeployExecutorInput{
+			ChainSelector:         selector,
+			Qualifier:             qualifier,
+			WasmPath:              execWasmPath,
+			FeeAggregator:         feeAggregatorAddr,
+			AllowedFinalityConfig: FamilyDefaultAllowedFinality,
+			ExistingAddresses:     currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy Executor %q: %w", qualifier, err)
+		}
+		if err := upsertComponentRefs(ds, poolExecOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
+			ContractID: poolExecOut.ContractID,
+			ToAdd:      execDestChainAdds,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor %q dest chain updates: %w", qualifier, err)
+		}
+		h.Logger().Info().Str("qualifier", qualifier).Str("contractID", poolExecOut.ContractID).Msg("qualified Executor deployed and dest chains enabled")
+	}
+
 	outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
 	for _, remoteSelector := range allSelectors {
 		outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
@@ -778,6 +814,27 @@ func nonDefaultCommitteeQualifiers(topology *offchain.EnvironmentTopology, selec
 			continue
 		}
 		if _, ok := committee.ChainConfigs[chainKey]; ok {
+			qualifiers = append(qualifiers, qualifier)
+		}
+	}
+	sort.Strings(qualifiers)
+	return qualifiers
+}
+
+// nonDefaultExecutorQualifiers returns the sorted qualifiers of executor pools
+// whose chain_configs cover selector, excluding the default instance the
+// deploy above already handles.
+func nonDefaultExecutorQualifiers(topology *offchain.EnvironmentTopology, selector uint64) []string {
+	if topology == nil {
+		return nil
+	}
+	chainKey := strconv.FormatUint(selector, 10)
+	qualifiers := make([]string, 0, len(topology.ExecutorPools))
+	for qualifier, pool := range topology.ExecutorPools {
+		if qualifier == stellarccip.DefaultExecutorQualifier {
+			continue
+		}
+		if _, ok := pool.ChainConfigs[chainKey]; ok {
 			qualifiers = append(qualifiers, qualifier)
 		}
 	}

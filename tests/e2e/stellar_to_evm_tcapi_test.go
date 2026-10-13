@@ -16,7 +16,8 @@ import (
 
 // TestStellarToEVMTCAPI runs the chain-agnostic tcapi basic cases that pass on
 // the EVM→Stellar lane (default verifier, safe-tag finality, secondary
-// committee) on the Stellar→EVM lane — the reverse of TestStellarTCAPI. The
+// committee, custom executor) on the Stellar→EVM lane — the reverse of
+// TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The
 // cases resolve CCV/executor from the SOURCE-side (Stellar) resolver and encode
 // them through the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban
 // GenericExtraArgsV3 XDR), which is the encoding the Stellar OnRamp parses.
@@ -47,7 +48,7 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	env := helpers.NewE2ETestEnv(t, ctx, l, configOutputPath, stellarChainID, stellarSelector)
 	lib := env.Lib
 
-	// Opposite lane orientation from TestStellarTCAPI: Stellar sources, EVM
+	// Opposite lane orientation from TestEVMToStellarTCAPI: Stellar sources, EVM
 	// receives (the harness names Stellar the env "source" chain).
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
@@ -60,16 +61,30 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	}
 
 	t.Run("extra args v3 messaging", func(t *testing.T) {
-		// The three cases that pass on the EVM→Stellar lane (see
-		// TestStellarTCAPI): default verifier, safe-tag finality, and the
-		// secondary committee. The remaining basic cases stay out until their
-		// EVM→Stellar counterparts are fixed — custom executor and max data
-		// size fail there by design, and the required/optional receiver cases
-		// need contract support that neither lane has yet.
+		// The four cases that pass on the EVM→Stellar lane (see
+		// TestEVMToStellarTCAPI): default verifier, safe-tag finality, the secondary
+		// committee, and the custom executor. The secondary-required receiver
+		// case is excluded for now: the receiver's required CCV is the EVM-side
+		// VVR while the executor submits the stellar-side VVR identity
+		// (truncated to 20 bytes by the EVM transmitter) — cross-family CCV
+		// identity agreement is a ccv-side gap (both directions; the dest
+		// OffRamp calls each matched CCV as a real on-chain VVR resolver). max
+		// data size is likewise excluded until its fix lands.
+		//
+		// The custom executor case names the stellar-side custom executor
+		// (GetExecutor(stellar, "custom"), deployed by the full deploy via
+		// nonDefaultExecutorQualifiers). The message's 32-byte executor ID only
+		// matters off-chain: the EVM dest decodes the envelope with
+		// MessageV1Codec, which carries an unchecked ccv_and_executor_hash, and
+		// the executor plugin byte-matches it against
+		// defaultExecutorAddress[stellar source] — populated in the EVM custom
+		// executor's job spec from the stellar chain config (the stellar
+		// entry the executor_pools.custom pool carries).
 		cases := []tcapi.TestCase{
 			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
 			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
+			basic.CustomExecutor(lib, src, dst, args),
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
@@ -78,7 +93,12 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 			}
 			t.Run(tc.Name(), func(t *testing.T) {
 				subtestCtx := ccv.Plog.WithContext(t.Context())
-				_, runErr := tc.Run(subtestCtx)
+				res, runErr := tc.Run(subtestCtx)
+				if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+					// The on-chain CCIPError code rides in the dest event's
+					// ReturnData; surface it for diagnosis (4-byte selector).
+					t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
+				}
 				require.NoError(t, runErr, tc.Name())
 			})
 		}
