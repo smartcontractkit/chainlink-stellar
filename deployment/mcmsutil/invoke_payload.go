@@ -9,7 +9,7 @@ import (
 
 // EncodeSorobanMCMSInvokePayload builds the MCMS transaction-data payload for Stellar
 // proposals: XDR for ScVal::Vec([Symbol(fn), ...args]). This is the wire format consumed by
-// the MCMS proposal transformer marked by AdditionalFields {"version":1,"family":"stellar"},
+// the MCMS proposal transformer marked by AdditionalFields {"family":"stellar","encodingVersion":1},
 // which splits it into StellarOp.function / StellarOp.args_xdr before submission.
 func EncodeSorobanMCMSInvokePayload(functionName string, argScVals []xdr.ScVal) ([]byte, error) {
 	vec := make(xdr.ScVec, 0, 1+len(argScVals))
