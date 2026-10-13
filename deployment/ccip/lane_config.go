@@ -8,7 +8,6 @@ import (
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
@@ -90,54 +89,6 @@ func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]by
 	default:
 		return raw, nil
 	}
-}
-
-// BuildOnRampDestConfigs builds datastore-backed OnRamp destination chain configs.
-// These builders serve the devenv path (ccvchain Chain.PostConnect); the shared
-// CLD lane path builds its args in sequences.StellarConfigureChainForLanes.
-// The remote chain's OffRamp must already be deployed and recorded: a
-// zero-address placeholder is not a valid entry (the ramp contracts reject
-// zero encodings, EVM `ZeroAddressNotAllowed` parity), so lane wiring is
-// strictly a lookup-and-fail-loudly operation at lane-configuration time.
-func BuildOnRampDestConfigs(
-	ds datastore.DataStore,
-	remoteSelectors []uint64,
-	defaultExecutor string,
-	vvrContractID string,
-	routerContractID string,
-) ([]onrampbindings.DestChainConfigArgs, error) {
-	configs := make([]onrampbindings.DestChainConfigArgs, 0, len(remoteSelectors))
-	for _, rs := range remoteSelectors {
-		addressBytesLength, err := AddressBytesLength(rs)
-		if err != nil {
-			return nil, err
-		}
-
-		offRampRef, err := OffRampDatastoreRef().LookupAddressRef(ds, rs)
-		if err != nil {
-			return nil, fmt.Errorf("lookup remote offramp for %d: %w", rs, err)
-		}
-		offRampBytes, err := AddressBytesHex(offRampRef, rs)
-		if err != nil {
-			return nil, fmt.Errorf("resolve remote offramp bytes for %d: %w", rs, err)
-		}
-
-		configs = append(configs, onrampbindings.DestChainConfigArgs{
-			DestChainSelector:         rs,
-			AddressBytesLength:        addressBytesLength,
-			BaseExecutionGasCost:      100_000,
-			DefaultCcvs:               []string{vvrContractID},
-			DefaultExecutor:           defaultExecutor,
-			ExecutionFeeUsdCents:      0,
-			LaneMandatedCcvs:          []string{},
-			MessageNetworkFeeUsdCents: 100,
-			OffRamp:                   offRampBytes,
-			Router:                    routerContractID,
-			TokenNetworkFeeUsdCents:   50,
-			TokenReceiverAllowed:      true,
-		})
-	}
-	return configs, nil
 }
 
 // BuildOffRampSourceConfigs builds datastore-backed OffRamp source configs.

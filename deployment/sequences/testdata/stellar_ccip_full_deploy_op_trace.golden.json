@@ -1131,7 +1131,7 @@
           {
             "AllowlistEnabled": false,
             "FeeUsdCents": 0,
-            "GasForVerification": 10000,
+            "GasForVerification": 60000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 17301180955411967724,
             "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
@@ -1139,7 +1139,7 @@
           {
             "AllowlistEnabled": false,
             "FeeUsdCents": 0,
-            "GasForVerification": 10000,
+            "GasForVerification": 75000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 16015286601757825753,
             "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"

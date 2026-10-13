@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 
+	chainsel "github.com/smartcontractkit/chain-selectors"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -48,6 +49,30 @@ func execStellarCCIPOp[IN, OUT any](
 		return z, err
 	}
 	return rep.Output, nil
+}
+
+// cvGasForVerificationForRemote returns the per-CCV dest verification gas for
+// a remote chain, mirroring the chain-family adapter default the lane
+// changeset coalesces to for that remote family: EVM 75_000 (chains/evm
+// deployment/v2_0_0/adapters/chain_family.go
+// GetDefaultCommitteeVerifierRemoteChainConfig), stellar 60_000 (deployment/
+// adapters/stellar_chain_family_adapter.go). The full deploy is the only
+// writer of stellar CV remote configs, so the remote's scale must be honored
+// here — a stellar-scale value for an EVM remote under-budgets the on-wire
+// execution_gas_limit (see the remoteChainConfigs loop above).
+func cvGasForVerificationForRemote(remoteSelector uint64) (uint32, error) {
+	family, err := chainsel.GetSelectorFamily(remoteSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get selector family for %d: %w", remoteSelector, err)
+	}
+	switch family {
+	case chainsel.FamilyEVM:
+		return 75_000, nil
+	case chainsel.FamilyStellar:
+		return 60_000, nil
+	default:
+		return 0, fmt.Errorf("no committee-verifier gas-for-verification default for chain family %q", family)
+	}
 }
 
 // statReleaseWasm checks that a release-profile WASM path exists and is a regular file.
@@ -642,13 +667,31 @@ func RunStellarCCIPFullDeploy(
 
 	// CommitteeVerifier RemoteChainConfig.Router must be this chain's Router contract (not the deployer);
 	// router exists only after deploy + Initialize above (matches tests/integration/contract_deploy_helpers_test.go).
+	//
+	// GasForVerification is the remote family's per-CCV dest verification gas:
+	// the CV's get_fee returns it as dest_gas_limit, which the stellar OnRamp
+	// sums into every message's on-wire execution_gas_limit (contracts/onramp
+	// src/lib.rs, H-5/INV-FEE-10 block) — so a stellar-scale 10_000 for an EVM
+	// remote under-budgets exactly like a low OnRamp base_execution_gas_cost
+	// does (EVM dest Router CallWithExactGas NOT_ENOUGH_GAS_FOR_CALL,
+	// 0x37c3be29). This full deploy is the ONLY writer of the stellar CV
+	// remote configs (the lane changeset's stellar leg never touches them),
+	// so the family-appropriate value must be set here. Values mirror the
+	// chain-family adapter defaults the changeset would coalesce to: EVM
+	// 75_000 (chains/evm deployment/v2_0_0/adapters/chain_family.go
+	// GetDefaultCommitteeVerifierRemoteChainConfig), stellar 60_000
+	// (deployment/adapters/stellar_chain_family_adapter.go).
 	routerRef := routerContractID
 	remoteChainConfigs := make([]cvbindings.RemoteChainConfig, 0, len(allSelectors))
 	for _, rs := range allSelectors {
+		gasForVerification, err := cvGasForVerificationForRemote(rs)
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("gas for verification for remote %d: %w", rs, err)
+		}
 		remoteChainConfigs = append(remoteChainConfigs, cvbindings.RemoteChainConfig{
 			RemoteChainSelector: rs,
 			FeeUsdCents:         0,
-			GasForVerification:  10000,
+			GasForVerification:  gasForVerification,
 			PayloadSizeBytes:    0,
 			AllowlistEnabled:    false,
 			Router:              &routerRef,
@@ -676,11 +719,14 @@ func RunStellarCCIPFullDeploy(
 	// EVM parity (and Solana parity): `DeployChainContracts` deploys and
 	// initializes only — ramp lane configs are lane-configuration-time wiring,
 	// applied with the remote chain's real ramp addresses resolved from the
-	// datastore. Stellar's lane-time wiring has two homes: the shared CLD path
+	// datastore. Stellar's lane-time wiring homes: the shared CLD path
 	// (StellarConfigureChainForLanes, invoked via the
-	// ConfigureChainsForLanesFromTopology changeset) and the devenv path (ccvchain
-	// Chain.PostConnect, ApplyDestChainConfigUpdates +
-	// ApplySourceChainCfgUpdates, datastore backed). There is no valid
+	// ConfigureChainsForLanesFromTopology changeset) owns the OnRamp dest
+	// configs, and the devenv path (ccvchain Chain.PostConnect,
+	// ApplySourceChainCfgUpdates, datastore backed) covers the OffRamp source
+	// configs. PostConnect deliberately no longer writes OnRamp dest configs —
+	// it ran after the changeset and its flat values clobbered the changeset's
+	// per-remote-family ones. There is no valid
 	// placeholder for a deploy-time provisional entry: the OffRamp rejects an
 	// all-zero onramp encoding with `ZeroAddressNotAllowed` (#808, EVM
 	// `OffRamp.applySourceChainConfigUpdates` parity), and a nonzero fake value

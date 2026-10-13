@@ -118,43 +118,18 @@ func TestPostConnect(t *testing.T) {
 	assert.Contains(t, err.Error(), "environment is nil")
 }
 
-func TestBuildOnRampDestConfigs_UsesSelectorSpecificAddressLengths(t *testing.T) {
-	ds := datastore.NewMemoryDataStore()
-	// Remote OffRamp refs with family-appropriate address lengths: 20 bytes
-	// for the EVM remote, 32 for the Stellar remote.
-	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OffRampDatastoreRef().FullAddressRef(testEVMSelector, "0x"+strings.Repeat("cd", 20))))
-	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OffRampDatastoreRef().FullAddressRef(chainsel.STELLAR_LOCALNET.Selector, "0x"+strings.Repeat("cd", int(stellarccip.StellarAddressByteLen)))))
-
-	chain := &Chain{
-		vvrContractID:    "vvr",
-		routerContractID: "router",
-	}
-
-	configs, err := chain.buildOnRampDestConfigs(ds.Seal(), []uint64{testEVMSelector, chainsel.STELLAR_LOCALNET.Selector}, "executor")
-	require.NoError(t, err)
-	require.Len(t, configs, 2)
-
-	assert.Equal(t, uint32(20), configs[0].AddressBytesLength)
-	assert.Len(t, configs[0].OffRamp, 20)
-	assert.Equal(t, uint32(stellarccip.StellarAddressByteLen), configs[1].AddressBytesLength)
-	assert.Len(t, configs[1].OffRamp, stellarccip.StellarAddressByteLen)
-}
-
-func TestBuildRemoteRampConfigs_ResolveDatastoreAddresses(t *testing.T) {
+func TestBuildOffRampSourceConfigs_ResolveDatastoreAddresses(t *testing.T) {
 	ds := datastore.NewMemoryDataStore()
 	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OnRampDatastoreRef().FullAddressRef(testEVMSelector, "0x"+strings.Repeat("ab", 20))))
-	require.NoError(t, ds.AddressRefStore.Add(stellarccip.OffRampDatastoreRef().FullAddressRef(testEVMSelector, "0x"+strings.Repeat("cd", 20))))
 
 	chain := &Chain{
 		vvrContractID:    "vvr",
 		routerContractID: "router",
 	}
 
-	onRampConfigs, err := chain.buildOnRampDestConfigs(ds.Seal(), []uint64{testEVMSelector}, "executor")
-	require.NoError(t, err)
-	require.Len(t, onRampConfigs, 1)
-	assert.Equal(t, []byte{0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, onRampConfigs[0].OffRamp)
-
+	// OnRamp dest configs are intentionally NOT built here: PostConnect no
+	// longer writes them (the shared lane changeset is the single writer, see
+	// PostConnect) — only the OffRamp source configs remain devenv-wired.
 	offRampConfigs, err := chain.buildOffRampSourceConfigs(ds.Seal(), []uint64{testEVMSelector})
 	require.NoError(t, err)
 	require.Len(t, offRampConfigs, 1)
