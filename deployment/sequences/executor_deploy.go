@@ -28,7 +28,8 @@ var FamilyDefaultAllowedFinality = func() uint32 {
 }()
 
 // DeployExecutorInput deploys and initializes the source-side Executor
-// contract. MaxCCVsPerMsg defaults to 2, AllowedFinalityConfig to 0,
+// contract. MaxCCVsPerMsg defaults to 10 (EVM parity: the ccv devenv deploys
+// its executor with MaxCCVsPerMsg 10), AllowedFinalityConfig to 0,
 // CcvAllowlistEnabled to false and FeeAggregator to the owner (the monolith's
 // constants). The sequence records both the executor and executor-proxy rows:
 // Soroban has no delegate proxy, so both point at the same contract. An empty
@@ -59,7 +60,12 @@ var DeployExecutor = cldf_ops.NewSequence(
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		maxCCVs := in.MaxCCVsPerMsg
 		if maxCCVs == 0 {
-			maxCCVs = 2
+			// EVM parity: the ccv devenv deploys its executor with
+			// MaxCCVsPerMsg 10 (evm/impl.go). The tcapi quaternary-receiver
+			// case sends a message specifying 3 CCVs (default+secondary+
+			// tertiary), which the previous default of 2 rejected at fee-quote
+			// time (CCIPError::ExceedsMaxCCVs, #804).
+			maxCCVs = 10
 		}
 		feeAggregator := in.FeeAggregator
 		if feeAggregator == "" {
