@@ -1,7 +1,6 @@
 package e2e_tests
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -17,8 +16,9 @@ import (
 
 // TestStellarToEVMTCAPI runs the chain-agnostic tcapi basic cases that pass on
 // the EVM→Stellar lane (default verifier, safe-tag finality, secondary
-// committee, custom executor) on the Stellar→EVM lane — the reverse of
-// TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The
+// committee, custom executor, and the five receiver-verifier cases against the
+// EVM-side per-qualifier mock receivers) on the Stellar→EVM lane — the reverse
+// of TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The
 // cases resolve CCV/executor from the SOURCE-side (Stellar) resolver and encode
 // them through the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban
 // GenericExtraArgsV3 XDR), which is the encoding the Stellar OnRamp parses.
@@ -81,24 +81,20 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
 			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
 			basic.CustomExecutor(lib, src, dst, args),
-		}
-		// The receiver-verifier cases: on this lane the dest is EVM, where
-		// ccv's EVM phase deploys the per-qualifier mock receivers
-		// (buildMockReceivers) configured with the EVM-side VVR ids, and the
-		// stellar source's executor report + aggregator stamps travel through
-		// the stellar offchain pipeline. They are opt-in until they pass
-		// empirically — cross-family CCV identity agreement between the
-		// executor's submitted identity and the EVM receivers' required CCVs
-		// has never been exercised on a mixed-family devenv. Enable with
-		// TC_ENABLE_RECEIVER_VERIFIER_CASES=1.
-		if os.Getenv("TC_ENABLE_RECEIVER_VERIFIER_CASES") != "" {
-			cases = append(cases,
-				basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
-				basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
-				basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
-				basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
-				basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
-			)
+			// The receiver-verifier cases: on this lane the dest is EVM,
+			// where ccv's EVM phase deploys the per-qualifier mock receivers
+			// (buildMockReceivers) configured with the EVM-side VVR ids,
+			// while the stellar source's executor report + aggregator stamps
+			// travel through the stellar offchain pipeline — exercising
+			// cross-family CCV identity agreement between the executor's
+			// submitted identity and the EVM receivers' required CCVs.
+			// Cases whose prerequisites the environment lacks (e.g. a
+			// missing committee) skip via HavePrerequisites below.
+			basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
+			basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
+			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
+			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
+			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {

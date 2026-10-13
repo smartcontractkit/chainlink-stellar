@@ -134,9 +134,6 @@ jobs:
       - name: Run E2E tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        # The tcapi tests (TestStellarToEVMTCAPI and TestEVMToStellarTCAPI) run
-        # in test-e2e-tcapi.yaml against its own devenv; -skip keeps the two
-        # jobs from duplicating each other.
         run: cd tests && go test -v -timeout 20m -skip 'Test(StellarToEVM|EVMToStellar)TCAPI' ./e2e/...
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
