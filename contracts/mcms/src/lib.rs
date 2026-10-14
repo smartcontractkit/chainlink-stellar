@@ -17,7 +17,7 @@ use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
 use common_helpers::soroban_invoke::decode_invoke_args;
-use constants::{ENCODING_VERSION, LEDGER_BUMP, LEDGER_THRESHOLD, MAX_ROOT_VALIDITY_SECS};
+use constants::{ENCODING_VERSION, LEDGER_THRESHOLD, MAX_ROOT_VALIDITY_SECS};
 use crypto::{cmp_bytes32, recover_eth_address_vrs, verify_merkle_proof};
 use encoding::{
     contract_id, eth_signed_message_hash_32, hash_root_metadata, hash_set_root_inner,
@@ -216,9 +216,11 @@ impl McmsContract {
             return Err(McmsError::WrongPreOpCount);
         }
         env.storage().persistent().set(&signed_hash, &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&signed_hash, LEDGER_THRESHOLD, LEDGER_BUMP);
+        env.storage().persistent().extend_ttl(
+            &signed_hash,
+            LEDGER_THRESHOLD,
+            env.storage().max_ttl(),
+        );
 
         env.storage().persistent().set(
             &EXPIRING_ROOT,
@@ -662,6 +664,10 @@ fn verify_signatures(
 
 /// Extend the TTL of fixed persistent storage keys and instance storage.
 ///
+/// Extends the instance entry only, never the code entry. Code rent scales with module size, so
+/// extending it here would bill a large fee to whichever caller crosses the threshold. Ops tooling
+/// keeps the shared code entry alive.
+///
 /// Per-hash seen entries (persistent key = signed hash as `BytesN<32>`) are NOT enumerable here; each entry
 /// receives its TTL at creation time in `set_root` and can be individually restored if
 /// archived.  This helper covers the fixed keys (CONFIG, SIGNER_MAP, EXPIRING_ROOT,
@@ -669,33 +675,36 @@ fn verify_signatures(
 /// function so that
 /// normal contract activity is sufficient to keep them alive.
 fn bump_ttls(env: &Env) {
-    env.storage()
-        .instance()
-        .extend_ttl(LEDGER_THRESHOLD, LEDGER_BUMP);
+    let max_ttl = env.storage().max_ttl();
+    env.deployer().extend_ttl_for_contract_instance(
+        env.current_contract_address(),
+        LEDGER_THRESHOLD,
+        max_ttl,
+    );
     if env.storage().persistent().has(&CONFIG) {
         env.storage()
             .persistent()
-            .extend_ttl(&CONFIG, LEDGER_THRESHOLD, LEDGER_BUMP);
+            .extend_ttl(&CONFIG, LEDGER_THRESHOLD, max_ttl);
     }
     if env.storage().persistent().has(&CONFIG_VERSION) {
         env.storage()
             .persistent()
-            .extend_ttl(&CONFIG_VERSION, LEDGER_THRESHOLD, LEDGER_BUMP);
+            .extend_ttl(&CONFIG_VERSION, LEDGER_THRESHOLD, max_ttl);
     }
     if env.storage().persistent().has(&SIGNER_MAP) {
         env.storage()
             .persistent()
-            .extend_ttl(&SIGNER_MAP, LEDGER_THRESHOLD, LEDGER_BUMP);
+            .extend_ttl(&SIGNER_MAP, LEDGER_THRESHOLD, max_ttl);
     }
     if env.storage().persistent().has(&EXPIRING_ROOT) {
         env.storage()
             .persistent()
-            .extend_ttl(&EXPIRING_ROOT, LEDGER_THRESHOLD, LEDGER_BUMP);
+            .extend_ttl(&EXPIRING_ROOT, LEDGER_THRESHOLD, max_ttl);
     }
     if env.storage().persistent().has(&ROOT_META_STORE) {
         env.storage()
             .persistent()
-            .extend_ttl(&ROOT_META_STORE, LEDGER_THRESHOLD, LEDGER_BUMP);
+            .extend_ttl(&ROOT_META_STORE, LEDGER_THRESHOLD, max_ttl);
     }
 }
 

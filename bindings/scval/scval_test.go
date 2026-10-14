@@ -281,3 +281,29 @@ func TestBytesToContractStrkey(t *testing.T) {
 	_, err = BytesToContractStrkey(raw[:31])
 	require.ErrorContains(t, err, "expected 32-byte contract ID")
 }
+
+func TestContractAddressWireBytes(t *testing.T) {
+	// Raw contract ID of the devenv Stellar OnRamp, with the exact 40-byte
+	// message field observed on the wire in CI (stellar→EVM tcapi run): a
+	// 4-byte SCV_ADDRESS discriminant + 4-byte SC_ADDRESS_CONTRACT
+	// discriminant + the 32-byte key. The EVM OffRamp whitelists the OnRamp
+	// by hashing these bytes, so the envelope layout is load-bearing.
+	raw, err := hex.DecodeString("3239eb5160092a2ee348a62eef08a34d38511e70040b1c84df747c1a62e057df")
+	require.NoError(t, err)
+	want, err := hex.DecodeString("00000012" + "00000001" + "3239eb5160092a2ee348a62eef08a34d38511e70040b1c84df747c1a62e057df")
+	require.NoError(t, err)
+
+	wire, err := ContractAddressWireBytes(raw)
+	require.NoError(t, err)
+	require.Equal(t, want, wire)
+
+	decoded, err := ContractIDFromWireBytes(wire)
+	require.NoError(t, err)
+	require.Equal(t, raw, decoded)
+
+	// A raw contract ID is not a wire envelope, and vice versa.
+	_, err = ContractAddressWireBytes(wire)
+	require.ErrorContains(t, err, "expected 32-byte contract ID")
+	_, err = ContractIDFromWireBytes(raw)
+	require.ErrorContains(t, err, "expected 40-byte address wire envelope")
+}

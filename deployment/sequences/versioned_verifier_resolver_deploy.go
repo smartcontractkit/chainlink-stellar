@@ -10,8 +10,12 @@ import (
 
 // DeployVVRInput deploys and initializes the VersionedVerifierResolver
 // contract. FeeAggregator defaults to the owner (the monolith's devenv value).
+// An empty Qualifier deploys the default instance; a non-empty one deploys a
+// distinct instance (separate datastore ref, salt and op reports) for extra,
+// non-default committees.
 type DeployVVRInput struct {
 	ChainSelector     uint64                 `json:"chainSelector"`
+	Qualifier         string                 `json:"qualifier,omitempty"`
 	Owner             string                 `json:"owner,omitempty"`
 	WasmPath          string                 `json:"wasmPath"`
 	FeeAggregator     string                 `json:"feeAggregator,omitempty"`
@@ -32,13 +36,13 @@ var DeployVVR = cldf_ops.NewSequence(
 			return ComponentDeployOutput{}, err
 		}
 		return deployAndInitialize(b.GetContext(), b, deps, vvrops.Deploy,
-			stellarccip.VVRDatastoreRef(), in.ChainSelector, "versioned-verifier-resolver", in.WasmPath, owner, in.ExistingAddresses,
+			stellarccip.VVRDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("versioned-verifier-resolver", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
 			func(contractID string) error {
 				_, err := execStellarCCIPOp(b, deps.StellarDeps, vvrops.Initialize, vvrops.InitializeInput{
 					ContractID:    contractID,
 					Owner:         owner,
 					FeeAggregator: feeAggregator,
-				}, withComponentIdempotencyKey[vvrops.InitializeInput](in.ChainSelector))
+				}, withComponentInstanceIdempotencyKey[vvrops.InitializeInput](in.ChainSelector, in.Qualifier))
 				return err
 			})
 	},

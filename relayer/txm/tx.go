@@ -136,6 +136,7 @@ const (
 	ErrorReasonRevert            ErrorReason = "revert"
 	ErrorReasonRevertDecode      ErrorReason = ErrorReasonRevert + "_decode_error"
 	ErrorReasonTimedOut          ErrorReason = "timed_out"
+	ErrorReasonStatusUnknown     ErrorReason = "status_unknown"
 	ErrorReasonBadSeq            ErrorReason = "bad_seq"
 	ErrorReasonRestoreFailed     ErrorReason = "restore_failed"
 	ErrorReasonTryAgainLater     ErrorReason = "try_again_later"

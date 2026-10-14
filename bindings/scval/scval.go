@@ -659,6 +659,40 @@ func BytesToContractStrkey(raw []byte) (string, error) {
 	return strkey.Encode(strkey.VersionByteContract, raw)
 }
 
+// ContractAddressWireBytes renders a raw 32-byte contract ID the way a Soroban
+// source contract writes its own address into CCIP messages: a full 40-byte
+// ScVal{SCV_ADDRESS, SC_ADDRESS_CONTRACT} XDR envelope (Rust `Address::to_xdr`),
+// not the raw key. Destination chains whitelist source onramps by hashing these
+// exact message bytes, so the raw contract ID would never match.
+func ContractAddressWireBytes(raw []byte) ([]byte, error) {
+	scAddr := BuildContractScAddress(raw)
+	if scAddr == nil {
+		return nil, fmt.Errorf("expected 32-byte contract ID, got %d bytes", len(raw))
+	}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: scAddr}.MarshalBinary()
+}
+
+// ContractIDFromWireBytes extracts the raw 32-byte contract ID out of the
+// 40-byte ScVal{SCV_ADDRESS} wire envelope (ContractAddressWireBytes). Callers
+// that need to invoke the contract decode the address out of the wire form.
+func ContractIDFromWireBytes(wire []byte) ([]byte, error) {
+	if len(wire) != 40 {
+		return nil, fmt.Errorf("expected 40-byte address wire envelope, got %d bytes", len(wire))
+	}
+	var val xdr.ScVal
+	if err := val.UnmarshalBinary(wire); err != nil {
+		return nil, fmt.Errorf("unmarshal address ScVal envelope: %w", err)
+	}
+	raw, err := RawBytesFromAddressScVal(val)
+	if err != nil {
+		return nil, fmt.Errorf("decode address ScVal: %w", err)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("expected 32-byte contract ID in envelope, got %d bytes", len(raw))
+	}
+	return raw, nil
+}
+
 // AddressVecFromScVal extracts raw 32-byte addresses from a Vec<Address> ScVal.
 func AddressVecFromScVal(val xdr.ScVal) ([][]byte, error) {
 	vec, ok := val.GetVec()

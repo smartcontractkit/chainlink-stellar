@@ -253,9 +253,13 @@ impl OffRampContract {
 
         ReentrancyGuard::exit(&env);
 
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        // Instance only: extending the code entry here would bill its rent, which scales with
+        // module size, to whichever executor crosses the threshold.
+        env.deployer().extend_ttl_for_contract_instance(
+            env.current_contract_address(),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
 
         Ok(())
     }

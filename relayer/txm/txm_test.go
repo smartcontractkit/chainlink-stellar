@@ -1245,6 +1245,25 @@ func TestStellarTxm_EnqueueAndWait_AbandonedTxReleasesSequenceDuringSubmitRetrie
 	assert.Equal(t, 0, store.InflightCount())
 }
 
+func TestStellarTxm_MaybeRetry_DropsAbandonedTxWithoutRequeue(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.TxManagerConfig{MaxTxRetryAttempts: ptr(uint64(5))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	_, tx := seedUnconfirmed(t, txm, 101, 1050, 0, time.Now())
+	tx.waited.Store(true) // its only EnqueueAndWait caller has returned
+
+	assert.True(t, txm.maybeRetry(t.Context(), &UnconfirmedTx{Sequence: 101, Hash: "seeded-hash", Tx: tx}, RetryReasonTimedOut))
+
+	assert.Empty(t, txm.broadcastChan)
+	result, err := txm.GetTransactionResult(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandoned))
+}
+
 // --- getSequenceNumber tests ---
 
 func TestStellarTxm_GetSequenceNumber(t *testing.T) {
@@ -1967,6 +1986,7 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 	const maxLedger = uint32(1050)
 	const maxTime = int64(1_700_000_300)
 	longAgo := time.Now().Add(-time.Hour) // far past TxTimeoutSecs
+	now := time.Now().Unix()
 
 	notFoundAt := func(ledger uint32, closeTime int64) protocolrpc.GetTransactionResponse {
 		return protocolrpc.GetTransactionResponse{
@@ -1980,6 +2000,8 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 		name         string
 		getTxResp    protocolrpc.GetTransactionResponse
 		getTxErr     error
+		latestLedger *protocolrpc.GetLatestLedgerResponse // nil: the expiry check must not call GetLatestLedger
+		maxTime      int64                                // 0: maxTime
 		wantNextSeq  int64
 		wantInflight int
 		wantTxStatus commontypes.TransactionStatus
@@ -2027,18 +2049,36 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			wantTxStatus: commontypes.Unconfirmed,
 		},
 		{
-			name:         "latest ledger missing from the response keeps tx pending",
+			name:         "latest ledger missing from the response falls back to GetLatestLedger",
 			getTxResp:    notFoundAt(0, 0),
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 1},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "latest ledger missing and GetLatestLedger inside the bounds keeps tx pending",
+			getTxResp:    notFoundAt(0, 0),
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 2},
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
 		},
 		{
-			name:         "tx status unavailable keeps tx pending regardless of age",
+			name:         "tx status unavailable keeps tx pending until its time bound is long past",
 			getTxErr:     errors.New("rpc down"),
+			maxTime:      now,
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "tx status unavailable long past its time bound fails the tx and recycles the sequence",
+			getTxErr:     errors.New("rpc down"),
+			maxTime:      now - 2*int64(statusUnknownMargin.Seconds()),
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
 		},
 	}
 
@@ -2051,13 +2091,20 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 				// GetTransaction already carries the ledger the NOT_FOUND applies to.
 				getLatestLedgerErr: errors.New("expiry check must not call GetLatestLedger"),
 			}
+			if tc.latestLedger != nil {
+				mock.getLatestLedgerResp, mock.getLatestLedgerErr = *tc.latestLedger, nil
+			}
+			txMaxTime := maxTime
+			if tc.maxTime != 0 {
+				txMaxTime = tc.maxTime
+			}
 			cfg := config.TxManagerConfig{
 				TxTimeoutSecs:      ptr(int64(300)),
 				MaxTxRetryAttempts: ptr(uint64(0)), // expiry goes straight to Failed, which makes recycling observable
 			}
 			txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 			require.NoError(t, err)
-			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, maxTime, longAgo)
+			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, txMaxTime, longAgo)
 
 			txm.checkUnconfirmed(t.Context())
 
@@ -2068,6 +2115,27 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			assert.Equal(t, tc.wantTxStatus, status)
 		})
 	}
+}
+
+func TestStellarTxm_CheckUnconfirmed_UnknownStatusPastTimeBoundIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{getTransactionErr: errors.New("rpc down")}
+	cfg := config.TxManagerConfig{MaxTxRetryAttempts: ptr(uint64(5))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	timeBound := time.Now().Add(-2 * statusUnknownMargin).Unix()
+	_, tx := seedUnconfirmed(t, txm, 101, 1050, timeBound, time.Now().Add(-time.Hour))
+
+	txm.checkUnconfirmed(t.Context())
+
+	result, err := txm.GetTransactionResult(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(ErrorReasonStatusUnknown))
+	assert.Empty(t, txm.broadcastChan, "a tx whose envelope may have landed must not be sent again")
+	assert.Zero(t, tx.Attempt.Load())
 }
 
 func TestStellarTxm_Enqueue_IdempotencyKeyBindsPayload(t *testing.T) {

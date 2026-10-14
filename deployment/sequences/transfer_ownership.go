@@ -12,6 +12,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	seqcore "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 
+	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
@@ -28,7 +29,7 @@ type StellarTransferOwnershipInput struct {
 }
 
 func stellarMCMSTxAdditionalFields() json.RawMessage {
-	return json.RawMessage(`{"version":1,"family":"stellar"}`)
+	return json.RawMessage(fmt.Sprintf(`{"family":"stellar","encodingVersion":%d}`, bindings.SorobanInvokeEncodingVersion))
 }
 
 // StellarTransferOwnershipViaMCMS mirrors EVM chains/evm/.../operations/mcms OpTransferOwnership:

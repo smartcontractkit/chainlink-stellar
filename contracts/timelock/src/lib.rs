@@ -302,9 +302,7 @@ impl TimelockContract {
     ) -> Result<(), TimelockError> {
         require_initialized(&env)?;
         require_admin(&env, &caller)?;
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        UpgradedEvent { new_wasm_hash }.publish(&env);
+        upgrade_wasm(&env, new_wasm_hash);
         Ok(())
     }
 
@@ -498,9 +496,19 @@ fn execute_self_admin(env: &Env, function: &Symbol, args: &Vec<Val>) -> Result<(
             FunctionUnblockedEvent { target, function }.publish(env);
         }
         Ok(())
+    } else if *function == Symbol::new(env, "upgrade") {
+        require_self_caller(2)?;
+        upgrade_wasm(env, self_arg(env, args, 1)?);
+        Ok(())
     } else {
         Err(TimelockError::UnsupportedSelfCall)
     }
+}
+
+fn upgrade_wasm(env: &Env, new_wasm_hash: BytesN<32>) {
+    env.deployer()
+        .update_current_contract_wasm(new_wasm_hash.clone());
+    UpgradedEvent { new_wasm_hash }.publish(env);
 }
 
 #[cfg(test)]

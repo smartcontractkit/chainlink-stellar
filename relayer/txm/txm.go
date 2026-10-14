@@ -844,7 +844,14 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error, tx_too_late): retry after
+		if retryReason == ErrorReasonTooLate {
+			// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
+			ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds", "attempt", submitAttempt)
+			submitAttempt++
+			continue
+		}
+
+		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
@@ -1044,21 +1051,46 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-			// Without a status the envelope may have landed, so its sequence must not be recycled.
+			// Without a status the envelope may have landed, so its sequence must not be recycled
+			// and its payload must not be sent again. Once its time bound is long past by node clock
+			// it cannot land any more: fail it without a retry so it stops blocking the account.
 			if err != nil {
-				ctxLogger.Warnw("couldn't fetch tx status for expiry check", "hash", hash, "error", err)
-				totalPending++
+				if !timeBoundLongPassed(utx, time.Now()) {
+					ctxLogger.Warnw("couldn't fetch tx status for expiry check", "hash", hash, "error", err)
+					totalPending++
+					continue
+				}
+				ctxLogger.Errorw("tx status still unknown long after its time bound, failing it without a retry",
+					"hash", hash, "maxTime", utx.MaxTime, "error", err)
+				if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
+					ctxLogger.Errorw("couldn't release sequence of tx with unknown status", "error", confirmErr)
+				}
+				s.updateTransactionResultCode(utx.Tx, string(ErrorReasonStatusUnknown))
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonStatusUnknown)
+				s.updateTransactionStatus(utx.Tx, commontypes.Failed)
 				continue
 			}
 
-			// NOT_FOUND: the envelope is in no ledger up to resp.LatestLedger. Recycle the sequence
+			latestLedger, latestCloseTime := resp.LatestLedger, resp.LatestLedgerCloseTime
+			if latestLedger == 0 {
+				// NOT_FOUND without the RPC's ledger: the status is known, so any latest ledger will do.
+				ledger, ledgerErr := client.GetLatestLedger(ctx)
+				if ledgerErr != nil {
+					ctxLogger.Warnw("couldn't fetch latest ledger for expiry check", "hash", hash, "error", ledgerErr)
+					totalPending++
+					continue
+				}
+				latestLedger, latestCloseTime = ledger.Sequence, ledger.LedgerCloseTime
+			}
+
+			// NOT_FOUND: the envelope is in no ledger up to latestLedger. Recycle the sequence
 			// only once no later ledger can include it; recycling on enqueue age would let two
 			// envelopes land on one sequence.
-			if !cannotBeIncluded(resp.LatestLedger, resp.LatestLedgerCloseTime, utx) {
+			if !cannotBeIncluded(latestLedger, latestCloseTime, utx) {
 				totalPending++
 				ctxLogger.Debugw("tx still pending", "hash", hash,
-					"currentLedger", resp.LatestLedger, "maxLedger", utx.MaxLedger,
-					"ledgerCloseTime", resp.LatestLedgerCloseTime, "maxTime", utx.MaxTime)
+					"currentLedger", latestLedger, "maxLedger", utx.MaxLedger,
+					"ledgerCloseTime", latestCloseTime, "maxTime", utx.MaxTime)
 				continue
 			}
 
@@ -1092,6 +1124,15 @@ func cannotBeIncluded(latestLedger uint32, latestCloseTime int64, utx *Unconfirm
 	ledgerExpired := utx.MaxLedger > 0 && latestLedger+1 >= utx.MaxLedger
 	timeExpired := utx.MaxTime > 0 && latestCloseTime > utx.MaxTime
 	return ledgerExpired || timeExpired
+}
+
+// statusUnknownMargin is how long past an envelope's time bound, by node clock, its status may stay
+// unknown before the tx is failed. Ledger close times track wall clock to within seconds.
+const statusUnknownMargin = time.Minute
+
+// timeBoundLongPassed reports, by node clock alone, whether no ledger can include utx's envelope any more.
+func timeBoundLongPassed(utx *UnconfirmedTx, now time.Time) bool {
+	return utx.MaxTime > 0 && now.Unix() > utx.MaxTime+int64(statusUnknownMargin.Seconds())
 }
 
 // --- Prune loop ---
@@ -1152,7 +1193,14 @@ func (s *StellarTxm) pruneTerminal() {
 
 // --- Retry ---
 
+// maybeRetry re-enqueues utx's tx for another broadcast. It returns false when the caller
+// must mark the tx failed.
 func (s *StellarTxm) maybeRetry(ctx context.Context, utx *UnconfirmedTx, reason RetryReason) bool {
+	if utx.Tx.abandoned() {
+		s.dropAbandoned(ctx, utx.Tx)
+		return true
+	}
+
 	ctxLogger := GetContextedTxLogger(s.baseLogger, utx.Tx.ID, utx.Tx.Metadata)
 	currentAttempt := s.getTransactionAttempt(utx.Tx)
 	if currentAttempt >= *s.config.MaxTxRetryAttempts {
