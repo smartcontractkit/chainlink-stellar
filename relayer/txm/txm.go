@@ -760,8 +760,19 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				ctxLogger.Warnw("sequence resync after bad_seq failed, retry may repeat bad_seq",
 					"error", err, "submitAttempt", submitAttempt)
 			}
+			prevSeq := seq
 			seq = txStore.GetNextSequence()
 			submitAttempt++
+			// An unchanged sequence means the account still waits on an earlier envelope of ours;
+			// give it time to land or expire instead of spending the remaining attempts at once.
+			if seq == prevSeq {
+				select {
+				case <-time.After(s.config.SubmitRetryDelay.Duration()):
+				case <-ctx.Done():
+					txStore.Release(seq)
+					return
+				}
+			}
 			continue
 		}
 
@@ -997,22 +1008,46 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				}
 			}
 
-			// NOT_FOUND or transient RPC error. Recycle the sequence only once the network can
-			// no longer include this envelope (latest ledger past MaxLedger or its close time past
-			// MaxTime); recycling on enqueue age would let two envelopes land on one sequence.
-			latestLedger, ledgerErr := client.GetLatestLedger(ctx)
-			if ledgerErr != nil {
-				ctxLogger.Errorw("couldn't fetch latest ledger for expiry check", "error", ledgerErr)
-				totalPending++
+			// Without a status the envelope may have landed, so its sequence must not be recycled
+			// and its payload must not be sent again. Once its time bound is long past by node clock
+			// it cannot land any more: fail it without a retry so it stops blocking the account.
+			if err != nil {
+				if !timeBoundLongPassed(utx, time.Now()) {
+					ctxLogger.Warnw("couldn't fetch tx status for expiry check", "hash", hash, "error", err)
+					totalPending++
+					continue
+				}
+				ctxLogger.Errorw("tx status still unknown long after its time bound, failing it without a retry",
+					"hash", hash, "maxTime", utx.MaxTime, "error", err)
+				if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
+					ctxLogger.Errorw("couldn't release sequence of tx with unknown status", "error", confirmErr)
+				}
+				s.updateTransactionResultCode(utx.Tx, string(ErrorReasonStatusUnknown))
+				s.metrics.IncrementErrorTxs(ctx, ErrorReasonStatusUnknown)
+				s.updateTransactionStatus(utx.Tx, commontypes.Failed)
 				continue
 			}
-			ledgerExpired := latestLedger.Sequence > utx.MaxLedger
-			timeExpired := utx.MaxTime > 0 && latestLedger.LedgerCloseTime > utx.MaxTime
-			if !ledgerExpired && !timeExpired {
+
+			latestLedger, latestCloseTime := resp.LatestLedger, resp.LatestLedgerCloseTime
+			if latestLedger == 0 {
+				// NOT_FOUND without the RPC's ledger: the status is known, so any latest ledger will do.
+				ledger, ledgerErr := client.GetLatestLedger(ctx)
+				if ledgerErr != nil {
+					ctxLogger.Warnw("couldn't fetch latest ledger for expiry check", "hash", hash, "error", ledgerErr)
+					totalPending++
+					continue
+				}
+				latestLedger, latestCloseTime = ledger.Sequence, ledger.LedgerCloseTime
+			}
+
+			// NOT_FOUND: the envelope is in no ledger up to latestLedger. Recycle the sequence
+			// only once no later ledger can include it; recycling on enqueue age would let two
+			// envelopes land on one sequence.
+			if !cannotBeIncluded(latestLedger, latestCloseTime, utx) {
 				totalPending++
 				ctxLogger.Debugw("tx still pending", "hash", hash,
-					"currentLedger", latestLedger.Sequence, "maxLedger", utx.MaxLedger,
-					"ledgerCloseTime", latestLedger.LedgerCloseTime, "maxTime", utx.MaxTime)
+					"currentLedger", latestLedger, "maxLedger", utx.MaxLedger,
+					"ledgerCloseTime", latestCloseTime, "maxTime", utx.MaxTime)
 				continue
 			}
 
@@ -1035,6 +1070,26 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 	}
 
 	s.metrics.SetPendingTxs(ctx, totalPending)
+}
+
+// cannotBeIncluded reports whether no ledger after latestLedger can include utx's envelope.
+// LedgerBounds.MaxLedger is exclusive, so once MaxLedger-1 has closed the envelope is dead.
+func cannotBeIncluded(latestLedger uint32, latestCloseTime int64, utx *UnconfirmedTx) bool {
+	if latestLedger == 0 {
+		return false
+	}
+	ledgerExpired := utx.MaxLedger > 0 && latestLedger+1 >= utx.MaxLedger
+	timeExpired := utx.MaxTime > 0 && latestCloseTime > utx.MaxTime
+	return ledgerExpired || timeExpired
+}
+
+// statusUnknownMargin is how long past an envelope's time bound, by node clock, its status may stay
+// unknown before the tx is failed. Ledger close times track wall clock to within seconds.
+const statusUnknownMargin = time.Minute
+
+// timeBoundLongPassed reports, by node clock alone, whether no ledger can include utx's envelope any more.
+func timeBoundLongPassed(utx *UnconfirmedTx, now time.Time) bool {
+	return utx.MaxTime > 0 && now.Unix() > utx.MaxTime+int64(statusUnknownMargin.Seconds())
 }
 
 // --- Prune loop ---

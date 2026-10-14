@@ -862,7 +862,12 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 			},
 		},
 		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
-		getTransactionErr:   fmt.Errorf("not found"),
+		getTransactionHook: func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+			return protocolrpc.GetTransactionResponse{
+				LatestLedger:       latestLedgerSeq.Load(),
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+			}, nil
+		},
 		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
 			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedgerSeq.Load()}, nil
 		},
@@ -1736,49 +1741,99 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 	const maxLedger = uint32(1050)
 	const maxTime = int64(1_700_000_300)
 	longAgo := time.Now().Add(-time.Hour) // far past TxTimeoutSecs
+	now := time.Now().Unix()
+
+	notFoundAt := func(ledger uint32, closeTime int64) protocolrpc.GetTransactionResponse {
+		return protocolrpc.GetTransactionResponse{
+			LatestLedger:          ledger,
+			LatestLedgerCloseTime: closeTime,
+			TransactionDetails:    protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+		}
+	}
 
 	cases := []struct {
 		name         string
-		latestLedger protocolrpc.GetLatestLedgerResponse
-		latestErr    error
+		getTxResp    protocolrpc.GetTransactionResponse
+		getTxErr     error
+		latestLedger *protocolrpc.GetLatestLedgerResponse // nil: the expiry check must not call GetLatestLedger
+		maxTime      int64                                // 0: maxTime
 		wantNextSeq  int64
 		wantInflight int
 		wantTxStatus commontypes.TransactionStatus
 	}{
 		{
 			name:         "enqueue age past TxTimeoutSecs but bounds not reached keeps tx pending",
-			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime - 100},
+			getTxResp:    notFoundAt(1000, maxTime-100),
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
 		},
 		{
+			name:         "next ledger is the last one inside the bounds keeps tx pending",
+			getTxResp:    notFoundAt(maxLedger-2, maxTime-100),
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "last ledger inside the bounds closed recycles the sequence",
+			getTxResp:    notFoundAt(maxLedger-1, maxTime-100),
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
 			name:         "ledger past MaxLedger recycles the sequence",
-			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 2000, LedgerCloseTime: maxTime - 100},
+			getTxResp:    notFoundAt(2000, maxTime-100),
 			wantNextSeq:  seq,
 			wantInflight: 0,
 			wantTxStatus: commontypes.Failed,
 		},
 		{
 			name:         "ledger close time past MaxTime recycles the sequence",
-			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: maxTime + 1},
+			getTxResp:    notFoundAt(1000, maxTime+1),
 			wantNextSeq:  seq,
 			wantInflight: 0,
 			wantTxStatus: commontypes.Failed,
 		},
 		{
 			name:         "ledger close time unavailable falls back to MaxLedger only",
-			latestLedger: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+			getTxResp:    notFoundAt(1000, 0),
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
 		},
 		{
-			name:         "ledger unavailable keeps tx pending regardless of age",
-			latestErr:    errors.New("rpc down"),
+			name:         "latest ledger missing from the response falls back to GetLatestLedger",
+			getTxResp:    notFoundAt(0, 0),
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 1},
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
+		},
+		{
+			name:         "latest ledger missing and GetLatestLedger inside the bounds keeps tx pending",
+			getTxResp:    notFoundAt(0, 0),
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 2},
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "tx status unavailable keeps tx pending until its time bound is long past",
+			getTxErr:     errors.New("rpc down"),
+			maxTime:      now,
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "tx status unavailable long past its time bound fails the tx and recycles the sequence",
+			getTxErr:     errors.New("rpc down"),
+			maxTime:      now - 2*int64(statusUnknownMargin.Seconds()),
+			wantNextSeq:  seq,
+			wantInflight: 0,
+			wantTxStatus: commontypes.Failed,
 		},
 	}
 
@@ -1786,11 +1841,17 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mock := &mockRPCClient{
-				getLatestLedgerResp: tc.latestLedger,
-				getLatestLedgerErr:  tc.latestErr,
-				getTransactionResp: protocolrpc.GetTransactionResponse{
-					TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
-				},
+				getTransactionResp: tc.getTxResp,
+				getTransactionErr:  tc.getTxErr,
+				// GetTransaction already carries the ledger the NOT_FOUND applies to.
+				getLatestLedgerErr: errors.New("expiry check must not call GetLatestLedger"),
+			}
+			if tc.latestLedger != nil {
+				mock.getLatestLedgerResp, mock.getLatestLedgerErr = *tc.latestLedger, nil
+			}
+			txMaxTime := maxTime
+			if tc.maxTime != 0 {
+				txMaxTime = tc.maxTime
 			}
 			cfg := config.TxManagerConfig{
 				TxTimeoutSecs:      ptr(int64(300)),
@@ -1798,7 +1859,7 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			}
 			txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 			require.NoError(t, err)
-			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, maxTime, longAgo)
+			store, tx := seedUnconfirmed(t, txm, seq, maxLedger, txMaxTime, longAgo)
 
 			txm.checkUnconfirmed(t.Context())
 
@@ -1809,6 +1870,27 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			assert.Equal(t, tc.wantTxStatus, status)
 		})
 	}
+}
+
+func TestStellarTxm_CheckUnconfirmed_UnknownStatusPastTimeBoundIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{getTransactionErr: errors.New("rpc down")}
+	cfg := config.TxManagerConfig{MaxTxRetryAttempts: ptr(uint64(5))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	timeBound := time.Now().Add(-2 * statusUnknownMargin).Unix()
+	_, tx := seedUnconfirmed(t, txm, 101, 1050, timeBound, time.Now().Add(-time.Hour))
+
+	txm.checkUnconfirmed(t.Context())
+
+	result, err := txm.GetTransactionResult(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(ErrorReasonStatusUnknown))
+	assert.Empty(t, txm.broadcastChan, "a tx whose envelope may have landed must not be sent again")
+	assert.Zero(t, tx.Attempt.Load())
 }
 
 func TestStellarTxm_Enqueue_IdempotencyKeyBindsPayload(t *testing.T) {
