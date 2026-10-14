@@ -99,7 +99,7 @@ func (s *StellarTxm) isRetryableSimulationError(ctx context.Context, err error) 
 }
 
 // assembleTransaction rebuilds tx with simulation results and a caller-supplied inclusionFee.
-// inclusionFee is computed by the caller via FeeStrategy (SeedInclusionFee / BumpInclusionFee
+// inclusionFee is computed by the caller via FeeStrategy (SeedInclusionFee / RebroadcastInclusionFee / BumpInclusionFee
 // with feeTracker percentiles); it must NOT include
 // the resource fee — txnbuild computes the envelope fee as BaseFee*numOps + sorobanData.ResourceFee,
 // so folding resource fee into BaseFee would double-count it.
@@ -249,13 +249,14 @@ func (s *StellarTxm) handleSendResult(
 		return false, false, ErrorReasonTryAgainLater
 
 	case stellarcore.TXStatusError:
-		typedCode, decoded := parseSubmitErrorResult(submitResult.ErrorResultXDR)
-		ctxLogger.Warnw("tx rejected by network", "resultCode", typedCode.String(), "errorXDR", submitResult.ErrorResultXDR)
+		txResult, decoded := parseSubmitErrorResult(submitResult.ErrorResultXDR)
+		ctxLogger.Warnw("tx rejected by network", "resultCode", txResult.Result.Code.String(),
+			"feeCharged", int64(txResult.FeeCharged), "errorXDR", submitResult.ErrorResultXDR)
 
 		if !decoded {
 			return false, true, ErrorReasonSubmitErrorUndecoded
 		}
-		fatal, reason := classifySubmitErrorCode(typedCode)
+		fatal, reason := classifySubmitErrorCode(txResult.Result.Code)
 		return false, fatal, reason
 
 	default:
@@ -264,17 +265,27 @@ func (s *StellarTxm) handleSendResult(
 	}
 }
 
-// parseSubmitErrorResult decodes errorResultXDR into a transaction result code.
+// parseSubmitErrorResult decodes errorResultXDR into a transaction result.
 // ok is false when errorResultXDR is empty or cannot be unmarshaled as XDR.
-func parseSubmitErrorResult(errorResultXDR string) (code xdr.TransactionResultCode, ok bool) {
+func parseSubmitErrorResult(errorResultXDR string) (txResult xdr.TransactionResult, ok bool) {
 	if errorResultXDR == "" {
-		return 0, false
+		return xdr.TransactionResult{}, false
 	}
-	var txResult xdr.TransactionResult
 	if err := xdr.SafeUnmarshalBase64(errorResultXDR, &txResult); err != nil {
-		return 0, false
+		return xdr.TransactionResult{}, false
 	}
-	return txResult.Result.Code, true
+	return txResult, true
+}
+
+// requiredInclusionFee returns the inclusion fee a tx_insufficient_fee rejection asks for, or 0 if
+// it carries none. When its queue is full, stellar-core reports in feeCharged the full fee needed to
+// outbid the txs it evicted; the inclusion part is that minus the resource fee the envelope declared.
+func requiredInclusionFee(errorResultXDR string, resourceFee int64) uint64 {
+	txResult, ok := parseSubmitErrorResult(errorResultXDR)
+	if !ok || int64(txResult.FeeCharged) <= resourceFee {
+		return 0
+	}
+	return uint64(int64(txResult.FeeCharged) - resourceFee)
 }
 
 func classifySubmitErrorCode(code xdr.TransactionResultCode) (fatal bool, reason ErrorReason) {

@@ -286,3 +286,35 @@ func TestFeeStrategy_BumpInclusionFee(t *testing.T) {
 		assert.True(t, clamped)
 	})
 }
+
+func TestFeeStrategy_RebroadcastInclusionFee(t *testing.T) {
+	t.Parallel()
+
+	fs := FeeStrategy{
+		BaseInclusionFee: 100,
+		MaxInclusionFee:  10_000,
+		BumpMultiplier:   1.5,
+	}
+
+	tests := []struct {
+		name        string
+		attempt     uint64
+		previous    int64
+		network     uint64
+		wantFee     int64
+		wantClamped bool
+	}{
+		{"outbids the previous envelope", 1, 2_000, 500, 3_000, false},
+		{"network percentile above the outbid wins", 1, 2_000, 4_000, 4_000, false},
+		{"geometric baseline when the previous bid is unknown", 2, 0, 0, 225, false},
+		{"outbid clamped to max", 3, 8_000, 0, 10_000, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fee, clamped := fs.RebroadcastInclusionFee(tt.attempt, tt.previous, tt.network)
+			assert.Equal(t, tt.wantFee, fee)
+			assert.Equal(t, tt.wantClamped, clamped)
+		})
+	}
+}
