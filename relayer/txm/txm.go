@@ -783,7 +783,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", localHash)
 			tx.InclusionFee = inclusionFee
 			s.markBroadcastAt(tx)
-			s.metrics.IncrementBroadcastedTxs(ctx)
+			s.metrics.IncrementBroadcastedTxs(ctx, currentAttempt)
 			s.updateTransactionStatus(tx, commontypes.Unconfirmed)
 			return
 		}
@@ -909,6 +909,8 @@ func (s *StellarTxm) prepareAndSimulateWithRetry(
 
 		simResult, err := s.simulateTransaction(ctx, client, prelimTx)
 		if err == nil {
+			head := s.estimateNetworkHead(ctx, ctxLogger, latestLedger, simResult.LatestLedger, time.Now())
+			tx.MaxLedger = head + offset
 			return prelimTx, simResult, tx.MaxLedger, nil
 		}
 
@@ -923,6 +925,50 @@ func (s *StellarTxm) prepareAndSimulateWithRetry(
 	}
 
 	return nil, protocolrpc.SimulateTransactionResponse{}, 0, fmt.Errorf("simulation attempts exhausted: %w", lastErr)
+}
+
+const (
+	expectedLedgerCloseTime = 5 * time.Second
+	maxHeadLagLedgers       = 3
+)
+
+// estimateNetworkHead returns the ledger the network has most likely closed. An RPC node that lags
+// reports an old latest ledger, which would give the envelope fewer valid ledgers than the offset
+// promises; the time since that ledger closed tells how many ledgers the node is behind.
+func (s *StellarTxm) estimateNetworkHead(
+	ctx context.Context,
+	ctxLogger logger.Logger,
+	latest protocolrpc.GetLatestLedgerResponse,
+	simLatest uint32,
+	now time.Time,
+) uint32 {
+	lag := headLagLedgers(latest.LedgerCloseTime, now)
+	s.metrics.ObserveRPCHeadLag(ctx, int64(lag))
+
+	head := max(latest.Sequence, simLatest, latest.Sequence+min(lag, maxHeadLagLedgers))
+	if head == latest.Sequence {
+		return head
+	}
+	logFields := []any{"rpcLatestLedger", latest.Sequence, "simLatestLedger", simLatest, "estimatedHead", head, "headLagLedgers", lag}
+	if lag > maxHeadLagLedgers {
+		ctxLogger.Warnw("RPC latest ledger is far behind its close time, capping the head estimate", logFields...)
+	} else {
+		ctxLogger.Infow("RPC latest ledger is behind the network, extending ledger bounds", logFields...)
+	}
+	return head
+}
+
+// headLagLedgers is how many whole ledgers have likely closed since closeTime. It is 0 when the
+// close time is unknown or ahead of the node clock.
+func headLagLedgers(closeTime int64, now time.Time) uint32 {
+	if closeTime <= 0 {
+		return 0
+	}
+	age := now.Sub(time.Unix(closeTime, 0))
+	if age <= 0 {
+		return 0
+	}
+	return uint32(age / expectedLedgerCloseTime)
 }
 
 func (s *StellarTxm) shouldRetrySimulation(ctx context.Context, err error, attempt uint, maxAttempts uint) bool {
@@ -1017,7 +1063,7 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					s.updateTransactionLedgerCloseTime(utx.Tx, resp.LedgerCloseTime)
 
 					ctxLogger.Infow("confirmed tx: successful", "hash", hash)
-					s.metrics.IncrementSuccessTxs(ctx)
+					s.metrics.IncrementSuccessTxs(ctx, s.getTransactionAttempt(utx.Tx))
 					s.recordTimeUntilConfirmed(ctx, utx.Tx)
 					s.updateTransactionStatus(utx.Tx, commontypes.Finalized)
 					continue

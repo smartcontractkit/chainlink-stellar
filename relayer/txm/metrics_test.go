@@ -8,6 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
@@ -23,8 +24,8 @@ func TestNoopStellarTxmMetrics(t *testing.T) {
 	m := NewNoopStellarTxmMetrics()
 
 	assert.NotPanics(t, func() {
-		m.IncrementBroadcastedTxs(ctx)
-		m.IncrementSuccessTxs(ctx)
+		m.IncrementBroadcastedTxs(ctx, 0)
+		m.IncrementSuccessTxs(ctx, 1)
 		m.SetPendingTxs(ctx, 5)
 		m.IncrementErrorTxs(ctx, ErrorReasonTimedOut)
 		m.IncrementRetryTxs(ctx, RetryReasonTimedOut)
@@ -37,6 +38,7 @@ func TestNoopStellarTxmMetrics(t *testing.T) {
 		m.ObserveSimulationDuration(ctx, 500)
 		m.ObserveInclusionFee(ctx, 1000)
 		m.ObserveResourceFee(ctx, 5000)
+		m.ObserveRPCHeadLag(ctx, 2)
 		m.RecordTimeUntilTxConfirmed(ctx, 1)
 	})
 }
@@ -121,4 +123,14 @@ func TestStellarTxm_Metrics_ConfirmIncrementsSuccess(t *testing.T) {
 
 	successAfter := testutil.ToFloat64(promStellarTxmSuccessTxs.WithLabelValues(chainID))
 	assert.Equal(t, float64(1), successAfter-successBefore, "success counter should increment once")
+}
+
+func TestStellarTxmMetrics_AttemptAttributeIsBounded(t *testing.T) {
+	m := &stellarTxmMetrics{chainID: "test"}
+	for attempt, want := range map[uint64]string{0: "0", 2: "2", 3: "3+", 7: "3+"} {
+		attrs := attribute.NewSet(m.attemptAttributes(attempt)...)
+		got, ok := attrs.Value("attempt")
+		require.True(t, ok)
+		assert.Equal(t, want, got.AsString(), "attempt %d", attempt)
+	}
 }
