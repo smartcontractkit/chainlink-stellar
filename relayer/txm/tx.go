@@ -141,6 +141,7 @@ const (
 	ErrorReasonClientUnavailable ErrorReason = "client_unavailable"
 	ErrorReasonInsufficientFee   ErrorReason = "insufficient_fee"
 	ErrorReasonInternalError     ErrorReason = "internal_error"
+	ErrorReasonTooLate           ErrorReason = "too_late"
 	ErrorReasonNilTx             ErrorReason = "nil_tx"
 	ErrorReasonNilTxStore        ErrorReason = "nil_tx_store"
 	// ErrorReasonSubmitErrorUndecoded means the node returned TXStatusError but
