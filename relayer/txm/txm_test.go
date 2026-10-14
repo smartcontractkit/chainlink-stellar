@@ -1155,6 +1155,25 @@ func TestStellarTxm_EnqueueAndWait_AbandonedTxReleasesSequenceDuringSubmitRetrie
 	assert.Equal(t, 0, store.InflightCount())
 }
 
+func TestStellarTxm_MaybeRetry_DropsAbandonedTxWithoutRequeue(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.TxManagerConfig{MaxTxRetryAttempts: ptr(uint64(5))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	_, tx := seedUnconfirmed(t, txm, 101, 1050, 0, time.Now())
+	tx.waited.Store(true) // its only EnqueueAndWait caller has returned
+
+	assert.True(t, txm.maybeRetry(t.Context(), &UnconfirmedTx{Sequence: 101, Hash: "seeded-hash", Tx: tx}, RetryReasonTimedOut))
+
+	assert.Empty(t, txm.broadcastChan)
+	result, err := txm.GetTransactionResult(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandoned))
+}
+
 // --- getSequenceNumber tests ---
 
 func TestStellarTxm_GetSequenceNumber(t *testing.T) {

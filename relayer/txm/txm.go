@@ -1181,7 +1181,14 @@ func (s *StellarTxm) pruneTerminal() {
 
 // --- Retry ---
 
+// maybeRetry re-enqueues utx's tx for another broadcast. It returns false when the caller
+// must mark the tx failed.
 func (s *StellarTxm) maybeRetry(ctx context.Context, utx *UnconfirmedTx, reason RetryReason) bool {
+	if utx.Tx.abandoned() {
+		s.dropAbandoned(ctx, utx.Tx)
+		return true
+	}
+
 	ctxLogger := GetContextedTxLogger(s.baseLogger, utx.Tx.ID, utx.Tx.Metadata)
 	currentAttempt := s.getTransactionAttempt(utx.Tx)
 	if currentAttempt >= *s.config.MaxTxRetryAttempts {
