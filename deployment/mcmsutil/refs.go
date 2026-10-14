@@ -59,13 +59,22 @@ func ChainNetworkID(passphrase string) [32]byte {
 
 // MCMSRoleDeploySalt derives a deterministic per-role deploy salt so the three role
 // instances land at distinct addresses.
-func MCMSRoleDeploySalt(chainSelector uint64, qual string, role MCMSRole) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("stellar-mcms:%s:%d:%s", role, chainSelector, qual)))
+func MCMSRoleDeploySalt(chainSelector uint64, qual, label string, role MCMSRole) [32]byte {
+	return sha256.Sum256(withLabel(fmt.Sprintf("stellar-mcms:%s:%d:%s", role, chainSelector, qual), label))
 }
 
 // TimelockDeploySalt derives a deterministic deploy salt for a Soroban timelock instance.
-func TimelockDeploySalt(chainSelector uint64, qual string) [32]byte {
-	return sha256.Sum256([]byte(fmt.Sprintf("stellar-timelock:%d:%s", chainSelector, qual)))
+func TimelockDeploySalt(chainSelector uint64, qual, label string) [32]byte {
+	return sha256.Sum256(withLabel(fmt.Sprintf("stellar-timelock:%d:%s", chainSelector, qual), label))
+}
+
+// withLabel lets a label redeploy a stack under the same qualifier at new addresses.
+// An empty label keeps the original salts.
+func withLabel(seed, label string) []byte {
+	if label == "" {
+		return []byte(seed)
+	}
+	return []byte(seed + ":" + label)
 }
 
 // FindExistingStellarMCMSByRole returns the address for exactly one role, or (","false) if absent.
