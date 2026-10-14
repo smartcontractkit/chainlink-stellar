@@ -801,7 +801,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
+		// Other retryable errors (e.g. try_again_later, tx_internal_error, tx_too_late): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
