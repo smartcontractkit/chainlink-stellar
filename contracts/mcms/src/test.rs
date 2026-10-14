@@ -17,7 +17,7 @@ use soroban_sdk::{
     Symbol, TryFromVal, TryIntoVal, Val, Vec as SorobanVec,
 };
 
-use crate::constants::ENCODING_VERSION;
+use crate::constants::{ENCODING_VERSION, LEDGER_THRESHOLD};
 use crate::crypto::{cmp_bytes32, efficient_hash_pair};
 use crate::encoding::{
     eth_signed_message_hash_32, hash_root_metadata, hash_set_root_inner, hash_stellar_op,
@@ -225,6 +225,41 @@ fn test_initialize_and_chain_id() {
 }
 
 /// Second `initialize` returns contract error; non-`try` entrypoint may panic in tests.
+#[test]
+fn test_ttl_bump_extends_instance_and_data_but_not_code() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    use soroban_sdk::testutils::Deployer as _;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let code_ttl_before = env.deployer().get_contract_code_ttl(&client.address);
+    assert!(code_ttl_before < LEDGER_THRESHOLD);
+
+    initialize_default(
+        &env,
+        &client,
+        &Address::generate(&env),
+        &zero_chain_id(&env),
+    );
+
+    let (max_ttl, config_ttl) = env.as_contract(&client.address, || {
+        (
+            env.storage().max_ttl(),
+            env.storage().persistent().get_ttl(&crate::CONFIG),
+        )
+    });
+    assert_eq!(
+        env.deployer().get_contract_instance_ttl(&client.address),
+        max_ttl
+    );
+    assert_eq!(config_ttl, max_ttl);
+    assert_eq!(
+        env.deployer().get_contract_code_ttl(&client.address),
+        code_ttl_before
+    );
+}
+
 #[test]
 #[should_panic]
 fn test_double_initialize_panics() {

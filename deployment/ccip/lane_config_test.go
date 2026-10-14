@@ -1,12 +1,14 @@
 package ccip
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,14 +33,20 @@ func TestAddressBytesHex_wrongLengthForStellar(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCanonicalSourceOnRampBytes_stellarPassesThrough(t *testing.T) {
+func TestCanonicalSourceOnRampBytes_stellarWireForm(t *testing.T) {
 	t.Parallel()
 	sid := stellarutil.MustGenerateMockContractID("lane-canon", "onr")
 	hexAddr, err := stellarutil.StrkeyToHex(sid)
 	require.NoError(t, err)
-	raw, err := CanonicalSourceOnRampBytes(datastore.AddressRef{Address: hexAddr}, chainsel.STELLAR_LOCALNET.Selector)
+	wire, err := CanonicalSourceOnRampBytes(datastore.AddressRef{Address: hexAddr}, chainsel.STELLAR_LOCALNET.Selector)
 	require.NoError(t, err)
-	assert.Len(t, raw, int(StellarAddressByteLen))
+	// Stellar OnRamps write their own address into messages as a full
+	// 40-byte Address::to_xdr envelope; OffRamps whitelist by hashing those
+	// bytes, so the canonical form must match them, not the raw contract ID.
+	require.Len(t, wire, 40)
+	decoded, err := scval.ContractIDFromWireBytes(wire)
+	require.NoError(t, err)
+	assert.Equal(t, hexAddr, "0x"+hex.EncodeToString(decoded))
 }
 
 func TestCanonicalSourceOnRampBytes_evmPadsLeft(t *testing.T) {

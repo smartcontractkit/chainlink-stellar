@@ -2,14 +2,20 @@ package sequences
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 
+	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/offchain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	recvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	executorbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/executor"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
@@ -46,6 +52,30 @@ func execStellarCCIPOp[IN, OUT any](
 		return z, err
 	}
 	return rep.Output, nil
+}
+
+// cvGasForVerificationForRemote returns the per-CCV dest verification gas for
+// a remote chain, mirroring the chain-family adapter default the lane
+// changeset coalesces to for that remote family: EVM 75_000 (chains/evm
+// deployment/v2_0_0/adapters/chain_family.go
+// GetDefaultCommitteeVerifierRemoteChainConfig), stellar 60_000 (deployment/
+// adapters/stellar_chain_family_adapter.go). The full deploy is the only
+// writer of stellar CV remote configs, so the remote's scale must be honored
+// here — a stellar-scale value for an EVM remote under-budgets the on-wire
+// execution_gas_limit (see the remoteChainConfigs loop above).
+func cvGasForVerificationForRemote(remoteSelector uint64) (uint32, error) {
+	family, err := chainsel.GetSelectorFamily(remoteSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get selector family for %d: %w", remoteSelector, err)
+	}
+	switch family {
+	case chainsel.FamilyEVM:
+		return 75_000, nil
+	case chainsel.FamilyStellar:
+		return 60_000, nil
+	default:
+		return 0, fmt.Errorf("no committee-verifier gas-for-verification default for chain family %q", family)
+	}
 }
 
 // statReleaseWasm checks that a release-profile WASM path exists and is a regular file.
@@ -313,12 +343,15 @@ func RunStellarCCIPFullDeploy(
 	// The source-side fee/policy Executor (EVM Executor.sol parity). The OnRamp's
 	// get_fee path cross-calls Executor::get_fee on default_executor, so the
 	// contract must be deployed+initialized with the dest chain enabled and an
-	// allowed_finality_config that permits the requested finality devenv sends (0).
+	// allowed_finality_config that permits the requested finality the lane flows
+	// send (the stellar family default; EVM deploy defaults apply the same to
+	// executors — see FamilyDefaultAllowedFinality).
 	execOut, err := execComponentSequence(b, componentDeps, DeployExecutor, DeployExecutorInput{
-		ChainSelector:     selector,
-		WasmPath:          execWasmPath,
-		FeeAggregator:     feeAggregatorAddr,
-		ExistingAddresses: currentRefs,
+		ChainSelector:         selector,
+		WasmPath:              execWasmPath,
+		FeeAggregator:         feeAggregatorAddr,
+		AllowedFinalityConfig: FamilyDefaultAllowedFinality,
+		ExistingAddresses:     currentRefs,
 	})
 	if err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("deploy Executor: %w", err)
@@ -347,6 +380,42 @@ func RunStellarCCIPFullDeploy(
 	}
 	h.Logger().Info().Str("contractID", executorContractID).Msg("Executor initialized and dest chains enabled")
 
+	// Non-default executor pools whose chain_configs cover this chain (e.g. the
+	// tcapi custom executor) each need their own Executor contract: the executor
+	// config adapters resolve per-qualifier refs (GetDeployedChains,
+	// DefaultExecutorAddress), and a pool qualifier with no stellar-side ref
+	// yields executor job specs with no stellar chain config, which the executor
+	// node rejects at proposal validation ("at least one chain must be
+	// configured"). EVM parity: ccv's EVM phase deploys the qualified custom
+	// executor on every chain and enables every remote chain on it (PostConnect).
+	for _, qualifier := range nonDefaultExecutorQualifiers(topology, selector) {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		poolExecOut, err := execComponentSequence(b, componentDeps, DeployExecutor, DeployExecutorInput{
+			ChainSelector:         selector,
+			Qualifier:             qualifier,
+			WasmPath:              execWasmPath,
+			FeeAggregator:         feeAggregatorAddr,
+			AllowedFinalityConfig: FamilyDefaultAllowedFinality,
+			ExistingAddresses:     currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy Executor %q: %w", qualifier, err)
+		}
+		if err := upsertComponentRefs(ds, poolExecOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
+			ContractID: poolExecOut.ContractID,
+			ToAdd:      execDestChainAdds,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor %q dest chain updates: %w", qualifier, err)
+		}
+		h.Logger().Info().Str("qualifier", qualifier).Str("contractID", poolExecOut.ContractID).Msg("qualified Executor deployed and dest chains enabled")
+	}
+
 	outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
 	for _, remoteSelector := range allSelectors {
 		outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
@@ -372,6 +441,92 @@ func RunStellarCCIPFullDeploy(
 		Implementations: inboundImplUpdates,
 	}); err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates: %w", err)
+	}
+
+	// Non-default committees covering this chain (e.g. the tcapi secondary
+	// committee) each need their own VVR + CV pair: lane wiring resolves
+	// per-qualifier CV and VVR refs for every committee covering the chain.
+	// CV contract IDs are collected here and configured after the Router deploy
+	// (CommitteeVerifier RemoteChainConfig.Router requires the Router to exist).
+	committeeCVs := make([]struct{ qualifier, cvID string }, 0)
+	// stellarVvrIDs maps every committee qualifier covering this chain (the
+	// default included) to its stellar-side VVR contract ID — the dest-family
+	// CCV identities the qualified receivers' required/optional lists use.
+	stellarVvrIDs := map[string]string{
+		stellarccip.DefaultCommitteeVerifierQualifier: vvrContractID,
+	}
+	for _, qualifier := range nonDefaultCommitteeQualifiers(topology, selector) {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		committeeVvrOut, err := execComponentSequence(b, componentDeps, DeployVVR, DeployVVRInput{
+			ChainSelector:     selector,
+			Qualifier:         qualifier,
+			WasmPath:          vvrWasmPath,
+			FeeAggregator:     feeAggregatorAddr,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy VVR %q: %w", qualifier, err)
+		}
+		committeeVvrContractID := committeeVvrOut.ContractID
+		stellarVvrIDs[qualifier] = committeeVvrContractID
+		if err := upsertComponentRefs(ds, committeeVvrOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		// Per-qualifier storage location so two committees never share one.
+		committeeStorage := stellarutil.GenerateContractAddress(componentSaltLabel("storage-location", qualifier), h.NetworkPassphrase())
+		committeeCvOut, err := execComponentSequence(b, componentDeps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+			ChainSelector:     selector,
+			Qualifier:         qualifier,
+			WasmPath:          cvWasmPath,
+			StorageLocations:  [][]byte{committeeStorage},
+			RmnProxy:          rmnProxyContractID,
+			FeeAggregator:     feeAggregatorAddr,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy Committee Verifier %q: %w", qualifier, err)
+		}
+		committeeCvContractID := committeeCvOut.ContractID
+		committeeCVs = append(committeeCVs, struct{ qualifier, cvID string }{qualifier, committeeCvContractID})
+		if err := upsertComponentRefs(ds, committeeCvOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		h.Logger().Info().Str("qualifier", qualifier).Str("cvContractID", committeeCvContractID).Msg("Committee Verifier pair deployed and initialized")
+
+		committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
+		for _, remoteSelector := range allSelectors {
+			committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
+				DestChainSelector: remoteSelector,
+				Verifier:          &committeeCvContractID,
+			})
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
+			ContractID:      committeeVvrContractID,
+			Implementations: committeeOutbound,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates for %q: %w", qualifier, err)
+		}
+
+		committeeInbound := []vvrbindings.InboundImplementationUpdate{
+			{
+				Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
+				Verifier: &committeeCvContractID,
+			},
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
+			ContractID:      committeeVvrContractID,
+			Implementations: committeeInbound,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates for %q: %w", qualifier, err)
+		}
 	}
 
 	// Signature quorum configs are deliberately NOT applied here. Since the
@@ -522,13 +677,31 @@ func RunStellarCCIPFullDeploy(
 
 	// CommitteeVerifier RemoteChainConfig.Router must be this chain's Router contract (not the deployer);
 	// router exists only after deploy + Initialize above (matches tests/integration/contract_deploy_helpers_test.go).
+	//
+	// GasForVerification is the remote family's per-CCV dest verification gas:
+	// the CV's get_fee returns it as dest_gas_limit, which the stellar OnRamp
+	// sums into every message's on-wire execution_gas_limit (contracts/onramp
+	// src/lib.rs, H-5/INV-FEE-10 block) — so a stellar-scale 10_000 for an EVM
+	// remote under-budgets exactly like a low OnRamp base_execution_gas_cost
+	// does (EVM dest Router CallWithExactGas NOT_ENOUGH_GAS_FOR_CALL,
+	// 0x37c3be29). This full deploy is the ONLY writer of the stellar CV
+	// remote configs (the lane changeset's stellar leg never touches them),
+	// so the family-appropriate value must be set here. Values mirror the
+	// chain-family adapter defaults the changeset would coalesce to: EVM
+	// 75_000 (chains/evm deployment/v2_0_0/adapters/chain_family.go
+	// GetDefaultCommitteeVerifierRemoteChainConfig), stellar 60_000
+	// (deployment/adapters/stellar_chain_family_adapter.go).
 	routerRef := routerContractID
 	remoteChainConfigs := make([]cvbindings.RemoteChainConfig, 0, len(allSelectors))
 	for _, rs := range allSelectors {
+		gasForVerification, err := cvGasForVerificationForRemote(rs)
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("gas for verification for remote %d: %w", rs, err)
+		}
 		remoteChainConfigs = append(remoteChainConfigs, cvbindings.RemoteChainConfig{
 			RemoteChainSelector: rs,
 			FeeUsdCents:         0,
-			GasForVerification:  10000,
+			GasForVerification:  gasForVerification,
 			PayloadSizeBytes:    0,
 			AllowlistEnabled:    false,
 			Router:              &routerRef,
@@ -540,16 +713,30 @@ func RunStellarCCIPFullDeploy(
 	}); err != nil {
 		return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
 	}
+	// Same configs on every non-default committee CV: quoting a message that
+	// names one of them (OnRamp get_fee → CV get_fee) errors with
+	// RemoteChainNotSupported unless the dest chain is in remote_chains.
+	for _, committeeCV := range committeeCVs {
+		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
+			ContractID: committeeCV.cvID,
+			Configs:    remoteChainConfigs,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier %q: %w", committeeCV.qualifier, err)
+		}
+	}
 
 	// No OnRamp DestChainConfig / OffRamp SourceChainConfig wiring happens here.
 	// EVM parity (and Solana parity): `DeployChainContracts` deploys and
 	// initializes only — ramp lane configs are lane-configuration-time wiring,
 	// applied with the remote chain's real ramp addresses resolved from the
-	// datastore. Stellar's lane-time wiring has two homes: the shared CLD path
+	// datastore. Stellar's lane-time wiring homes: the shared CLD path
 	// (StellarConfigureChainForLanes, invoked via the
-	// ConfigureChainsForLanesFromTopology changeset) and the devenv path (ccvchain
-	// Chain.PostConnect, ApplyDestChainConfigUpdates +
-	// ApplySourceChainCfgUpdates, datastore backed). There is no valid
+	// ConfigureChainsForLanesFromTopology changeset) owns the OnRamp dest
+	// configs, and the devenv path (ccvchain Chain.PostConnect,
+	// ApplySourceChainCfgUpdates, datastore backed) covers the OffRamp source
+	// configs. PostConnect deliberately no longer writes OnRamp dest configs —
+	// it ran after the changeset and its flat values clobbered the changeset's
+	// per-remote-family ones. There is no valid
 	// placeholder for a deploy-time provisional entry: the OffRamp rejects an
 	// all-zero onramp encoding with `ZeroAddressNotAllowed` (#808, EVM
 	// `OffRamp.applySourceChainConfigUpdates` parity), and a nonzero fake value
@@ -657,6 +844,94 @@ func RunStellarCCIPFullDeploy(
 			return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example EnableRemoteChain for source chain %d: %w", rs, err)
 		}
 	}
+
+	// --- Qualified CCIP receivers (tcapi receiver-verifier cases) ---
+	// Mirrors ccv's EVM buildMockReceivers matrix (build/devenv/evm/impl.go):
+	// each qualified instance is configured per remote source chain with the
+	// stellar-side (dest-family) VVR contract IDs of the committees it
+	// requires/allows, and the same permissive allowed-finality the EVM mock
+	// receivers get at deploy time. Multi-committee receivers deploy only when
+	// every referenced committee covers this chain. The default ("") receiver
+	// above stays as-is (its finality stays 0: the e2e FTF negative control
+	// relies on it).
+	hasCommittee := func(qualifier string) bool {
+		_, ok := stellarVvrIDs[qualifier]
+		return ok
+	}
+	qualifiedReceivers := make([]qualifiedReceiverPlan, 0, 3)
+	if hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:    stellarccip.SecondaryReceiverQualifier,
+			requiredCcvs: []string{stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier]},
+		})
+	}
+	if hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.TertiaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:         stellarccip.TertiaryReceiverQualifier,
+			requiredCcvs:      []string{stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier]},
+			optionalCcvs:      []string{stellarVvrIDs[stellarccip.TertiaryCommitteeVerifierQualifier]},
+			optionalThreshold: 1,
+		})
+	}
+	if hasCommittee(stellarccip.DefaultCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.SecondaryCommitteeVerifierQualifier) &&
+		hasCommittee(stellarccip.TertiaryCommitteeVerifierQualifier) {
+		qualifiedReceivers = append(qualifiedReceivers, qualifiedReceiverPlan{
+			qualifier:    stellarccip.QuaternaryReceiverQualifier,
+			requiredCcvs: []string{stellarVvrIDs[stellarccip.DefaultCommitteeVerifierQualifier]},
+			optionalCcvs: []string{
+				stellarVvrIDs[stellarccip.SecondaryCommitteeVerifierQualifier],
+				stellarVvrIDs[stellarccip.TertiaryCommitteeVerifierQualifier],
+			},
+			optionalThreshold: 1,
+		})
+	}
+	qualifiedFinalityRaw := finality.Config{BlockDepth: 1, WaitForSafe: true}.Raw()
+	qualifiedFinality := binary.BigEndian.Uint32(qualifiedFinalityRaw[:])
+	for _, qr := range qualifiedReceivers {
+		currentRefs, err = ds.AddressRefStore.Fetch()
+		if err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		qRecvOut, err := execComponentSequence(b, componentDeps, DeployCCIPReceiver, DeployCCIPReceiverInput{
+			ChainSelector:     selector,
+			WasmPath:          receiverWasmPath,
+			Router:            routerContractID,
+			Qualifier:         qr.qualifier,
+			ExistingAddresses: currentRefs,
+		})
+		if err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("deploy ccip_receiver_example %q: %w", qr.qualifier, err)
+		}
+		if err := upsertComponentRefs(ds, qRecvOut.Refs); err != nil {
+			return seq_core.OnChainOutput{}, err
+		}
+		for _, rs := range remoteSelectors {
+			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
+				ContractID:            qRecvOut.ContractID,
+				Caller:                ownerAddr,
+				RemoteChainSelector:   rs,
+				ExtraArgs:             placeholderExtra,
+				AllowedFinalityConfig: qualifiedFinality,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q EnableRemoteChain for source chain %d: %w", qr.qualifier, rs, err)
+			}
+			if _, err := execStellarCCIPOp(b, deps, recvops.ApplyCcvConfigUpdates, recvops.ApplyCcvConfigUpdatesInput{
+				ContractID: qRecvOut.ContractID,
+				Caller:     ownerAddr,
+				Updates: []recvbindings.CcvConfigUpdate{{
+					SourceChainSelector: rs,
+					RequiredCcvs:        qr.requiredCcvs,
+					OptionalCcvs:        qr.optionalCcvs,
+					OptionalThreshold:   qr.optionalThreshold,
+				}},
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q ApplyCcvConfigUpdates for source chain %d: %w", qr.qualifier, rs, err)
+			}
+		}
+		h.Logger().Info().Str("qualifier", qr.qualifier).Str("receiverContractID", qRecvOut.ContractID).Msg("Qualified CCIP receiver deployed and configured")
+	}
 	h.SetReceiver(receiverContractID)
 	h.Logger().Info().Str("receiverContractID", receiverContractID).Msg("CCIP receiver example deployed and initialized")
 
@@ -665,4 +940,59 @@ func RunStellarCCIPFullDeploy(
 		return seq_core.OnChainOutput{}, err
 	}
 	return seq_core.OnChainOutput{Addresses: addrs}, nil
+}
+
+// qualifiedReceiverPlan mirrors one row of ccv's EVM buildMockReceivers matrix
+// (build/devenv/evm/impl.go): a receiver instance qualified by qualifier, whose
+// per-source-chain CCV config requires requiredCcvs and allows optionalCcvs
+// with optionalThreshold of them.
+type qualifiedReceiverPlan struct {
+	qualifier         string
+	requiredCcvs      []string
+	optionalCcvs      []string
+	optionalThreshold uint32
+}
+
+// nonDefaultCommitteeQualifiers returns the sorted qualifiers of committees
+// whose chain_configs cover selector, excluding the default instance the
+// deploy above already handles. Mirrors the EVM side's committee selection in
+// ccv buildCommitteeVerifierParams (committee must have a chain_config for the
+// local chain).
+func nonDefaultCommitteeQualifiers(topology *offchain.EnvironmentTopology, selector uint64) []string {
+	if topology == nil || topology.NOPTopology == nil {
+		return nil
+	}
+	chainKey := strconv.FormatUint(selector, 10)
+	qualifiers := make([]string, 0, len(topology.NOPTopology.Committees))
+	for qualifier, committee := range topology.NOPTopology.Committees {
+		if qualifier == stellarccip.DefaultCommitteeVerifierQualifier {
+			continue
+		}
+		if _, ok := committee.ChainConfigs[chainKey]; ok {
+			qualifiers = append(qualifiers, qualifier)
+		}
+	}
+	sort.Strings(qualifiers)
+	return qualifiers
+}
+
+// nonDefaultExecutorQualifiers returns the sorted qualifiers of executor pools
+// whose chain_configs cover selector, excluding the default instance the
+// deploy above already handles.
+func nonDefaultExecutorQualifiers(topology *offchain.EnvironmentTopology, selector uint64) []string {
+	if topology == nil {
+		return nil
+	}
+	chainKey := strconv.FormatUint(selector, 10)
+	qualifiers := make([]string, 0, len(topology.ExecutorPools))
+	for qualifier, pool := range topology.ExecutorPools {
+		if qualifier == stellarccip.DefaultExecutorQualifier {
+			continue
+		}
+		if _, ok := pool.ChainConfigs[chainKey]; ok {
+			qualifiers = append(qualifiers, qualifier)
+		}
+	}
+	sort.Strings(qualifiers)
+	return qualifiers
 }

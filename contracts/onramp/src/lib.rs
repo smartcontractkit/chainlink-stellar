@@ -1039,7 +1039,11 @@ impl OnRampContract {
                 &extra_args.executor,
             ),
             onramp_address: env.current_contract_address().to_xdr(&env),
-            offramp_address: dest_config.off_ramp.clone().to_xdr(&env),
+            // Dest-side addresses travel raw (dest-chain byte width, no XDR
+            // envelope): the dest OffRamp matches this field against its own
+            // address bytes (EVM requires exactly 20, Stellar the raw 32-byte
+            // contract ID), same as `receiver` below.
+            offramp_address: dest_config.off_ramp.clone(),
             sender: original_sender.clone().to_xdr(&env),
             receiver: message.receiver.clone(),
             dest_blob: Bytes::new(&env),

@@ -201,16 +201,15 @@ func isSourceSignersNotConfigured(err error) bool {
 // simulation diagnostics the RPC client surfaces.
 const sourceSignersNotConfiguredCode = "Error(Contract, #19)"
 
-// SetAllowedFinalityConfig is a no-op for Stellar.
+// SetAllowedFinalityConfig sets the verifier-global allowed-finality config on the
+// Soroban committee_verifier (EVM `BaseVerifier.setAllowedFinalityConfig` parity). The
+// contract gates get_fee on the stored config (InvalidRequestedFinality, #315), so the
+// value must actually be written — this replaced an earlier no-op recorded before the
+// contract gained set_allowed_finality_config (M-9 / INV-FIN-CCV-1/2).
 //
-// The Soroban committee_verifier has no allowed-finality gate — set_allowed_finality_config
-// exists only on the token pools (contracts/common/pool), and the verifier stores no finality
-// state. Stellar ledgers are final on close, so every requested finality level is already
-// accepted and the caller's request is already satisfied; recording that as a no-op is
-// accurate, and returning an error instead would block mixed-family
-// SetAllowedFinalityConfig runs for no on-chain benefit.
-//
-// If the contract ever gains set_allowed_finality_config, wire it here.
+// The encoding mirrors chainlink-ccip deployment/finality Config.Raw: the safe flag
+// occupies bit 16 and the block depth the lower 16 bits; waitForFinality contributes
+// no bits (the zero value is wait-for-finality).
 func (a *StellarCCVCommitteeVerifierOnchainAdapter) SetAllowedFinalityConfig(
 	ctx context.Context,
 	env deployment.Environment,
@@ -220,16 +219,51 @@ func (a *StellarCCVCommitteeVerifierOnchainAdapter) SetAllowedFinalityConfig(
 	waitForSafe bool,
 	blockDepth uint16,
 ) error {
-	env.Logger.Infow(
-		"Stellar committee verifier has no allowed-finality config; treating request as satisfied",
-		"chainSelector", chainSelector,
-		"qualifier", qualifier,
-		"waitForFinality", waitForFinality,
-		"waitForSafe", waitForSafe,
-		"blockDepth", blockDepth,
+	_ = waitForFinality // contributes no bits; see the comment above.
+	refs := env.DataStore.Addresses().Filter(
+		datastore.AddressRefByType(datastore.ContractType(committee_verifier.ContractType)),
+		datastore.AddressRefByChainSelector(chainSelector),
+		datastore.AddressRefByQualifier(qualifier),
 	)
+	if len(refs) == 0 {
+		return fmt.Errorf("no CommitteeVerifier found for chain %d qualifier %q", chainSelector, qualifier)
+	}
+	if len(refs) > 1 {
+		return fmt.Errorf("multiple CommitteeVerifiers found for chain %d qualifier %q", chainSelector, qualifier)
+	}
+
+	stellarChains := env.BlockChains.StellarChains()
+	chain, ok := stellarChains[chainSelector]
+	if !ok {
+		return fmt.Errorf("Stellar chain %d not found in environment", chainSelector)
+	}
+	if chain.Signer == nil {
+		return fmt.Errorf("Stellar chain %d has no signer configured", chainSelector)
+	}
+
+	contractID, err := scval.HexToContractStrkey(refs[0].Address)
+	if err != nil {
+		return fmt.Errorf("convert address %s to Stellar contract ID: %w", refs[0].Address, err)
+	}
+
+	deployer := stellardeployment.NewDeployerWithSigner(
+		chain.Client, chain.NetworkPassphrase, stellardeployment.NewSDKSigner(chain.Signer))
+	client := ccvbindings.NewCommitteeVerifierClient(deployer, contractID)
+
+	var allowedFinality uint32
+	if waitForSafe {
+		allowedFinality |= finalitySafeFlagBit
+	}
+	allowedFinality |= uint32(blockDepth)
+	if err := client.SetAllowedFinalityConfig(ctx, allowedFinality); err != nil {
+		return fmt.Errorf("set_allowed_finality_config on chain %d: %w", chainSelector, err)
+	}
 	return nil
 }
+
+// finalitySafeFlagBit is the FinalityCodec.sol wait-for-safe flag (bit 16), the only
+// flag bit the raw allowed-finality encoding carries today.
+const finalitySafeFlagBit uint32 = 1 << 16
 
 // ApplyAllowlistUpdates updates the per-destination-chain sender allowlist on the Soroban
 // committee_verifier.

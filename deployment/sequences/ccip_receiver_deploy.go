@@ -13,11 +13,16 @@ import (
 // DeployCCIPReceiverInput deploys and initializes the ccip_receiver_example
 // contract (the 12th component; devenv needs it). Router is a required input.
 // Enabling remote chains is a config op and stays with the orchestrator.
+// Qualifier deploys an additional receiver instance recorded under that
+// qualifier (empty keeps the original instance); the deploy salt and
+// idempotency key are suffixed with it so each instance lands at its own
+// deterministic contract ID.
 type DeployCCIPReceiverInput struct {
 	ChainSelector     uint64                 `json:"chainSelector"`
 	Owner             string                 `json:"owner,omitempty"`
 	WasmPath          string                 `json:"wasmPath"`
 	Router            string                 `json:"router"`
+	Qualifier         string                 `json:"qualifier,omitempty"`
 	ExistingAddresses []datastore.AddressRef `json:"existingAddresses,omitempty"`
 }
 
@@ -34,13 +39,14 @@ var DeployCCIPReceiver = cldf_ops.NewSequence(
 			return ComponentDeployOutput{}, fmt.Errorf("router is required: deploy Router first")
 		}
 		return deployAndInitialize(b.GetContext(), b, deps, recvops.Deploy,
-			stellarccip.CCIPReceiverDatastoreRef(), in.ChainSelector, "ccip-receiver-example", in.WasmPath, owner, in.ExistingAddresses,
+			stellarccip.CCIPReceiverDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector,
+			componentSaltLabel("ccip-receiver-example", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
 			func(contractID string) error {
 				_, err := execStellarCCIPOp(b, deps.StellarDeps, recvops.Initialize, recvops.InitializeInput{
 					ContractID: contractID,
 					Owner:      owner,
 					Router:     in.Router,
-				}, withComponentIdempotencyKey[recvops.InitializeInput](in.ChainSelector))
+				}, withComponentInstanceIdempotencyKey[recvops.InitializeInput](in.ChainSelector, in.Qualifier))
 				return err
 			})
 	},

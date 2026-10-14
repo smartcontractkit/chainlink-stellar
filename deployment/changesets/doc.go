@@ -36,7 +36,9 @@
 // the key that signs the deploy. Owner defaults to that signer address (the
 // configs accept another owner for custom workflows). These changesets never
 // transfer ownership or emit MCMS proposals; ownership moves later through
-// the transfer-ownership changesets.
+// the transfer-ownership changesets. The exception is ActivateRMN, which hands
+// an already-deployed RMN Remote to the RMNMCMS timelock and emits the
+// accept_ownership proposal.
 //
 // Rerun safety comes from the component sequences' three-layer skip
 // (datastore ref, predicted contract ID + WASM hash, owner()): re-applying an

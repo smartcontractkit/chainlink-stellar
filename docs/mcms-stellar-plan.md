@@ -53,7 +53,7 @@ Soroban separates **where** data lives and **how long** it stays live before it 
 | **Persistent** | Arbitrary key/value contract data; **each key** is its own ledger entry with its own TTL | MCMS: config, maps, root state, `MIN_SPL`, and **every replay-protection key**. Timelock: role map, blocked selectors, **every operation timestamp**. |
 | **Temporary** | Ledger-scoped; not used | **Neither** MCMS nor timelock uses `temporary()` storage in the shipped logic. |
 
-**TTL (`extend_ttl`):** Both crates call `extend_ttl(LEDGER_THRESHOLD, LEDGER_BUMP)` with shared numeric intent ([`constants.rs`](../contracts/mcms/src/constants.rs) for MCMS; [`storage.rs`](../contracts/timelock/src/storage.rs) for timelock — same threshold/bump pattern). Roughly: when a bucket’s remaining TTL (in **ledgers**) falls below **`LEDGER_THRESHOLD`** (~1 week at ~5 s/ledger), proactively bump remaining TTL toward **`LEDGER_BUMP`** (~1 year at that cadence). Exact wall-clock time depends on network congestion and seconds-per-ledger; MCMS exposes **`min_secs_per_ledger`** precisely to reason about **seconds** for policy caps.
+**TTL (`extend_ttl`):** Both crates extend with `LEDGER_THRESHOLD` and the network maximum `env.storage().max_ttl()` ([`constants.rs`](../contracts/mcms/src/constants.rs) for MCMS; [`storage.rs`](../contracts/timelock/src/storage.rs) for timelock — same pattern). When an entry’s remaining TTL (in **ledgers**) falls below **`LEDGER_THRESHOLD`** (~1 week at ~5 s/ledger), it is extended to the network maximum. Only the instance entry and data keys are extended, never the code entry: code rent scales with module size, so the caller who crosses the threshold would pay a large fee. Ops tooling keeps the shared code entry alive. Exact wall-clock time depends on network congestion and seconds-per-ledger; MCMS exposes **`min_secs_per_ledger`** precisely to reason about **seconds** for policy caps.
 
 **Archival vs deletion:** If an entry’s TTL is not extended and expires, the entry becomes **archived**. Archived entries are **not readable** by normal contract logic (`has` / `get` behave like missing). There is **no** Soroban host `restore` inside guest code — only ledger-level **`RestoreFootprintOp`** (with footprint + rent) brings archived entries back.
 
@@ -134,7 +134,7 @@ When **`set_root`** accepts a new root, it computes:
 1. `inner = hash_set_root_inner(root, validUntil)`
 2. `signedHash = eth_signed_message_hash_32(inner)` (EIP-191 over the 32-byte `inner`)
 
-It then **`persistent().has(&signedHash)`** before verifying signatures; after success it **`persistent().set(&signedHash, &true)`** and **`persistent().extend_ttl(&signedHash, LEDGER_THRESHOLD, LEDGER_BUMP)`** once ([`lib.rs`](../contracts/mcms/src/lib.rs)).
+It then **`persistent().has(&signedHash)`** before verifying signatures; after success it **`persistent().set(&signedHash, &true)`** and **`persistent().extend_ttl(&signedHash, LEDGER_THRESHOLD, max_ttl())`** once ([`lib.rs`](../contracts/mcms/src/lib.rs)).
 
 **Why persistent, not instance:** Each distinct governance signing session produces a distinct `signedHash`; the set grows with history. Instance storage is not suited for unbounded distinct keys.
 
@@ -228,11 +228,11 @@ id = keccak256(n_calls_as_uint256_be || call_hash_0 || … || call_hash_n || pre
 
 #### TTL behavior
 
-**Instance + fixed persistent bucket:** [`bump_ttls`](../contracts/timelock/src/storage.rs) calls **`instance().extend_ttl(LEDGER_THRESHOLD, LEDGER_BUMP)`** and, if present, extends **`ROLES_KEY`** and **`BLK_SEL`** persistent entries the same way. **[`extend_all_ttls`](../contracts/timelock/src/lib.rs)** is permissionless and simply invokes `bump_ttls`.
+**Instance + fixed persistent bucket:** [`bump_ttls`](../contracts/timelock/src/storage.rs) calls **`deployer().extend_ttl_for_contract_instance(self, LEDGER_THRESHOLD, max_ttl())`** (instance only, never the code entry) and, if present, extends **`ROLES_KEY`** and **`BLK_SEL`** persistent entries the same way. **[`extend_all_ttls`](../contracts/timelock/src/lib.rs)** is permissionless and simply invokes `bump_ttls`.
 
 **Per-operation entries (`OpTime`):**
 
-- **`set_op_timestamp` / `get_op_timestamp`:** On access, if the entry exists, the contract **`extend_ttl`** that specific persistent key (`LEDGER_THRESHOLD`, `LEDGER_BUMP`) so normal scheduling / execution / queries keep hot ids alive.
+- **`set_op_timestamp` / `get_op_timestamp`:** On access, if the entry exists, the contract **`extend_ttl`** that specific persistent key (`LEDGER_THRESHOLD`, `max_ttl()`) so normal scheduling / execution / queries keep hot ids alive.
 - **Not swept globally:** There is **no** loop over all operation ids — same pattern as MCMS replay keys.
 - **Deletion:** **`delete_op_timestamp`** removes the persistent entry (e.g. cancel path) — distinct from archival.
 

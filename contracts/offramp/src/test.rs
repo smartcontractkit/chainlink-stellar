@@ -571,6 +571,33 @@ fn test_execute_message_already_in_progress() {
 }
 
 #[test]
+fn test_execute_extends_instance_ttl_but_not_code() {
+    use soroban_sdk::testutils::Deployer as _;
+
+    let (env, client) = setup_initialized_offramp_for_execute();
+    let router = Address::generate(&env);
+    let default_ccv = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
+    let encoded = valid_execute_message(&env, &client.address, onramp)
+        .to_bytes(&env)
+        .unwrap();
+    let code_ttl_before = env.deployer().get_contract_code_ttl(&client.address);
+    assert!(code_ttl_before < 518_400);
+
+    client.execute(&encoded, &Vec::new(&env), &Vec::new(&env), &0u32);
+
+    assert_eq!(
+        env.deployer().get_contract_instance_ttl(&client.address),
+        3_110_400
+    );
+    assert_eq!(
+        env.deployer().get_contract_code_ttl(&client.address),
+        code_ttl_before
+    );
+}
+
+#[test]
 fn test_execute_reexecute_after_failure_succeeds() {
     let (env, client) = setup_initialized_offramp_for_execute();
 

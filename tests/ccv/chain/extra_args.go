@@ -82,7 +82,7 @@ func EncodeStellarSourceExtraArgsForOnRamp(vvrContractID string, opts cciptestin
 		ExecutorArgs:       append([]byte(nil), opts.ExecutorArgs...),
 		GasLimit:           opts.ExecutionGasLimit,
 		TokenArgs:          append([]byte(nil), opts.TokenArgs...),
-		TokenReceiver:      nil,
+		TokenReceiver:      append([]byte(nil), opts.TokenReceiver...),
 	}
 	return common.EncodeExtraArgsV3(v3)
 }

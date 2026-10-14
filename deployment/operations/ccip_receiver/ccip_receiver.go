@@ -57,6 +57,28 @@ var EnableRemoteChain = cldfops.NewOperation(
 	},
 )
 
+// ApplyCcvConfigUpdatesInput sets the receiver's per-source-chain CCV
+// consultation config (required/optional CCV verifiers and optional threshold).
+type ApplyCcvConfigUpdatesInput struct {
+	ContractID string                         `json:"contract_id"`
+	Caller     string                         `json:"caller"`
+	Updates    []recvbindings.CcvConfigUpdate `json:"updates"`
+}
+
+// ApplyCcvConfigUpdates calls `apply_ccv_config_updates` (owner-gated).
+var ApplyCcvConfigUpdates = cldfops.NewOperation(
+	"ccip-receiver:apply-ccv-config-updates",
+	stellarops.ContractDeploymentVersion,
+	"Sets the CCIP receiver's per-source-chain required/optional CCV config",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyCcvConfigUpdatesInput) (stellarops.Void, error) {
+		c := recvbindings.NewExampleCcipReceiverClient(d.Invoker, in.ContractID)
+		if err := c.ApplyCcvConfigUpdates(b.GetContext(), in.Caller, in.Updates); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
 // TransferOwnershipInput starts two-step ownership transfer.
 type TransferOwnershipInput struct {
 	ContractID string `json:"contract_id"`
