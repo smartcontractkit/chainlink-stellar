@@ -1188,3 +1188,76 @@ func TestStellarTxm_BroadcastPipeline_RejectsUntrustedMinResourceFee(t *testing.
 		})
 	}
 }
+
+func TestStellarTxm_BroadcastPipeline_InsufficientFeeBidsWhatCoreAsksFor(t *testing.T) {
+	t.Parallel()
+
+	const resourceFee = 10000 + 5000 // MinResourceFee + ResourceFeeBuffer
+	const requiredInclusion = 5_001
+	insufficientFee, err := xdr.MarshalBase64(xdr.TransactionResult{
+		FeeCharged: resourceFee + requiredInclusion,
+		Result:     xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxInsufficientFee},
+	})
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var sent []string
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp: protocolrpc.SimulateTransactionResponse{
+			MinResourceFee:     10000,
+			TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+		},
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			sent = append(sent, req.Transaction)
+			if len(sent) == 1 {
+				return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insufficientFee}, nil
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{
+		ResourceFeeBuffer: ptr(int64(5000)),
+		SubmitRetryDelay:  clconfig.MustNewDuration(time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		require.NoError(t, err)
+		return status == commontypes.Unconfirmed
+	}, 5*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, sent, 2)
+	assert.Equal(t, int64(100), envelopeInclusionFee(t, sent[0]))
+	assert.Equal(t, int64(requiredInclusion), envelopeInclusionFee(t, sent[1]),
+		"retry should bid the inclusion fee stellar-core reported, not just BumpMultiplier x the rejected bid")
+}

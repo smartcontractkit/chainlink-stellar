@@ -42,10 +42,41 @@ func Test_parseSubmitErrorResult(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		code, ok := parseSubmitErrorResult(b64)
+		txResult, ok := parseSubmitErrorResult(b64)
 		require.True(t, ok)
-		assert.Equal(t, xdr.TransactionResultCodeTxBadSeq, code)
+		assert.Equal(t, xdr.TransactionResultCodeTxBadSeq, txResult.Result.Code)
 	})
+}
+
+func Test_requiredInclusionFee(t *testing.T) {
+	t.Parallel()
+
+	insufficientFee := func(feeCharged int64) string {
+		b64, err := xdr.MarshalBase64(xdr.TransactionResult{
+			FeeCharged: xdr.Int64(feeCharged),
+			Result:     xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxInsufficientFee},
+		})
+		require.NoError(t, err)
+		return b64
+	}
+
+	tests := []struct {
+		name           string
+		errorResultXDR string
+		resourceFee    int64
+		want           uint64
+	}{
+		{"fee charged minus declared resource fee", insufficientFee(25_001), 20_000, 5_001},
+		{"fee charged not above resource fee", insufficientFee(20_000), 20_000, 0},
+		{"no fee charged", insufficientFee(0), 20_000, 0},
+		{"undecodable result", "not-valid-xdr-!!!", 20_000, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, requiredInclusionFee(tt.errorResultXDR, tt.resourceFee))
+		})
+	}
 }
 
 func TestStellarTxm_handleSendResult(t *testing.T) {

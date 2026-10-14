@@ -55,7 +55,7 @@ type TxManagerConfig struct {
 	RestoreFeeBuffer  *int64   `toml:"RestoreFeeBuffer"`
 	MaxResourceFee *int64 `toml:"MaxResourceFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
-	// Soroban inclusion fee P50/P90 in the feeTracker; back-to-back broadcasts reuse values.
+	// Soroban inclusion fee P50/P90/P99 in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
 

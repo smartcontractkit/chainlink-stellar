@@ -651,23 +651,31 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	// Seed inclusion fee from live network data (P50 first broadcast, P90 rebroadcasts),
-	// via feeTracker to cap GetFeeStats RPC rate.
-	// SeedInclusionFee caps the result at MaxInclusionFee
+	// Seed inclusion fee from live network data (P50 first broadcast, P99 rebroadcasts),
+	// via feeTracker to cap GetFeeStats RPC rate. A rebroadcast also outbids the previous
+	// envelope, which was not included at its bid.
+	// SeedInclusionFee and RebroadcastInclusionFee cap the result at MaxInclusionFee
 	var networkPercentile uint64
-	if p50, p90, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
+	if fees, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
 		if currentAttempt > 0 {
-			networkPercentile = p90
+			networkPercentile = fees.p99
 		} else {
-			networkPercentile = p50
+			networkPercentile = fees.p50
 		}
 	} else {
 		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
 	}
-	inclusionFee, clampedToMax := s.feeStrat.SeedInclusionFee(currentAttempt, networkPercentile)
+	var inclusionFee int64
+	var clampedToMax bool
+	if currentAttempt > 0 {
+		inclusionFee, clampedToMax = s.feeStrat.RebroadcastInclusionFee(currentAttempt, tx.InclusionFee, networkPercentile)
+	} else {
+		inclusionFee, clampedToMax = s.feeStrat.SeedInclusionFee(currentAttempt, networkPercentile)
+	}
 	if clampedToMax {
 		ctxLogger.Warnw("seeded inclusion fee clamped to MaxInclusionFee — possible misbehaving RPC",
 			"networkPercentile", networkPercentile,
+			"previousInclusionFee", tx.InclusionFee,
 			"maxInclusionFee", s.feeStrat.MaxInclusionFee,
 			"attempt", currentAttempt,
 		)
@@ -773,6 +781,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime, localHash)
 		if accepted {
 			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", localHash)
+			tx.InclusionFee = inclusionFee
 			s.markBroadcastAt(tx)
 			s.metrics.IncrementBroadcastedTxs(ctx)
 			s.updateTransactionStatus(tx, commontypes.Unconfirmed)
@@ -809,18 +818,21 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		if retryReason == ErrorReasonInsufficientFee {
 			var networkP90 uint64
-			if _, p90, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
-				networkP90 = p90
+			if fees, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
+				networkP90 = fees.p90
 			}
-			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, networkP90)
+			required := requiredInclusionFee(submitResult.ErrorResultXDR, resourceFee)
+			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, max(networkP90, required))
 			if clampedToMax {
 				ctxLogger.Warnw("bumped inclusion fee clamped to MaxInclusionFee — possible misbehaving RPC",
 					"networkPercentile", networkP90,
+					"requiredInclusionFee", required,
 					"maxInclusionFee", s.feeStrat.MaxInclusionFee,
 				)
 			}
 			ctxLogger.Warnw("tx rejected, bumping inclusion fee and retrying",
-				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped)
+				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped,
+				"requiredInclusionFee", required)
 			inclusionFee = bumped
 			submitAttempt++
 			select {

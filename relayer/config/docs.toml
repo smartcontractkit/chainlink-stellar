@@ -23,7 +23,7 @@ FeeBumpMultiplier = 1.5 # Default
 ResourceFeeBuffer = 15000 # Default
 # RestoreFeeBuffer is the flat buffer (in stroops) added to the preamble MinResourceFee for RestoreFootprint transactions.
 RestoreFeeBuffer = 10000 # Default
-# FeeStatsPollInterval controls how often GetFeeStats is called to refresh Soroban inclusion fee P50/P90 in the feeTracker. Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
+# FeeStatsPollInterval controls how often GetFeeStats is called to refresh Soroban inclusion fee P50/P90/P99 in the feeTracker. Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 FeeStatsPollInterval = '5s' # Default
 # MaxSimulateAttempts is the maximum number of SimulateTransaction attempts before treating the failure as terminal.
 MaxSimulateAttempts = 3 # Default
