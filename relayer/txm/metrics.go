@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -74,8 +75,8 @@ var (
 
 // TxmMetrics is the metrics contract for the Stellar TXM transaction lifecycle.
 type TxmMetrics interface {
-	IncrementBroadcastedTxs(context.Context)
-	IncrementSuccessTxs(context.Context)
+	IncrementBroadcastedTxs(ctx context.Context, attempt uint64)
+	IncrementSuccessTxs(ctx context.Context, attempt uint64)
 	SetPendingTxs(context.Context, int)
 	IncrementErrorTxs(context.Context, ErrorReason)
 	IncrementRetryTxs(context.Context, RetryReason)
@@ -85,6 +86,7 @@ type TxmMetrics interface {
 	ObserveSimulationDuration(context.Context, int64)
 	ObserveInclusionFee(context.Context, int64)
 	ObserveResourceFee(context.Context, int64)
+	ObserveRPCHeadLag(ctx context.Context, ledgers int64)
 	RecordTimeUntilTxConfirmed(context.Context, float64)
 }
 
@@ -105,6 +107,7 @@ type stellarTxmMetrics struct {
 	simDuration  metric.Int64Histogram
 	feeInclusion metric.Int64Histogram
 	feeResource  metric.Int64Histogram
+	rpcHeadLag   metric.Int64Histogram
 }
 
 func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
@@ -168,6 +171,13 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_fee_resource_stroops: %w", err))
 	}
 
+	rpcHeadLag, err := meter.Int64Histogram("stellar_txm_rpc_head_lag_ledgers",
+		metric.WithExplicitBucketBoundaries(0, 1, 2, 3, 5, 10, 20),
+	)
+	if err != nil {
+		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_rpc_head_lag_ledgers: %w", err))
+	}
+
 	if initErr != nil {
 		lggr.Errorw("Failed to initialize Stellar TXM metrics; using noop metrics", "err", initErr)
 		return NewNoopStellarTxmMetrics()
@@ -188,6 +198,7 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 		simDuration:  simDuration,
 		feeInclusion: feeInclusion,
 		feeResource:  feeResource,
+		rpcHeadLag:   rpcHeadLag,
 	}
 }
 
@@ -201,14 +212,26 @@ func (m *stellarTxmMetrics) getOtelAttributes() []attribute.KeyValue {
 
 // --- Transaction lifecycle metrics ---
 
-func (m *stellarTxmMetrics) IncrementBroadcastedTxs(ctx context.Context) {
+// IncrementBroadcastedTxs and IncrementSuccessTxs share the attempt attribute so the landing rate
+// of each broadcast attempt is success{attempt} / broadcasted{attempt}.
+func (m *stellarTxmMetrics) IncrementBroadcastedTxs(ctx context.Context, attempt uint64) {
 	promStellarTxmBroadcastedTxs.WithLabelValues(m.chainID).Add(1)
-	m.broadcastedTxs.Add(ctx, 1, metric.WithAttributes(m.getOtelAttributes()...))
+	m.broadcastedTxs.Add(ctx, 1, metric.WithAttributes(m.attemptAttributes(attempt)...))
 }
 
-func (m *stellarTxmMetrics) IncrementSuccessTxs(ctx context.Context) {
+func (m *stellarTxmMetrics) IncrementSuccessTxs(ctx context.Context, attempt uint64) {
 	promStellarTxmSuccessTxs.WithLabelValues(m.chainID).Add(1)
-	m.successTxs.Add(ctx, 1, metric.WithAttributes(m.getOtelAttributes()...))
+	m.successTxs.Add(ctx, 1, metric.WithAttributes(m.attemptAttributes(attempt)...))
+}
+
+const maxAttemptLabel = 3
+
+func (m *stellarTxmMetrics) attemptAttributes(attempt uint64) []attribute.KeyValue {
+	label := strconv.FormatUint(attempt, 10)
+	if attempt >= maxAttemptLabel {
+		label = strconv.Itoa(maxAttemptLabel) + "+"
+	}
+	return append(m.getOtelAttributes(), attribute.String("attempt", label))
 }
 
 func (m *stellarTxmMetrics) SetPendingTxs(ctx context.Context, count int) {
@@ -278,11 +301,15 @@ func (m *stellarTxmMetrics) ObserveResourceFee(ctx context.Context, stroops int6
 	m.feeResource.Record(ctx, stroops, metric.WithAttributes(m.getOtelAttributes()...))
 }
 
+func (m *stellarTxmMetrics) ObserveRPCHeadLag(ctx context.Context, ledgers int64) {
+	m.rpcHeadLag.Record(ctx, ledgers, metric.WithAttributes(m.getOtelAttributes()...))
+}
+
 type noopStellarTxmMetrics struct{}
 
-func (noopStellarTxmMetrics) IncrementBroadcastedTxs(context.Context) {}
+func (noopStellarTxmMetrics) IncrementBroadcastedTxs(context.Context, uint64) {}
 
-func (noopStellarTxmMetrics) IncrementSuccessTxs(context.Context) {}
+func (noopStellarTxmMetrics) IncrementSuccessTxs(context.Context, uint64) {}
 
 func (noopStellarTxmMetrics) SetPendingTxs(context.Context, int) {}
 
@@ -301,5 +328,7 @@ func (noopStellarTxmMetrics) ObserveSimulationDuration(context.Context, int64) {
 func (noopStellarTxmMetrics) ObserveInclusionFee(context.Context, int64) {}
 
 func (noopStellarTxmMetrics) ObserveResourceFee(context.Context, int64) {}
+
+func (noopStellarTxmMetrics) ObserveRPCHeadLag(context.Context, int64) {}
 
 func (noopStellarTxmMetrics) RecordTimeUntilTxConfirmed(context.Context, float64) {}
