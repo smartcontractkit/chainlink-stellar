@@ -841,7 +841,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			}
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error) and tx_too_late past
+		// Other retryable errors (e.g. try_again_later, tx_internal_error, tx_too_late) and tx_too_late past
 		// the immediate retries (the RPC keeps lagging the validating node): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
