@@ -1654,3 +1654,180 @@ fn test_upgrade_by_non_owner_rejected() {
     let hash = BytesN::<32>::from_array(&env, &[0u8; 32]);
     client.upgrade(&hash);
 }
+
+// ===========================================================================
+// extend_contract_ttls
+// ===========================================================================
+
+const EXTEND_TO: u32 = 500_000;
+
+fn encode_extend_contract_ttls_args(
+    env: &Env,
+    contracts: SorobanVec<Address>,
+    extend_to: u32,
+) -> Bytes {
+    let mut v: SorobanVec<Val> = SorobanVec::new(env);
+    v.push_back(contracts.into_val(env));
+    v.push_back(extend_to.into_val(env));
+    v.to_xdr(env)
+}
+
+fn assert_ttls(env: &Env, contract: &Address, expected: u32) {
+    use soroban_sdk::testutils::Deployer as _;
+    assert_eq!(env.deployer().get_contract_instance_ttl(contract), expected);
+    assert_eq!(env.deployer().get_contract_code_ttl(contract), expected);
+}
+
+#[test]
+fn test_extend_contract_ttls_without_auth_extends_instance_and_code() {
+    use soroban_sdk::testutils::Deployer as _;
+
+    let env = Env::default();
+    env.mock_auths(&[]);
+    let client = register_client(&env);
+    let ping = env.register(ExecPingMock, ());
+    let failure = env.register(ExecFailureMock, ());
+    assert!(env.deployer().get_contract_instance_ttl(&ping) < EXTEND_TO);
+    assert!(env.deployer().get_contract_code_ttl(&ping) < EXTEND_TO);
+
+    client.extend_contract_ttls(
+        &SorobanVec::from_array(&env, [ping.clone(), failure.clone()]),
+        &EXTEND_TO,
+    );
+
+    assert_ttls(&env, &ping, EXTEND_TO);
+    assert_ttls(&env, &failure, EXTEND_TO);
+
+    // An entry already above `extend_to` is left as is.
+    client.extend_contract_ttls(&SorobanVec::from_array(&env, [ping.clone()]), &1_000);
+    assert_ttls(&env, &ping, EXTEND_TO);
+}
+
+#[test]
+fn test_extend_contract_ttls_rejects_account_address() {
+    let env = Env::default();
+    let client = register_client(&env);
+    let account = Address::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
+    assert_eq!(
+        client.try_extend_contract_ttls(&SorobanVec::from_array(&env, [account]), &EXTEND_TO),
+        Err(Ok(McmsError::InvalidTarget))
+    );
+}
+
+/// A timelock batch that targets the MCMS reaches `extend_contract_ttls` (no re-entry).
+#[test]
+fn test_extend_contract_ttls_via_timelock_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 2_000);
+
+    let client = register_client(&env);
+    initialize_default(
+        &env,
+        &client,
+        &Address::generate(&env),
+        &zero_chain_id(&env),
+    );
+    let proposer = Address::generate(&env);
+    let tl_client = register_timelock(&env);
+    tl_client.initialize(
+        &100u64,
+        &SorobanVec::from_array(&env, [proposer.clone()]),
+        &SorobanVec::from_array(&env, [Address::generate(&env)]),
+        &SorobanVec::from_array(&env, [Address::generate(&env)]),
+    );
+
+    let ping = env.register(ExecPingMock, ());
+    let calls = Calls {
+        inner: SorobanVec::from_array(
+            &env,
+            [Call {
+                target: client.address.clone(),
+                function: Symbol::new(&env, "extend_contract_ttls"),
+                args_xdr: encode_extend_contract_ttls_args(
+                    &env,
+                    SorobanVec::from_array(&env, [ping.clone()]),
+                    EXTEND_TO,
+                ),
+            }],
+        ),
+    };
+    let pred = zero_bytes32(&env);
+    let salt = salt_byte(&env, 7);
+    tl_client.schedule_batch(&proposer, &calls, &pred, &salt, &100u64);
+    env.ledger().with_mut(|li| li.timestamp = 2_100);
+    tl_client.execute_batch(&calls, &pred, &salt);
+
+    assert_ttls(&env, &ping, EXTEND_TO);
+}
+
+/// The MCMS cannot run `extend_contract_ttls` on itself through `execute`: Soroban forbids
+/// re-entry, so the call aborts and the nonce is not consumed.
+#[test]
+fn test_extend_contract_ttls_via_own_execute_aborts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    client.initialize(
+        &Address::generate(&env),
+        &chain,
+        &SignerAddresses {
+            inner: SorobanVec::from_array(&env, [padded_eth_address(&env, &sk)]),
+        },
+        &SignerGroups {
+            inner: SorobanVec::from_array(&env, [0u32]),
+        },
+        &one_of_one_quorum(&env),
+        &all_zero_parents(&env),
+        &test_label(&env),
+    );
+
+    let ping = env.register(ExecPingMock, ());
+    let mut payload: SorobanVec<Val> = SorobanVec::new(&env);
+    payload.push_back(Symbol::new(&env, "extend_contract_ttls").into_val(&env));
+    payload.push_back(SorobanVec::from_array(&env, [ping]).into_val(&env));
+    payload.push_back(EXTEND_TO.into_val(&env));
+    let metadata = build_metadata(chain.clone(), client.address.clone(), 0, 1, false, 1);
+    let op = build_operation(
+        &env,
+        chain,
+        client.address.clone(),
+        0,
+        client.address.clone(),
+        payload.to_xdr(&env),
+    );
+    let leaves = Vec::from([
+        hash_root_metadata(&env, &metadata).unwrap(),
+        hash_stellar_op(&env, &op).unwrap(),
+    ]);
+    let root = merkle_root_native(&env, &leaves);
+    let valid_until = 2_000_000u32;
+    let signed = eth_signed_message_hash_32(&env, &hash_set_root_inner(&env, &root, valid_until));
+    client.set_root(
+        &root,
+        &valid_until,
+        &metadata,
+        &MerkleProof {
+            inner: compute_proof_for_leaf(&env, leaves.clone(), 0),
+        },
+        &signature_vec_single(&env, &sk, &signed),
+    );
+
+    assert_eq!(
+        client.try_execute(
+            &op,
+            &MerkleProof {
+                inner: compute_proof_for_leaf(&env, leaves, 1),
+            },
+        ),
+        Err(Ok(McmsError::CallAborted))
+    );
+    assert_eq!(client.get_op_count(), 0);
+}

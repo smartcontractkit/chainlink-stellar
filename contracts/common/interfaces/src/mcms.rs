@@ -50,6 +50,11 @@ pub trait McmsInterface {
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
+    fn extend_contract_ttls(
+        env: soroban_sdk::Env,
+        contracts: soroban_sdk::Vec<soroban_sdk::Address>,
+        extend_to: u32,
+    ) -> Result<(), McmsError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]
