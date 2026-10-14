@@ -25,11 +25,13 @@ type StellarSendOptions struct{}
 func (StellarSendOptions) IsSendOption() {}
 
 var (
-	_ cciptestinterfaces.ChainAsSource        = (*Chain)(nil)
-	_ cciptestinterfaces.ChainAsDestination   = (*Chain)(nil)
-	_ cciptestinterfaces.MessageV3Destination = (*Chain)(nil)
-	_ cciptestinterfaces.MessageV3Source      = (*Chain)(nil)
-	_ cciptestinterfaces.V3Source             = (*Chain)(nil)
+	_ cciptestinterfaces.ChainAsSource             = (*Chain)(nil)
+	_ cciptestinterfaces.ChainAsDestination        = (*Chain)(nil)
+	_ cciptestinterfaces.MessageV3Destination      = (*Chain)(nil)
+	_ cciptestinterfaces.MessageV3Source           = (*Chain)(nil)
+	_ cciptestinterfaces.V3Source                  = (*Chain)(nil)
+	_ cciptestinterfaces.MessageOverheadProvider   = (*Chain)(nil)
+	_ cciptestinterfaces.ExecutionGasLimitProvider = (*Chain)(nil)
 )
 
 // BuildV3ExtraArgs implements cciptestinterfaces.MessageV3Source: merges the

@@ -16,7 +16,8 @@ import (
 
 // TestStellarToEVMTCAPI runs the chain-agnostic tcapi basic cases that pass on
 // the EVM→Stellar lane (default verifier, safe-tag finality, secondary
-// committee, custom executor, and the five receiver-verifier cases against the
+// committee, custom executor, max data size, and the five receiver-verifier
+// cases against the
 // EVM-side per-qualifier mock receivers) on the Stellar→EVM lane — the reverse
 // of TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The
 // cases resolve CCV/executor from the SOURCE-side (Stellar) resolver and encode
@@ -64,8 +65,9 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	t.Run("extra args v3 messaging", func(t *testing.T) {
 		// The four cases that pass on the EVM→Stellar lane (see
 		// TestEVMToStellarTCAPI): default verifier, safe-tag finality, the secondary
-		// committee, and the custom executor. max data size is likewise
-		// excluded until its fix lands.
+		// committee, and the custom executor. Max data size runs since the ccv
+		// fix (#1510) is pinned and the stellar Chain implements the
+		// source-side MessageOverheadProvider this lane needs.
 		//
 		// The custom executor case names the stellar-side custom executor
 		// (GetExecutor(stellar, "custom"), deployed by the full deploy via
@@ -95,6 +97,9 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
 			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
 			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
+			// Max data size: the stellar source implements
+			// MessageOverheadProvider, so the case hydrates on this lane.
+			basic.MaxDataSize(lib, src, dst, args),
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {

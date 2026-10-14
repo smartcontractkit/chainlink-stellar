@@ -29,8 +29,9 @@ import (
 // executor NOP exists in the env), and the five receiver-verifier cases
 // (required/optional receiver CCVs against the qualified receivers the full
 // deploy records). The reverse lane (stellar_to_evm_tcapi_test.go,
-// TestStellarToEVMTCAPI) runs the same set. Max data size stays excluded
-// until its ccv FeeQuoter fix lands.
+// TestStellarToEVMTCAPI) runs the same set. Max data size runs since the
+// ccv fix (#1510) is pinned and the stellar Chain implements the
+// destination-side ExecutionGasLimitProvider this lane needs.
 //
 // Contracts must be compiled before running (from the repo root):
 //
@@ -108,8 +109,8 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 		// basic.All so CI stays green. custom executor works since the env grew
 		// a custom-qualified stellar executor NOP (stellar-executor-2 in
 		// env-stellar-evm.toml; the EVM source side's custom executor contract
-		// is deployed by ccv's EVM phase). max data size needs the ccv
-		// FeeQuoter calldata-overhead fix (not in the pinned ccv yet).
+		// is deployed by ccv's EVM phase). Max data size runs since the
+		// stellar destination implements ExecutionGasLimitProvider.
 		cases := []tcapi.TestCase{
 			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
@@ -131,6 +132,9 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
 			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
 			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
+			// Max data size: the stellar destination implements
+			// ExecutionGasLimitProvider, so the case hydrates on this lane.
+			basic.MaxDataSize(lib, src, dst, args),
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
