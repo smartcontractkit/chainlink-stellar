@@ -56,6 +56,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
 		qual := mcmsutil.QualifierStr(in.Qualifier)
+		label := mcmsutil.QualifierStr(in.Label)
 
 		dep, err := stellarDeployerFromChain(ch)
 		if err != nil {
@@ -87,7 +88,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 					return seqcore.OnChainOutput{}, err
 				}
 			}
-			salt := mcmsutil.MCMSRoleDeploySalt(in.ChainSelector, qual, role)
+			salt := mcmsutil.MCMSRoleDeploySalt(in.ChainSelector, qual, label, role)
 			depOut, err := cldfops.ExecuteOperation(b, mcmsops.Deploy, deps, stellarops.DeployInput{WasmPath: mcmsWasm, Salt: salt})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy (%s): %w", role, err)
@@ -103,7 +104,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
 			}
-			tlSalt := mcmsutil.TimelockDeploySalt(in.ChainSelector, qual)
+			tlSalt := mcmsutil.TimelockDeploySalt(in.ChainSelector, qual, label)
 			tlOut, err := cldfops.ExecuteOperation(b, timelockops.Deploy, deps, stellarops.DeployInput{WasmPath: tlWasm, Salt: tlSalt})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
