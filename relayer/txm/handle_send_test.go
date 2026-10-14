@@ -274,6 +274,7 @@ func TestStellarTxm_classifySubmitErrorCode(t *testing.T) {
 		{"tx_bad_seq is retryable (resync)", xdr.TransactionResultCodeTxBadSeq, false, ErrorReasonBadSeq},
 		{"tx_insufficient_fee is retryable (bump fee)", xdr.TransactionResultCodeTxInsufficientFee, false, ErrorReasonInsufficientFee},
 		{"tx_internal_error is retryable (transient)", xdr.TransactionResultCodeTxInternalError, false, ErrorReasonInternalError},
+		{"tx_too_late is retryable (fresh bounds)", xdr.TransactionResultCodeTxTooLate, false, ErrorReasonTooLate},
 
 		// Fatal — every other documented code.
 		{"tx_no_account is fatal", xdr.TransactionResultCodeTxNoAccount, true, ErrorReason(xdr.TransactionResultCodeTxNoAccount.String())},
@@ -281,7 +282,6 @@ func TestStellarTxm_classifySubmitErrorCode(t *testing.T) {
 		{"tx_bad_auth is fatal", xdr.TransactionResultCodeTxBadAuth, true, ErrorReason(xdr.TransactionResultCodeTxBadAuth.String())},
 		{"tx_bad_auth_extra is fatal", xdr.TransactionResultCodeTxBadAuthExtra, true, ErrorReason(xdr.TransactionResultCodeTxBadAuthExtra.String())},
 		{"tx_too_early is fatal", xdr.TransactionResultCodeTxTooEarly, true, ErrorReason(xdr.TransactionResultCodeTxTooEarly.String())},
-		{"tx_too_late is fatal", xdr.TransactionResultCodeTxTooLate, true, ErrorReason(xdr.TransactionResultCodeTxTooLate.String())},
 		{"tx_missing_operation is fatal", xdr.TransactionResultCodeTxMissingOperation, true, ErrorReason(xdr.TransactionResultCodeTxMissingOperation.String())},
 		{"tx_not_supported is fatal", xdr.TransactionResultCodeTxNotSupported, true, ErrorReason(xdr.TransactionResultCodeTxNotSupported.String())},
 		{"tx_fee_bump_inner_failed is fatal", xdr.TransactionResultCodeTxFeeBumpInnerFailed, true, ErrorReason(xdr.TransactionResultCodeTxFeeBumpInnerFailed.String())},

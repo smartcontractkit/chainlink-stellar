@@ -110,6 +110,10 @@ func (s *TxStore) AddUnconfirmed(seq int64, hash string, maxLedger uint32, maxTi
 		s.nextSequence++
 	} else {
 		delete(s.failedSequences, seq)
+		// A released head sequence was never sent, so the head has not moved past it yet.
+		if seq >= s.nextSequence {
+			s.nextSequence = seq + 1
+		}
 	}
 
 	s.unconfirmedSequences[seq] = &UnconfirmedTx{

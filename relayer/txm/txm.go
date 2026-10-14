@@ -790,6 +790,13 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
+		if retryReason == ErrorReasonTooLate {
+			// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
+			ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds", "attempt", submitAttempt)
+			submitAttempt++
+			continue
+		}
+
 		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
