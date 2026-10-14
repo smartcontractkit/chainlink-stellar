@@ -19,16 +19,18 @@ import (
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-// TestStellarTCAPI runs the chain-agnostic tcapi basic messaging suite on the
-// EVM→Stellar lane, the same standard cases every other chain family runs.
+// TestEVMToStellarTCAPI runs the chain-agnostic tcapi basic messaging suite on
+// the EVM→Stellar lane, the same standard cases every other chain family runs.
 // Stellar plugs in via the V3DestinationFactory and AddressResolver registered
 // in tests/ccv/chain/register.go.
 //
-// With the current env topology the runnable cases are: EOA receiver default
-// verifier, safe-tag finality, and the secondary committee — the same three as
-// the reverse lane (stellar_to_evm_tcapi_test.go). The other basic cases are
-// excluded until fixed (custom executor, max data size) or until the env grows
-// the contracts they need (required/optional receiver verifiers).
+// The runnable cases are: EOA receiver default verifier, safe-tag finality,
+// the secondary committee, the custom executor (a custom-qualified stellar
+// executor NOP exists in the env), and the five receiver-verifier cases
+// (required/optional receiver CCVs against the qualified receivers the full
+// deploy records). The reverse lane (stellar_to_evm_tcapi_test.go,
+// TestStellarToEVMTCAPI) runs the same set. Max data size stays excluded
+// until its ccv FeeQuoter fix lands.
 //
 // Contracts must be compiled before running (from the repo root):
 //
@@ -40,8 +42,8 @@ import (
 //
 // Once the devenv is running, run the test (also from the tests dir):
 //
-//	go test -v -timeout 25m ./e2e/... -run 'TestStellar(ToEVM)?TCAPI'
-func TestStellarTCAPI(t *testing.T) {
+//	go test -v -timeout 25m ./e2e/... -run 'Test(StellarToEVM|EVMToStellar)TCAPI'
+func TestEVMToStellarTCAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
 	}
@@ -102,16 +104,33 @@ func TestStellarTCAPI(t *testing.T) {
 	}
 
 	t.Run("extra args v3 messaging", func(t *testing.T) {
-		// The three cases that pass on this lane; an explicit list rather than
-		// basic.All so CI stays green. custom executor needs a second executor
-		// instance in the env, max data size needs the ccv FeeQuoter
-		// calldata-overhead fix (not in the pinned ccv yet), and the
-		// required/optional receiver cases need contract support. Mirrored in
-		// stellar_to_evm_tcapi_test.go.
+		// The four cases that pass on this lane; an explicit list rather than
+		// basic.All so CI stays green. custom executor works since the env grew
+		// a custom-qualified stellar executor NOP (stellar-executor-2 in
+		// env-stellar-evm.toml; the EVM source side's custom executor contract
+		// is deployed by ccv's EVM phase). max data size needs the ccv
+		// FeeQuoter calldata-overhead fix (not in the pinned ccv yet).
 		cases := []tcapi.TestCase{
 			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
 			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
 			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
+			basic.CustomExecutor(lib, src, dst, args),
+			// The receiver-verifier cases: the stellar full deploy deploys
+			// qualified receivers (secondary/tertiary/quaternary) configured
+			// with the stellar-side VVR ids, matching this lane's dest. They
+			// rely on cross-family identity agreement between the receiver's
+			// required CCVs and the executor's report + aggregator-stamped
+			// identity (the EVM-side offchain pipeline): executor
+			// ErrInsufficientVerifiers / empty VerifierDestAddress ⇒ ccv
+			// aggregator-config gap; on-chain CCVQuorumNotMet ⇒ stellar
+			// lane-config quorum gap. Cases whose prerequisites the
+			// environment lacks (e.g. a missing committee) skip via
+			// HavePrerequisites below.
+			basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
+			basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
+			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
+			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
+			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
 		}
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
@@ -120,7 +139,12 @@ func TestStellarTCAPI(t *testing.T) {
 			}
 			t.Run(tc.Name(), func(t *testing.T) {
 				subtestCtx := ccv.Plog.WithContext(t.Context())
-				_, runErr := tc.Run(subtestCtx)
+				res, runErr := tc.Run(subtestCtx)
+				if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+					// The on-chain CCIPError code rides in the dest event's
+					// ReturnData; surface it for diagnosis (4-byte selector).
+					t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
+				}
 				require.NoError(t, runErr, tc.Name())
 			})
 		}

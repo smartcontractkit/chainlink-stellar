@@ -8,7 +8,8 @@ import (
 )
 
 // DeployExecutorConfig is the input of the Executor deploy changeset.
-// MaxCCVsPerMsg defaults to 2, AllowedFinalityConfig to 0,
+// MaxCCVsPerMsg defaults to 10 (EVM parity: the ccv devenv deploys its
+// executor with MaxCCVsPerMsg 10), AllowedFinalityConfig to 0,
 // CcvAllowlistEnabled to false and FeeAggregator to the owner. The changeset
 // records both the executor and executor-proxy rows: Soroban has no delegate
 // proxy, so both point at the same contract.
