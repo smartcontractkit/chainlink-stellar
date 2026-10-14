@@ -26,12 +26,9 @@ pub fn domain_meta(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &DOMAIN_META_STELLAR)
 }
 
-/// If a persistent entry's remaining TTL falls below this ledger count (~1 week at 5 s/ledger),
-/// proactively extend it to [`LEDGER_BUMP`].
+/// If an entry's remaining TTL falls below this ledger count (~1 week at 5 s/ledger),
+/// proactively extend it to the network maximum (`env.storage().max_ttl()`).
 pub const LEDGER_THRESHOLD: u32 = 120_960;
-
-/// Target TTL (in ledgers) after a proactive extension (~1 year at 5 s/ledger).
-pub const LEDGER_BUMP: u32 = 6_307_200;
 
 /// Maximum horizon for `set_root(..., valid_until, ...)`: `valid_until` must be ≤ ledger timestamp + this value.
 ///

@@ -204,7 +204,7 @@ func TestWithdrawFeeTokensWrite_EncodesProposalPayload(t *testing.T) {
 	require.Nil(t, wo.ExecInfo, "proposal write must be unexecuted")
 	require.Equal(t, id, wo.Tx.To)
 	require.Equal(t, string(stellarccip.OnRampDatastoreRef().Type), wo.Tx.OperationMetadata.ContractType)
-	require.JSONEq(t, `{"version":1,"family":"stellar"}`, string(wo.Tx.AdditionalFields))
+	require.JSONEq(t, `{"family":"stellar","encodingVersion":1}`, string(wo.Tx.AdditionalFields))
 
 	fn, args := decodeWithdrawPayload(t, wo.Tx.Data)
 	require.Equal(t, "withdraw_fee_tokens", fn)

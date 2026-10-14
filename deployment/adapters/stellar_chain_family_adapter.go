@@ -46,8 +46,22 @@ func toStellarAddressBytes(ref datastore.AddressRef) ([]byte, error) {
 	return b, nil
 }
 
+// GetOnRampAddress returns the OnRamp address the way the Stellar OnRamp puts
+// it on the wire: a full 40-byte Address::to_xdr envelope (onramp lib.rs
+// `forward_from_router` populates the message's onramp_address with it). A
+// destination OffRamp whitelists the onramp by hashing those exact message
+// bytes, so the raw 32-byte contract ID would never match. Callers that need
+// to invoke the contract decode it out via scval.ContractIDFromWireBytes.
 func (a *StellarChainFamilyAdapter) GetOnRampAddress(ds datastore.DataStore, chainSelector uint64) ([]byte, error) {
-	return datastore_utils.FindAndFormatRef(ds, stellarccip.OnRampDatastoreRef().PartialAddressRef(), chainSelector, toStellarAddressBytes)
+	return datastore_utils.FindAndFormatRef(ds, stellarccip.OnRampDatastoreRef().PartialAddressRef(), chainSelector, toStellarOnRampWireBytes)
+}
+
+func toStellarOnRampWireBytes(ref datastore.AddressRef) ([]byte, error) {
+	raw, err := toStellarAddressBytes(ref)
+	if err != nil {
+		return nil, err
+	}
+	return scval.ContractAddressWireBytes(raw)
 }
 
 func (a *StellarChainFamilyAdapter) GetOffRampAddress(ds datastore.DataStore, chainSelector uint64) ([]byte, error) {

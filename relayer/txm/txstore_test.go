@@ -222,6 +222,17 @@ func TestTxStore_Release_CleansUpUnconfirmedEntry(t *testing.T) {
 	assert.Equal(t, int64(10), store.GetNextSequence())
 }
 
+func TestTxStore_Release_NeverSentHeadThenReuseAdvancesHead(t *testing.T) {
+	t.Parallel()
+	store := NewTxStore(10)
+
+	store.Release(store.GetNextSequence())
+	inFlight := store.GetNextSequence()
+	require.NoError(t, store.AddUnconfirmed(inFlight, "h10", 100, 0, nil))
+
+	assert.Equal(t, int64(11), store.GetNextSequence(), "must not hand out the in-flight sequence %d again", inFlight)
+}
+
 // --- TxStore: ResyncNonce ---
 
 func TestTxStore_ResyncNonce_AdvancesNextSequence(t *testing.T) {

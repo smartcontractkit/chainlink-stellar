@@ -134,6 +134,21 @@ const (
 	DefaultExecutorQualifier          = "default"
 )
 
+// Devenv committee and receiver qualifiers beyond the default instances,
+// mirroring chainlink-ccv/build/devenv/common (SecondaryCommitteeVerifierQualifier,
+// TertiaryCommitteeVerifierQualifier, SecondaryReceiverQualifier,
+// TertiaryReceiverQualifier, QuaternaryReceiverQualifier). Duplicated locally
+// for the same reason as the default qualifiers above; if devenv changes these
+// values, update them here to match.
+const (
+	SecondaryCommitteeVerifierQualifier = "secondary"
+	TertiaryCommitteeVerifierQualifier  = "tertiary"
+
+	SecondaryReceiverQualifier  = "secondary"
+	TertiaryReceiverQualifier   = "tertiary"
+	QuaternaryReceiverQualifier = "quaternary"
+)
+
 func RMNRemoteDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(RMNRemoteContractType),
@@ -159,10 +174,20 @@ func TokenAdminRegistryDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func VVRDatastoreRef() DatastoreSorobanContractRef {
+	return VVRDatastoreRefWithQualifier("")
+}
+
+// VVRDatastoreRefWithQualifier returns the VVR ref for one committee instance.
+// An empty qualifier keeps the default instance, so existing refs and salts
+// keep resolving.
+func VVRDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
+	if qualifier == "" {
+		qualifier = DefaultCommitteeVerifierQualifier
+	}
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(versioned_verifier_resolver.CommitteeVerifierResolverType),
 		Version:   versioned_verifier_resolver.Version,
-		Qualifier: DefaultCommitteeVerifierQualifier,
+		Qualifier: qualifier,
 	}
 }
 
@@ -193,10 +218,17 @@ func RampRegistryDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func CCIPReceiverDatastoreRef() DatastoreSorobanContractRef {
+	return CCIPReceiverDatastoreRefWithQualifier("")
+}
+
+// CCIPReceiverDatastoreRefWithQualifier returns the ccip_receiver ref for one
+// receiver instance. An empty qualifier keeps the existing unqualified ref, so
+// existing refs and salts keep resolving.
+func CCIPReceiverDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(CcipReceiverContractType),
 		Version:   stellarops.ContractDeploymentVersion,
-		Qualifier: "",
+		Qualifier: qualifier,
 	}
 }
 
@@ -237,10 +269,19 @@ func DevenvTestTokenDatastoreRef() DatastoreSorobanContractRef {
 }
 
 func DefaultExecutorDatastoreRef() DatastoreSorobanContractRef {
+	return ExecutorDatastoreRefWithQualifier("")
+}
+
+// ExecutorDatastoreRefWithQualifier returns the executor contract row for the
+// given qualifier (empty means the default instance).
+func ExecutorDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
+	if qualifier == "" {
+		qualifier = DefaultExecutorQualifier
+	}
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(executor.ContractType),
 		Version:   executor.Version,
-		Qualifier: DefaultExecutorQualifier,
+		Qualifier: qualifier,
 	}
 }
 

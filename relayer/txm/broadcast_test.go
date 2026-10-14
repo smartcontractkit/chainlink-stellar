@@ -244,6 +244,77 @@ func (m *mockWrapper) SendTransaction(ctx context.Context, req protocolrpc.SendT
 	return m.sendFn(ctx, req)
 }
 
+func TestStellarTxm_BroadcastPipeline_TooLateResimulatesAtOnceWithFreshBounds(t *testing.T) {
+	t.Parallel()
+
+	tooLate, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxTooLate},
+	})
+	require.NoError(t, err)
+
+	var latestLedger atomic.Uint32
+	latestLedger.Store(1000)
+	var sends atomic.Int32
+	sent := make(chan xdr.TransactionEnvelope, 3)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedger.Load()}, nil
+		},
+		simulateResp: protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			var env xdr.TransactionEnvelope
+			if err := xdr.SafeUnmarshalBase64(req.Transaction, &env); err != nil {
+				return protocolrpc.SendTransactionResponse{}, err
+			}
+			sent <- env
+			if sends.Add(1) == 1 {
+				latestLedger.Store(1005)
+				return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: tooLate}, nil
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(3)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Hour),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		require.NoError(t, err)
+		return status == commontypes.Unconfirmed
+	}, 5*time.Second, 10*time.Millisecond, "tx_too_late must be re-simulated at once, not fail or wait SubmitRetryDelay")
+
+	first, second := <-sent, <-sent
+	assert.Equal(t, first.SeqNum(), second.SeqNum())
+	assert.Equal(t, first.LedgerBounds().MaxLedger+5, second.LedgerBounds().MaxLedger)
+}
+
 func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	t.Parallel()
 

@@ -654,9 +654,9 @@
       "input": {
         "contract_id": "CAY4P74XRKJQH5SJTIO6JPYU746FOQISIR2WRS5Z3GLLAHBD4DWYIZ3S",
         "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "max_ccvs_per_msg": 2,
+        "max_ccvs_per_msg": 10,
         "dynamic_config": {
-          "AllowedFinalityConfig": 0,
+          "AllowedFinalityConfig": 65537,
           "CcvAllowlistEnabled": false,
           "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
         }
@@ -667,6 +667,7 @@
       "input": {
         "chainSelector": 17301180955411967724,
         "wasmPath": "$CHAINLINK_STELLAR_ROOT/target/wasm32v1-none/release/executor.wasm",
+        "allowedFinalityConfig": 65537,
         "feeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
         "existingAddresses": [
           {
@@ -1130,7 +1131,7 @@
           {
             "AllowlistEnabled": false,
             "FeeUsdCents": 0,
-            "GasForVerification": 10000,
+            "GasForVerification": 60000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 17301180955411967724,
             "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
@@ -1138,7 +1139,7 @@
           {
             "AllowlistEnabled": false,
             "FeeUsdCents": 0,
-            "GasForVerification": 10000,
+            "GasForVerification": 75000,
             "PayloadSizeBytes": 0,
             "RemoteChainSelector": 16015286601757825753,
             "Router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"

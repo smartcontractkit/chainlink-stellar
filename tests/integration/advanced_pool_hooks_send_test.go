@@ -189,9 +189,11 @@ func TestAdvancedPoolHooksOutboundSend(t *testing.T) {
 
 	// AUGMENT: issuer's special CCV + lane defaults (include_defaults=true). On the
 	// outbound merge, a token-only send with empty user CCVs yields
-	// [ccvB, VvrID] (pool ccvs first, then defaults) — exactly the executor's
-	// max_ccvs_per_msg=2 cap (deployOutboundSendWire), so no executor re-provisioning
-	// is needed (unlike the Rust test, whose lane carries TWO defaults).
+	// [ccvB, VvrID] (pool ccvs first, then defaults) — 2 CCVs, within the
+	// executor's max_ccvs_per_msg cap (deployOutboundSendWire; 10 since the
+	// EVM-parity default change, 2 when this test was written), so no executor
+	// re-provisioning is needed (unlike the Rust test, whose lane carries TWO
+	// defaults on top of the pool CCV, needing a raised cap).
 	if err := hooksClient.ApplyCcvConfigUpdates(ctx, []advancedpoolhooksbindings.CCVConfigArg{{
 		RemoteChainSelector:     remoteDestChain,
 		OutboundCcvs:            []string{ccvB},

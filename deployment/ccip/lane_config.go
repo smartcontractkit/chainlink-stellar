@@ -8,7 +8,6 @@ import (
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
-	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
@@ -65,7 +64,11 @@ func AddressBytesHex(ref datastore.AddressRef, selector uint64) ([]byte, error) 
 	return raw, nil
 }
 
-// CanonicalSourceOnRampBytes returns on-ramp bytes for OffRamp source config; left-pads EVM addresses to 32 bytes.
+// CanonicalSourceOnRampBytes returns the remote OnRamp bytes the local OffRamp
+// whitelists in its source chain config, in the form the source OnRamp actually
+// writes into its messages (the OffRamp matches them by hashing those message
+// bytes): left-padded 32 bytes for EVM, the 40-byte Address::to_xdr envelope
+// for Stellar.
 func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]byte, error) {
 	raw, err := AddressBytesHex(ref, selector)
 	if err != nil {
@@ -76,61 +79,16 @@ func CanonicalSourceOnRampBytes(ref datastore.AddressRef, selector uint64) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("get selector family for %d: %w", selector, err)
 	}
-	if family != chainsel.FamilyEVM {
+	switch family {
+	case chainsel.FamilyEVM:
+		padded := make([]byte, 32)
+		copy(padded[len(padded)-len(raw):], raw)
+		return padded, nil
+	case chainsel.FamilyStellar:
+		return scval.ContractAddressWireBytes(raw)
+	default:
 		return raw, nil
 	}
-
-	padded := make([]byte, 32)
-	copy(padded[len(padded)-len(raw):], raw)
-	return padded, nil
-}
-
-// BuildOnRampDestConfigs builds datastore-backed OnRamp destination chain configs.
-// These builders serve the devenv path (ccvchain Chain.PostConnect); the shared
-// CLD lane path builds its args in sequences.StellarConfigureChainForLanes.
-// The remote chain's OffRamp must already be deployed and recorded: a
-// zero-address placeholder is not a valid entry (the ramp contracts reject
-// zero encodings, EVM `ZeroAddressNotAllowed` parity), so lane wiring is
-// strictly a lookup-and-fail-loudly operation at lane-configuration time.
-func BuildOnRampDestConfigs(
-	ds datastore.DataStore,
-	remoteSelectors []uint64,
-	defaultExecutor string,
-	vvrContractID string,
-	routerContractID string,
-) ([]onrampbindings.DestChainConfigArgs, error) {
-	configs := make([]onrampbindings.DestChainConfigArgs, 0, len(remoteSelectors))
-	for _, rs := range remoteSelectors {
-		addressBytesLength, err := AddressBytesLength(rs)
-		if err != nil {
-			return nil, err
-		}
-
-		offRampRef, err := OffRampDatastoreRef().LookupAddressRef(ds, rs)
-		if err != nil {
-			return nil, fmt.Errorf("lookup remote offramp for %d: %w", rs, err)
-		}
-		offRampBytes, err := AddressBytesHex(offRampRef, rs)
-		if err != nil {
-			return nil, fmt.Errorf("resolve remote offramp bytes for %d: %w", rs, err)
-		}
-
-		configs = append(configs, onrampbindings.DestChainConfigArgs{
-			DestChainSelector:         rs,
-			AddressBytesLength:        addressBytesLength,
-			BaseExecutionGasCost:      100_000,
-			DefaultCcvs:               []string{vvrContractID},
-			DefaultExecutor:           defaultExecutor,
-			ExecutionFeeUsdCents:      0,
-			LaneMandatedCcvs:          []string{},
-			MessageNetworkFeeUsdCents: 100,
-			OffRamp:                   offRampBytes,
-			Router:                    routerContractID,
-			TokenNetworkFeeUsdCents:   50,
-			TokenReceiverAllowed:      true,
-		})
-	}
-	return configs, nil
 }
 
 // BuildOffRampSourceConfigs builds datastore-backed OffRamp source configs.

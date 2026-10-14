@@ -222,12 +222,30 @@ func stellarFeeQuoterDestChainConfigOverride(_ uint64) lanes.FeeQuoterDestChainC
 func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) (ccipChangesets.ChainOverrides, error) {
 	// FeeQuoter family selector and DestGasOverhead are populated from the Stellar
 	// lane adapter defaults; overrides here only set fields that differ from those.
+	//
+	// BaseExecutionGasCost and CommitteeVerifierGasForVerification are deliberately
+	// NOT overridden: the lane changeset coalesces unset fields with the REMOTE
+	// chain family adapter's defaults (configure_chains_for_lanes_from_topology.go
+	// resolveRemoteChainConfig / mergeCommitteeVerifierRemoteChainConfig), which
+	// describe what executing on that remote actually costs. Overriding them with
+	// stellar-scale numbers under-budgets the on-wire execution_gas_limit of
+	// messages this chain sends: the ccv executor sizes its dest execute tx from
+	// that value, and on EVM the Router's CallWithExactGas then reverts
+	// NOT_ENOUGH_GAS_FOR_CALL (0x37c3be29) because the receiver's
+	// ccipReceiveGasLimit cannot be delivered. Leaving them unset matches the
+	// EVM family defaults (base 200_000, per-CCV 75_000) that green EVM↔EVM
+	// lanes use, for any remote family.
+	//
+	// NOTE: this profile is only ONE of the writers that feed the on-wire gas
+	// fields. The changeset's OnRamp dest-config write is what this profile
+	// shapes (see PostConnect for why nothing may rewrite it afterwards), and
+	// the CV remote config's gas_for_verification (the per-CCV term) is written
+	// by the full deploy, not the lane changeset — both must agree with the
+	// remote family's scale or the same under-budget failure returns.
 	enabled := true
 	executorQualifier := devenvcommon.DefaultExecutorQualifier
 	return ccipChangesets.ChainOverrides{
-		CommitteeVerifierGasForVerification: ptrU32(10_000),
 		RemoteChainCfg: ccipChangesets.PartialRemoteChainConfig{
-			BaseExecutionGasCost: ptrU32(100_000),
 			FeeQuoterDestChainConfig: adapters.FeeQuoterDestChainConfigOverrides{
 				IsEnabled:                   &enabled,
 				MaxDataBytes:                ptrU32(30_000),
@@ -274,22 +292,18 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 		return fmt.Errorf("ensure local stellar contracts: %w", err)
 	}
 
-	defaultExecutor, err := stellarccip.ExecutorProxyDatastoreRef(devenvcommon.DefaultExecutorQualifier).LookupStrkey(
-		env.DataStore,
-		selector,
-	)
-	if err != nil {
-		return fmt.Errorf("resolve default executor proxy: %w", err)
-	}
-
-	onRampDestConfigs, err := c.buildOnRampDestConfigs(env.DataStore, remoteSelectors, defaultExecutor)
-	if err != nil {
-		return fmt.Errorf("build onramp dest configs: %w", err)
-	}
-	if err := c.onRampClient.ApplyDestChainConfigUpdates(context.Background(), onRampDestConfigs); err != nil {
-		return fmt.Errorf("apply onramp dest configs in post-connect: %w", err)
-	}
-
+	// No OnRamp DestChainConfig write happens here, deliberately. PostConnect's
+	// only caller (devenv deploy.go ConnectAllChainsCanonical) runs it directly
+	// AFTER the ConfigureChainsForLanesFromTopology changeset, which has already
+	// written the OnRamp dest configs with per-remote-family values (remote
+	// adapter defaults coalesced with the lane-profile overrides). Rewriting
+	// them here with flat stellar-scale values silently clobbered
+	// base_execution_gas_cost back to 100_000, under-budgeting the on-wire
+	// execution_gas_limit of messages this chain sends: on an EVM destination
+	// the Router's CallWithExactGas then reverts NOT_ENOUGH_GAS_FOR_CALL
+	// (0x37c3be29) because the receiver's ccipReceiveGasLimit cannot be
+	// delivered. EVM parity: the EVM impl's PostConnect does not touch OnRamp
+	// dest configs either — the changeset is the single writer.
 	offRampSourceConfigs, err := c.buildOffRampSourceConfigs(env.DataStore, remoteSelectors)
 	if err != nil {
 		return fmt.Errorf("build offramp source configs: %w", err)
@@ -1383,10 +1397,6 @@ func (c *Chain) buildPoolChainUpdates(ds datastore.DataStore, remoteSelectors []
 		})
 	}
 	return updates, nil
-}
-
-func (c *Chain) buildOnRampDestConfigs(ds datastore.DataStore, remoteSelectors []uint64, defaultExecutor string) ([]onrampbindings.DestChainConfigArgs, error) {
-	return stellarccip.BuildOnRampDestConfigs(ds, remoteSelectors, defaultExecutor, c.vvrContractID, c.routerContractID)
 }
 
 func (c *Chain) buildOffRampSourceConfigs(ds datastore.DataStore, remoteSelectors []uint64) ([]offrampbindings.SourceChainConfigArgs, error) {
