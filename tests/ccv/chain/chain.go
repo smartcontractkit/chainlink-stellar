@@ -38,6 +38,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
@@ -46,6 +47,7 @@ import (
 	slrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/siloed_lock_release_pool"
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
@@ -878,6 +880,110 @@ func (c *Chain) GetMaxDataBytes(ctx context.Context, remoteChainSelector uint64)
 		return 0, fmt.Errorf("failed to get fee quoter dest chain config: %w", err)
 	}
 	return cfg.MaxDataBytes, nil
+}
+
+// messageV1StellarSourceBaseSize mirrors MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE
+// (contracts/common/message): MessageV1 framing plus the stellar sender and
+// onramp address XDR bytes billed for every stellar-sourced message.
+const messageV1StellarSourceBaseSize uint32 = 159
+
+// cvRemoteConfig returns the outbound committee verifier's remote config for
+// remoteChainSelector, or nil when no committee verifier is deployed.
+func (c *Chain) cvRemoteConfig(ctx context.Context, remoteChainSelector uint64) (*cvbindings.RemoteChainConfig, error) {
+	if c.vvrContractID == "" {
+		return nil, nil
+	}
+	cvID, err := vvrbindings.NewVersionedVerifierResolverClient(c.deployer, c.vvrContractID).
+		GetOutboundImplementation(ctx, remoteChainSelector, []byte{})
+	if err != nil {
+		return nil, fmt.Errorf("get outbound committee verifier: %w", err)
+	}
+	if cvID == "" {
+		return nil, nil
+	}
+	cvCfg, err := cvbindings.NewCommitteeVerifierClient(c.deployer, cvID).
+		GetRemoteChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return nil, fmt.Errorf("get committee verifier remote config: %w", err)
+	}
+	return cvCfg, nil
+}
+
+// messageOverheadBytes bills a data-only message's non-payload bytes from the
+// OnRamp dest-chain config and the committee verifier's remote config.
+func messageOverheadBytes(onrampCfg *onrampbindings.DestChainConfig, cvCfg *cvbindings.RemoteChainConfig) uint32 {
+	overhead := messageV1StellarSourceBaseSize + 2*onrampCfg.AddressBytesLength
+	if cvCfg != nil {
+		overhead += cvCfg.PayloadSizeBytes
+	}
+	return overhead
+}
+
+// GetMessageOverheadBytes implements cciptestinterfaces.MessageOverheadProvider.
+// The non-payload bytes the stellar OnRamp bills inside the fee quoter's
+// maxDataBytes budget for a data-only message to the remote: MessageV1
+// stellar-source framing, the remote's receiver and offramp address fields,
+// and the default committee verifier's dest_bytes_overhead. Executor args are
+// assumed empty (data-only case; the EVM destination returns none).
+func (c *Chain) GetMessageOverheadBytes(ctx context.Context, remoteChainSelector uint64) (uint32, error) {
+	if c.onRampClient == nil {
+		return 0, fmt.Errorf("OnRamp client not initialized")
+	}
+	onrampCfg, err := c.onRampClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get dest chain config: %w", err)
+	}
+	cvCfg, err := c.cvRemoteConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, err
+	}
+	return messageOverheadBytes(onrampCfg, cvCfg), nil
+}
+
+// GetExecutionGasLimit implements cciptestinterfaces.ExecutionGasLimitProvider.
+// Sizes the gas limit for a dataLen-byte message from the remote to execute
+// on stellar from the fee quoter's own dest-chain terms for the remote:
+// DestGasOverhead as the flat margin plus DestGasPerPayloadByte over the data
+// and framing (quote_gas_for_exec's cost model). On Soroban the value is a
+// logical budget — the execute tx's compute is simulation-derived — so its
+// hard caps live source-side; the clamp reserves the OnRamp's added terms.
+func (c *Chain) GetExecutionGasLimit(ctx context.Context, remoteChainSelector uint64, dataLen uint32) (uint32, error) {
+	if c.feeQuoterClient == nil {
+		return 0, fmt.Errorf("FeeQuoter client not initialized")
+	}
+	fqCfg, err := c.feeQuoterClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get fee quoter dest chain config: %w", err)
+	}
+	if c.onRampClient == nil {
+		return 0, fmt.Errorf("OnRamp client not initialized")
+	}
+	onrampCfg, err := c.onRampClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get dest chain config: %w", err)
+	}
+	cvCfg, err := c.cvRemoteConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, err
+	}
+	overhead := messageOverheadBytes(onrampCfg, cvCfg)
+	gas := uint64(fqCfg.DestGasOverhead) +
+		uint64(fqCfg.DestGasPerPayloadByte)*(uint64(dataLen)+uint64(overhead))
+	// MessageGasLimitTooHigh covers the OnRamp's whole sum: reserve the
+	// per-CCV verification gas, the dest base execution cost, and the
+	// per-byte calldata gas from the fee quoter's cap.
+	reserve := uint64(onrampCfg.BaseExecutionGasCost) +
+		uint64(fqCfg.DestGasPerPayloadByte)*uint64(overhead)
+	if cvCfg != nil {
+		reserve += uint64(cvCfg.GasForVerification)
+	}
+	if maxPerMsg := uint64(fqCfg.MaxPerMsgGasLimit); maxPerMsg > reserve && gas > maxPerMsg-reserve {
+		gas = maxPerMsg - reserve
+	}
+	if gas > math.MaxUint32 {
+		gas = math.MaxUint32
+	}
+	return uint32(gas), nil
 }
 
 // GetSenderAddress implements cciptestinterfaces.CCIP17.
