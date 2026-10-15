@@ -691,7 +691,7 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	const maxAttempts = 3
 	for attempt := 1; ; attempt++ {
-		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op)
+		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt)
 		if err == nil {
 			return meta, nil
 		}
@@ -720,11 +720,19 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 
 // buildSimulateAndSubmitOnce performs a single build -> simulate -> (restore)
 // -> assemble -> submit round of buildAndSubmitTransaction.
-func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
+func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int) (*xdr.TransactionMeta, error) {
 	// Establish a single deadline shared by the transaction's time-bound and the
 	// confirmation poll, so they are always in sync. After a successful auto-restore
 	// path, the deadline is refreshed (restore can consume most of the initial window).
 	txnDeadline := time.Now().Add(d.txnTimeBound)
+
+	// A fresh round must start from the bare op: a previous attempt may
+	// have attached stale ext/auth, and the first simulation must see the
+	// invocation without them to derive the pre-auth budget.
+	if ihf, ok := op.(*txnbuild.InvokeHostFunction); ok {
+		ihf.Ext = xdr.TransactionExt{}
+		ihf.Auth = nil
+	}
 
 	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
@@ -808,7 +816,57 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 		}
 	}
 
-	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline)
+	// Attach the simulation's required auth and re-simulate. The first
+	// simulation runs the invocation bare, so its budget does not include
+	// the auth tree — every entry duplicates the full invocation args (a
+	// router send carries the payload twice more in its root and sub
+	// invocations), so assembling from the bare simulation fails large
+	// invocations at execution with RESOURCE_LIMIT_EXCEEDED. The
+	// re-simulation with the auth attached counts the tree; only the
+	// signature verification an unsigned simulation cannot run stays
+	// outside, covered by the margin assembleTransaction adds.
+	if ihf, ok := op.(*txnbuild.InvokeHostFunction); ok &&
+		len(simResult.Results) > 0 && simResult.Results[0].AuthXDR != nil && len(*simResult.Results[0].AuthXDR) > 0 {
+		auth := make([]xdr.SorobanAuthorizationEntry, len(*simResult.Results[0].AuthXDR))
+		for i, authXDR := range *simResult.Results[0].AuthXDR {
+			if err := xdr.SafeUnmarshalBase64(authXDR, &auth[i]); err != nil {
+				return nil, fmt.Errorf("failed to decode auth: %w", err)
+			}
+		}
+		ihf.Auth = auth
+
+		tx, err = txnbuild.NewTransaction(
+			txnbuild.TransactionParams{
+				SourceAccount:        sourceAccount,
+				IncrementSequenceNum: true,
+				Operations:           []txnbuild.Operation{op},
+				BaseFee:              txnbuild.MinBaseFee,
+				Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, txnDeadline.Unix())},
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build transaction with auth: %w", err)
+		}
+		txXDR, err = tx.Base64()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get transaction XDR with auth: %w", err)
+		}
+		authSim, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
+			Transaction: txXDR,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("simulation with auth failed: %w", err)
+		}
+		if authSim.Error != "" {
+			return nil, fmt.Errorf("simulation with auth error: %s", authSim.Error)
+		}
+		if authSim.RestorePreamble != nil {
+			return nil, fmt.Errorf("simulation with auth still requires a restore: unexpected RestorePreamble")
+		}
+		simResult = authSim
+	}
+
+	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble transaction: %w", err)
 	}
@@ -1097,7 +1155,7 @@ func (d *Deployer) resourceFeeBump(minResourceFee int64) int64 {
 
 // assembleTransaction injects simulation results (Soroban data, auth, fee) into the
 // transaction and rebuilds it with the correct fee and the provided deadline as MaxTime.
-func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time) (*txnbuild.Transaction, error) {
+func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time, attempt int) (*txnbuild.Transaction, error) {
 	ops := tx.Operations()
 	if len(ops) == 0 {
 		return tx, nil
@@ -1116,6 +1174,51 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 
 		if ihf, ok := ops[0].(*txnbuild.InvokeHostFunction); ok {
 			sorobanData.ResourceFee += xdr.Int64(bump)
+			// Margin for what an unsigned simulation cannot meter: the auth
+			// signature verification (a small fixed cost per entry). Only
+			// auth-carrying invocations have that residual; auth-less ones
+			// (e.g. offRamp.execute as the tx source) simulate accurately.
+			if len(ihf.Auth) > 0 {
+				sorobanData.Resources.Instructions += sorobanData.Resources.Instructions/50 + xdr.Uint32(100_000)
+			}
+			// Retry scaling: the RPC simulation bypasses auth processing
+			// entirely (empirically, re-simulating with the auth attached
+			// still under-counts — the auth tree's parsing and verification
+			// are only metered in real execution, and a router send carries
+			// the payload twice more in its auth tree). Scale the declared
+			// budget exponentially per attempt until the transaction lands;
+			// over-declared resources cost only the resource fee, and the
+			// unused refundable portion is refunded.
+			if attempt > 1 {
+				factor := uint64(1) << (attempt - 1)
+				clamp := func(v uint64) xdr.Uint32 {
+					if v > uint64(^xdr.Uint32(0)) {
+						return ^xdr.Uint32(0)
+					}
+					return xdr.Uint32(v)
+				}
+				res := sorobanData.Resources
+				res.Instructions = clamp(uint64(res.Instructions) * factor)
+				res.DiskReadBytes = clamp(uint64(res.DiskReadBytes) * factor)
+				res.WriteBytes = clamp(uint64(res.WriteBytes) * factor)
+				sorobanData.Resources = res
+				if fee := int64(sorobanData.ResourceFee) * int64(factor); fee > 0 {
+					sorobanData.ResourceFee = xdr.Int64(fee)
+				}
+			}
+			// The network validates declared resources against its config's
+			// per-tx caps before the transaction runs: overshooting one (observed
+			// on the max-data-size send, where the retry scaling grew a
+			// 28.8M-instruction simulation to 115.2M on attempt 3, past the
+			// localnet 100M per-tx cap) rejects the transaction at submission
+			// with "transaction instructions resources exceed network config
+			// limit" — strictly worse than under-declaring, since the
+			// transaction never even runs. Clamp to the caps read from the
+			// network config; a zero cap leaves the resource unclamped.
+			caps := d.networkResourceCaps(ctx)
+			sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
+			sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
+			sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
@@ -1155,6 +1258,65 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 	}
 
 	return tx, nil
+}
+
+// networkResourceCaps are the per-transaction resource caps the network
+// config validates declared Soroban resources against. A zero field means
+// the cap is unknown and disables clamping for that resource.
+type networkResourceCaps struct {
+	instructions  xdr.Uint32
+	diskReadBytes xdr.Uint32
+	writeBytes    xdr.Uint32
+}
+
+// networkResourceCaps reads the per-tx instruction and disk caps from the
+// Soroban network-config ledger entries, best-effort: any read or decode
+// failure (or an entry whose config arm is absent) leaves the caps zero,
+// disabling clamping in assembleTransaction rather than failing the send.
+func (d *Deployer) networkResourceCaps(ctx context.Context) networkResourceCaps {
+	var caps networkResourceCaps
+	if data, err := d.fetchLedgerEntry(ctx, configSettingLedgerKey(xdr.ConfigSettingIdConfigSettingContractComputeV0)); err == nil {
+		if entry, ok := data.GetConfigSetting(); ok && entry.ContractCompute != nil {
+			caps.instructions = clampInt64ToUint32(entry.ContractCompute.TxMaxInstructions)
+		}
+	}
+	if data, err := d.fetchLedgerEntry(ctx, configSettingLedgerKey(xdr.ConfigSettingIdConfigSettingContractLedgerCostV0)); err == nil {
+		if entry, ok := data.GetConfigSetting(); ok && entry.ContractLedgerCost != nil {
+			caps.diskReadBytes = entry.ContractLedgerCost.TxMaxDiskReadBytes
+			caps.writeBytes = entry.ContractLedgerCost.TxMaxWriteBytes
+		}
+	}
+	return caps
+}
+
+// configSettingLedgerKey builds the ledger key for a Soroban network-config
+// setting entry (readable like any other ledger entry).
+func configSettingLedgerKey(id xdr.ConfigSettingId) xdr.LedgerKey {
+	return xdr.LedgerKey{
+		Type:          xdr.LedgerEntryTypeConfigSetting,
+		ConfigSetting: &xdr.LedgerKeyConfigSetting{ConfigSettingId: id},
+	}
+}
+
+// clampToCap bounds a declared resource to a network cap; a zero cap is
+// unknown and disables the clamp.
+func clampToCap(v, cap xdr.Uint32) xdr.Uint32 {
+	if cap == 0 || v <= cap {
+		return v
+	}
+	return cap
+}
+
+// clampInt64ToUint32 maps an Int64 network-config cap onto the Uint32
+// resource field it clamps; non-positive becomes zero (unknown, clamp off).
+func clampInt64ToUint32(v xdr.Int64) xdr.Uint32 {
+	if v <= 0 {
+		return 0
+	}
+	if v > xdr.Int64(^uint32(0)) {
+		return ^xdr.Uint32(0)
+	}
+	return xdr.Uint32(v)
 }
 
 // extractWASMHash extracts the WASM hash from a transaction result.
