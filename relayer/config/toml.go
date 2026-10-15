@@ -82,6 +82,10 @@ func (c *TxManagerConfig) SetFrom(f *TxManagerConfig) {
 		v := *f.FeeStatsPollInterval
 		c.FeeStatsPollInterval = &v
 	}
+	if f.FeeStatsLookback != nil {
+		v := *f.FeeStatsLookback
+		c.FeeStatsLookback = &v
+	}
 	if f.MaxSimulateAttempts != nil {
 		v := *f.MaxSimulateAttempts
 		c.MaxSimulateAttempts = &v
