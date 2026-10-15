@@ -691,7 +691,7 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	const maxAttempts = 3
 	for attempt := 1; ; attempt++ {
-		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op)
+		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt)
 		if err == nil {
 			return meta, nil
 		}
@@ -720,7 +720,7 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 
 // buildSimulateAndSubmitOnce performs a single build -> simulate -> (restore)
 // -> assemble -> submit round of buildAndSubmitTransaction.
-func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
+func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int) (*xdr.TransactionMeta, error) {
 	// Establish a single deadline shared by the transaction's time-bound and the
 	// confirmation poll, so they are always in sync. After a successful auto-restore
 	// path, the deadline is refreshed (restore can consume most of the initial window).
@@ -866,7 +866,7 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 		simResult = authSim
 	}
 
-	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline)
+	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble transaction: %w", err)
 	}
@@ -1155,7 +1155,7 @@ func (d *Deployer) resourceFeeBump(minResourceFee int64) int64 {
 
 // assembleTransaction injects simulation results (Soroban data, auth, fee) into the
 // transaction and rebuilds it with the correct fee and the provided deadline as MaxTime.
-func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time) (*txnbuild.Transaction, error) {
+func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time, attempt int) (*txnbuild.Transaction, error) {
 	ops := tx.Operations()
 	if len(ops) == 0 {
 		return tx, nil
@@ -1180,6 +1180,31 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 			// (e.g. offRamp.execute as the tx source) simulate accurately.
 			if len(ihf.Auth) > 0 {
 				sorobanData.Resources.Instructions += sorobanData.Resources.Instructions/50 + xdr.Uint32(100_000)
+			}
+			// Retry scaling: the RPC simulation bypasses auth processing
+			// entirely (empirically, re-simulating with the auth attached
+			// still under-counts — the auth tree's parsing and verification
+			// are only metered in real execution, and a router send carries
+			// the payload twice more in its auth tree). Scale the declared
+			// budget exponentially per attempt until the transaction lands;
+			// over-declared resources cost only the resource fee, and the
+			// unused refundable portion is refunded.
+			if attempt > 1 {
+				factor := uint64(1) << (attempt - 1)
+				clamp := func(v uint64) xdr.Uint32 {
+					if v > uint64(^xdr.Uint32(0)) {
+						return ^xdr.Uint32(0)
+					}
+					return xdr.Uint32(v)
+				}
+				res := sorobanData.Resources
+				res.Instructions = clamp(uint64(res.Instructions) * factor)
+				res.DiskReadBytes = clamp(uint64(res.DiskReadBytes) * factor)
+				res.WriteBytes = clamp(uint64(res.WriteBytes) * factor)
+				sorobanData.Resources = res
+				if fee := int64(sorobanData.ResourceFee) * int64(factor); fee > 0 {
+					sorobanData.ResourceFee = xdr.Int64(fee)
+				}
 			}
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,

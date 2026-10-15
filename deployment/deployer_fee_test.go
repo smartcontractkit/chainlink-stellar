@@ -53,7 +53,7 @@ func TestAssembleTransaction_FeeCountsResourceFeeOnce(t *testing.T) {
 		MinResourceFee:     simMinResourceFee,
 	}
 
-	assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute))
+	assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute), 1)
 	require.NoError(t, err)
 
 	// Resource fee (bumped once) + inclusion base fee — nothing else.
