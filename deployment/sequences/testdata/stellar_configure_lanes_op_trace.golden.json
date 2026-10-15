@@ -114,7 +114,7 @@
             "DestGasPerPayloadByte": 16,
             "IsEnabled": true,
             "LinkPremiumPercent": 90,
-            "MaxDataBytes": 35000,
+            "MaxDataBytes": 50000,
             "MaxPerMsgGasLimit": 4000000,
             "NetworkFeeUsdCents": 100
           },
