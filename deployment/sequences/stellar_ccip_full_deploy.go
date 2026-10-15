@@ -541,14 +541,8 @@ func RunStellarCCIPFullDeploy(
 		fqDestChainConfigs = append(fqDestChainConfigs, fqbindings.DestChainConfigArgs{
 			DestChainSelector: rs,
 			Config: fqbindings.DestChainConfig{
-				IsEnabled: true,
-				// The budget must fit the transport: the ccip_send tx carries
-				// the payload THREE times (op args + the auth tree's root and
-				// sub invocations — simulation-derived auth duplicates the full
-				// router/onramp args), so measured tx = 3*(budget-199) + ~3.8K
-				// framing vs the localnet 132,096-byte soroban tx size limit.
-				// 40K payloads land at ~123K (6.8% headroom); the ceiling is 42,977.
-				MaxDataBytes:          40_000,
+				IsEnabled:             true,
+				MaxDataBytes:          35_000,
 				MaxPerMsgGasLimit:     4_000_000,
 				DestGasOverhead:       350_000,
 				DestGasPerPayloadByte: 16,
