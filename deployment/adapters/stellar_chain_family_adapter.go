@@ -80,7 +80,7 @@ func (a *StellarChainFamilyAdapter) GetFQAddress(ds datastore.DataStore, chainSe
 func (a *StellarChainFamilyAdapter) GetFeeQuoterDestChainConfig() lanes.FeeQuoterDestChainConfig {
 	return lanes.FeeQuoterDestChainConfig{
 		IsEnabled:                   true,
-		MaxDataBytes:                50_000,
+		MaxDataBytes:                40_000,
 		MaxPerMsgGasLimit:           4_000_000,
 		DestGasOverhead:             350_000,
 		DestGasPerPayloadByteBase:   16,
@@ -151,7 +151,7 @@ func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig(
 	}
 	return ccvadapters.FeeQuoterDestChainConfigOverrides{
 		IsEnabled:                   ptr(true),
-		MaxDataBytes:                ptr(uint32(50_000)),
+		MaxDataBytes:                ptr(uint32(40_000)),
 		MaxPerMsgGasLimit:           ptr(uint32(4_000_000)),
 		DestGasOverhead:             ptr(uint32(350_000)),
 		DestGasPerPayloadByteBase:   ptr(uint8(16)),
