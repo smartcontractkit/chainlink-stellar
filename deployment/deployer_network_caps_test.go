@@ -111,6 +111,67 @@ func TestAssembleTransaction_NoCapsLeavesResourcesUnclamped(t *testing.T) {
 	require.Equal(t, xdr.Uint32(120_000_000), op.Ext.SorobanData.Resources.Instructions)
 }
 
+// TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap pins the
+// final-attempt raise: when the graduated scaling lands below the per-tx
+// instruction cap (a 30K-budget send simulates ~22M instructions, so
+// attempt 3's x4 declares ~88M < the 100M cap), the last attempt must still
+// declare the cap — the send's best and final shot. Earlier attempts keep
+// their graduated declarations.
+func TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap(t *testing.T) {
+	t.Parallel()
+
+	buildSim := func(t *testing.T) protocolrpc.SimulateTransactionResponse {
+		t.Helper()
+		sorobanData := xdr.SorobanTransactionData{
+			Resources:   xdr.SorobanResources{Instructions: 22_000_000},
+			ResourceFee: 1_000_000,
+		}
+		dataXDR, err := xdr.MarshalBase64(sorobanData)
+		require.NoError(t, err)
+		return protocolrpc.SimulateTransactionResponse{
+			TransactionDataXDR: dataXDR,
+			MinResourceFee:     1_000_000,
+		}
+	}
+
+	for _, attempt := range []int{2, 3} {
+		sim := buildSim(t)
+		seq := testInitialSeq
+		mock := &mockRPC{
+			GetLedgerEntriesFn: func(_ context.Context, req protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error) {
+				return networkCapsLedgerEntries(t, req, &seq), nil
+			},
+		}
+		d := newTestDeployer(t, mock)
+
+		ctx := context.Background()
+		sourceAccount, err := d.getSourceAccount(ctx)
+		require.NoError(t, err)
+		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+			SourceAccount:        sourceAccount,
+			IncrementSequenceNum: true,
+			Operations:           []txnbuild.Operation{testInvokeOp(d.signer.Address())},
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, time.Now().Add(time.Minute).Unix())},
+		})
+		require.NoError(t, err)
+
+		assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute), attempt)
+		require.NoError(t, err)
+
+		op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
+		require.True(t, ok)
+		switch attempt {
+		case 2:
+			// Graduated: 22M ×2 = 44M, below the cap, not raised.
+			require.Equal(t, xdr.Uint32(44_000_000), op.Ext.SorobanData.Resources.Instructions)
+		case 3:
+			// Final attempt: 22M ×4 = 88M is below the 100M cap — raised to it.
+			require.Equal(t, xdr.Uint32(100_000_000), op.Ext.SorobanData.Resources.Instructions)
+		}
+	}
+}
+
 // networkCapsLedgerEntries serves the signer account entry and the Soroban
 // network-config entries (compute + ledger cost) with localnet-shaped caps:
 // 100M per-tx instructions, 200K per-tx disk read/write bytes.

@@ -688,8 +688,13 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 // failed-but-included transaction still consumes a source account sequence
 // number (a rejected or timed-out one does not), so each retry re-fetches the
 // account either way.
+// submitMaxAttempts bounds buildAndSubmitTransaction's retry rounds. The
+// final round's assembleTransaction declares the network's full per-tx
+// instruction cap (see the raise there).
+const submitMaxAttempts = 3
+
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
-	const maxAttempts = 3
+	const maxAttempts = submitMaxAttempts
 	for attempt := 1; ; attempt++ {
 		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt)
 		if err == nil {
@@ -1219,6 +1224,16 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 			sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
 			sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
 			sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
+			// The final attempt declares the full per-tx instruction cap: the
+			// graduated factors above under-declare at smaller payloads — a
+			// 30K-budget send simulates ~22M instructions, so attempt 3's ×4
+			// declares ~88M, below the 100M cap — and the last try has nothing
+			// left to conserve. Over-declared budget costs only the refundable
+			// resource fee: fee processing charges by actual usage.
+			if attempt == submitMaxAttempts && caps.instructions > 0 &&
+				sorobanData.Resources.Instructions < caps.instructions {
+				sorobanData.Resources.Instructions = caps.instructions
+			}
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
