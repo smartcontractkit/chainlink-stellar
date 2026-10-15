@@ -1206,6 +1206,19 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 					sorobanData.ResourceFee = xdr.Int64(fee)
 				}
 			}
+			// The network validates declared resources against its config's
+			// per-tx caps before the transaction runs: overshooting one (observed
+			// on the max-data-size send, where the retry scaling grew a
+			// 28.8M-instruction simulation to 115.2M on attempt 3, past the
+			// localnet 100M per-tx cap) rejects the transaction at submission
+			// with "transaction instructions resources exceed network config
+			// limit" — strictly worse than under-declaring, since the
+			// transaction never even runs. Clamp to the caps read from the
+			// network config; a zero cap leaves the resource unclamped.
+			caps := d.networkResourceCaps(ctx)
+			sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
+			sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
+			sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
@@ -1245,6 +1258,65 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 	}
 
 	return tx, nil
+}
+
+// networkResourceCaps are the per-transaction resource caps the network
+// config validates declared Soroban resources against. A zero field means
+// the cap is unknown and disables clamping for that resource.
+type networkResourceCaps struct {
+	instructions  xdr.Uint32
+	diskReadBytes xdr.Uint32
+	writeBytes    xdr.Uint32
+}
+
+// networkResourceCaps reads the per-tx instruction and disk caps from the
+// Soroban network-config ledger entries, best-effort: any read or decode
+// failure (or an entry whose config arm is absent) leaves the caps zero,
+// disabling clamping in assembleTransaction rather than failing the send.
+func (d *Deployer) networkResourceCaps(ctx context.Context) networkResourceCaps {
+	var caps networkResourceCaps
+	if data, err := d.fetchLedgerEntry(ctx, configSettingLedgerKey(xdr.ConfigSettingIdConfigSettingContractComputeV0)); err == nil {
+		if entry, ok := data.GetConfigSetting(); ok && entry.ContractCompute != nil {
+			caps.instructions = clampInt64ToUint32(entry.ContractCompute.TxMaxInstructions)
+		}
+	}
+	if data, err := d.fetchLedgerEntry(ctx, configSettingLedgerKey(xdr.ConfigSettingIdConfigSettingContractLedgerCostV0)); err == nil {
+		if entry, ok := data.GetConfigSetting(); ok && entry.ContractLedgerCost != nil {
+			caps.diskReadBytes = entry.ContractLedgerCost.TxMaxDiskReadBytes
+			caps.writeBytes = entry.ContractLedgerCost.TxMaxWriteBytes
+		}
+	}
+	return caps
+}
+
+// configSettingLedgerKey builds the ledger key for a Soroban network-config
+// setting entry (readable like any other ledger entry).
+func configSettingLedgerKey(id xdr.ConfigSettingId) xdr.LedgerKey {
+	return xdr.LedgerKey{
+		Type:          xdr.LedgerEntryTypeConfigSetting,
+		ConfigSetting: &xdr.LedgerKeyConfigSetting{ConfigSettingId: id},
+	}
+}
+
+// clampToCap bounds a declared resource to a network cap; a zero cap is
+// unknown and disables the clamp.
+func clampToCap(v, cap xdr.Uint32) xdr.Uint32 {
+	if cap == 0 || v <= cap {
+		return v
+	}
+	return cap
+}
+
+// clampInt64ToUint32 maps an Int64 network-config cap onto the Uint32
+// resource field it clamps; non-positive becomes zero (unknown, clamp off).
+func clampInt64ToUint32(v xdr.Int64) xdr.Uint32 {
+	if v <= 0 {
+		return 0
+	}
+	if v > xdr.Int64(^uint32(0)) {
+		return ^xdr.Uint32(0)
+	}
+	return xdr.Uint32(v)
 }
 
 // extractWASMHash extracts the WASM hash from a transaction result.
