@@ -56,7 +56,7 @@ func TestAssembleTransaction_ClampsScaledResourcesToNetworkCaps(t *testing.T) {
 	assembled, err := d.assembleTransaction(ctx, tx, protocolrpc.SimulateTransactionResponse{
 		TransactionDataXDR: dataXDR,
 		MinResourceFee:     1_000_000,
-	}, time.Now().Add(time.Minute), 3)
+	}, time.Now().Add(time.Minute), 3, true)
 	require.NoError(t, err)
 
 	op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
@@ -102,7 +102,7 @@ func TestAssembleTransaction_NoCapsLeavesResourcesUnclamped(t *testing.T) {
 	assembled, err := d.assembleTransaction(ctx, tx, protocolrpc.SimulateTransactionResponse{
 		TransactionDataXDR: dataXDR,
 		MinResourceFee:     1_000_000,
-	}, time.Now().Add(time.Minute), 3)
+	}, time.Now().Add(time.Minute), 3, true)
 	require.NoError(t, err)
 
 	op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
@@ -112,11 +112,14 @@ func TestAssembleTransaction_NoCapsLeavesResourcesUnclamped(t *testing.T) {
 }
 
 // TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap pins the
-// final-attempt raise: when the graduated scaling lands below the per-tx
-// instruction cap (a 30K-budget send simulates ~22M instructions, so
-// attempt 3's x4 declares ~88M < the 100M cap), the last attempt must still
-// declare the cap — the send's best and final shot. Earlier attempts keep
-// their graduated declarations.
+// reason-aware final-attempt raise: when the previous round failed by
+// exceeding its declared budget and the graduated scaling lands below the
+// per-tx instruction cap (a 30K-budget send simulates ~22M instructions, so
+// attempt 3's x4 declares ~88M < the 100M cap), the last attempt declares
+// the cap with the fee scaled by the same ratio — the send's best and final
+// shot. After non-budget failures (fee rejection, overload) the simulated
+// budget passes through unscaled at every attempt, and earlier budget-exceed
+// attempts keep their graduated declarations.
 func TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap(t *testing.T) {
 	t.Parallel()
 
@@ -134,7 +137,8 @@ func TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap(t *testing.T
 		}
 	}
 
-	for _, attempt := range []int{2, 3} {
+	assembledInstructions := func(t *testing.T, attempt int, prevBudgetExceeded bool) (xdr.Uint32, xdr.Int64) {
+		t.Helper()
 		sim := buildSim(t)
 		seq := testInitialSeq
 		mock := &mockRPC{
@@ -156,20 +160,31 @@ func TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap(t *testing.T
 		})
 		require.NoError(t, err)
 
-		assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute), attempt)
+		assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute), attempt, prevBudgetExceeded)
 		require.NoError(t, err)
 
 		op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
 		require.True(t, ok)
-		switch attempt {
-		case 2:
-			// Graduated: 22M ×2 = 44M, below the cap, not raised.
-			require.Equal(t, xdr.Uint32(44_000_000), op.Ext.SorobanData.Resources.Instructions)
-		case 3:
-			// Final attempt: 22M ×4 = 88M is below the 100M cap — raised to it.
-			require.Equal(t, xdr.Uint32(100_000_000), op.Ext.SorobanData.Resources.Instructions)
-		}
+		return op.Ext.SorobanData.Resources.Instructions, op.Ext.SorobanData.ResourceFee
 	}
+
+	// Budget-exceeded retry, attempt 2: graduated 22M x2 = 44M, not raised.
+	ins, _ := assembledInstructions(t, 2, true)
+	require.Equal(t, xdr.Uint32(44_000_000), ins)
+
+	// Budget-exceeded retry, final attempt: 22M x4 = 88M is below the 100M
+	// cap — instructions raised to it, fee scaled by the same 100/88 ratio:
+	// (1M resource fee + 250K bump) × 4 = 5M, then × 100,000,000/88,000,000.
+	ins, fee := assembledInstructions(t, 3, true)
+	require.Equal(t, xdr.Uint32(100_000_000), ins)
+	require.Equal(t, xdr.Int64(5_681_818), fee)
+
+	// Non-budget failure (fee rejection, overload): the simulated budget
+	// passes through unscaled at every attempt, including the final one
+	// (only the unconditional resource-fee bump applies: 1M + 250K).
+	ins, fee = assembledInstructions(t, 3, false)
+	require.Equal(t, xdr.Uint32(22_000_000), ins)
+	require.Equal(t, xdr.Int64(1_250_000), fee)
 }
 
 // networkCapsLedgerEntries serves the signer account entry and the Soroban

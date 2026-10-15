@@ -792,7 +792,7 @@
               "DestGasPerPayloadByte": 16,
               "IsEnabled": true,
               "LinkPremiumPercent": 90,
-              "MaxDataBytes": 30000,
+              "MaxDataBytes": 25000,
               "MaxPerMsgGasLimit": 4000000,
               "NetworkFeeUsdCents": 100
             },
@@ -807,7 +807,7 @@
               "DestGasPerPayloadByte": 16,
               "IsEnabled": true,
               "LinkPremiumPercent": 90,
-              "MaxDataBytes": 30000,
+              "MaxDataBytes": 25000,
               "MaxPerMsgGasLimit": 4000000,
               "NetworkFeeUsdCents": 100
             },

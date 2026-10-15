@@ -695,8 +695,9 @@ const submitMaxAttempts = 3
 
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
 	const maxAttempts = submitMaxAttempts
+	prevBudgetExceeded := false
 	for attempt := 1; ; attempt++ {
-		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt)
+		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt, prevBudgetExceeded)
 		if err == nil {
 			return meta, nil
 		}
@@ -707,6 +708,12 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == maxAttempts {
 			return nil, err
 		}
+		// Resource inflation answers a budget-exceeded failure only: after a
+		// fee rejection or an overload the next round re-simulates and keeps
+		// the accurate budget (scaling resources after those failures raised
+		// the declared instructions without the fee to match, and inclusion
+		// rejected the upload with txInsufficientFee).
+		prevBudgetExceeded = rle != nil
 		if soe != nil {
 			// Nothing about the ledger changed — only back off far enough to
 			// let the node drain its submission queue.
@@ -725,7 +732,7 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 
 // buildSimulateAndSubmitOnce performs a single build -> simulate -> (restore)
 // -> assemble -> submit round of buildAndSubmitTransaction.
-func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int) (*xdr.TransactionMeta, error) {
+func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int, prevBudgetExceeded bool) (*xdr.TransactionMeta, error) {
 	// Establish a single deadline shared by the transaction's time-bound and the
 	// confirmation poll, so they are always in sync. After a successful auto-restore
 	// path, the deadline is refreshed (restore can consume most of the initial window).
@@ -871,7 +878,7 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 		simResult = authSim
 	}
 
-	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt)
+	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt, prevBudgetExceeded)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble transaction: %w", err)
 	}
@@ -1160,7 +1167,7 @@ func (d *Deployer) resourceFeeBump(minResourceFee int64) int64 {
 
 // assembleTransaction injects simulation results (Soroban data, auth, fee) into the
 // transaction and rebuilds it with the correct fee and the provided deadline as MaxTime.
-func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time, attempt int) (*txnbuild.Transaction, error) {
+func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transaction, sim protocolrpc.SimulateTransactionResponse, deadline time.Time, attempt int, prevBudgetExceeded bool) (*txnbuild.Transaction, error) {
 	ops := tx.Operations()
 	if len(ops) == 0 {
 		return tx, nil
@@ -1186,15 +1193,17 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 			if len(ihf.Auth) > 0 {
 				sorobanData.Resources.Instructions += sorobanData.Resources.Instructions/50 + xdr.Uint32(100_000)
 			}
-			// Retry scaling: the RPC simulation bypasses auth processing
-			// entirely (empirically, re-simulating with the auth attached
-			// still under-counts — the auth tree's parsing and verification
-			// are only metered in real execution, and a router send carries
-			// the payload twice more in its auth tree). Scale the declared
-			// budget exponentially per attempt until the transaction lands;
-			// over-declared resources cost only the resource fee, and the
-			// unused refundable portion is refunded.
-			if attempt > 1 {
+			// Retry scaling answers a budget-exceeded failure: the RPC
+			// simulation bypasses auth processing entirely (empirically,
+			// re-simulating with the auth attached still under-counts — the
+			// auth tree's parsing and verification are only metered in real
+			// execution, and a router send carries the payload twice more in
+			// its auth tree). Scale the declared budget exponentially per
+			// attempt until the transaction lands; over-declared resources
+			// cost only the resource fee, and the unused refundable portion
+			// is refunded. After fee/overload failures the budget stays as
+			// simulated — the fresh round re-simulates it accurately.
+			if attempt > 1 && prevBudgetExceeded {
 				factor := uint64(1) << (attempt - 1)
 				clamp := func(v uint64) xdr.Uint32 {
 					if v > uint64(^xdr.Uint32(0)) {
@@ -1224,14 +1233,22 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 			sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
 			sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
 			sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
-			// The final attempt declares the full per-tx instruction cap: the
-			// graduated factors above under-declare at smaller payloads — a
-			// 30K-budget send simulates ~22M instructions, so attempt 3's ×4
-			// declares ~88M, below the 100M cap — and the last try has nothing
-			// left to conserve. Over-declared budget costs only the refundable
-			// resource fee: fee processing charges by actual usage.
-			if attempt == submitMaxAttempts && caps.instructions > 0 &&
+			// The final budget-exceeded attempt declares the full per-tx
+			// instruction cap: the graduated factors above under-declare at
+			// smaller payloads — a 30K-budget send simulates ~22M
+			// instructions, so attempt 3's ×4 declares ~88M, below the 100M
+			// cap — and the last try has nothing left to conserve. The fee is
+			// scaled by the same ratio: inclusion-time fee validation scales
+			// with declared instructions, so raising them alone is rejected
+			// with txInsufficientFee (observed on a retried WASM upload).
+			if attempt == submitMaxAttempts && prevBudgetExceeded && caps.instructions > 0 &&
+				sorobanData.Resources.Instructions > 0 &&
 				sorobanData.Resources.Instructions < caps.instructions {
+				fee := int64(sorobanData.ResourceFee) * int64(caps.instructions) /
+					int64(sorobanData.Resources.Instructions)
+				if fee > int64(sorobanData.ResourceFee) {
+					sorobanData.ResourceFee = xdr.Int64(fee)
+				}
 				sorobanData.Resources.Instructions = caps.instructions
 			}
 			ihf.Ext = xdr.TransactionExt{
