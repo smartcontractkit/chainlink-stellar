@@ -591,7 +591,7 @@ func (s *StellarTxm) broadcastLoop() {
 // simulateAssembleSignAndSend runs the full Stellar broadcast pipeline for a
 // single transaction: simulate → (restore archived entries) → assemble →
 // sign → send, with retry on transient failures and inclusion-fee bumping
-// seeded from the feeTracker's Soroban inclusion-fee bid.
+// seeded from feeTracker.
 func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *StellarTx) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 	client, err := s.getClient(ctx)
@@ -626,8 +626,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	// Bid the highest Soroban inclusion-fee P99 that GetFeeStats reported within
-	// FeeStatsLookback (see feeTracker). SeedInclusionFee caps it at MaxInclusionFee.
+	// Seed from the feeTracker bid (highest recent P99), capped at MaxInclusionFee.
 	var networkFee uint64
 	var latestFees feeSample
 	if bid, latest, fsErr := s.feeTracker.sorobanInclusionFeeBid(ctx, client); fsErr == nil {

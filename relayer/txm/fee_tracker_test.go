@@ -117,14 +117,14 @@ func TestFeeTracker_BidsPeakP99WithinLookback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(100), bid)
 
-	// A surge ledger enters the RPC window: P99 jumps while P50 and P90 stay at base.
+	// P99 jumps while P50 and P90 stay at base.
 	clock.advance(5 * time.Second)
 	client.resp = feeStats(100, 100, 26_000_000)
 	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(26_000_000), bid)
 
-	// P99 falls while the surge is still alternating ledger by ledger: keep bidding the peak.
+	// P99 falls within the lookback: still bid the peak.
 	clock.advance(5 * time.Second)
 	client.resp = feeStats(100, 100, 1_000_000)
 	bid, latest, err := tr.sorobanInclusionFeeBid(ctx, client)
@@ -132,7 +132,7 @@ func TestFeeTracker_BidsPeakP99WithinLookback(t *testing.T) {
 	assert.Equal(t, uint64(26_000_000), bid)
 	assert.Equal(t, uint64(1_000_000), latest.p99)
 
-	// Once the peak sample is older than the lookback it no longer sets the bid.
+	// The peak sample ages out of the lookback.
 	clock.advance(2 * time.Minute)
 	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
 	require.NoError(t, err)

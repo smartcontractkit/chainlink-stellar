@@ -25,7 +25,7 @@ ResourceFeeBuffer = 15000 # Default
 RestoreFeeBuffer = 10000 # Default
 # FeeStatsPollInterval controls how often GetFeeStats is called to refresh Soroban inclusion fee percentiles in the feeTracker. Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 FeeStatsPollInterval = '5s' # Default
-# FeeStatsLookback is how long GetFeeStats samples are kept. The inclusion fee is seeded from the highest Soroban P99 seen within the lookback: the RPC computes its percentiles from fees charged over its fee-stats retention window (50 ledgers by default), so a short surge leaves P50 and P90 at the base fee while P99 moves within a ledger or two, and surge-priced ledgers alternate with base-priced ones. Zero keeps only the latest sample.
+# FeeStatsLookback is how long GetFeeStats samples are kept. The inclusion fee is seeded from the highest Soroban P99 seen within the lookback, so a short surge that barely moves the RPC's long-window P50/P90 is still priced in. Zero keeps only the latest sample.
 FeeStatsLookback = '2m' # Default
 # MaxSimulateAttempts is the maximum number of SimulateTransaction attempts before treating the failure as terminal.
 MaxSimulateAttempts = 3 # Default

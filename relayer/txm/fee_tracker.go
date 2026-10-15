@@ -13,39 +13,32 @@ type feeStatsRPC interface {
 	GetFeeStats(ctx context.Context) (protocolrpc.GetFeeStatsResponse, error)
 }
 
-// feeSample is one GetFeeStats Soroban inclusion-fee snapshot (stroops).
+// feeSample is one GetFeeStats Soroban inclusion fee snapshot (stroops).
 type feeSample struct {
 	at            time.Time
 	p50, p90, p99 uint64
 }
 
-// feeTracker polls GetFeeStats at most once per pollInterval and keeps every sample
-// taken within lookback. Its bid is the highest Soroban inclusion-fee P99 among them.
-//
-// The RPC derives the percentiles from the inclusion fees charged over its fee-stats
-// retention window (50 ledgers by default). Stellar charges every transaction in a
-// lane the lane's clearing price, so through a surge shorter than that window P50 and
-// P90 stay at the base fee while P99 moves within a ledger or two; and because surge
-// priced ledgers alternate with base priced ones, holding the peak for the lookback
-// keeps the bid from falling back while the surge is still on.
-//
-// A non-positive pollInterval fetches on every call; a non-positive lookback keeps
-// only the latest sample. When a refresh fails the samples already held are used.
+// feeTracker caches GetFeeStats Soroban inclusion fee percentiles, refreshing at most
+// once per pollInterval, and keeps the samples from the last lookback. Its bid is the
+// highest P99 among them. A non-positive pollInterval fetches on every call; a
+// non-positive lookback keeps only the latest sample. On refresh error the samples
+// already held are used (stale-while-revalidate).
 type feeTracker struct {
 	mu           sync.Mutex
 	pollInterval time.Duration
 	lookback     time.Duration
 	now          func() time.Time
 
-	samples []feeSample // oldest first; never emptied once a fetch has succeeded
+	samples []feeSample // oldest first
 }
 
 func newFeeTracker(pollInterval, lookback time.Duration) *feeTracker {
 	return &feeTracker{pollInterval: pollInterval, lookback: lookback, now: time.Now}
 }
 
-// sorobanInclusionFeeBid returns the highest Soroban inclusion-fee P99 reported within
-// lookback and the latest sample. It fails only when no sample has ever been fetched.
+// sorobanInclusionFeeBid returns the highest Soroban inclusion fee P99 within lookback
+// and the latest sample. It errors only when no sample has ever been fetched.
 func (t *feeTracker) sorobanInclusionFeeBid(ctx context.Context, client feeStatsRPC) (bid uint64, latest feeSample, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

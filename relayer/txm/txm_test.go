@@ -1981,8 +1981,8 @@ func noopInvokeRequest() TxRequest {
 	}
 }
 
-// broadcastAndReadInclusionFee enqueues a noop invoke, waits for its broadcast and
-// returns the per-op inclusion fee of the envelope the mock received.
+// broadcastAndReadInclusionFee enqueues a noop invoke and returns the per-op inclusion
+// fee of the envelope the mock received.
 func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCClient) int64 {
 	t.Helper()
 	txID, err := txm.Enqueue(t.Context(), noopInvokeRequest())
@@ -2016,7 +2016,7 @@ func TestStellarTxm_FirstBroadcastBidsPeakP99(t *testing.T) {
 
 	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock), "first broadcast bids P99, not P50")
 
-	// P99 falls while the surge alternates ledger by ledger: the peak within FeeStatsLookback still sets the bid.
+	// P99 drops; the peak within FeeStatsLookback still sets the bid.
 	mock.getFeeStatsResp = feeStats(100, 100, 100)
 	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock))
 }
