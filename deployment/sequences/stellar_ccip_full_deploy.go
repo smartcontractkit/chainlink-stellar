@@ -542,7 +542,7 @@ func RunStellarCCIPFullDeploy(
 			DestChainSelector: rs,
 			Config: fqbindings.DestChainConfig{
 				IsEnabled:             true,
-				MaxDataBytes:          35_000,
+				MaxDataBytes:          30_000,
 				MaxPerMsgGasLimit:     4_000_000,
 				DestGasOverhead:       350_000,
 				DestGasPerPayloadByte: 16,
