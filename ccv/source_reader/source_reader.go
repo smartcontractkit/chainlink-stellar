@@ -97,22 +97,21 @@ func NewSourceReaderWithClient(
 }
 
 // FetchMessageSentEvents fetches CCIP MessageSent events from the Stellar OnRamp contract.
-func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, toBlock *big.Int) ([]protocol.MessageSentEvent, error) {
-	fromSeq := fromBlock.Uint64()
-	if fromSeq > math.MaxUint32 {
-		return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", fromSeq)
+// A toBlock of 0 queries up to the latest ledger.
+func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, toBlock uint64) ([]protocol.MessageSentEvent, error) {
+	if fromBlock > math.MaxUint32 {
+		return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", fromBlock)
 	}
 
 	// OnStellar, ledger 7 is the min starting ledger number.
-	fromLedger := max(uint32(fromSeq), 7)
+	fromLedger := max(uint32(fromBlock), 7)
 
 	var toLedger uint32
-	if toBlock != nil {
-		toSeq := toBlock.Uint64()
-		if toSeq > math.MaxUint32 {
-			return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", toSeq)
+	if toBlock != 0 {
+		if toBlock > math.MaxUint32 {
+			return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", toBlock)
 		}
-		toLedger = uint32(toSeq)
+		toLedger = uint32(toBlock)
 	} else {
 		latestLedger, err := s.client.GetLatestLedger(ctx)
 		if err != nil {
@@ -509,13 +508,16 @@ func parseReceipt(val xdr.ScVal) (*protocol.ReceiptWithBlob, error) {
 // }
 
 // GetBlocksHeaders returns the block headers for the requested ledger sequence numbers.
-func (s *SourceReader) GetBlocksHeaders(ctx context.Context, ledgerNumber []*big.Int) (map[uint64]protocol.BlockHeader, error) {
-	headers := make(map[uint64]protocol.BlockHeader, len(ledgerNumber))
+// Per the chainaccess.SourceReader contract, a ledger that is out of range, not
+// found, or fails to fetch is omitted from the result (callers check for missing
+// entries) rather than failing the whole batch.
+func (s *SourceReader) GetBlocksHeaders(ctx context.Context, ledgerNumbers []uint64) (map[uint64]protocol.BlockHeader, error) {
+	headers := make(map[uint64]protocol.BlockHeader, len(ledgerNumbers))
 
-	for _, n := range ledgerNumber {
-		seq := n.Uint64()
+	for _, seq := range ledgerNumbers {
 		if seq > math.MaxUint32 {
-			return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", seq)
+			s.lggr.Warn().Uint64("ledger", seq).Msg("block number exceeds uint32 (ledger seq) range, omitting header")
+			continue
 		}
 
 		req := protocolrpc.GetLedgersRequest{
@@ -527,19 +529,23 @@ func (s *SourceReader) GetBlocksHeaders(ctx context.Context, ledgerNumber []*big
 
 		resp, err := s.client.GetLedgers(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get ledger %d: %w", seq, err)
+			s.lggr.Warn().Uint64("ledger", seq).Err(err).Msg("failed to get ledger, omitting header")
+			continue
 		}
 		if len(resp.Ledgers) == 0 {
-			return nil, fmt.Errorf("ledger %d not found", seq)
+			s.lggr.Warn().Uint64("ledger", seq).Msg("ledger not found, omitting header")
+			continue
 		}
 		ledger := resp.Ledgers[0]
 		if ledger.Sequence != uint32(seq) {
-			return nil, fmt.Errorf("ledger seq mismatch: requested %d got %d", seq, ledger.Sequence)
+			s.lggr.Warn().Uint64("requested", seq).Uint32("got", ledger.Sequence).Msg("ledger seq mismatch, omitting header")
+			continue
 		}
 
 		blockHeader, err := buildBlockHeaderFromMeta(ledger.Hash, ledger.LedgerMetadata, ledger.Sequence, ledger.LedgerCloseTime)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build header for ledger %d: %w", seq, err)
+			s.lggr.Warn().Uint64("ledger", seq).Err(err).Msg("failed to build header, omitting")
+			continue
 		}
 		headers[seq] = blockHeader
 	}

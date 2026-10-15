@@ -607,7 +607,7 @@ func deployOutboundSendWire(
 
 	destCfg := fqbindings.DestChainConfig{
 		IsEnabled:             true,
-		MaxDataBytes:          50000,
+		MaxDataBytes:          12_451,
 		MaxPerMsgGasLimit:     4_000_000,
 		DestGasOverhead:       350_000,
 		DestGasPerPayloadByte: 16,

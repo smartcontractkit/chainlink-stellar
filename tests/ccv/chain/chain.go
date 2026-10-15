@@ -38,6 +38,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
@@ -46,6 +47,7 @@ import (
 	slrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/siloed_lock_release_pool"
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
@@ -223,18 +225,33 @@ func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) 
 	// FeeQuoter family selector and DestGasOverhead are populated from the Stellar
 	// lane adapter defaults; overrides here only set fields that differ from those.
 	//
-	// BaseExecutionGasCost and CommitteeVerifierGasForVerification are deliberately
-	// NOT overridden: the lane changeset coalesces unset fields with the REMOTE
-	// chain family adapter's defaults (configure_chains_for_lanes_from_topology.go
+	// CommitteeVerifierGasForVerification is deliberately NOT overridden: the lane
+	// changeset coalesces unset fields with the REMOTE chain family adapter's
+	// defaults (configure_chains_for_lanes_from_topology.go
 	// resolveRemoteChainConfig / mergeCommitteeVerifierRemoteChainConfig), which
-	// describe what executing on that remote actually costs. Overriding them with
-	// stellar-scale numbers under-budgets the on-wire execution_gas_limit of
-	// messages this chain sends: the ccv executor sizes its dest execute tx from
-	// that value, and on EVM the Router's CallWithExactGas then reverts
-	// NOT_ENOUGH_GAS_FOR_CALL (0x37c3be29) because the receiver's
-	// ccipReceiveGasLimit cannot be delivered. Leaving them unset matches the
-	// EVM family defaults (base 200_000, per-CCV 75_000) that green EVM↔EVM
-	// lanes use, for any remote family.
+	// describe what executing on that remote actually costs. Overriding it DOWN
+	// to stellar-scale numbers under-budgets the on-wire execution_gas_limit of
+	// messages this chain sends, and the EVM Router's CallWithExactGas reverts
+	// NOT_ENOUGH_GAS_FOR_CALL (0x37c3be29). Unset = the EVM family default
+	// (per-CCV 75_000), matching green EVM↔EVM lanes for any remote family.
+	//
+	// BaseExecutionGasCost IS overridden UP from the EVM family default
+	// (200_000): the default leaves no room for calldata intrinsic + OffRamp
+	// pre-call processing at large payloads. The ccv executor sizes the dest
+	// execute tx as execution_gas_limit + EIP-150 buffer only
+	// (txm_evm_contract_transmitter.go — intrinsic is NOT added), while the
+	// Router's CallWithExactGas demands gasleft ≥ ccipReceiveGasLimit +
+	// gasForCallExactCheck at the receiver call. At the 12,252-byte max payload
+	// the ~13KB execute calldata costs ~227K intrinsic (payload is nonzero
+	// bytes, 16 gas each) and verification/state-writes/decode cost ~90-150K
+	// more, so the check falls ~40-100K short at base 200K + CV 75K (same
+	// 0x37c3be29, CI run 38774977247 max_data_size). Raising the user gasLimit
+	// cannot fix it — it scales both sides of the check ~1:1 because the
+	// buffer is proportional to it — only the fixed terms move the inequality.
+	// 400_000 covers intrinsic + processing at the max payload with ~2x margin
+	// on the processing estimate; wire total at max ≈ 400K+75K+733K = 1.21M,
+	// well under MaxPerMsgGasLimit. Devenv fees are fake, so the over-declare
+	// costs nothing.
 	//
 	// NOTE: this profile is only ONE of the writers that feed the on-wire gas
 	// fields. The changeset's OnRamp dest-config write is what this profile
@@ -246,6 +263,7 @@ func (c *Chain) GetChainLaneProfile(_ *deployment.Environment, selector uint64) 
 	executorQualifier := devenvcommon.DefaultExecutorQualifier
 	return ccipChangesets.ChainOverrides{
 		RemoteChainCfg: ccipChangesets.PartialRemoteChainConfig{
+			BaseExecutionGasCost: ptrU32(400_000),
 			FeeQuoterDestChainConfig: adapters.FeeQuoterDestChainConfigOverrides{
 				IsEnabled:                   &enabled,
 				MaxDataBytes:                ptrU32(30_000),
@@ -878,6 +896,110 @@ func (c *Chain) GetMaxDataBytes(ctx context.Context, remoteChainSelector uint64)
 		return 0, fmt.Errorf("failed to get fee quoter dest chain config: %w", err)
 	}
 	return cfg.MaxDataBytes, nil
+}
+
+// messageV1StellarSourceBaseSize mirrors MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE
+// (contracts/common/message): MessageV1 framing plus the stellar sender and
+// onramp address XDR bytes billed for every stellar-sourced message.
+const messageV1StellarSourceBaseSize uint32 = 159
+
+// cvRemoteConfig returns the outbound committee verifier's remote config for
+// remoteChainSelector, or nil when no committee verifier is deployed.
+func (c *Chain) cvRemoteConfig(ctx context.Context, remoteChainSelector uint64) (*cvbindings.RemoteChainConfig, error) {
+	if c.vvrContractID == "" {
+		return nil, nil
+	}
+	cvID, err := vvrbindings.NewVersionedVerifierResolverClient(c.deployer, c.vvrContractID).
+		GetOutboundImplementation(ctx, remoteChainSelector, []byte{})
+	if err != nil {
+		return nil, fmt.Errorf("get outbound committee verifier: %w", err)
+	}
+	if cvID == "" {
+		return nil, nil
+	}
+	cvCfg, err := cvbindings.NewCommitteeVerifierClient(c.deployer, cvID).
+		GetRemoteChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return nil, fmt.Errorf("get committee verifier remote config: %w", err)
+	}
+	return cvCfg, nil
+}
+
+// messageOverheadBytes bills a data-only message's non-payload bytes from the
+// OnRamp dest-chain config and the committee verifier's remote config.
+func messageOverheadBytes(onrampCfg *onrampbindings.DestChainConfig, cvCfg *cvbindings.RemoteChainConfig) uint32 {
+	overhead := messageV1StellarSourceBaseSize + 2*onrampCfg.AddressBytesLength
+	if cvCfg != nil {
+		overhead += cvCfg.PayloadSizeBytes
+	}
+	return overhead
+}
+
+// GetMessageOverheadBytes implements cciptestinterfaces.MessageOverheadProvider.
+// The non-payload bytes the stellar OnRamp bills inside the fee quoter's
+// maxDataBytes budget for a data-only message to the remote: MessageV1
+// stellar-source framing, the remote's receiver and offramp address fields,
+// and the default committee verifier's dest_bytes_overhead. Executor args are
+// assumed empty (data-only case; the EVM destination returns none).
+func (c *Chain) GetMessageOverheadBytes(ctx context.Context, remoteChainSelector uint64) (uint32, error) {
+	if c.onRampClient == nil {
+		return 0, fmt.Errorf("OnRamp client not initialized")
+	}
+	onrampCfg, err := c.onRampClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get dest chain config: %w", err)
+	}
+	cvCfg, err := c.cvRemoteConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, err
+	}
+	return messageOverheadBytes(onrampCfg, cvCfg), nil
+}
+
+// GetExecutionGasLimit implements cciptestinterfaces.ExecutionGasLimitProvider.
+// Sizes the gas limit for a dataLen-byte message from the remote to execute
+// on stellar from the fee quoter's own dest-chain terms for the remote:
+// DestGasOverhead as the flat margin plus DestGasPerPayloadByte over the data
+// and framing (quote_gas_for_exec's cost model). On Soroban the value is a
+// logical budget — the execute tx's compute is simulation-derived — so its
+// hard caps live source-side; the clamp reserves the OnRamp's added terms.
+func (c *Chain) GetExecutionGasLimit(ctx context.Context, remoteChainSelector uint64, dataLen uint32) (uint32, error) {
+	if c.feeQuoterClient == nil {
+		return 0, fmt.Errorf("FeeQuoter client not initialized")
+	}
+	fqCfg, err := c.feeQuoterClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get fee quoter dest chain config: %w", err)
+	}
+	if c.onRampClient == nil {
+		return 0, fmt.Errorf("OnRamp client not initialized")
+	}
+	onrampCfg, err := c.onRampClient.GetDestChainConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, fmt.Errorf("get dest chain config: %w", err)
+	}
+	cvCfg, err := c.cvRemoteConfig(ctx, remoteChainSelector)
+	if err != nil {
+		return 0, err
+	}
+	overhead := messageOverheadBytes(onrampCfg, cvCfg)
+	gas := uint64(fqCfg.DestGasOverhead) +
+		uint64(fqCfg.DestGasPerPayloadByte)*(uint64(dataLen)+uint64(overhead))
+	// MessageGasLimitTooHigh caps the OnRamp's whole sum PLUS the per-byte
+	// charge on payload AND framing (quote_gas_for_exec's calldata_size), so
+	// the reserve covers base + per-CCV verification + perByte*(dataLen+overhead).
+	reserve := uint64(onrampCfg.BaseExecutionGasCost) +
+		uint64(fqCfg.DestGasPerPayloadByte)*(uint64(dataLen)+uint64(overhead))
+	if cvCfg != nil {
+		reserve += uint64(cvCfg.GasForVerification)
+	}
+	if maxPerMsg := uint64(fqCfg.MaxPerMsgGasLimit); maxPerMsg > reserve && gas > maxPerMsg-reserve {
+		gas = maxPerMsg - reserve
+	}
+	if gas > math.MaxUint32 {
+		gas = math.MaxUint32
+	}
+	return uint32(gas), nil
 }
 
 // GetSenderAddress implements cciptestinterfaces.CCIP17.
