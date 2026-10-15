@@ -546,11 +546,13 @@ func RunStellarCCIPFullDeploy(
 				// a ccip_send tx carries the payload 3× (op args + the
 				// auth tree's root and sub invocations), so
 				// 3×(B−199)+3,761 ≤ 132,096 ⇒ B ≤ 42,977. Instructions: the
-				// same 3× carries into execution cost (~3.5K instructions
-				// per payload byte against the localnet 100M per-tx cap),
-				// and a 30K budget measured >100M even with the maximum
-				// declaration — 25K keeps the measured cost ~85-90M.
-				MaxDataBytes:          25_000,
+				// same 3× carries into execution cost — calibration
+				// (tests/e2e/maxdata_calibration_test.go, 2026-10-15)
+				// measured 13,613 bytes as the largest payload that
+				// executes under the localnet 100M per-tx instruction cap
+				// (24,801 fails even max-declared): 12,252 payload + 199
+				// overhead + 10% headroom for token/CCV-bearing shapes.
+				MaxDataBytes:          12_451,
 				MaxPerMsgGasLimit:     4_000_000,
 				DestGasOverhead:       350_000,
 				DestGasPerPayloadByte: 16,
