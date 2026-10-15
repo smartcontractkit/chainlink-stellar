@@ -56,7 +56,7 @@ func TestAssembleTransaction_ClampsScaledResourcesToNetworkCaps(t *testing.T) {
 	assembled, err := d.assembleTransaction(ctx, tx, protocolrpc.SimulateTransactionResponse{
 		TransactionDataXDR: dataXDR,
 		MinResourceFee:     1_000_000,
-	}, time.Now().Add(time.Minute), 3)
+	}, time.Now().Add(time.Minute), 3, true)
 	require.NoError(t, err)
 
 	op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
@@ -102,13 +102,89 @@ func TestAssembleTransaction_NoCapsLeavesResourcesUnclamped(t *testing.T) {
 	assembled, err := d.assembleTransaction(ctx, tx, protocolrpc.SimulateTransactionResponse{
 		TransactionDataXDR: dataXDR,
 		MinResourceFee:     1_000_000,
-	}, time.Now().Add(time.Minute), 3)
+	}, time.Now().Add(time.Minute), 3, true)
 	require.NoError(t, err)
 
 	op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
 	require.True(t, ok)
 	// 30M ×4 = 120M with no readable cap → passes through.
 	require.Equal(t, xdr.Uint32(120_000_000), op.Ext.SorobanData.Resources.Instructions)
+}
+
+// TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap pins the
+// reason-aware final-attempt raise: when the previous round failed by
+// exceeding its declared budget and the graduated scaling lands below the
+// per-tx instruction cap (a 30K-budget send simulates ~22M instructions, so
+// attempt 3's x4 declares ~88M < the 100M cap), the last attempt declares
+// the cap with the fee scaled by the same ratio — the send's best and final
+// shot. After non-budget failures (fee rejection, overload) the simulated
+// budget passes through unscaled at every attempt, and earlier budget-exceed
+// attempts keep their graduated declarations.
+func TestAssembleTransaction_FinalAttemptDeclaresFullInstructionCap(t *testing.T) {
+	t.Parallel()
+
+	buildSim := func(t *testing.T) protocolrpc.SimulateTransactionResponse {
+		t.Helper()
+		sorobanData := xdr.SorobanTransactionData{
+			Resources:   xdr.SorobanResources{Instructions: 22_000_000},
+			ResourceFee: 1_000_000,
+		}
+		dataXDR, err := xdr.MarshalBase64(sorobanData)
+		require.NoError(t, err)
+		return protocolrpc.SimulateTransactionResponse{
+			TransactionDataXDR: dataXDR,
+			MinResourceFee:     1_000_000,
+		}
+	}
+
+	assembledInstructions := func(t *testing.T, attempt int, prevBudgetExceeded bool) (xdr.Uint32, xdr.Int64) {
+		t.Helper()
+		sim := buildSim(t)
+		seq := testInitialSeq
+		mock := &mockRPC{
+			GetLedgerEntriesFn: func(_ context.Context, req protocolrpc.GetLedgerEntriesRequest) (protocolrpc.GetLedgerEntriesResponse, error) {
+				return networkCapsLedgerEntries(t, req, &seq), nil
+			},
+		}
+		d := newTestDeployer(t, mock)
+
+		ctx := context.Background()
+		sourceAccount, err := d.getSourceAccount(ctx)
+		require.NoError(t, err)
+		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+			SourceAccount:        sourceAccount,
+			IncrementSequenceNum: true,
+			Operations:           []txnbuild.Operation{testInvokeOp(d.signer.Address())},
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, time.Now().Add(time.Minute).Unix())},
+		})
+		require.NoError(t, err)
+
+		assembled, err := d.assembleTransaction(ctx, tx, sim, time.Now().Add(time.Minute), attempt, prevBudgetExceeded)
+		require.NoError(t, err)
+
+		op, ok := assembled.Operations()[0].(*txnbuild.InvokeHostFunction)
+		require.True(t, ok)
+		return op.Ext.SorobanData.Resources.Instructions, op.Ext.SorobanData.ResourceFee
+	}
+
+	// Budget-exceeded retry, attempt 2: graduated 22M x2 = 44M, not raised.
+	ins, _ := assembledInstructions(t, 2, true)
+	require.Equal(t, xdr.Uint32(44_000_000), ins)
+
+	// Budget-exceeded retry, final attempt: 22M x4 = 88M is below the 100M
+	// cap — instructions raised to it, fee scaled by the same 100/88 ratio:
+	// (1M resource fee + 250K bump) × 4 = 5M, then × 100,000,000/88,000,000.
+	ins, fee := assembledInstructions(t, 3, true)
+	require.Equal(t, xdr.Uint32(100_000_000), ins)
+	require.Equal(t, xdr.Int64(5_681_818), fee)
+
+	// Non-budget failure (fee rejection, overload): the simulated budget
+	// passes through unscaled at every attempt, including the final one
+	// (only the unconditional resource-fee bump applies: 1M + 250K).
+	ins, fee = assembledInstructions(t, 3, false)
+	require.Equal(t, xdr.Uint32(22_000_000), ins)
+	require.Equal(t, xdr.Int64(1_250_000), fee)
 }
 
 // networkCapsLedgerEntries serves the signer account entry and the Soroban
