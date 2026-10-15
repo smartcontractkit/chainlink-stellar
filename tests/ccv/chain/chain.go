@@ -985,11 +985,11 @@ func (c *Chain) GetExecutionGasLimit(ctx context.Context, remoteChainSelector ui
 	overhead := messageOverheadBytes(onrampCfg, cvCfg)
 	gas := uint64(fqCfg.DestGasOverhead) +
 		uint64(fqCfg.DestGasPerPayloadByte)*(uint64(dataLen)+uint64(overhead))
-	// MessageGasLimitTooHigh covers the OnRamp's whole sum: reserve the
-	// per-CCV verification gas, the dest base execution cost, and the
-	// per-byte calldata gas from the fee quoter's cap.
+	// MessageGasLimitTooHigh caps the OnRamp's whole sum PLUS the per-byte
+	// charge on payload AND framing (quote_gas_for_exec's calldata_size), so
+	// the reserve covers base + per-CCV verification + perByte*(dataLen+overhead).
 	reserve := uint64(onrampCfg.BaseExecutionGasCost) +
-		uint64(fqCfg.DestGasPerPayloadByte)*uint64(overhead)
+		uint64(fqCfg.DestGasPerPayloadByte)*(uint64(dataLen)+uint64(overhead))
 	if cvCfg != nil {
 		reserve += uint64(cvCfg.GasForVerification)
 	}

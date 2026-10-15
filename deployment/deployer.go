@@ -54,11 +54,8 @@ type stellarRPCClient interface {
 }
 
 // TxSigner abstracts transaction signing so the Deployer can use either an
-// in-process *keypair.Full (test paths) or a remote keystore-backed signer
-// that never exposes raw key material (production / chainlink-ccv keystore).
-//
-// Implementations MUST NOT mutate the input transaction; they should clone it
-// and return the signed clone, mirroring (*txnbuild.Transaction).Sign.
+// in-process *keypair.Full (tests) or a keystore-backed signer (production).
+// Implementations MUST NOT mutate the input transaction; sign a clone.
 type TxSigner interface {
 	// Address returns the Stellar account strkey (G...) of the signer.
 	Address() string
@@ -94,10 +91,8 @@ type stellarSDKSigner interface {
 	SignDecorated(input []byte) (xdr.DecoratedSignature, error)
 }
 
-// sdkTxSigner adapts an SDK-shaped Stellar signer (e.g.
-// chainlink-deployments-framework's StellarSigner, or *keypair.Full itself)
-// to deployment.TxSigner. It is used by deployment changesets that already
-// hold an env.BlockChains.StellarChains()[sel].Signer instance.
+// sdkTxSigner adapts an SDK-shaped Stellar signer (CLDF StellarSigner or
+// *keypair.Full) to TxSigner, for changesets already holding a chain Signer.
 type sdkTxSigner struct {
 	sdk stellarSDKSigner
 }
@@ -114,10 +109,9 @@ func NewSDKSigner(sdk stellarSDKSigner) TxSigner {
 
 func (s *sdkTxSigner) Address() string { return s.sdk.Address() }
 
-// SignTransaction hashes the transaction envelope, asks the underlying SDK
-// signer for a decorated signature, and appends it to a clone of tx. This
-// mirrors what (*txnbuild.Transaction).Sign does internally without requiring
-// a *keypair.Full.
+// SignTransaction hashes the envelope, obtains a decorated signature from the
+// underlying signer, and appends it to a clone of tx — mirroring
+// (*txnbuild.Transaction).Sign without requiring a *keypair.Full.
 func (s *sdkTxSigner) SignTransaction(networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
 	envelope := tx.ToXDR()
 	h, err := stellarHashTransactionInEnvelope(envelope, networkPassphrase)
@@ -141,11 +135,9 @@ func WithAutoRestore(enabled bool) DeployerOption {
 	return func(d *Deployer) { d.autoRestore = enabled }
 }
 
-// WithFeeBumpFactor sets the multiplier applied to the simulation's MinResourceFee
-// to derive the submitted transaction fee. For example, 1.25 submits at 25% above
-// the simulated minimum, providing headroom during network fee surges. A floor of
-// minFeeBuffer (10 000 stroops) is always applied on top of the simulation minimum.
-// Non-finite values and values below 1.0 are clamped to 1.0 (no bump).
+// WithFeeBumpFactor sets the multiplier applied to the simulation's
+// MinResourceFee (1.25 = 25% headroom; a minFeeBuffer floor always applies).
+// Non-finite or <1.0 values clamp to 1.0 (no bump).
 func WithFeeBumpFactor(factor float64) DeployerOption {
 	return func(d *Deployer) {
 		if math.IsNaN(factor) || math.IsInf(factor, 0) || factor < 1.0 {
@@ -155,10 +147,9 @@ func WithFeeBumpFactor(factor float64) DeployerOption {
 	}
 }
 
-// WithTxnTimeBound sets the validity window for every transaction submitted by
-// the Deployer. The same duration is used as the transaction's MaxTime and as
-// the confirmation poll timeout, keeping them in sync. Durations of zero or
-// below are ignored and the default (120s) is kept.
+// WithTxnTimeBound sets the validity window for every submitted transaction,
+// used as both MaxTime and the confirmation poll timeout so they stay in
+// sync. Non-positive values keep the default (120s).
 func WithTxnTimeBound(d time.Duration) DeployerOption {
 	return func(dep *Deployer) {
 		if d > 0 {
@@ -177,33 +168,24 @@ type Deployer struct {
 	// autoRestore controls automatic RestoreFootprint handling for expired
 	// persistent ledger entries. True by default.
 	autoRestore bool
-	// feeBumpFactor is multiplied by the simulation's MinResourceFee to derive
-	// the submitted fee. A value of 1.25 means 25% above the simulation minimum.
-	// Defaults to 1.25; WithFeeBumpFactor clamps non-finite values and values below 1.0.
+	// feeBumpFactor multiplies the simulation's MinResourceFee to derive the
+	// submitted fee (1.25 = 25% above minimum). Defaults to 1.25.
 	feeBumpFactor float64
-	// txnTimeBound is the validity window for every Soroban/classic transaction
-	// submitted by the Deployer. waitForTransaction polls for this exact duration,
-	// so the poll deadline and the transaction's MaxTime are always in sync.
-	// Defaults to defaultTxnTimeBound (120s).
+	// txnTimeBound is the validity window for every submitted transaction:
+	// waitForTransaction polls for exactly this duration, so the poll
+	// deadline and MaxTime stay in sync. Defaults to defaultTxnTimeBound.
 	txnTimeBound time.Duration
 }
 
-// NewDeployer creates a new Deployer instance. Options can be passed to
-// customise behaviour (e.g. WithAutoRestore(false) to disable automatic
-// restoration of expired persistent entries).
-//
-// The signer argument is a *keypair.Full to preserve compatibility with the
-// majority of call sites (tests, dev tooling, deployment changesets) that
-// already hold a raw seed. For keystore-backed signing in production
-// binaries use NewDeployerWithSigner.
+// NewDeployer creates a Deployer from a *keypair.Full, suiting the call sites
+// that hold a raw seed. For keystore-backed signing (raw key bytes never
+// exposed) use NewDeployerWithSigner. Options customise behaviour.
 func NewDeployer(rpcClient *rpcclient.Client, networkPassphrase string, signer *keypair.Full, opts ...DeployerOption) *Deployer {
 	return NewDeployerWithSigner(rpcClient, networkPassphrase, NewKeypairSigner(signer), opts...)
 }
 
-// NewDeployerWithSigner is like NewDeployer but accepts an arbitrary TxSigner,
-// allowing the caller to back the deployer with a keystore-managed key whose
-// raw bytes are never exposed. Used by ccv/accessors when the bootstrapper
-// keystore provides the Stellar transmitter / deployer Ed25519 key.
+// NewDeployerWithSigner is like NewDeployer but accepts an arbitrary TxSigner
+// (e.g. a ccv keystore-managed key) so raw key bytes are never exposed.
 func NewDeployerWithSigner(rpcClient *rpcclient.Client, networkPassphrase string, signer TxSigner, opts ...DeployerOption) *Deployer {
 	d := &Deployer{
 		rpcClient:         rpcClient,
@@ -220,14 +202,9 @@ func NewDeployerWithSigner(rpcClient *rpcclient.Client, networkPassphrase string
 	return d
 }
 
-// NewDeployerFromChain creates a Deployer directly from a CLDF Stellar chain,
-// using the chain's Signer, Client, and NetworkPassphrase.
-//
-// When the chain signer exposes a non-nil [keypair.Full] via KeypairFull(), the
-// deployer uses [NewKeypairSigner] (same path as [NewDeployer]). When KeypairFull
-// is nil (e.g. keystore-backed signers that only implement SignDecorated), the
-// deployer uses [NewSDKSigner] with [NewDeployerWithSigner] so raw key material
-// is not required.
+// NewDeployerFromChain creates a Deployer directly from a CLDF Stellar chain.
+// It uses [NewKeypairSigner] when the chain signer exposes a KeypairFull, and
+// otherwise [NewSDKSigner] so keystore-backed signers need no raw key material.
 func NewDeployerFromChain(ch cldfstellar.Chain, opts ...DeployerOption) (*Deployer, error) {
 	if ch.Signer == nil {
 		return nil, fmt.Errorf("stellar chain Signer is nil")
@@ -238,10 +215,8 @@ func NewDeployerFromChain(ch cldfstellar.Chain, opts ...DeployerOption) (*Deploy
 	return NewDeployerWithSigner(ch.Client, ch.NetworkPassphrase, NewSDKSigner(ch.Signer), opts...), nil
 }
 
-// DeployContract deploys a Soroban contract from a WASM file and returns the contract ID.
-// This performs two operations:
-// 1. Upload the WASM code (installContractCode)
-// 2. Deploy a contract instance (createContract)
+// DeployContract deploys a Soroban contract from a WASM file and returns the
+// contract ID (upload the code, then create the instance).
 func (d *Deployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
 	return d.DeployContractWithArgs(ctx, wasmPath, salt, nil)
 }
@@ -255,10 +230,9 @@ func (d *Deployer) DeployContractWithArgs(ctx context.Context, wasmPath string, 
 	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, ctorArgs)
 }
 
-// DeployContractBytes uploads the given WASM bytes and instantiates a contract,
-// returning the contract ID. Use this when the WASM is embedded in the binary
-// (e.g. go:embed) rather than read from disk; DeployContract is the file-path
-// wrapper around it.
+// DeployContractBytes uploads WASM bytes held in memory (e.g. go:embed) and
+// instantiates a contract, returning the contract ID. DeployContract is the
+// file-path wrapper.
 func (d *Deployer) DeployContractBytes(ctx context.Context, wasmBytes []byte, salt [32]byte) (string, error) {
 	return d.DeployContractBytesWithArgs(ctx, wasmBytes, salt, nil)
 }
@@ -288,10 +262,9 @@ func (d *Deployer) UploadContractWASM(ctx context.Context, wasmPath string) (xdr
 	return d.UploadContractWASMBytes(ctx, wasmBytes)
 }
 
-// UploadContractWASMBytes uploads the given WASM bytes and returns their code
-// hash, without instantiating a contract: the hash is what an upgrade points an
-// existing instance at. Use this when the WASM is embedded in the binary (e.g.
-// go:embed); UploadContractWASM is the file-path wrapper around it.
+// UploadContractWASMBytes uploads WASM bytes and returns the code hash an
+// upgrade points an existing instance at, without instantiating.
+// UploadContractWASM is the file-path wrapper.
 func (d *Deployer) UploadContractWASMBytes(ctx context.Context, wasmBytes []byte) (xdr.Hash, error) {
 	return d.uploadWASM(ctx, wasmBytes)
 }
@@ -600,9 +573,8 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 }
 
 // getSourceAccount fetches the current account sequence from the network.
-// It always queries the ledger to stay in sync with the on-chain state,
-// which is safe because every write path waits for transaction confirmation
-// (via waitForTransaction) before returning.
+// Every write path waits for confirmation before returning, so the ledger
+// read always stays in sync.
 func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccount, error) {
 	accountKey := xdr.LedgerKey{
 		Type: xdr.LedgerEntryTypeAccount,
@@ -616,11 +588,9 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 		return nil, fmt.Errorf("failed to marshal account key: %w", err)
 	}
 
-	// GetLedgerEntries is a pure read, but the captive-core backend can
-	// transiently return HTTP non-200 (e.g. 404 when captive core restarts or
-	// prunes mid-test), surfacing as an `[-32603] could not query captive core`
-	// JSON-RPC error. Retry with backoff so a momentary backend hiccup does not
-	// fail an otherwise-healthy integration run.
+	// The captive-core backend can transiently return HTTP non-200 (e.g. 404
+	// mid-test, "[-32603] could not query captive core"); retry with backoff
+	// so a momentary hiccup does not fail a healthy run.
 	var resp protocolrpc.GetLedgerEntriesResponse
 	const maxAttempts = 5
 	backoff := 2 * time.Second
@@ -665,36 +635,12 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 	}, nil
 }
 
-// buildAndSubmitTransaction builds, signs, and submits a transaction. A
-// transaction the network rejects for simulation/inclusion drift — either
-// included but rejected at execution for exceeding its declared resource
-// budget (resourceLimitExceededError), or rejected at inclusion with
-// txInsufficientFee (insufficientFeeRejectedError) — is retried from a fresh
-// simulation: the declared budget and fee come from our pre-submission
-// simulation, and under concurrent deployment two transactions touching the
-// same fresh ledger entry (e.g. two tests uploading identical WASM bytes) can
-// race — the second one's execution pays an entry-exists cost (or fee) its
-// simulation, run before the first one landed, did not. Re-simulating against
-// the then-current ledger state converges: each failed attempt means the
-// conflicting transaction landed, so the next simulation budgets the
-// entry-exists path. A submission the node refuses outright with
-// TRY_AGAIN_LATER (serverOverloadedError — its queue was full, so the
-// transaction was never executed) is likewise retried, after a short backoff
-// so the resubmission does not land in the same full queue. A transaction the
-// node accepted but never included before its MaxTime
-// (transactionTimedOutError) is dead — past the deadline the network can no
-// longer include it — so it is retried from a fresh simulation too (seen live
-// as a localnet ledger/queue stall during devenv first-bring-up). A
-// failed-but-included transaction still consumes a source account sequence
-// number (a rejected or timed-out one does not), so each retry re-fetches the
-// account either way.
-// submitMaxAttempts bounds buildAndSubmitTransaction's retry rounds. The
-// final round's assembleTransaction declares the network's full per-tx
-// instruction cap (see the raise there).
+// buildAndSubmitTransaction builds, signs, and submits a transaction, retrying
+// recoverable drift (see the typed errors below) from a fresh simulation.
+// submitMaxAttempts bounds the retry rounds.
 const submitMaxAttempts = 3
 
 func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
-	const maxAttempts = submitMaxAttempts
 	prevBudgetExceeded := false
 	for attempt := 1; ; attempt++ {
 		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt, prevBudgetExceeded)
@@ -705,15 +651,15 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		var ifr *insufficientFeeRejectedError
 		var soe *serverOverloadedError
 		var tto *transactionTimedOutError
-		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == maxAttempts {
+		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == submitMaxAttempts {
 			return nil, err
 		}
-		// Resource inflation answers a budget-exceeded failure only: after a
-		// fee rejection or an overload the next round re-simulates and keeps
-		// the accurate budget (scaling resources after those failures raised
-		// the declared instructions without the fee to match, and inclusion
-		// rejected the upload with txInsufficientFee).
-		prevBudgetExceeded = rle != nil
+		// Resource inflation answers a budget-exceeded failure, and the flag is
+		// sticky: an intervening overload/fee rejection never executed, so the
+		// known shortfall persists. Otherwise the fresh re-sim is accurate.
+		if rle != nil {
+			prevBudgetExceeded = true
+		}
 		if soe != nil {
 			// Nothing about the ledger changed — only back off far enough to
 			// let the node drain its submission queue.
@@ -820,62 +766,11 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
 		}
 		if simResult.RestorePreamble != nil {
-			// The RPC should capture all archived entries in a single RestorePreamble.
-			// A second one after a successful restore indicates an RPC inconsistency or
-			// an entry that expired in the narrow window between restore confirmation and
-			// re-simulation. Return an error so the caller retries from a clean state.
+			// The RPC should capture all archived entries in one
+			// RestorePreamble; a second one means an RPC inconsistency — fail
+			// so the caller retries from a clean state.
 			return nil, fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
 		}
-	}
-
-	// Attach the simulation's required auth and re-simulate. The first
-	// simulation runs the invocation bare, so its budget does not include
-	// the auth tree — every entry duplicates the full invocation args (a
-	// router send carries the payload twice more in its root and sub
-	// invocations), so assembling from the bare simulation fails large
-	// invocations at execution with RESOURCE_LIMIT_EXCEEDED. The
-	// re-simulation with the auth attached counts the tree; only the
-	// signature verification an unsigned simulation cannot run stays
-	// outside, covered by the margin assembleTransaction adds.
-	if ihf, ok := op.(*txnbuild.InvokeHostFunction); ok &&
-		len(simResult.Results) > 0 && simResult.Results[0].AuthXDR != nil && len(*simResult.Results[0].AuthXDR) > 0 {
-		auth := make([]xdr.SorobanAuthorizationEntry, len(*simResult.Results[0].AuthXDR))
-		for i, authXDR := range *simResult.Results[0].AuthXDR {
-			if err := xdr.SafeUnmarshalBase64(authXDR, &auth[i]); err != nil {
-				return nil, fmt.Errorf("failed to decode auth: %w", err)
-			}
-		}
-		ihf.Auth = auth
-
-		tx, err = txnbuild.NewTransaction(
-			txnbuild.TransactionParams{
-				SourceAccount:        sourceAccount,
-				IncrementSequenceNum: true,
-				Operations:           []txnbuild.Operation{op},
-				BaseFee:              txnbuild.MinBaseFee,
-				Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, txnDeadline.Unix())},
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build transaction with auth: %w", err)
-		}
-		txXDR, err = tx.Base64()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get transaction XDR with auth: %w", err)
-		}
-		authSim, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
-			Transaction: txXDR,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("simulation with auth failed: %w", err)
-		}
-		if authSim.Error != "" {
-			return nil, fmt.Errorf("simulation with auth error: %s", authSim.Error)
-		}
-		if authSim.RestorePreamble != nil {
-			return nil, fmt.Errorf("simulation with auth still requires a restore: unexpected RestorePreamble")
-		}
-		simResult = authSim
 	}
 
 	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt, prevBudgetExceeded)
@@ -914,12 +809,9 @@ func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transacti
 		return nil, &serverOverloadedError{label: label}
 	case "ERROR":
 		if submitResult.ErrorResultXDR != "" {
-			// A txInsufficientFee rejection means the fee assembled from our
-			// simulation no longer covers the inclusion-time required fee —
-			// the same concurrent-deployment drift resourceLimitExceededError
-			// captures at the instruction level (e.g. a sibling upload of
-			// identical WASM bytes landed between our simulation and
-			// inclusion). Retryable: the transaction was never executed.
+			// txInsufficientFee: the ledger shifted between our simulation and
+			// inclusion (e.g. a sibling upload of identical WASM bytes).
+			// Retryable — never executed.
 			if isTxInsufficientFee(submitResult.ErrorResultXDR) {
 				return nil, &insufficientFeeRejectedError{
 					label:     label,
@@ -986,12 +878,9 @@ func (d *Deployer) waitForTransaction(ctx context.Context, hash string, deadline
 	}
 }
 
-// resourceLimitExceededError marks a transaction the network included but
-// rejected at execution for exceeding its declared resource budget (Soroban
-// InvokeHostFunctionResultCodeInvokeHostFunctionResourceLimitExceeded). The
-// declared budget came from our pre-submission simulation, so this is
-// simulation/execution drift — not a deterministic contract failure — and the
-// transaction can be rebuilt against the current ledger state and retried.
+// resourceLimitExceededError marks a transaction included but rejected at
+// execution for exceeding its declared (simulation-derived) resource budget.
+// This is simulation/execution drift, not a deterministic failure — retried.
 type resourceLimitExceededError struct {
 	hash        string
 	resultXDR   string
@@ -1003,15 +892,9 @@ func (e *resourceLimitExceededError) Error() string {
 		e.hash, e.resultXDR, e.diagnostics)
 }
 
-// insufficientFeeRejectedError marks a transaction the network rejected at
-// inclusion with txInsufficientFee — it was never executed, hence no
-// diagnostics. The fee came from our pre-submission simulation, and under
-// concurrent deployment the ledger can shift before inclusion (e.g. a sibling
-// upload of identical WASM bytes landing first), changing the required fee —
-// the same simulation/inclusion drift resourceLimitExceededError captures at
-// the instruction level. The transaction consumed nothing, so it can be
-// rebuilt against the current ledger state and retried; re-simulating
-// converges the same way.
+// insufficientFeeRejectedError marks a transaction rejected at inclusion with
+// txInsufficientFee: the ledger shifted between our simulation and inclusion
+// (e.g. a sibling upload landed first). Never executed, hence retryable.
 type insufficientFeeRejectedError struct {
 	label     string
 	resultXDR string
@@ -1022,10 +905,8 @@ func (e *insufficientFeeRejectedError) Error() string {
 }
 
 // serverOverloadedError marks a transaction the node refused outright with
-// TRY_AGAIN_LATER: its submission queue was full, so the transaction was
-// never executed and consumed no sequence number. Purely transient — nothing
-// about the ledger changed, unlike the drift errors above — so the same
-// transaction can be resubmitted after a short backoff.
+// TRY_AGAIN_LATER (full queue): never executed, no sequence consumed — safe
+// to resubmit after a short backoff.
 type serverOverloadedError struct {
 	label string
 }
@@ -1034,14 +915,9 @@ func (e *serverOverloadedError) Error() string {
 	return fmt.Sprintf("%stransaction submission failed: server overloaded, try again later", e.label)
 }
 
-// transactionTimedOutError marks a transaction the node accepted (PENDING or
-// DUPLICATE) but never included before its MaxTime: the poll deadline always
-// matches the transaction's time bound, so past the deadline the network can
-// no longer include it. It consumed nothing on-chain (the on-ledger sequence
-// number is unchanged), so the operation can be rebuilt against the current
-// ledger state and retried — unlike the drift errors above there is nothing
-// to converge, the ledger simply did not process the transaction in time
-// (e.g. a stalled localnet ledger or submission queue).
+// transactionTimedOutError marks a transaction accepted but never included
+// before its MaxTime: past the deadline it can never land and the on-ledger
+// sequence is unchanged, so a rebuilt transaction retries safely.
 type transactionTimedOutError struct {
 	hash string
 }
@@ -1105,11 +981,9 @@ func feeBumpExtra(minFee int64, factor float64) int64 {
 	return int64(math.Ceil(x))
 }
 
-// restoreFootprint submits a RestoreFootprint transaction using the data provided
-// by a simulation's RestorePreamble. Soroban returns this preamble when the
-// transaction's read/write footprint references persistent ledger entries whose
-// TTL has expired (archived). The restore must succeed before the original
-// transaction can be retried.
+// restoreFootprint submits a RestoreFootprint transaction from the
+// simulation's preamble, which lists the footprint's expired (archived)
+// persistent entries. The restore must land before the original tx retries.
 func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.RestorePreamble) error {
 	restoreDeadline := time.Now().Add(d.txnTimeBound)
 
@@ -1186,23 +1060,16 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 
 		if ihf, ok := ops[0].(*txnbuild.InvokeHostFunction); ok {
 			sorobanData.ResourceFee += xdr.Int64(bump)
-			// Margin for what an unsigned simulation cannot meter: the auth
-			// signature verification (a small fixed cost per entry). Only
-			// auth-carrying invocations have that residual; auth-less ones
-			// (e.g. offRamp.execute as the tx source) simulate accurately.
-			if len(ihf.Auth) > 0 {
+			hasAuth := len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil && len(*sim.Results[0].AuthXDR) > 0
+			// Margin for what simulation never meters on auth-carrying
+			// invocations: signature verification and auth-tree args
+			// re-processing. Auth-less invocations simulate accurately.
+			if hasAuth {
 				sorobanData.Resources.Instructions += sorobanData.Resources.Instructions/50 + xdr.Uint32(100_000)
 			}
-			// Retry scaling answers a budget-exceeded failure: the RPC
-			// simulation bypasses auth processing entirely (empirically,
-			// re-simulating with the auth attached still under-counts — the
-			// auth tree's parsing and verification are only metered in real
-			// execution, and a router send carries the payload twice more in
-			// its auth tree). Scale the declared budget exponentially per
-			// attempt until the transaction lands; over-declared resources
-			// cost only the resource fee, and the unused refundable portion
-			// is refunded. After fee/overload failures the budget stays as
-			// simulated — the fresh round re-simulates it accurately.
+			// A budget-exceeded failure means the (auth-blind) simulation
+			// under-counted, so inflate the declaration per attempt. Other
+			// retry causes re-simulate accurately and keep that budget.
 			if attempt > 1 && prevBudgetExceeded {
 				factor := uint64(1) << (attempt - 1)
 				clamp := func(v uint64) xdr.Uint32 {
@@ -1219,44 +1086,33 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 				if fee := int64(sorobanData.ResourceFee) * int64(factor); fee > 0 {
 					sorobanData.ResourceFee = xdr.Int64(fee)
 				}
-			}
-			// The network validates declared resources against its config's
-			// per-tx caps before the transaction runs: overshooting one (observed
-			// on the max-data-size send, where the retry scaling grew a
-			// 28.8M-instruction simulation to 115.2M on attempt 3, past the
-			// localnet 100M per-tx cap) rejects the transaction at submission
-			// with "transaction instructions resources exceed network config
-			// limit" — strictly worse than under-declaring, since the
-			// transaction never even runs. Clamp to the caps read from the
-			// network config; a zero cap leaves the resource unclamped.
-			caps := d.networkResourceCaps(ctx)
-			sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
-			sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
-			sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
-			// The final budget-exceeded attempt declares the full per-tx
-			// instruction cap: the graduated factors above under-declare at
-			// smaller payloads — a 30K-budget send simulates ~22M
-			// instructions, so attempt 3's ×4 declares ~88M, below the 100M
-			// cap — and the last try has nothing left to conserve. The fee is
-			// scaled by the same ratio: inclusion-time fee validation scales
-			// with declared instructions, so raising them alone is rejected
-			// with txInsufficientFee (observed on a retried WASM upload).
-			if attempt == submitMaxAttempts && prevBudgetExceeded && caps.instructions > 0 &&
-				sorobanData.Resources.Instructions > 0 &&
-				sorobanData.Resources.Instructions < caps.instructions {
-				fee := int64(sorobanData.ResourceFee) * int64(caps.instructions) /
-					int64(sorobanData.Resources.Instructions)
-				if fee > int64(sorobanData.ResourceFee) {
-					sorobanData.ResourceFee = xdr.Int64(fee)
+				// Clamp to the network's per-tx caps: overshooting one rejects
+				// the tx at submission ("resources exceed network config
+				// limit") — strictly worse than under-declaring.
+				caps := d.networkResourceCaps(ctx)
+				sorobanData.Resources.Instructions = clampToCap(sorobanData.Resources.Instructions, caps.instructions)
+				sorobanData.Resources.DiskReadBytes = clampToCap(sorobanData.Resources.DiskReadBytes, caps.diskReadBytes)
+				sorobanData.Resources.WriteBytes = clampToCap(sorobanData.Resources.WriteBytes, caps.writeBytes)
+				// The final attempt declares the full instruction cap — the
+				// graduated factors under-declare at small payloads — with the
+				// fee scaled by the same ratio (inclusion rejects otherwise).
+				if attempt == submitMaxAttempts && caps.instructions > 0 &&
+					sorobanData.Resources.Instructions > 0 &&
+					sorobanData.Resources.Instructions < caps.instructions {
+					fee := int64(sorobanData.ResourceFee) * int64(caps.instructions) /
+						int64(sorobanData.Resources.Instructions)
+					if fee > int64(sorobanData.ResourceFee) {
+						sorobanData.ResourceFee = xdr.Int64(fee)
+					}
+					sorobanData.Resources.Instructions = caps.instructions
 				}
-				sorobanData.Resources.Instructions = caps.instructions
 			}
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
 			}
 
-			if len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil && len(*sim.Results[0].AuthXDR) > 0 {
+			if hasAuth {
 				auth := make([]xdr.SorobanAuthorizationEntry, len(*sim.Results[0].AuthXDR))
 				for i, authXDR := range *sim.Results[0].AuthXDR {
 					if err := xdr.SafeUnmarshalBase64(authXDR, &auth[i]); err != nil {
@@ -1274,10 +1130,9 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 			return nil, err
 		}
 
-		// BaseFee is the per-operation inclusion fee only. The Soroban resource
-		// fee (already bumped above, in SorobanData.ResourceFee) is added on top
-		// by txnbuild; passing MinResourceFee+bump here as well double-counts it
-		// and can overflow the uint32 max fee for large simulations.
+		// BaseFee is the per-op inclusion fee only; the resource fee rides in
+		// SorobanData.ResourceFee (bumped above). Passing it here too
+		// double-counts it and can overflow the uint32 max fee.
 		return txnbuild.NewTransaction(
 			txnbuild.TransactionParams{
 				SourceAccount:        sourceAccount,
@@ -1302,9 +1157,8 @@ type networkResourceCaps struct {
 }
 
 // networkResourceCaps reads the per-tx instruction and disk caps from the
-// Soroban network-config ledger entries, best-effort: any read or decode
-// failure (or an entry whose config arm is absent) leaves the caps zero,
-// disabling clamping in assembleTransaction rather than failing the send.
+// network-config ledger entries, best-effort: any failure leaves caps zero,
+// disabling the clamp in assembleTransaction rather than failing the send.
 func (d *Deployer) networkResourceCaps(ctx context.Context) networkResourceCaps {
 	var caps networkResourceCaps
 	if data, err := d.fetchLedgerEntry(ctx, configSettingLedgerKey(xdr.ConfigSettingIdConfigSettingContractComputeV0)); err == nil {
@@ -1561,9 +1415,8 @@ func (d *Deployer) NativeAccountState(ctx context.Context, rawAccountKey []byte)
 }
 
 // SubmitClassicOperation builds, signs, and submits a single classic Stellar
-// operation (e.g. ChangeTrust, Payment) via the Soroban RPC.
-// Classic operations cannot be simulated through the Soroban RPC, so this
-// method bypasses simulation and submits the transaction directly.
+// operation (e.g. ChangeTrust, Payment). Classic ops cannot be simulated via
+// the Soroban RPC, so this submits directly.
 func (d *Deployer) SubmitClassicOperation(ctx context.Context, op txnbuild.Operation) error {
 	src, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -1619,10 +1472,9 @@ func (d *Deployer) SubmitClassicOperation(ctx context.Context, op txnbuild.Opera
 	return err
 }
 
-// DeploySACToken deploys a Soroban Asset Contract (SAC) wrapper for a classic
-// Stellar asset and returns the resulting contract ID (C… strkey).
-// The contract address is deterministic based on the network passphrase and
-// asset, so if a SAC for the asset already exists it is adopted as-is.
+// DeploySACToken deploys the SAC wrapper for a classic asset and returns its
+// contract ID (C… strkey). The address is deterministic per network+asset,
+// so an existing SAC is adopted as-is.
 func (d *Deployer) DeploySACToken(ctx context.Context, asset xdr.Asset) (string, error) {
 	contractID, err := ComputeSACContractID(d.networkPassphrase, asset)
 	if err != nil {
@@ -1687,10 +1539,9 @@ func ComputeSACContractID(networkPassphrase string, asset xdr.Asset) (string, er
 	return strkey.Encode(strkey.VersionByteContract, h[:])
 }
 
-// ComputeContractID returns the deterministic contract address (C… strkey) that
-// deploying with deployerAddress and salt would create on the network, without
-// touching the chain. It mirrors the preimage built by
-// buildCreateContractHostFunction.
+// ComputeContractID returns the deterministic contract address (C… strkey)
+// for deployerAddress+salt without touching the chain; it mirrors the
+// preimage built by buildCreateContractHostFunction.
 func ComputeContractID(networkPassphrase, deployerAddress string, salt [32]byte) (string, error) {
 	raw, err := strkey.Decode(strkey.VersionByteAccountID, deployerAddress)
 	if err != nil {
