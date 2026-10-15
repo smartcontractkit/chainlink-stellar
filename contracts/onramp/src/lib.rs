@@ -11,7 +11,8 @@ use common_interfaces::{
     versioned_verifier_resolver::VersionedVerifierResolverClient,
 };
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, token, vec,
+    address_payload::AddressPayload,
+    contract, contractimpl, panic_with_error, symbol_short, token, vec,
     xdr::{FromXdr, ToXdr},
     Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
@@ -1000,11 +1001,19 @@ impl OnRampContract {
             // (default) case reduces to `message.receiver`, already validated.
             Self::validate_dest_address(&dest_config, &effective_token_receiver)?;
 
+            // Cross-family wire convention for source addresses (EVM
+            // TokenPool ChainUpdate: addresses are "ABI encoded in the case
+            // of a remote EVM chain"; Solana sends `.to_bytes()` raw): the
+            // RAW 32-byte contract ID, never the 40-byte `Address::to_xdr`
+            // envelope (that form is for ramp whitelists only). The
+            // destination pool checks `isRemotePool` with exact byte equality
+            // against its stored raw-32 remote-pool bytes, so an envelope
+            // here fails release with InvalidSourcePoolAddress.
             let token_transfer = CcipTokenTransferV1 {
                 version: MESSAGE_V1_VERSION,
                 amount: Self::i128_to_bytes32(&env, lock_result.dest_token_amount),
-                source_pool_address: pool_address.to_xdr(&env),
-                source_token_address: token_amount.token.clone().to_xdr(&env),
+                source_pool_address: Self::contract_id_bytes(&env, &pool_address),
+                source_token_address: Self::contract_id_bytes(&env, &token_amount.token),
                 dest_token_address: lock_result.dest_token_address,
                 token_receiver: effective_token_receiver,
                 extra_data: lock_result.dest_pool_data,
@@ -1542,6 +1551,18 @@ impl OnRampContract {
         let mut padded = [0u8; 32];
         padded[16..].copy_from_slice(&be_bytes);
         BytesN::from_array(env, &padded)
+    }
+
+    /// Raw 32-byte contract ID of `addr` — the cross-family wire form for
+    /// `source_pool_address`/`source_token_address` (see the token transfer
+    /// encoding above; mirrors Solana's `.to_bytes()` and the Go wiring's
+    /// raw-32 remote-pool storage). Unreachable for non-contract addresses:
+    /// pools and tokens are always contracts on this path.
+    fn contract_id_bytes(env: &Env, addr: &Address) -> Bytes {
+        match addr.to_payload() {
+            Some(AddressPayload::ContractIdHash(hash)) => Bytes::from(hash),
+            _ => panic_with_error!(env, CCIPError::InvalidAddress),
+        }
     }
 
     /// Reject duplicate addresses within a single CCV list. Mirrors EVM

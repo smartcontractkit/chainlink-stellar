@@ -238,11 +238,6 @@ pub struct InboundImplRemovedEvent {
 pub struct OutboundImplRemovedEvent {
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OwnerTransferred"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct OwnershipTransferredEvent {
-    pub new_owner: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
