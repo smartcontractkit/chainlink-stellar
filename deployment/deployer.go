@@ -726,6 +726,14 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 	// path, the deadline is refreshed (restore can consume most of the initial window).
 	txnDeadline := time.Now().Add(d.txnTimeBound)
 
+	// A fresh round must start from the bare op: a previous attempt may
+	// have attached stale ext/auth, and the first simulation must see the
+	// invocation without them to derive the pre-auth budget.
+	if ihf, ok := op.(*txnbuild.InvokeHostFunction); ok {
+		ihf.Ext = xdr.TransactionExt{}
+		ihf.Auth = nil
+	}
+
 	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
 			SourceAccount:        sourceAccount,
@@ -806,6 +814,56 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 			// re-simulation. Return an error so the caller retries from a clean state.
 			return nil, fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
 		}
+	}
+
+	// Attach the simulation's required auth and re-simulate. The first
+	// simulation runs the invocation bare, so its budget does not include
+	// the auth tree — every entry duplicates the full invocation args (a
+	// router send carries the payload twice more in its root and sub
+	// invocations), so assembling from the bare simulation fails large
+	// invocations at execution with RESOURCE_LIMIT_EXCEEDED. The
+	// re-simulation with the auth attached counts the tree; only the
+	// signature verification an unsigned simulation cannot run stays
+	// outside, covered by the margin assembleTransaction adds.
+	if ihf, ok := op.(*txnbuild.InvokeHostFunction); ok &&
+		len(simResult.Results) > 0 && simResult.Results[0].AuthXDR != nil && len(*simResult.Results[0].AuthXDR) > 0 {
+		auth := make([]xdr.SorobanAuthorizationEntry, len(*simResult.Results[0].AuthXDR))
+		for i, authXDR := range *simResult.Results[0].AuthXDR {
+			if err := xdr.SafeUnmarshalBase64(authXDR, &auth[i]); err != nil {
+				return nil, fmt.Errorf("failed to decode auth: %w", err)
+			}
+		}
+		ihf.Auth = auth
+
+		tx, err = txnbuild.NewTransaction(
+			txnbuild.TransactionParams{
+				SourceAccount:        sourceAccount,
+				IncrementSequenceNum: true,
+				Operations:           []txnbuild.Operation{op},
+				BaseFee:              txnbuild.MinBaseFee,
+				Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, txnDeadline.Unix())},
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build transaction with auth: %w", err)
+		}
+		txXDR, err = tx.Base64()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get transaction XDR with auth: %w", err)
+		}
+		authSim, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
+			Transaction: txXDR,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("simulation with auth failed: %w", err)
+		}
+		if authSim.Error != "" {
+			return nil, fmt.Errorf("simulation with auth error: %s", authSim.Error)
+		}
+		if authSim.RestorePreamble != nil {
+			return nil, fmt.Errorf("simulation with auth still requires a restore: unexpected RestorePreamble")
+		}
+		simResult = authSim
 	}
 
 	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline)
@@ -1116,6 +1174,13 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 
 		if ihf, ok := ops[0].(*txnbuild.InvokeHostFunction); ok {
 			sorobanData.ResourceFee += xdr.Int64(bump)
+			// Margin for what an unsigned simulation cannot meter: the auth
+			// signature verification (a small fixed cost per entry). Only
+			// auth-carrying invocations have that residual; auth-less ones
+			// (e.g. offRamp.execute as the tx source) simulate accurately.
+			if len(ihf.Auth) > 0 {
+				sorobanData.Resources.Instructions += sorobanData.Resources.Instructions/50 + xdr.Uint32(100_000)
+			}
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
 				SorobanData: &sorobanData,
