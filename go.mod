@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/lib/pq v1.12.3
-	github.com/smartcontractkit/chainlink-ccv v0.14.1-0.20261013215607-8bb16c5252a5
+	github.com/smartcontractkit/chainlink-ccv v0.14.1-0.20261014221947-c3982fc37fe3
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
 	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
 )

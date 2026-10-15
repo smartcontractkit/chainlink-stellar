@@ -15,4 +15,13 @@ const (
 	// DevenvLegacyLockReleasePoolQualifier is the datastore qualifier for the legacy lock-release pool
 	// deployed alongside the siloed pool (e.g. MCMS / lock-release-specific tests).
 	DevenvLegacyLockReleasePoolQualifier = "LEGACY_LR"
+
+	// DevenvBnmPoolQualifier is the datastore qualifier for the lane's stellar
+	// BnM burn-mint pool (and its ccv-catalog mirror row).
+	DevenvBnmPoolQualifier = "BnM"
+
+	// DevenvCatalogBurnMintTokenPoolType mirrors
+	// chainlink-ccv/build/devenv/common.BurnMintTokenPoolType. Duplicated locally
+	// because this module stays free of the chainlink-ccv dependency
+	DevenvCatalogBurnMintTokenPoolType = "BurnMintTokenPool"
 )

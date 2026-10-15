@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/lanes"
 	tokenscore "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	seq_core "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
@@ -56,6 +58,8 @@ import (
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	bnmops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/bnm_token"
 	lrpoolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
 	stellardeps "github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
@@ -351,6 +355,13 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 		}
 	}
 
+	// Shared-pipeline BnM pairs: wire each stellar burn-mint pool's remote
+	// updates (the EVM side of every pair is wired by the shared
+	// ConfigureTokensForTransfers pipeline, which runs before PostConnect).
+	if err := c.configureSharedBnmPools(env, selector, remoteSelectors); err != nil {
+		return fmt.Errorf("configure shared BnM pools: %w", err)
+	}
+
 	return nil
 }
 
@@ -421,9 +432,10 @@ func (c *Chain) GetDeployChainContractsCfg(env *deployment.Environment, selector
 }
 
 // PostDeployContractsForSelector implements cciptestinterfaces.OnChainConfigurable.
-// Post-deploy parity with EVM: deploys legacy + siloed lock-release test pools (with token lock box),
-// applies FeeQuoter pricing for the test token ([stellarccip.ApplyFeeQuoterTestTokenConfig]), and returns
-// a datastore delta with siloed pool, legacy pool, lock box, and test token AddressRefs.
+// Post-deploy parity with EVM: deploys the legacy + siloed lock-release test pools (with token lock box),
+// applies FeeQuoter pricing for the SAC test token ([stellarccip.ApplyFeeQuoterTokenConfig]), and returns
+// a datastore delta with the siloed pool, legacy pool, lock box, and test token AddressRefs. The shared
+// TokenExpansion pipeline deploys the BnM pairs (see GetTokenExpansionConfigs).
 func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deployment.Environment, selector uint64, topology *ccvdeployment.EnvironmentTopology) (datastore.DataStore, error) {
 	_ = topology
 	stellarsequences.ClearStellarDeployOffchainTopologyForSelector(selector)
@@ -445,7 +457,7 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 
 	allSelectors := selectorsFromBlockChains(env.BlockChains)
 	if c.testTokenContractID != "" && c.feeQuoterClient != nil {
-		if err := stellarccip.ApplyFeeQuoterTestTokenConfig(ctx, c.feeQuoterClient, c.deployerKeypair.Address(), c.testTokenContractID, allSelectors); err != nil {
+		if err := stellarccip.ApplyFeeQuoterTokenConfig(ctx, c.feeQuoterClient, c.deployerKeypair.Address(), c.testTokenContractID, allSelectors); err != nil {
 			return nil, fmt.Errorf("apply fee quoter test token config: %w", err)
 		}
 		c.logger.Info().Int("destChainCount", len(allSelectors)).Msg("FeeQuoter test token fees applied (post-deploy)")
@@ -472,45 +484,223 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 // ---------------------------------------------------------------------------
 
 // GetSupportedPools returns the pool types and versions the Stellar chain can
-// deploy. Returning nil keeps Stellar out of the ComputeTokenCombinations matrix
-// (Stellar pool pairing is handled in PostConnect, not via the shared
-// TokenExpansion / ConfigureTokensForTransfers pipeline).
+// deploy: burn-mint pools wrapping the BnM token (the shared TokenExpansion /
+// ConfigureTokensForTransfers pipeline deploys one pair per combo; the
+// stellar-side pool remote updates are applied in PostConnect). Lock-release
+// pools stay bespoke (the siloed lane pair is wired in PostConnect).
 func (c *Chain) GetSupportedPools() []devenvcommon.PoolCapability {
-	return nil
+	return []devenvcommon.PoolCapability{
+		{PoolType: stellarccip.DevenvCatalogBurnMintTokenPoolType, PoolVersion: stellarops.ContractDeploymentVersion},
+	}
 }
 
-// GetTokenExpansionConfigs returns nil because Stellar deploys its own test
-// token and lock-release pool in PostDeployContractsForSelector.
+// bnmTokenDecimals is the decimals every shared-pipeline BnM token uses (SAC
+// convention); bnmPreMintTokens is the deployer's pre-minted allocation in
+// whole tokens (EVM parity: 1 billion).
+const (
+	bnmTokenDecimals        = 7
+	bnmPreMintTokens uint64 = 1_000_000_000
+)
+
+// GetTokenExpansionConfigs mirrors the EVM implementation: deploy the LOCAL
+// leg of each combo this chain supports (burn-mint pairs, dedup by full ref)
+// through the shared TokenExpansion pipeline — one BnM token + burn-mint pool
+// per combo, deployed and onboarded by the StellarTokenAdapter sequences,
+// with the deployer pre-funded through the token's mint_as pre-mint.
 func (c *Chain) GetTokenExpansionConfigs(
-	_ *deployment.Environment,
-	_ uint64,
-	_ []devenvcommon.TokenCombination,
+	env *deployment.Environment,
+	selector uint64,
+	combos []devenvcommon.TokenCombination,
 ) ([]tokenscore.TokenExpansionInputPerChain, error) {
-	return nil, nil
+	if _, ok := env.BlockChains.StellarChains()[selector]; !ok {
+		return nil, fmt.Errorf("stellar chain not found for selector %d", selector)
+	}
+	if c.deployerKeypair == nil {
+		return nil, fmt.Errorf("deployer keypair not initialized")
+	}
+
+	supported := devenvcommon.BuildSupportedPoolsMap(c.GetSupportedPools())
+	preMint := bnmPreMintTokens
+	seen := make(map[string]bool)
+	var configs []tokenscore.TokenExpansionInputPerChain
+	for _, combo := range combos {
+		// Only deploy the local leg; the remote pool belongs to the
+		// counterpart chain (skip combos where another chain is local).
+		poolRef := combo.LocalPoolAddressRef()
+		if !devenvcommon.IsPoolSupported(supported, poolRef) {
+			continue
+		}
+		key := devenvcommon.AddressRefFullKey(poolRef)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		configs = append(configs, tokenscore.TokenExpansionInputPerChain{
+			TokenPoolVersion:      poolRef.Version,
+			SkipOwnershipTransfer: true,
+			DeployTokenInput: &tokenscore.DeployTokenInput{
+				Symbol:        poolRef.Qualifier,
+				Name:          poolRef.Qualifier,
+				Decimals:      bnmTokenDecimals,
+				Type:          deployment.ContractType(bnmops.ContractType),
+				ExternalAdmin: c.deployerKeypair.Address(),
+				CCIPAdmin:     c.deployerKeypair.Address(),
+				PreMint:       &preMint,
+			},
+			DeployTokenPoolInput: &tokenscore.DeployTokenPoolInput{
+				PoolType:           string(poolRef.Type),
+				TokenPoolQualifier: poolRef.Qualifier,
+			},
+		})
+	}
+	return configs, nil
 }
 
-// PostTokenDeploy is a no-op; Stellar handles post-deploy work in
-// PostDeployContractsForSelector (FeeQuoter pricing, TAR registration).
+// PostTokenDeploy applies FeeQuoter pricing for every deployed shared BnM
+// pair token, mirroring the SAC test token's treatment: the OnRamp threads
+// the token fee's dest gas overhead into the on-wire execution gas limit, so
+// under-configuring it risks NOT_ENOUGH_GAS_FOR_CALL on EVM destinations.
 func (c *Chain) PostTokenDeploy(
-	_ *deployment.Environment,
-	_ uint64,
-	_ []datastore.AddressRef,
+	env *deployment.Environment,
+	selector uint64,
+	deployedRefs []datastore.AddressRef,
 ) error {
+	if len(deployedRefs) == 0 {
+		return nil
+	}
+	if c.feeQuoterClient == nil {
+		return fmt.Errorf("FeeQuoter client not initialized")
+	}
+	if c.deployerKeypair == nil {
+		return fmt.Errorf("deployer keypair not initialized")
+	}
+	allSelectors := selectorsFromBlockChains(env.BlockChains)
+	ctx := context.Background()
+	for _, ref := range deployedRefs {
+		tokenRef, err := stellarccip.LookupAddressRef(env.DataStore, selector,
+			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, ref.Qualifier)
+		if err != nil {
+			return fmt.Errorf("lookup BnM token for pool %q: %w", ref.Qualifier, err)
+		}
+		tokenStrkey, err := scval.HexToContractStrkey(tokenRef.Address)
+		if err != nil {
+			return fmt.Errorf("convert BnM token address: %w", err)
+		}
+		if err := stellarccip.ApplyFeeQuoterTokenConfig(ctx, c.feeQuoterClient, c.deployerKeypair.Address(), tokenStrkey, allSelectors); err != nil {
+			return fmt.Errorf("apply fee quoter BnM token config for %q: %w", ref.Qualifier, err)
+		}
+	}
+	c.logger.Info().Int("poolCount", len(deployedRefs)).Msg("FeeQuoter BnM token fees applied (post-token-deploy)")
 	return nil
 }
 
-// GetTokenTransferConfigs returns nil because Stellar-EVM cross-chain pool
-// pairing is wired in PostConnect rather than through the shared
-// ConfigureAllTokenTransfers pipeline. The shared pipeline requires strict
-// symmetric grouping by pool identity, which does not align with the
-// asymmetric LockRelease (Stellar) <-> BurnMint (EVM) pairing model.
+// GetTokenTransferConfigs mirrors the EVM implementation: the hand-curated
+// catalog filtered by the datastore, emitting configs only for remote
+// selectors that hold the combo's remote pool ref, merged per local pool. The
+// shared ConfigureAllTokenTransfers pipeline applies them; the stellar-side
+// pool remote updates are applied in PostConnect (the adapter's configure
+// sequence is a documented no-op).
 func (c *Chain) GetTokenTransferConfigs(
-	_ *deployment.Environment,
-	_ uint64,
-	_ []uint64,
-	_ *ccvdeployment.EnvironmentTopology,
+	env *deployment.Environment,
+	selector uint64,
+	remoteSelectors []uint64,
+	topology *ccvdeployment.EnvironmentTopology,
 ) ([]tokenscore.TokenTransferConfig, error) {
-	return nil, nil
+	applicableCombos := devenvcommon.FilterTokenCombinations(
+		devenvcommon.AllTokenCombinations(), topology, env.DataStore, append([]uint64{selector}, remoteSelectors...))
+	hasAddressRef := func(chainSelector uint64, ref datastore.AddressRef) bool {
+		_, err := env.DataStore.Addresses().Get(datastore.NewAddressRefKey(
+			chainSelector, ref.Type, ref.Version, ref.Qualifier))
+		return err == nil
+	}
+	merged := make(map[string]tokenscore.TokenTransferConfig)
+	for _, combo := range applicableCombos {
+		eligibleRemoteSelectors := make([]uint64, 0, len(remoteSelectors))
+		for _, rs := range remoteSelectors {
+			if hasAddressRef(rs, combo.RemotePoolAddressRef()) {
+				eligibleRemoteSelectors = append(eligibleRemoteSelectors, rs)
+			}
+		}
+		if len(eligibleRemoteSelectors) == 0 {
+			continue
+		}
+		cfg, err := c.buildStellarTokenTransferConfig(selector, eligibleRemoteSelectors,
+			combo.LocalPoolAddressRef(), combo.RemotePoolAddressRef(), combo.LocalPoolCCVQualifiers())
+		if err != nil {
+			return nil, err
+		}
+		key := string(cfg.TokenPoolRef.Type) + "\x00" + cfg.TokenPoolRef.Version.String() + "\x00" + cfg.TokenPoolRef.Qualifier
+		if existing, ok := merged[key]; ok {
+			maps.Copy(existing.RemoteChains, cfg.RemoteChains)
+			merged[key] = existing
+		} else {
+			merged[key] = cfg
+		}
+	}
+	configs := make([]tokenscore.TokenTransferConfig, 0, len(merged))
+	for _, cfg := range merged {
+		configs = append(configs, cfg)
+	}
+	return configs, nil
+}
+
+// buildStellarTokenTransferConfig mirrors the EVM builder: remote entries
+// carry the counterpart pool ref plus the lane's committee-verifier resolver
+// refs for the combo's CCV qualifiers (shared by outbound and inbound).
+func (c *Chain) buildStellarTokenTransferConfig(
+	selector uint64,
+	remoteSelectors []uint64,
+	localRef datastore.AddressRef,
+	remoteRef datastore.AddressRef,
+	ccvQualifiers []string,
+) (tokenscore.TokenTransferConfig, error) {
+	remoteChains := make(map[uint64]tokenscore.RemoteChainConfig[*datastore.AddressRef, datastore.AddressRef])
+	vvr := stellarccip.VVRDatastoreRef()
+	ccvRefs := make([]datastore.AddressRef, 0, len(ccvQualifiers))
+	for _, qualifier := range ccvQualifiers {
+		ccvRefs = append(ccvRefs, datastore.AddressRef{
+			Type:      vvr.Type,
+			Version:   vvr.Version,
+			Qualifier: qualifier,
+		})
+	}
+	for _, rs := range remoteSelectors {
+		remoteChains[rs] = tokenscore.RemoteChainConfig[*datastore.AddressRef, datastore.AddressRef]{
+			RemotePool:   &remoteRef,
+			OutboundCCVs: ccvRefs,
+			InboundCCVs:  ccvRefs,
+		}
+	}
+	tokenRef, err := stellarTokenRefForPool(localRef)
+	if err != nil {
+		return tokenscore.TokenTransferConfig{}, err
+	}
+	tar := stellarccip.TokenAdminRegistryDatastoreRef()
+	return tokenscore.TokenTransferConfig{
+		ChainSelector: selector,
+		TokenPoolRef:  localRef,
+		TokenRef:      tokenRef,
+		RegistryRef: datastore.AddressRef{
+			Type:    tar.Type,
+			Version: tar.Version,
+		},
+		RemoteChains:          remoteChains,
+		AllowedFinalityConfig: finality.Config{BlockDepth: 1, WaitForSafe: true},
+	}, nil
+}
+
+// stellarTokenRefForPool maps a shared burn-mint pool ref to its BnM token
+// ref (same qualifier — the pipeline deploys one token per pool, keyed by the
+// pool's qualifier; EVM TokenRefForPool parity).
+func stellarTokenRefForPool(poolRef datastore.AddressRef) (datastore.AddressRef, error) {
+	if string(poolRef.Type) != stellarccip.DevenvCatalogBurnMintTokenPoolType {
+		return datastore.AddressRef{}, fmt.Errorf("unsupported stellar pool type %q", string(poolRef.Type))
+	}
+	return datastore.AddressRef{
+		Type:      datastore.ContractType(bnmops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: poolRef.Qualifier,
+	}, nil
 }
 
 // DeployStellarCCIPContracts runs the sequences-based full Soroban CCIP deploy and returns output for the
@@ -1001,14 +1191,30 @@ func (c *Chain) GetSenderAddress() (protocol.UnknownAddress, error) {
 }
 
 // GetTokenBalance implements cciptestinterfaces.CCIP17.
-// Gets the balance of a token for a raw Stellar account address by calling the
-// SAC balance function. Use GetTokenBalanceForAddress for contract holders.
+// Gets the balance of a token for a raw 32-byte holder address. Raw
+// addresses carry no account-vs-contract tag: the account-encoded read
+// of a contract holder errors on SAC tokens (missing trustline entry)
+// or silently returns 0 on custom tokens (BnM balance is unwrap_or(0)),
+// so a non-positive account read is retried with the contract encoding.
 func (c *Chain) GetTokenBalance(ctx context.Context, address, tokenAddress protocol.UnknownAddress) (*big.Int, error) {
-	addrStrkey, err := strkey.Encode(strkey.VersionByteAccountID, []byte(address))
+	acctStrkey, err := strkey.Encode(strkey.VersionByteAccountID, []byte(address))
 	if err != nil {
 		return nil, fmt.Errorf("encode account holder address: %w", err)
 	}
-	return c.GetTokenBalanceForAddress(ctx, addrStrkey, tokenAddress)
+	acctBal, acctErr := c.GetTokenBalanceForAddress(ctx, acctStrkey, tokenAddress)
+	if acctErr == nil && acctBal != nil && acctBal.Sign() > 0 {
+		return acctBal, nil
+	}
+	ctrStrkey, err := strkey.Encode(strkey.VersionByteContract, []byte(address))
+	if err != nil {
+		return nil, fmt.Errorf("encode contract holder address: %w", err)
+	}
+	ctrBal, ctrErr := c.GetTokenBalanceForAddress(ctx, ctrStrkey, tokenAddress)
+	if ctrErr == nil && ctrBal != nil && ctrBal.Sign() > 0 {
+		return ctrBal, nil
+	}
+	// Genuine zero balance or a failing account read: prior behavior.
+	return acctBal, acctErr
 }
 
 // GetTokenBalanceForAddress gets a token balance for a typed Stellar holder

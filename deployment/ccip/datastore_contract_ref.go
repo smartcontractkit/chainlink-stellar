@@ -342,6 +342,24 @@ func BurnMintPoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	}
 }
 
+// BurnMintPoolDevenvDatastoreRef returns the stellar-native lane BnM pool ref.
+func BurnMintPoolDevenvDatastoreRef() DatastoreSorobanContractRef {
+	return BurnMintPoolDatastoreRef(DevenvBnmPoolQualifier)
+}
+
+// CatalogBurnMintPoolDevenvDatastoreRef returns the ccv-catalog-typed row
+// (BurnMintTokenPool 2.0.0) for the same pool, so tcapi pair resolution
+// (TokenCombinationsFromPoolPairs, exact type+version+qualifier lookup)
+// finds the stellar leg; the stellar AddressResolver maps the catalog type
+// to the BnM token and ignores the qualifier.
+func CatalogBurnMintPoolDevenvDatastoreRef() DatastoreSorobanContractRef {
+	return DatastoreSorobanContractRef{
+		Type:      datastore.ContractType(DevenvCatalogBurnMintTokenPoolType),
+		Version:   stellarops.ContractDeploymentVersion,
+		Qualifier: DevenvBnmPoolQualifier,
+	}
+}
+
 func LockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(lrops.ContractType),

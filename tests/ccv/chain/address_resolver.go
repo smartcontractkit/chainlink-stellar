@@ -72,7 +72,10 @@ func (AddressResolver) GetToken(ds datastore.DataStore, chainSelector uint64, po
 	case devenvcommon.LockReleaseTokenPoolType:
 		tokenRef = stellarccip.DevenvTestTokenDatastoreRef()
 	case devenvcommon.BurnMintTokenPoolType:
+		// Shared-pipeline burn-mint pools wrap their own qualified BnM
+		// token (one token per pool, keyed by the pool's qualifier).
 		tokenRef = stellarccip.BnmTokenDatastoreRef()
+		tokenRef.Qualifier = poolRef.Qualifier
 	default:
 		return protocol.UnknownAddress{}, fmt.Errorf("no stellar token mapped for pool type %s qualifier %q", poolRef.Type, poolRef.Qualifier)
 	}

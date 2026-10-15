@@ -3,6 +3,7 @@ package e2e_tests
 import (
 	"context"
 	"encoding/binary"
+	"math/big"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/basic"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	recvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
@@ -152,5 +154,39 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 				require.NoError(t, runErr, tc.Name())
 			})
 		}
+	})
+
+	t.Run("extra args v3 BnM token transfer", func(t *testing.T) {
+		// The lane's BnM pair: EVM BurnMintTokenPool 2.0.0 with the 18-decimal
+		// BurnMintERC20WithDrip token ↔ stellar burn-mint pool with the
+		// 7-decimal BnM token (deployed by the shared TokenExpansion pipeline,
+		// wired by the shared ConfigureTokensForTransfers + PostConnect). The
+		// destination pool converts by an exact 10^11
+		// (calculate_local_amount), so 1000e18 EVM base units (1000 tokens)
+		// mint exactly 1000e7 stellar base units. Finality 0: the stellar
+		// pool's allowed_finality_config defaults to WAIT_FOR_FINALITY, and
+		// default finality needs no receiver-policy seeding. Args.Send stays
+		// zero — SendV3Message's central gas default applies.
+		evmBase := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+		stellarBase := new(big.Int).Exp(big.NewInt(10), big.NewInt(7), nil)
+		args := token_transfer.Args{
+			Run: tcapi.RunConfig{
+				ConfirmSentTimeout: 30 * time.Second,
+				ConfirmExecTimeout: 7 * time.Minute,
+			},
+			TransferAmount:      new(big.Int).Mul(big.NewInt(1000), evmBase),     // 1000 tokens, EVM base units
+			DestBalanceIncrease: new(big.Int).Mul(big.NewInt(1000), stellarBase), // 1000 tokens, stellar base units
+		}
+		combo := bnmCombination(t, lib, src, dst)
+		tc := token_transfer.TokenTransfer(lib, src, dst, combo, 0 /* default finality */, true, /* EOA receiver */
+			"token transfer EOA default finality (BnM EVM→Stellar)", args)
+		if !tc.HavePrerequisites(ctx) {
+			t.Skip("BnM pair prerequisites not met (lane deploy did not onboard the BnM pair)")
+		}
+		res, runErr := tc.Run(ccv.Plog.WithContext(t.Context()))
+		if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+			t.Logf("dest ReturnData: 0x%x", res.Dest.Event.ReturnData)
+		}
+		require.NoError(t, runErr)
 	})
 }
