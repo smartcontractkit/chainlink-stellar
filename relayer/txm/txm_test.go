@@ -1948,3 +1948,94 @@ func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
 	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.ErrorIs(t, err, ErrTxmStopped)
 }
+
+// --- Fee seeding ---
+
+func feeSeedingMock(t *testing.T, feeStats protocolrpc.GetFeeStatsResponse) *mockRPCClient {
+	t.Helper()
+	return &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendTransactionResp: protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"},
+		getFeeStatsResp:     feeStats,
+	}
+}
+
+func noopInvokeRequest() TxRequest {
+	return TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	}
+}
+
+// broadcastAndReadInclusionFee enqueues a noop invoke, waits for its broadcast and
+// returns the per-op inclusion fee of the envelope the mock received.
+func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCClient) int64 {
+	t.Helper()
+	txID, err := txm.Enqueue(t.Context(), noopInvokeRequest())
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond, "tx should move to Unconfirmed")
+
+	req := mock.lastSendReq.Load()
+	require.NotNil(t, req)
+	var env xdr.TransactionEnvelope
+	require.NoError(t, xdr.SafeUnmarshalBase64(req.Transaction, &env))
+	tx := env.MustV1().Tx
+	fee := int64(tx.Fee)
+	if tx.Ext.V == 1 && tx.Ext.SorobanData != nil {
+		fee -= int64(tx.Ext.SorobanData.ResourceFee)
+	}
+	return fee / int64(len(tx.Operations))
+}
+
+func TestStellarTxm_FirstBroadcastBidsPeakP99(t *testing.T) {
+	t.Parallel()
+
+	mock := feeSeedingMock(t, feeStats(100, 100, 26_000_000))
+	cfg := config.TxManagerConfig{FeeStatsPollInterval: clconfig.MustNewDuration(0)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock), "first broadcast bids P99, not P50")
+
+	// P99 falls while the surge alternates ledger by ledger: the peak within FeeStatsLookback still sets the bid.
+	mock.getFeeStatsResp = feeStats(100, 100, 100)
+	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock))
+}
+
+func TestStellarTxm_ZeroFeeStatsLookbackBidsLatestP99(t *testing.T) {
+	t.Parallel()
+
+	mock := feeSeedingMock(t, feeStats(100, 100, 26_000_000))
+	cfg := config.TxManagerConfig{
+		FeeStatsPollInterval: clconfig.MustNewDuration(0),
+		FeeStatsLookback:     clconfig.MustNewDuration(0),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock))
+
+	mock.getFeeStatsResp = feeStats(100, 100, 100)
+	assert.Equal(t, int64(100), broadcastAndReadInclusionFee(t, txm, mock))
+}
