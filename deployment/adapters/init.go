@@ -100,6 +100,7 @@ func init() {
 	)
 
 	fees.GetRegistry().RegisterFeeAdapter(chainsel.FamilyStellar, v2, &StellarFeeAdapter{})
+	fees.GetRegistry().RegisterFeeResolver(chainsel.FamilyStellar, &StellarFeeAdapter{})
 	fees.GetFeeAggregatorRegistry().RegisterFeeAggregatorAdapter(chainsel.FamilyStellar, v2, &StellarFeeAggregatorAdapter{})
 
 	curseAdapter := NewStellarCurseAdapter()
