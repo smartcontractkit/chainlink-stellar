@@ -333,14 +333,6 @@ func (a *StellarTokenAdapter) ManualRegistration() *cldf_ops.Sequence[tokens.Man
 	return nil
 }
 
-func (a *StellarTokenAdapter) SetTokenPoolRateLimits() *cldf_ops.Sequence[tokens.TPRLRemotes, sequences.OnChainOutput, cldf_chain.BlockChains] {
-	return nil
-}
-
-func (a *StellarTokenAdapter) UpdateAuthorities() *cldf_ops.Sequence[tokens.UpdateAuthoritiesInput, sequences.OnChainOutput, *deployment.Environment] {
-	return nil
-}
-
 func (a *StellarTokenAdapter) MigrateLockReleasePoolLiquiditySequence() *cldf_ops.Sequence[tokens.MigrateLockReleasePoolLiquidityInput, sequences.OnChainOutput, cldf_chain.BlockChains] {
 	return nil
 }

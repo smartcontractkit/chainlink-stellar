@@ -79,3 +79,100 @@ var SetAdvancedPoolHooks = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// SetRateLimitConfigInput sets outbound and inbound rate limit configs for
+// one remote chain and finality bucket. Caller is the invoker identity the
+// contract authorizes (owner or rate-limit admin).
+type SetRateLimitConfigInput struct {
+	ContractID          string                        `json:"contract_id"`
+	Caller              string                        `json:"caller"`
+	RemoteChainSelector uint64                        `json:"remote_chain_selector"`
+	OutboundConfig      tpoolbindings.RateLimitConfig `json:"outbound_config"`
+	InboundConfig       tpoolbindings.RateLimitConfig `json:"inbound_config"`
+	FastFinality        bool                          `json:"fast_finality"`
+}
+
+// SetRateLimitConfig calls pool `set_rate_limit_config` for one remote chain
+// and finality bucket.
+var SetRateLimitConfig = cldfops.NewOperation(
+	"token-pool:set-rate-limit-config",
+	stellarops.ContractDeploymentVersion,
+	"Sets outbound and inbound rate limit configs for a remote chain on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetRateLimitConfigInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetRateLimitConfig(b.GetContext(), in.Caller, in.RemoteChainSelector, in.OutboundConfig, in.InboundConfig, in.FastFinality); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// GetRateLimitAdminInput identifies a pool rate-limit admin read.
+type GetRateLimitAdminInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetRateLimitAdmin reads pool `get_rate_limit_admin`.
+var GetRateLimitAdmin = cldfops.NewOperation(
+	"token-pool:get-rate-limit-admin",
+	stellarops.ContractDeploymentVersion,
+	"Reads the rate-limit admin of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetRateLimitAdminInput) (*string, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetRateLimitAdmin(b.GetContext())
+	},
+)
+
+// GetAllowedFinalityConfigInput identifies a pool allowed-finality read.
+type GetAllowedFinalityConfigInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetAllowedFinalityConfig reads pool `get_allowed_finality_config`.
+var GetAllowedFinalityConfig = cldfops.NewOperation(
+	"token-pool:get-allowed-finality-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the allowed finality config of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetAllowedFinalityConfigInput) (uint32, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetAllowedFinalityConfig(b.GetContext())
+	},
+)
+
+// SetAllowedFinalityConfigInput sets the pool's allowed finality config.
+type SetAllowedFinalityConfigInput struct {
+	ContractID      string `json:"contract_id"`
+	AllowedFinality uint32 `json:"allowed_finality"`
+}
+
+// SetAllowedFinalityConfig calls pool `set_allowed_finality_config` (no
+// explicit caller: the contract require_auths the invoking owner).
+var SetAllowedFinalityConfig = cldfops.NewOperation(
+	"token-pool:set-allowed-finality-config",
+	stellarops.ContractDeploymentVersion,
+	"Sets the allowed finality config of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetAllowedFinalityConfigInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetAllowedFinalityConfig(b.GetContext(), in.AllowedFinality); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// GetAdvancedPoolHooksInput identifies a pool AdvancedPoolHooks read.
+type GetAdvancedPoolHooksInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetAdvancedPoolHooks reads pool `get_advanced_pool_hooks`; nil means no
+// hooks are configured (no zero address exists on Soroban).
+var GetAdvancedPoolHooks = cldfops.NewOperation(
+	"token-pool:get-advanced-pool-hooks",
+	stellarops.ContractDeploymentVersion,
+	"Reads the AdvancedPoolHooks wired to a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetAdvancedPoolHooksInput) (*string, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetAdvancedPoolHooks(b.GetContext())
+	},
+)
