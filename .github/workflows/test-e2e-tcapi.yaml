@@ -123,10 +123,18 @@ jobs:
           JD_IMAGE: ${{ secrets.JD_IMAGE }}
         run: make up
 
-      - name: Run TCAPI e2e tests
+      - name: Run TCAPI basic e2e tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        run: cd tests && go test -v -timeout 25m ./e2e/... -run 'Test(StellarToEVM|EVMToStellar)TCAPI'
+        run: cd tests && go test -v -timeout 25m ./e2e/... -run 'Test(StellarToEVM|EVMToStellar)TCAPI$'
+
+      # The BnM token-transfer suite is ~27 full round trips per direction
+      # (full pair matrix x EOA/mock receivers), so it gets its own item
+      # with a longer timeout, on the same devenv.
+      - name: Run TCAPI BnM token transfer e2e tests
+        env:
+          GOPATH: ${{ github.workspace }}/.go
+        run: cd tests && go test -v -timeout 90m ./e2e/... -run 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransfers$'
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
       # (metrics noise every ~5s aside), so 5000 lines covers the entire run —

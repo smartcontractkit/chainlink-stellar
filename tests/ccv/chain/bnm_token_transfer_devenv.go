@@ -9,19 +9,39 @@ package ccvchain
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	evmtokenpool "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/token_pool"
+	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
+	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
+	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
+
+// sharedPairAllowedFinality is the allowed-finality config applied to every
+// shared-pipeline pool on the lane (both sides): {WaitForSafe, BlockDepth 1}
+// admits safe-tag requests and block-depth requests ≥ 1, mirroring the
+// AllowedFinalityConfig the stellar TokenTransferConfig declares. Pools
+// default to wait-for-finality only, which rejects the fast-finality
+// requests the tcapi combo finality produces (block-depth 1).
+var sharedPairAllowedFinality = finality.Config{WaitForSafe: true, BlockDepth: 1}
+
+// sharedPairAllowedFinalityU32 is the stellar bindings' uint32 form of
+// sharedPairAllowedFinality (same on-wire bytes4 encoding).
+var sharedPairAllowedFinalityU32 = func() uint32 {
+	raw := sharedPairAllowedFinality.Raw()
+	return binary.BigEndian.Uint32(raw[:])
+}()
 
 // configureSharedBnmPools applies every shared-pipeline stellar burn-mint
 // pool's remote updates. The pipeline derives each pool's qualifier as
@@ -69,6 +89,10 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 		return nil
 	}
 
+	// EVM counterpart pools (2.0.0+) needing the shared allowed-finality
+	// config; keyed by pool address (one pool per combo), mapped to its chain.
+	evmAllowedPools := make(map[string]uint64)
+
 	for _, ref := range allRefs {
 		if ref.ChainSelector != stellarSelector ||
 			string(ref.Type) != stellarccip.DevenvCatalogBurnMintTokenPoolType ||
@@ -93,6 +117,12 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 					Str("counterpart", counterpartQualifier).
 					Msg("No counterpart pool found for a shared stellar burn-mint pool")
 				continue
+			}
+			// 2.0.0+ counterpart pools gate lockOrBurn on allowed finality the
+			// same way the stellar pool does; remember them for the shared
+			// allowed-finality application after the stellar loop.
+			if counterpart.Version.Major() >= 2 {
+				evmAllowedPools[counterpart.Address] = rs
 			}
 			counterpartToken, ok := evmTokenForPoolQualifier(allRefs, rs, counterpart.Qualifier)
 			if !ok {
@@ -129,6 +159,46 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 		if err := poolClient.ApplyChainUpdates(context.Background(), updates, nil); err != nil {
 			return fmt.Errorf("apply chain updates for shared burn-mint pool %q: %w", ref.Qualifier, err)
 		}
+		// Fast-finality admission (stellar side): the burn-mint pool defaults
+		// to wait-for-finality only, and lock_or_burn gates FTF requests on the
+		// allowed config (finality codec ensure_requested_finality_allowed),
+		// so combo-finality cases (block-depth-1 requests) would be rejected
+		// without this. The pipeline would apply the AllowedFinalityConfig
+		// declared in the TokenTransferConfig, but only through the pool-config
+		// changeset (TokenFeeAdapter), which the devenv never runs — PostConnect
+		// applies it directly. Owner-gated EOA write; idempotent.
+		if err := poolClient.SetAllowedFinalityConfig(context.Background(), sharedPairAllowedFinalityU32); err != nil {
+			return fmt.Errorf("set allowed finality for shared burn-mint pool %q: %w", ref.Qualifier, err)
+		}
+	}
+
+	// Fast-finality admission (EVM side): the 2.0.0 counterpart pools gate
+	// lockOrBurn on allowed finality the same way (default 0 rejects FTF
+	// requests), so the EVM-source combo-finality cases need the same config
+	// on the EVM pools.
+	for poolAddr, rs := range evmAllowedPools {
+		if err := c.setEVMPoolAllowedFinality(env, rs, poolAddr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setEVMPoolAllowedFinality applies the shared allowed-finality config to an
+// EVM burn-mint pool via the EVM token-pool op (2.0.0+ pools only — 1.6.1
+// pools predate the finality codec). Owner-gated EOA write; idempotent.
+func (c *Chain) setEVMPoolAllowedFinality(env *deployment.Environment, evmSelector uint64, poolAddress string) error {
+	evmChain, ok := env.BlockChains.EVMChains()[evmSelector]
+	if !ok {
+		return fmt.Errorf("EVM chain %d not found in environment", evmSelector)
+	}
+	if _, err := cldf_ops.ExecuteOperation(env.OperationsBundle, evmtokenpool.SetAllowedFinalityConfig, evmChain,
+		evmcontract.FunctionInput[[4]byte]{
+			Address:       common.HexToAddress(poolAddress),
+			ChainSelector: evmSelector,
+			Args:          sharedPairAllowedFinality.Raw(),
+		}); err != nil {
+		return fmt.Errorf("set allowed finality on EVM pool %s: %w", poolAddress, err)
 	}
 	return nil
 }
