@@ -21,6 +21,10 @@ import (
 //	set -a; source staging/staging.env; set +a
 //	go test -v -count=1 -timeout 45m ./staging/... -run TestStagingStellarToEVM
 
+// errUnsupportedDestinationChain is CCIPError::UnsupportedDestinationChain (63)
+// as rendered in Soroban simulation errors.
+const errUnsupportedDestinationChain = "Error(Contract, #63)"
+
 // TestStagingStellarToEVMMessage sends a single data-only message via
 // Router.ccip_send, checks the OnRamp's CCIPMessageSent event and the exact fee
 // pull, and — when STAGING_EVM_RPC_URL/STAGING_EVM_OFFRAMP are set — waits for
@@ -137,11 +141,12 @@ func TestStagingStellarToEVMUnsupportedDestination(t *testing.T) {
 
 	msg := env.buildMessage(t, []byte("staging: should be rejected"))
 	_, err = env.router.GetFee(ctx, unknownSelector, msg)
-	require.Error(t, err, "get_fee to an unsupported destination should fail")
+	require.ErrorContains(t, err, errUnsupportedDestinationChain, "get_fee to an unsupported destination")
 
+	// No quote exists for an unsupported destination; the legacy ABI still needs a fee argument.
 	balanceBefore := env.feeTokenBalance(t, ctx)
-	_, err = env.router.CcipSend(ctx, env.cfg.Sender.Address(), unknownSelector, msg)
-	require.Error(t, err, "ccip_send to an unsupported destination should fail")
+	_, err = env.ccipSend(ctx, unknownSelector, msg, big.NewInt(0))
+	require.ErrorContains(t, err, errUnsupportedDestinationChain, "ccip_send to an unsupported destination")
 	env.l.Info().Err(err).Msg("ccip_send rejected as expected")
 
 	nativeFee, err := env.cfg.isNativeFeeToken()

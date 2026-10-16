@@ -33,6 +33,7 @@ const (
 	envStellarFeeToken    = "STAGING_STELLAR_FEE_TOKEN"          // required: C... fee token (e.g. LINK or native XLM SAC)
 	envStellarCCVs        = "STAGING_STELLAR_CCVS"               // required: comma-separated C... CCV addresses (e.g. the VersionedVerifierResolver)
 	envStellarExecutor    = "STAGING_STELLAR_EXECUTOR"           // optional: C... executor; defaults to the lane's default executor sentinel
+	envRouterLegacyFeeArg = "STAGING_ROUTER_LEGACY_FEE_ARG"      // optional: true for Routers built before bbc2d2b4, whose ccip_send takes a trailing fee_token_amount
 	envSourceChainSel     = "STAGING_SOURCE_CHAIN_SELECTOR"      // default: stellar-testnet
 	envDestChainSel       = "STAGING_DEST_CHAIN_SELECTOR"        // default: ethereum-testnet-sepolia
 	envEVMGasLimit        = "STAGING_EVM_GAS_LIMIT"              // default: 0 (EOA receiver, no callback)
@@ -54,6 +55,8 @@ type stagingConfig struct {
 	FeeTokenID        string
 	CCVs              []string
 	Executor          string
+	// RouterLegacyFeeArg selects the pre-bbc2d2b4 ccip_send(sender, dest, message, fee_token_amount) ABI.
+	RouterLegacyFeeArg bool
 
 	SourceChainSelector uint64
 	DestChainSelector   uint64
@@ -108,6 +111,7 @@ func loadStagingConfig(t *testing.T) *stagingConfig {
 		EVMGasLimit:         uint32(mustUintBits(t, envEVMGasLimit, 0, 32)),
 		BatchSize:           int(mustUint(t, envSendBatchSize, 3)),
 		SentEventTimeout:    mustDuration(t, envSentEventTimeout, 2*time.Minute),
+		RouterLegacyFeeArg:  mustBool(t, envRouterLegacyFeeArg, false),
 		EVMRPCURL:           strings.TrimSpace(os.Getenv(envEVMRPCURL)),
 		EVMExecTimeout:      mustDuration(t, envEVMExecTimeout, 30*time.Minute),
 		EVMLookbackBlocks:   mustUint(t, envEVMLogLookbackBlks, 50),
@@ -200,6 +204,19 @@ func mustUintBits(t *testing.T, name string, def uint64, bits int) uint64 {
 		t.Fatalf("%s: invalid unsigned integer %q: %v", name, v, err)
 	}
 	return n
+}
+
+func mustBool(t *testing.T, name string, def bool) bool {
+	t.Helper()
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		t.Fatalf("%s: invalid boolean %q: %v", name, v, err)
+	}
+	return b
 }
 
 func mustDuration(t *testing.T, name string, def time.Duration) time.Duration {

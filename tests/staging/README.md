@@ -21,6 +21,12 @@ tests skip, so `go test ./...` stays green elsewhere.
    Set `STAGING_EVM_RPC_URL` and `STAGING_EVM_OFFRAMP` to also wait for
    execution on Sepolia.
 
+If the deployed Router predates `bbc2d2b4`, its `ccip_send` still takes a
+trailing `fee_token_amount` and the generated binding fails with
+`MismatchingParameterLen`. Set `STAGING_ROUTER_LEGACY_FEE_ARG=true` to pass the
+quoted fee as that argument. Check the Router with
+`stellar contract info interface --id <router> --network testnet`.
+
 ## Run
 
 From `tests/`:

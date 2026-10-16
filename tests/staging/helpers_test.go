@@ -71,6 +71,7 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 		Strs("ccvs", cfg.CCVs).
 		Uint64("destChainSelector", cfg.DestChainSelector).
 		Str("evmReceiver", cfg.EVMReceiver.Hex()).
+		Bool("routerLegacyFeeArg", cfg.RouterLegacyFeeArg).
 		Bool("execCheck", cfg.ExecCheckEnabled()).
 		Msg("Staging environment")
 
@@ -133,7 +134,7 @@ func (e *stagingEnv) sendAndConfirm(t *testing.T, ctx context.Context, msg route
 		startLedger -= sentEventLookbackLedgers
 	}
 
-	messageID, err := e.router.CcipSend(ctx, e.cfg.Sender.Address(), e.cfg.DestChainSelector, msg)
+	messageID, err := e.ccipSend(ctx, e.cfg.DestChainSelector, msg, fee)
 	require.NoError(t, err, "Router.ccip_send")
 	e.l.Info().Str("messageID", hexID(messageID)).Msg("ccip_send included")
 
@@ -147,6 +148,33 @@ func (e *stagingEnv) sendAndConfirm(t *testing.T, ctx context.Context, msg route
 		Msg("CCIPMessageSent observed on OnRamp")
 
 	return sentMessage{MessageID: messageID, Fee: fee, Event: event}
+}
+
+// ccipSend calls Router.ccip_send. Routers built before bbc2d2b4 take a trailing
+// fee_token_amount argument that the generated binding no longer emits, so with
+// STAGING_ROUTER_LEGACY_FEE_ARG set the call is built by hand and passes fee.
+func (e *stagingEnv) ccipSend(ctx context.Context, destChainSelector uint64, msg routerbindings.StellarToAnyMessage, fee *big.Int) ([32]byte, error) {
+	if !e.cfg.RouterLegacyFeeArg {
+		return e.router.CcipSend(ctx, e.cfg.Sender.Address(), destChainSelector, msg)
+	}
+
+	msgVal, err := msg.ToScVal()
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("encode message: %w", err)
+	}
+	result, err := e.deployer.InvokeContract(ctx, e.cfg.RouterID, "ccip_send", []xdr.ScVal{
+		scval.AddressToScVal(e.cfg.Sender.Address()),
+		scval.Uint64ToScVal(destChainSelector),
+		msgVal,
+		scval.I128ToScVal(fee),
+	})
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("failed to call ccip_send (legacy fee arg): %w", err)
+	}
+	if result == nil {
+		return [32]byte{}, fmt.Errorf("no return value from ccip_send")
+	}
+	return scval.Bytes32FromScVal(*result)
 }
 
 func (e *stagingEnv) waitForSentEvent(t *testing.T, ctx context.Context, startLedger uint32, messageID [32]byte) *ccvchain.CCIPMessageSentEvent {
