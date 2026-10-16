@@ -62,6 +62,8 @@ func TestCCVDeploymentAdapterRegistrations_stellar(t *testing.T) {
 	require.NoError(t, err, "TokenVerifier")
 	_, err = ccvdeploymentadapters.GetCommitteeVerifierOnchainRegistry().Get(sel)
 	require.NoError(t, err, "CommitteeVerifierOnchain")
+	_, err = ccvdeploymentadapters.GetTokenPoolOnchainRegistry().Get(sel)
+	require.NoError(t, err, "TokenPoolOnchain")
 }
 
 func TestStellarDeployChainContractsAdapter_smoke(t *testing.T) {

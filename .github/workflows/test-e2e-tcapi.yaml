@@ -15,11 +15,56 @@ permissions: {}
 
 jobs:
   test-e2e-tcapi:
-    name: E2E TCAPI Tests
+    name: E2E TCAPI Tests (${{ matrix.suite }})
     permissions:
       contents: read
       id-token: write
     runs-on: runs-on=${{ github.run_id }}/family=c6i/cpu=32+48/ram=64+96/spot=false/image=ubuntu24-full-x64/extras=s3-cache+tmpfs
+    strategy:
+      # Two parallel legs: a failure in one must not cancel the other.
+      fail-fast: false
+      matrix:
+        include:
+          - suite: basic
+            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPI$'
+            timeout: 25m
+          # One case type x one direction per leg; cases run sequentially
+          # inside each leg, so no two sends ever overlap (the EVM send
+          # path races same-nonce approve/send txs; the stellar RPC rejects
+          # bursts with TRY_AGAIN_LATER).
+          - suite: token-transfer-eoa-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferEOA$'
+            timeout: 20m
+          - suite: token-transfer-eoa-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferEOA$'
+            timeout: 20m
+          - suite: token-transfer-mock-receiver-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferMockReceiver$'
+            timeout: 20m
+          - suite: token-transfer-mock-receiver-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferMockReceiver$'
+            timeout: 20m
+          - suite: token-transfer-mock-receiver-ff-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferMockReceiverFastFinality$'
+            timeout: 20m
+          - suite: token-transfer-mock-receiver-ff-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality$'
+            timeout: 20m
+          - suite: token-transfer-rate-limit-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferRateLimit$'
+            timeout: 20m
+          - suite: token-transfer-rate-limit-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferRateLimit$'
+            timeout: 20m
+          - suite: token-transfer-separate-token-receiver-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferSeparateTokenReceiver$'
+            timeout: 20m
+          - suite: token-transfer-separate-token-receiver-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver$'
+            timeout: 20m
+          - suite: token-transfer-remove-remote-pool-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferRemoveRemotePool$'
+            timeout: 20m
     steps:
       - name: Enable S3 Cache for Self-Hosted Runners
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -79,7 +124,7 @@ jobs:
           DOCKER_BUILDKIT: 1
 
       - name: Save CCV dev images
-        if: steps.ccv-images.outputs.cache-hit != 'true' && github.event_name == 'push'
+        if: steps.ccv-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'basic'
         run: docker save verifier:dev token-verifier:dev executor:dev indexer:dev aggregator:dev pricer:dev ccv-fakes:dev | gzip > /tmp/ccv-dev-images.tar.gz
 
       - name: Restore Stellar dev images
@@ -100,7 +145,7 @@ jobs:
           make docker-executor
 
       - name: Save Stellar dev images
-        if: steps.stellar-images.outputs.cache-hit != 'true' && github.event_name == 'push'
+        if: steps.stellar-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'basic'
         run: docker save stellarcommittee-verifier:dev stellarexecutor:dev | gzip > /tmp/stellar-dev-images.tar.gz
 
       - name: Authenticate to AWS ECR (JD)
@@ -123,10 +168,10 @@ jobs:
           JD_IMAGE: ${{ secrets.JD_IMAGE }}
         run: make up
 
-      - name: Run TCAPI e2e tests
+      - name: Run TCAPI ${{ matrix.suite }} e2e tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        run: cd tests && go test -v -timeout 25m ./e2e/... -run 'Test(StellarToEVM|EVMToStellar)TCAPI'
+        run: cd tests && go test -v -timeout ${{ matrix.timeout }} ./e2e/... -run '${{ matrix.pattern }}'
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
       # (metrics noise every ~5s aside), so 5000 lines covers the entire run —

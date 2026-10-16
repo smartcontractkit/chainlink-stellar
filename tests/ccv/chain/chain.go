@@ -378,6 +378,12 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 		return fmt.Errorf("configure shared BnM pools: %w", err)
 	}
 
+	// Separate-token-receiver sends: both lane OnRamps default
+	// token_receiver_allowed to false; flip it for the token-transfer suite.
+	if err := c.enableTokenReceivers(env, selector, remoteSelectors); err != nil {
+		return fmt.Errorf("enable token receivers on lane onramps: %w", err)
+	}
+
 	return nil
 }
 
