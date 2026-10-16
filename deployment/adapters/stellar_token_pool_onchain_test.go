@@ -78,11 +78,34 @@ func TestStellarCCVTokenPoolOnchainAdapter_RemoveRemotePool_happyPath(t *testing
 
 	out, err := a.removeRemotePool(context.Background(), nil, tarStrkey, input)
 	require.NoError(t, err)
-	// The remove targets the padded on-chain form, once.
+	// The raw input matches nothing, so the remove targets the padded
+	// fallback form, once.
 	require.Len(t, pool.removed, 1)
 	require.Equal(t, input.RemoteChainSelector, pool.removed[0].remote)
 	require.Equal(t, padded, pool.removed[0].addr)
 	// Deployer-key mode: an ExecInfo-marked empty batch op, dropped downstream.
+	require.Len(t, out.BatchOps, 1)
+	require.Empty(t, out.BatchOps[0].Transactions)
+}
+
+func TestStellarCCVTokenPoolOnchainAdapter_RemoveRemotePool_unpaddedEntry(t *testing.T) {
+	t.Parallel()
+	// The pool stores remote addresses verbatim and removes by exact equality:
+	// a configured unpadded 20-byte entry must be removable by its exact
+	// bytes, not only in the 32-byte padded form.
+	input := tokenPoolOnchainInput()
+	pool := &fakeRemotePoolClient{configured: map[uint64][][]byte{7: {input.RemotePoolAddress}}}
+	a := newSeededTokenPoolOnchainAdapter(t, fakeTarPoolResolver{
+		pools: map[string]string{input.TokenAddress: "CPOOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAL"},
+	}, pool)
+	tarStrkey := "CTARAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+	out, err := a.removeRemotePool(context.Background(), nil, tarStrkey, input)
+	require.NoError(t, err)
+	// The remove targets the raw configured form, once.
+	require.Len(t, pool.removed, 1)
+	require.Equal(t, input.RemoteChainSelector, pool.removed[0].remote)
+	require.Equal(t, input.RemotePoolAddress, pool.removed[0].addr)
 	require.Len(t, out.BatchOps, 1)
 	require.Empty(t, out.BatchOps[0].Transactions)
 }

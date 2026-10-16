@@ -92,9 +92,11 @@ func (a *StellarCCVTokenPoolOnchainAdapter) RemoveRemotePool() *cldf_ops.Sequenc
 
 // removeRemotePool resolves the token's active pool via the TokenAdminRegistry,
 // verifies the requested remote pool is currently configured for the remote
-// chain (erroring clearly when it is not), and removes it. Remote pool
-// addresses are stored left-padded to 32 bytes on chain; the input is matched
-// and removed in the same padded form.
+// chain (erroring clearly when it is not), and removes it. The pool stores
+// remote addresses verbatim and removes by exact equality, so the raw input is
+// matched first; the 32-byte left-padded form (how EVM counterpart pools are
+// conventionally wired) is only a fallback — padding unconditionally would
+// make a configured unpadded entry impossible to remove.
 func (a *StellarCCVTokenPoolOnchainAdapter) removeRemotePool(ctx context.Context, invoker bindings.Invoker, tarStrkey string, input ccvdeploymentadapters.RemoveRemotePoolInput) (ccvdeploymentadapters.RemoveRemotePoolOutput, error) {
 	pool, err := a.resolvePool(ctx, invoker, tarStrkey, input.TokenAddress)
 	if err != nil {
@@ -106,11 +108,14 @@ func (a *StellarCCVTokenPoolOnchainAdapter) removeRemotePool(ctx context.Context
 		return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf("failed to get remote pools for token %s remote chain %d on pool %s (chain %d): %w",
 			input.TokenAddress, input.RemoteChainSelector, pool, input.ChainSelector, err)
 	}
-	target := common.LeftPadBytes(input.RemotePoolAddress, 32)
+	target := input.RemotePoolAddress
 	if !slices.ContainsFunc(configured, func(p []byte) bool { return bytes.Equal(p, target) }) {
-		return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf(
-			"remote pool 0x%x is not configured for token %s remote chain %d on pool %s (chain %d)",
-			input.RemotePoolAddress, input.TokenAddress, input.RemoteChainSelector, pool, input.ChainSelector)
+		target = common.LeftPadBytes(input.RemotePoolAddress, 32)
+		if !slices.ContainsFunc(configured, func(p []byte) bool { return bytes.Equal(p, target) }) {
+			return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf(
+				"remote pool 0x%x is not configured for token %s remote chain %d on pool %s (chain %d) (checked the raw and 32-byte left-padded forms)",
+				input.RemotePoolAddress, input.TokenAddress, input.RemoteChainSelector, pool, input.ChainSelector)
+		}
 	}
 	if err := poolClient.RemoveRemotePool(ctx, input.RemoteChainSelector, target); err != nil {
 		return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf("failed to remove remote pool for token %s remote chain %d on chain %d: %w",
