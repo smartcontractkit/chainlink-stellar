@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -13,10 +14,14 @@ import (
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	evmtokenpool "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/token_pool"
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/chainreg"
 	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	ccvchangesets "github.com/smartcontractkit/chainlink-ccv/deployment/changesets"
+	"github.com/smartcontractkit/chainlink-ccv/protocol"
+	"github.com/smartcontractkit/chainlink-common/pkg/utils/tests"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -24,6 +29,7 @@ import (
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellaradapters "github.com/smartcontractkit/chainlink-stellar/deployment/adapters"
+	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 )
 
 // TestEVMToStellarTCAPIBnmTokenTransferRemoveRemotePool proves the stellar
@@ -102,10 +108,61 @@ func TestEVMToStellarTCAPIBnmTokenTransferRemoveRemotePool(t *testing.T) {
 		}
 	})
 
-	// 4. The same transfer now fails at the stellar pool's release gate.
-	post := token_transfer.TokenTransfer(lib, src, dst, combo, 0, true, "remove-remote-pool after", args)
-	_, postErr := post.Run(ctx)
-	require.Error(t, postErr, "transfer should fail after the remote pool is removed")
+	// 4. The same transfer now fails at the stellar pool's release gate —
+	//    proven positively, not by "some error happened": the source send
+	//    still confirms (removal blocks only execution), and a direct
+	//    execute of the verified message reverts with the pool's
+	//    InvalidSourcePoolAddress (319). Pool failures revert the entire
+	//    execute transaction without an execution event, so the relayer's
+	//    exec-event wait timing out would be indistinguishable from a
+	//    source-side failure — the manual execute pins the exact rejection.
+	_, srcTokenAddr, err := rateLimitSource(ctx, env, lib, src, combo)
+	require.NoError(t, err)
+	receiver, err := env.Chains[dst].GetEOAReceiverAddress()
+	require.NoError(t, err)
+	evmSrc := env.Chains[src]
+	sentEvent, err := evmSrc.SendMessage(ctx, dst,
+		cciptestinterfaces.MessageFields{
+			Receiver:    receiver,
+			TokenAmount: cciptestinterfaces.TokenAmount{Amount: args.TransferAmount, TokenAddress: srcTokenAddr},
+		},
+		cciptestinterfaces.MessageOptions{}, messageV3Version)
+	require.NoError(t, err, "the EVM send itself must succeed after removal")
+	_, err = evmSrc.ConfirmSendOnSource(ctx, dst,
+		cciptestinterfaces.MessageEventKey{MessageID: sentEvent.MessageID}, evmSentTimeout)
+	require.NoError(t, err, "the source send must confirm after removal (only execution is blocked)")
+
+	// Wait for verification + indexing to assemble the manual-execute
+	// arguments, exactly as the permissionless-exec test and the `manualexec`
+	// CLI do (each verification contributes its CCV address and blob).
+	defaultAggregatorClient := env.AggregatorClients[devenvcommon.DefaultCommitteeVerifierQualifier]
+	require.NotNil(t, defaultAggregatorClient)
+	testCtx := e2e.NewTestingContext(t, t.Context(), env.Chains, defaultAggregatorClient, env.IndexerMonitor)
+	result, err := testCtx.AssertMessage(protocol.Bytes32(sentEvent.MessageID), e2e.AssertMessageOptions{
+		TickInterval:            1 * time.Second,
+		ExpectedVerifierResults: combo.ExpectedVerifierResults(),
+		Timeout:                 tests.WaitTimeout(t),
+		AssertVerifierLogs:      false,
+		AssertExecutorLogs:      false,
+	})
+	require.NoError(t, err, "the message must still verify and index after removal (only execution is blocked)")
+	verifs := result.IndexedVerifications.Results
+	require.NotEmpty(t, verifs, "need ≥1 indexed verification to assemble manual-execute arguments")
+	ccvs := make([]protocol.UnknownAddress, 0, len(verifs))
+	verifierResults := make([][]byte, 0, len(verifs))
+	for _, v := range verifs {
+		ccvs = append(ccvs, v.VerifierResult.VerifierDestAddress)
+		verifierResults = append(verifierResults, v.VerifierResult.CCVData)
+	}
+
+	// Direct execute of the verified message: the release gate rejects the
+	// removed source pool, reverting the whole execute transaction with the
+	// pool's InvalidSourcePoolAddress (319) contract error.
+	stellarChain := env.Chains[dst]
+	_, execErr := stellarChain.ManuallyExecuteMessage(ctx, verifs[0].VerifierResult.Message, 0, ccvs, verifierResults)
+	require.Error(t, execErr, "execute must fail after the remote pool is removed")
+	require.True(t, stellarops.IsContractErrorCode(execErr, tokenpoolbindings.CCIPErrorInvalidSourcePoolAddress),
+		"execute must fail at the pool's release gate with InvalidSourcePoolAddress (319), got: %v", execErr)
 }
 
 // removeRemotePoolTokens resolves the combo's src/dest tokens as the chains'

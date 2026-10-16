@@ -306,11 +306,15 @@ func (c *Chain) GetTokenReceiver(opts any) (cciptestinterfaces.MessageV3TokenRec
 	case nil:
 		return nil, nil
 	case string:
-		var vb strkey.VersionByte = strkey.VersionByteContract
+		// Reject account strkeys: strkey.Decode strips the version byte, and
+		// the destination OffRamp reconstructs token receivers as contract
+		// addresses (address_from_token_bytes), so a G-address would deliver
+		// to the C-address with the same 32-byte hash — never the requested
+		// account. Reject until account recipients are supported end to end.
 		if strings.HasPrefix(v, "G") {
-			vb = strkey.VersionByteAccountID
+			return nil, fmt.Errorf("token receiver %q: account recipients are not supported (the destination delivers token receivers as contract addresses)", v)
 		}
-		raw, err := strkey.Decode(vb, v)
+		raw, err := strkey.Decode(strkey.VersionByteContract, v)
 		if err != nil {
 			return nil, fmt.Errorf("decode token receiver strkey %q: %w", v, err)
 		}

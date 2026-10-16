@@ -1089,6 +1089,108 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
     );
 }
 
+#[test]
+// The token-only zero-receiver exception is granted only to the canonical
+// 32-byte zero address. The decoder does not enforce the receiver length, so
+// an empty or short all-zero receiver carrying data or receive gas must NOT
+// be classified token-only (which would skip receiver validation and delivery
+// and record Success without delivery) — it must fail receiver decoding
+// (InvalidReceiverLength, the same rejection `get_ccvs_for_message` applies,
+// EVM InvalidEVMAddress parity) and record a retryable Failure.
+fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    let registry_id = env.register(MockTokenAdminRegistry, ());
+    let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
+    let pool_id = env.register(MockTokenPool, ());
+    registry_client.set_pool(&Address::generate(&env), &pool_id);
+
+    let verifier_id = env.register(MockVerifier, ());
+    let vvr_id = env.register(MockVvr, ());
+    let vvr_client = MockVvrClient::new(&env, &vvr_id);
+    vvr_client.set_verifier(&verifier_id);
+
+    let static_config = StaticConfig {
+        chain_selector: EXEC_TEST_DEST_CHAIN,
+        rmn_proxy: rmn_proxy_id,
+        token_admin_registry: registry_id,
+    };
+
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    client.initialize(&owner, &static_config);
+
+    let router = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router, vvr_id.clone(), onramp.clone(), true);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let data_message = |env: &Env, receiver: Bytes, seq: u64| CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: seq,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 200_000,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(env, &[0u8; 32]),
+        onramp_address: onramp.clone(),
+        offramp_address: offramp_address_field_from_contract(env, &contract_id),
+        sender: Bytes::from_array(env, &[2u8; 20]),
+        receiver,
+        dest_blob: Bytes::new(env),
+        token_transfer: Bytes::new(env),
+        data: Bytes::from_array(env, b"payload"),
+    };
+
+    // Empty and short all-zero receivers must NOT get the token-only
+    // exception: the receiver consult runs, fails decoding, and the message
+    // records a retryable Failure instead of a silent token-only Success.
+    let malformed: Vec<Bytes> = vec![&env, Bytes::new(&env), Bytes::from_array(&env, &[0u8; 16])];
+    for (i, receiver) in malformed.iter().enumerate() {
+        let msg = data_message(&env, receiver.clone(), i as u64 + 1);
+        let encoded = msg.to_bytes(&env).unwrap();
+        let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+        let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+        assert!(
+            res.is_ok(),
+            "execute must record a Failure, not trap, for a malformed zero receiver: {:?}",
+            res.err()
+        );
+        assert_eq!(
+            client.get_execution_state(&message_id),
+            MessageExecutionState::Failure,
+            "an empty or short all-zero receiver carrying data must be rejected, not delivered token-only"
+        );
+    }
+
+    // Contrast: the canonical 32-byte zero receiver keeps the EVM-parity
+    // token-only skip (data dropped, no receiver call) — Success.
+    let msg = data_message(&env, Bytes::from_array(&env, &[0u8; 32]), 100);
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(res.is_ok(), "execute must not trap: {:?}", res.err());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "the canonical 32-byte zero receiver must keep the token-only exception"
+    );
+}
+
 // ============================================================
 // L-10: post-release failures must trap — no double release on retry
 // ============================================================

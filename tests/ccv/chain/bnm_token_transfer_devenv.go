@@ -92,8 +92,16 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 	}
 
 	// EVM counterpart pools (2.0.0+) needing the shared allowed-finality
-	// config; keyed by pool address (one pool per combo), mapped to its chain.
-	evmAllowedPools := make(map[string]uint64)
+	// config; keyed by (chain selector, pool address). Pool addresses are
+	// unique only within a chain — the same deployer/nonce produces
+	// identical addresses across EVM dev chains — so keying by address alone
+	// would drop all but one chain's pool and leave the rest rejecting
+	// fast-finality transfers.
+	type allowedPoolKey struct {
+		chain uint64
+		addr  string
+	}
+	evmAllowedPools := make(map[allowedPoolKey]struct{})
 
 	for _, ref := range allRefs {
 		if ref.ChainSelector != stellarSelector ||
@@ -124,7 +132,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 			// same way the stellar pool does; remember them for the shared
 			// allowed-finality application after the stellar loop.
 			if counterpart.Version.Major() >= 2 {
-				evmAllowedPools[counterpart.Address] = rs
+				evmAllowedPools[allowedPoolKey{rs, counterpart.Address}] = struct{}{}
 			}
 			counterpartToken, ok := evmTokenForPoolQualifier(allRefs, rs, counterpart.Qualifier)
 			if !ok {
@@ -178,8 +186,8 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 	// lockOrBurn on allowed finality the same way (default 0 rejects FTF
 	// requests), so the EVM-source combo-finality cases need the same config
 	// on the EVM pools.
-	for poolAddr, rs := range evmAllowedPools {
-		if err := c.setEVMPoolAllowedFinality(env, rs, poolAddr); err != nil {
+	for k := range evmAllowedPools {
+		if err := c.setEVMPoolAllowedFinality(env, k.chain, k.addr); err != nil {
 			return err
 		}
 	}

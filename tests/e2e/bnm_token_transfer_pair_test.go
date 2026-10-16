@@ -7,10 +7,13 @@ import (
 	"math/big"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
@@ -126,10 +129,14 @@ func bnmMockReceiverFastFinalityCases(t *testing.T, env *helpers.E2ETestEnv, lib
 // per case. Sequential by design: each CI leg runs one case type in one
 // direction, so no two sends ever overlap — the EVM send path races
 // same-nonce approve/send transactions and the stellar RPC rejects bursts
-// with TRY_AGAIN_LATER when sends overlap.
+// with TRY_AGAIN_LATER when sends overlap. Each case runs in its own
+// subtest, so an unmet prerequisite or a failure stays local to that case
+// instead of skipping/aborting the remaining combinations.
 func runBnmTokenTransferCases(t *testing.T, cases []tcapi.TestCase) {
 	for _, tc := range cases {
-		runBnmTokenTransferCase(t, tc)
+		t.Run(tc.Name(), func(t *testing.T) {
+			runBnmTokenTransferCase(t, tc)
+		})
 	}
 }
 
@@ -393,12 +400,19 @@ func runRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ET
 	if err == nil {
 		return fmt.Errorf("send must be rejected at the pool rate-limit gate")
 	}
-	// The pool rate-limit gate has two variants: TokenMaxCapacityExceeded
-	// (311, amount > bucket capacity) and TokenRateLimitReached (312, drained).
-	if srcIsStellar &&
-		!stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenMaxCapacityExceeded) &&
-		!stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenRateLimitReached) {
-		return fmt.Errorf("send failed, but not at the pool rate-limit gate (contract error 311/312): %w", err)
+	// The rejection must be the pool's rate-limit gate: for a stellar source
+	// the contract error code (311 = TokenMaxCapacityExceeded, 312 =
+	// TokenRateLimitReached); for an EVM source the send revert decodes to the
+	// pool's rate-limit custom error. A loose error check would let an
+	// approval failure or an RPC submission error pass with the token
+	// balance unchanged, proving nothing about the limiter.
+	if srcIsStellar {
+		if !stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenMaxCapacityExceeded) &&
+			!stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenRateLimitReached) {
+			return fmt.Errorf("send failed, but not at the pool rate-limit gate (contract error 311/312): %w", err)
+		}
+	} else if !evmRateLimitRevertHit(err) {
+		return fmt.Errorf("send failed, but not at the pool rate-limit gate (TokenMaxCapacityExceeded/TokenRateLimitReached): %w", err)
 	}
 	endBal, err := balReader.GetTokenBalance(ctx, sender, srcToken)
 	if err != nil {
@@ -408,6 +422,35 @@ func runRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ET
 		return fmt.Errorf("no tokens may be locked on a rejected send: start %s, end %s", startBal, endBal)
 	}
 	return nil
+}
+
+// evmRateLimitRevertHit reports whether an EVM source send error carries one
+// of the pool's rate-limit custom-error selectors. A rate-limit rejection
+// reverts the send transaction at lockOrBurn, and the confirm layer embeds the
+// raw revert data in the returned error's text, so the "0x"-prefixed 4-byte
+// selector (derived from the shared 2.0.0 TokenPool ABI) is matchable there —
+// the string-substring analog of the stellar IsContractErrorCode pattern.
+func evmRateLimitRevertHit(sendErr error) bool {
+	if sendErr == nil {
+		return false
+	}
+	parsed, err := abi.JSON(strings.NewReader(evmtokenpool.TokenPoolABI))
+	if err != nil {
+		// The ABI is a compile-time constant; a parse failure is a bug, and
+		// treating it as "no hit" would silently loosen the rejection check.
+		panic(fmt.Sprintf("parse TokenPool ABI: %v", err))
+	}
+	msg := sendErr.Error()
+	for _, name := range []string{"TokenMaxCapacityExceeded", "TokenRateLimitReached"} {
+		e, ok := parsed.Errors[name]
+		if !ok {
+			panic(fmt.Sprintf("error %q not found in TokenPool ABI", name))
+		}
+		if strings.Contains(msg, hexutil.Encode(e.ID[:4])) {
+			return true
+		}
+	}
+	return false
 }
 
 // rateLimitSource resolves the sender and the source-side token for a combo,
