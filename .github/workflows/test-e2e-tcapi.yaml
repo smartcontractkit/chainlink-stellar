@@ -28,8 +28,17 @@ jobs:
           - suite: basic
             pattern: 'Test(StellarToEVM|EVMToStellar)TCAPI$'
             timeout: 25m
-          - suite: token-transfer
-            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransfer'
+          - suite: token-transfer-eoa
+            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransferEOA'
+            timeout: 30m
+          - suite: token-transfer-mock-receiver
+            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransferMockReceiver'
+            timeout: 30m
+          - suite: token-transfer-rate-limit
+            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransferRateLimit'
+            timeout: 30m
+          - suite: token-transfer-separate-token-receiver
+            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPIBnmTokenTransferSeparateTokenReceiver'
             timeout: 30m
     steps:
       - name: Enable S3 Cache for Self-Hosted Runners

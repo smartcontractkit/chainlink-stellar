@@ -34,31 +34,161 @@ import (
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-// bnmTokenTransferCases builds every BnM token-transfer tcapi case for one
-// direction: the pair-matrix suite (All: EOA + combo finality; All17:
-// 2.0.0 pairs × EOA/mock receiver) plus the rate-limit exhaustion error
-// path. Cases gate themselves per-environment via HavePrerequisites.
-func bnmTokenTransferCases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []tcapi.TestCase {
-	srcIsStellar := src == env.SourceChainDetails.ChainSelector
+// newBnmTokenTransferEnv loads the shared e2e env for the token-transfer
+// case funcs (one top-level func per case type; see helpers.NewE2ETestEnv).
+func newBnmTokenTransferEnv(t *testing.T) (*helpers.E2ETestEnv, context.Context, *zerolog.Logger, ccv.Lib, string) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
+	}
+	configOutputPath := "../env/env-stellar-evm-out.toml"
+	ctx := ccv.Plog.WithContext(t.Context())
+	l := zerolog.Ctx(ctx)
+	env := helpers.NewE2ETestEnv(t, ctx, l, configOutputPath,
+		chainsel.STELLAR_LOCALNET.ChainID, chainsel.STELLAR_LOCALNET.Selector)
+	return env, ctx, l, env.Lib, configOutputPath
+}
+
+// bnmTokenTransferArgs returns one direction's Args: every stellar BnM
+// token is 7-dec and every EVM burn-mint token 18-dec, so one Args covers
+// every combo (1000 tokens with the exact ×/÷10^11 conversion).
+func bnmTokenTransferArgs(env *helpers.E2ETestEnv, src uint64) token_transfer.Args {
 	transferAmount, destIncrease := big.NewInt(1000), big.NewInt(0)
-	if srcIsStellar {
+	if src == env.SourceChainDetails.ChainSelector {
 		destIncrease = new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(11), nil)) // ×10^11 up-conversion
 	} else {
 		transferAmount = new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
 		destIncrease = new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(7), nil)) // ÷10^11 down-conversion
 	}
-	// One Args per direction: every stellar BnM token is 7-dec and every EVM
-	// burn-mint token 18-dec, so the conversion is identical for every combo.
-	args := token_transfer.Args{
+	return token_transfer.Args{
 		Run:                 bnmTokenTransferRun(),
 		TransferAmount:      transferAmount,
 		DestBalanceIncrease: destIncrease,
 	}
-	combos := bnmCombinations(t, lib, configOutputPath, src, dst)
-	cases := token_transfer.All(lib, src, dst, combos, args)
-	cases = append(cases, token_transfer.All17(lib, src, dst, combos, args)...)
-	cases = append(cases, bnmRateLimitCase(t, env, lib, configOutputPath, src, dst))
+}
+
+// bnmEOACaseGroups returns one group per combo with both EOA cases: the
+// combo-finality variant (token_transfer.All parity) and the default-finality
+// variant (All17 parity, 2.0.0 pairs only) — same (receiver, token) per combo.
+func bnmEOACaseGroups(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []bnmCaseGroup {
+	args := bnmTokenTransferArgs(env, src)
+	var groups []bnmCaseGroup
+	for _, combo := range bnmCombinations(t, lib, configOutputPath, src, dst) {
+		qual := combo.LocalPoolAddressRef().Qualifier
+		group := []tcapi.TestCase{
+			token_transfer.TokenTransfer(lib, src, dst, combo, combo.FinalityConfig(), true,
+				fmt.Sprintf("token transfer EOA (%s)", qual), args),
+		}
+		if devenvcommon.Is17Combination(combo) {
+			group = append(group, token_transfer.TokenTransfer(lib, src, dst, combo, 0, true,
+				fmt.Sprintf("token transfer 1.7.0 EOA default finality (%s)", qual), args))
+		}
+		groups = append(groups, bnmCaseGroup{name: qual, cases: group})
+	}
+	return groups
+}
+
+// bnmMockReceiverCases returns the mock-receiver cases per 2.0.0 pair
+// (token_transfer.All17 parity, default finality). Different combos use
+// different tokens, so the cases share no balances and run concurrently.
+func bnmMockReceiverCases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []tcapi.TestCase {
+	args := bnmTokenTransferArgs(env, src)
+	var cases []tcapi.TestCase
+	for _, combo := range bnmCombinations(t, lib, configOutputPath, src, dst) {
+		if !devenvcommon.Is17Combination(combo) {
+			continue
+		}
+		qual := combo.LocalPoolAddressRef().Qualifier
+		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, 0, false,
+			fmt.Sprintf("token transfer 1.7.0 mock receiver default finality (%s)", qual), args))
+	}
 	return cases
+}
+
+// runBnmTokenTransferGroups runs each group as a parallel subtest with its
+// cases sequential (a group's cases share the (receiver, token) balance).
+func runBnmTokenTransferGroups(t *testing.T, groups []bnmCaseGroup) {
+	for _, g := range groups {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range g.cases {
+				runBnmTokenTransferCase(t, tc)
+			}
+		})
+	}
+}
+
+// runBnmTokenTransferCases runs prerequisite-gated cases as parallel
+// subtests — only for case sets that share no (receiver, token) balance.
+func runBnmTokenTransferCases(t *testing.T, cases []tcapi.TestCase) {
+	for _, tc := range cases {
+		t.Run(tc.Name(), func(t *testing.T) {
+			t.Parallel()
+			runBnmTokenTransferCase(t, tc)
+		})
+	}
+}
+
+// runBnmTokenTransferCase gates one case on prerequisites and runs it.
+func runBnmTokenTransferCase(t *testing.T, tc tcapi.TestCase) {
+	if !tc.HavePrerequisites(t.Context()) {
+		t.Skipf("Skipping %s: prerequisites not met in this environment", tc.Name())
+	}
+	res, runErr := tc.Run(ccv.Plog.WithContext(t.Context()))
+	if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+		// The on-chain CCIPError code rides in the dest event's ReturnData.
+		t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
+	}
+	require.NoError(t, runErr, tc.Name())
+}
+
+// bnmCaseGroup is one combo's token-transfer cases. Every group shares its
+// combo's (receiver, token) balances — the stellar receiver contract is the
+// receiver of every dest-side case — so groups run concurrently while the
+// cases within a group run sequentially (balance reads must not interleave).
+type bnmCaseGroup struct {
+	name  string
+	cases []tcapi.TestCase
+}
+
+// firstIs17Combination picks the shared symmetric 2.0.0 pair combo for a
+// direction (the first Is17Combination from the env-declared pairs).
+func firstIs17Combination(t *testing.T, lib ccv.Lib, configOutputPath string, src, dst uint64) (devenvcommon.TokenCombination, bool) {
+	for _, c := range bnmCombinations(t, lib, configOutputPath, src, dst) {
+		if devenvcommon.Is17Combination(c) {
+			return c, true
+		}
+	}
+	return devenvcommon.TokenCombination{}, false
+}
+
+// bnmSeparateTokenReceiverCase returns the separate-token-receiver case for
+// one direction: tokens land at the destination chain's EOA receiver (never
+// a shared source account) while the message receiver is the tcapi
+// token-only zero (see token_transfer Run).
+func bnmSeparateTokenReceiverCase(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64, args token_transfer.Args) tcapi.TestCase {
+	combo, found := firstIs17Combination(t, lib, configOutputPath, src, dst)
+	return bnmTestCase{
+		name:    "token transfer separate token receiver",
+		prereqs: func(context.Context) bool { return found },
+		run: func(ctx context.Context) (tcapi.RunResult, error) {
+			if !found {
+				return tcapi.RunResult{}, fmt.Errorf("no 2.0.0×2.0.0 pair combo in this environment")
+			}
+			tokenReceiver, err := env.Chains[dst].GetEOAReceiverAddress()
+			if err != nil {
+				return tcapi.RunResult{}, err
+			}
+			// Params in the dest family's raw form: both the dest's
+			// GetTokenReceiver and the tcapi balance assertions take bytes.
+			tt := token_transfer.TokenTransfer(lib, src, dst, combo, 0, true, "token transfer separate token receiver", token_transfer.Args{
+				Run:                 args.Run,
+				Send:                tcapi.SendArgs{TokenReceiverParams: []byte(tokenReceiver)},
+				TransferAmount:      args.TransferAmount,
+				DestBalanceIncrease: args.DestBalanceIncrease,
+			})
+			return tt.Run(ctx)
+		},
+	}
 }
 
 // bnmCombinations builds the full tcapi combo list for one direction: every
@@ -124,9 +254,6 @@ type bnmTestCase struct {
 	name    string
 	run     func(ctx context.Context) (tcapi.RunResult, error)
 	prereqs func(ctx context.Context) bool
-	// serial marks cases that must not run concurrently with other cases
-	// (they mutate shared pool config mid-run, e.g. the rate-limit case).
-	serial bool
 }
 
 func (tc bnmTestCase) Name() string { return tc.name }
@@ -142,30 +269,15 @@ func (tc bnmTestCase) Run(ctx context.Context) (tcapi.RunResult, error) {
 	return tc.run(ctx)
 }
 
-// Serial implements serialTestCase.
-func (tc bnmTestCase) Serial() bool { return tc.serial }
-
-// serialTestCase is implemented by cases that must not run concurrently with
-// other cases; the suite loop keeps them sequential (t.Parallel for the rest).
-type serialTestCase interface{ Serial() bool }
-
 // bnmRateLimitCase returns the rate-limit-exhaustion case for one direction:
 // a capacity-1/rate-0 outbound bucket on the source pool for the remote
 // rejects the send at the pool's rate-limit gate with no tokens locked; the
 // disabled config is restored on test cleanup.
 func bnmRateLimitCase(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) tcapi.TestCase {
 	srcIsStellar := src == env.SourceChainDetails.ChainSelector
-	var combo devenvcommon.TokenCombination
-	found := false
-	for _, c := range bnmCombinations(t, lib, configOutputPath, src, dst) {
-		if devenvcommon.Is17Combination(c) {
-			combo, found = c, true
-			break
-		}
-	}
+	combo, found := firstIs17Combination(t, lib, configOutputPath, src, dst)
 	return bnmTestCase{
 		name:    "token transfer rate limit exceeded",
-		serial:  true,
 		prereqs: func(context.Context) bool { return found },
 		run: func(ctx context.Context) (tcapi.RunResult, error) {
 			if !found {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	evmonramp "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/onramp"
 	evmtokenpool "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/token_pool"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
@@ -22,6 +23,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
+	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
@@ -241,4 +243,104 @@ func evmTokenForPoolQualifier(refs []datastore.AddressRef, chainSelector uint64,
 		}
 	}
 	return datastore.AddressRef{}, false
+}
+
+// enableTokenReceivers flips token_receiver_allowed on both lane OnRamps
+// (both families default it false and the shared pipeline never sets it),
+// read-modify-write per remote, so separate-token-receiver sends are
+// admitted on the lane.
+func (c *Chain) enableTokenReceivers(env *deployment.Environment, stellarSelector uint64, remoteSelectors []uint64) error {
+	ctx := context.Background()
+	evmRemoteSelectors := make([]uint64, 0, len(remoteSelectors))
+	for _, rs := range remoteSelectors {
+		if family, err := chainsel.GetSelectorFamily(rs); err == nil && family == chainsel.FamilyEVM {
+			evmRemoteSelectors = append(evmRemoteSelectors, rs)
+		}
+	}
+	if len(evmRemoteSelectors) == 0 {
+		return nil
+	}
+
+	// Stellar OnRamp: read-modify-write per EVM remote.
+	if c.onRampContractID != "" {
+		onrampClient := onrampbindings.NewOnRampClient(c.deployer, c.onRampContractID)
+		var updates []onrampbindings.DestChainConfigArgs
+		for _, rs := range evmRemoteSelectors {
+			cur, err := onrampClient.GetDestChainConfig(ctx, rs)
+			if err != nil {
+				return fmt.Errorf("get stellar onramp dest config for %d: %w", rs, err)
+			}
+			if cur == nil || cur.TokenReceiverAllowed {
+				continue
+			}
+			updates = append(updates, onrampbindings.DestChainConfigArgs{
+				AddressBytesLength:        cur.AddressBytesLength,
+				BaseExecutionGasCost:      cur.BaseExecutionGasCost,
+				DefaultCcvs:               cur.DefaultCcvs,
+				DefaultExecutor:           cur.DefaultExecutor,
+				DestChainSelector:         rs,
+				ExecutionFeeUsdCents:      cur.ExecutionFeeUsdCents,
+				LaneMandatedCcvs:          cur.LaneMandatedCcvs,
+				MessageNetworkFeeUsdCents: cur.MessageNetworkFeeUsdCents,
+				OffRamp:                   cur.OffRamp,
+				Router:                    cur.Router,
+				TokenNetworkFeeUsdCents:   cur.TokenNetworkFeeUsdCents,
+				TokenReceiverAllowed:      true,
+			})
+		}
+		if len(updates) > 0 {
+			if err := onrampClient.ApplyDestChainConfigUpdates(ctx, updates); err != nil {
+				return fmt.Errorf("enable token receivers on stellar onramp: %w", err)
+			}
+			c.logger.Info().Int("remotes", len(updates)).Msg("Enabled token receivers on stellar onramp")
+		}
+	}
+
+	// EVM OnRamps: read-modify-write the stellar remote via the ops.
+	allRefs, err := env.DataStore.Addresses().Fetch()
+	if err != nil {
+		return fmt.Errorf("fetch datastore addresses: %w", err)
+	}
+	for _, rs := range evmRemoteSelectors {
+		evmChain, ok := env.BlockChains.EVMChains()[rs]
+		if !ok {
+			continue
+		}
+		for _, ref := range allRefs {
+			if ref.ChainSelector != rs || string(ref.Type) != "OnRamp" ||
+				ref.Version == nil || ref.Version.String() != "2.0.0" {
+				continue
+			}
+			addr := common.HexToAddress(ref.Address)
+			read, err := cldf_ops.ExecuteOperation(env.OperationsBundle, evmonramp.GetDestChainConfig, evmChain,
+				evmcontract.FunctionInput[uint64]{Address: addr, ChainSelector: rs, Args: stellarSelector})
+			if err != nil {
+				return fmt.Errorf("read EVM onramp %s dest config for stellar: %w", ref.Address, err)
+			}
+			cur := read.Output
+			if cur.TokenReceiverAllowed {
+				continue
+			}
+			args := evmonramp.DestChainConfigArgs{
+				DestChainSelector:         stellarSelector,
+				Router:                    cur.Router,
+				AddressBytesLength:        cur.AddressBytesLength,
+				TokenReceiverAllowed:      true,
+				MessageNetworkFeeUSDCents: cur.MessageNetworkFeeUSDCents,
+				TokenNetworkFeeUSDCents:   cur.TokenNetworkFeeUSDCents,
+				BaseExecutionGasCost:      cur.BaseExecutionGasCost,
+				DefaultCCVs:               cur.DefaultCCVs,
+				LaneMandatedCCVs:          cur.LaneMandatedCCVs,
+				DefaultExecutor:           cur.DefaultExecutor,
+				OffRamp:                   cur.OffRamp,
+			}
+			if _, err := cldf_ops.ExecuteOperation(env.OperationsBundle, evmonramp.ApplyDestChainConfigUpdates, evmChain,
+				evmcontract.FunctionInput[[]evmonramp.DestChainConfigArgs]{
+					Address: addr, ChainSelector: rs, Args: []evmonramp.DestChainConfigArgs{args},
+				}); err != nil {
+				return fmt.Errorf("enable token receivers on EVM onramp %s: %w", ref.Address, err)
+			}
+		}
+	}
+	return nil
 }

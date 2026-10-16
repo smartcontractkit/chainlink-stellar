@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
+	evmcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
@@ -57,6 +59,18 @@ func (c *Chain) BuildV3ExtraArgs(
 	tokenReceiver, err := destChain.GetTokenReceiver(tokenReceiverParams)
 	if err != nil {
 		return nil, fmt.Errorf("get token receiver from destination chain: %w", err)
+	}
+	// Dest impls return nil today (the EVM one does); the tcapi params ARE
+	// the receiver address, so resolve them directly for an EVM dest.
+	if len(tokenReceiver) == 0 && tokenReceiverParams != nil {
+		switch v := tokenReceiverParams.(type) {
+		case string:
+			if evmcommon.IsHexAddress(v) {
+				tokenReceiver = cciptestinterfaces.MessageV3TokenReceiver(evmcommon.HexToAddress(v).Bytes())
+			}
+		case []byte:
+			tokenReceiver = cciptestinterfaces.MessageV3TokenReceiver(v)
+		}
 	}
 	opts.TokenReceiver = tokenReceiver
 
@@ -284,12 +298,31 @@ func (c *Chain) GetExecutorArgs(opts any) (cciptestinterfaces.MessageV3ExecutorA
 }
 
 // GetTokenReceiver implements cciptestinterfaces.MessageV3Destination.
-// Returns nil for Stellar as token receiver is typically the same as message receiver.
+// Resolves the caller-supplied token receiver (a stellar strkey string or
+// raw 32-byte address) into the wire form the source embeds in its extra
+// args; nil means the default (the message receiver).
 func (c *Chain) GetTokenReceiver(opts any) (cciptestinterfaces.MessageV3TokenReceiver, error) {
-	// For Stellar, token receiver is typically the same as the message receiver
-	// Return nil to indicate no distinct token receiver
-	// TODO: verify
-	return nil, nil
+	switch v := opts.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		var vb strkey.VersionByte = strkey.VersionByteContract
+		if strings.HasPrefix(v, "G") {
+			vb = strkey.VersionByteAccountID
+		}
+		raw, err := strkey.Decode(vb, v)
+		if err != nil {
+			return nil, fmt.Errorf("decode token receiver strkey %q: %w", v, err)
+		}
+		if len(raw) != 32 {
+			return nil, fmt.Errorf("token receiver %q decodes to %d bytes, want 32", v, len(raw))
+		}
+		return cciptestinterfaces.MessageV3TokenReceiver(raw), nil
+	case []byte:
+		return cciptestinterfaces.MessageV3TokenReceiver(v), nil
+	default:
+		return nil, fmt.Errorf("unsupported token receiver params %T", opts)
+	}
 }
 
 // GetTokenArgs implements cciptestinterfaces.MessageV3Destination.

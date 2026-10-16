@@ -96,59 +96,50 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 	})
 }
 
-// TestEVMToStellarTCAPIBnmTokenTransfers runs the tcapi token-transfer suite
-// on the EVM→Stellar lane: All (EOA, combo finality) + All17 (2.0.0×2.0.0 ×
-// EOA/mock receiver, default finality) over the full pair matrix.
-// TestEVMToStellarTCAPIBnmTokenTransfers runs the tcapi token-transfer cases
-// on the EVM→Stellar lane: the pair-matrix suite plus the rate-limit
-// exhaustion error path (see bnmTokenTransferCases).
-func TestEVMToStellarTCAPIBnmTokenTransfers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
-	}
-	// The two direction funcs run concurrently; their cases are independent
-	// (separate lanes/pools, messageID-keyed assertions).
+// TestEVMToStellarTCAPIBnmTokenTransferEOA runs the EOA-receiver token
+// transfers on the EVM→Stellar lane: both finality variants per combo
+// (see bnmEOACaseGroups). Own CI leg (see test-e2e-tcapi.yaml).
+func TestEVMToStellarTCAPIBnmTokenTransferEOA(t *testing.T) {
+	env, _, l, lib, configOutputPath := newBnmTokenTransferEnv(t)
 	t.Parallel()
-
-	configOutputPath := "../env/env-stellar-evm-out.toml"
-	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
-	stellarSelector := chainsel.STELLAR_LOCALNET.Selector
-
-	ctx := ccv.Plog.WithContext(t.Context())
-	l := zerolog.Ctx(ctx)
-
-	env := helpers.NewE2ETestEnv(t, ctx, l, configOutputPath, stellarChainID, stellarSelector)
-	lib := env.Lib
-
-	// The harness names Stellar the "source" and EVM the "dest" for its default
-	// lane orientation; the tcapi cases here run the other direction.
+	// The harness names Stellar the "source" and EVM the "dest"; the
+	// tcapi cases here run the other direction.
 	src := env.DestChainDetails.ChainSelector   // EVM
 	dst := env.SourceChainDetails.ChainSelector // Stellar
-
-	// Same seeding as the basic suite: All's combo-finality cases deliver to
+	// Same seeding as the basic suite: the combo-finality cases deliver to
 	// the stellar example receiver, which rejects them without the policy.
 	seedStellarReceiverPolicy(t, env, l, src, dst)
+	runBnmTokenTransferGroups(t, bnmEOACaseGroups(t, env, lib, configOutputPath, src, dst))
+}
 
-	cases := bnmTokenTransferCases(t, env, lib, configOutputPath, src, dst)
-	for _, tc := range cases {
-		if !tc.HavePrerequisites(ctx) {
-			t.Logf("Skipping %s because current environment does not have the prerequisites", tc.Name())
-			continue
-		}
-		t.Run(tc.Name(), func(t *testing.T) {
-			// Cases are independent (each combo is its own pool pair and
-			// token), so they run concurrently; serial cases (shared pool
-			// config mutation) defer past the loop and run alone.
-			if s, ok := tc.(serialTestCase); !ok || !s.Serial() {
-				t.Parallel()
-			}
-			res, runErr := tc.Run(ccv.Plog.WithContext(t.Context()))
-			if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
-				// The on-chain CCIPError code rides in the dest event's
-				// ReturnData; surface it for diagnosis (4-byte selector).
-				t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
-			}
-			require.NoError(t, runErr, tc.Name())
-		})
-	}
+// TestEVMToStellarTCAPIBnmTokenTransferMockReceiver runs the mock-receiver
+// token transfers on the EVM→Stellar lane (see bnmMockReceiverCases).
+func TestEVMToStellarTCAPIBnmTokenTransferMockReceiver(t *testing.T) {
+	env, _, l, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	t.Parallel()
+	src := env.DestChainDetails.ChainSelector   // EVM
+	dst := env.SourceChainDetails.ChainSelector // Stellar
+	seedStellarReceiverPolicy(t, env, l, src, dst)
+	runBnmTokenTransferCases(t, bnmMockReceiverCases(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestEVMToStellarTCAPIBnmTokenTransferRateLimit runs the rate-limit
+// exhaustion error path on the EVM→Stellar lane (see bnmRateLimitCase).
+func TestEVMToStellarTCAPIBnmTokenTransferRateLimit(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	t.Parallel()
+	src := env.DestChainDetails.ChainSelector   // EVM
+	dst := env.SourceChainDetails.ChainSelector // Stellar
+	runBnmTokenTransferCase(t, bnmRateLimitCase(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestEVMToStellarTCAPIBnmTokenTransferSeparateTokenReceiver runs the
+// separate-token-receiver case on the EVM→Stellar lane.
+func TestEVMToStellarTCAPIBnmTokenTransferSeparateTokenReceiver(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	t.Parallel()
+	src := env.DestChainDetails.ChainSelector   // EVM
+	dst := env.SourceChainDetails.ChainSelector // Stellar
+	args := bnmTokenTransferArgs(env, src)
+	runBnmTokenTransferCase(t, bnmSeparateTokenReceiverCase(t, env, lib, configOutputPath, src, dst, args))
 }
