@@ -1,7 +1,6 @@
 package e2e_tests
 
 import (
-	"math/big"
 	"testing"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/basic"
-	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
@@ -43,6 +41,9 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
 	}
+	// The two direction funcs run concurrently; their cases are independent
+	// (separate lanes/pools, messageID-keyed assertions).
+	t.Parallel()
 
 	configOutputPath := "../env/env-stellar-evm-out.toml"
 	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
@@ -98,10 +99,16 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 // TestEVMToStellarTCAPIBnmTokenTransfers runs the tcapi token-transfer suite
 // on the EVM→Stellar lane: All (EOA, combo finality) + All17 (2.0.0×2.0.0 ×
 // EOA/mock receiver, default finality) over the full pair matrix.
+// TestEVMToStellarTCAPIBnmTokenTransfers runs the tcapi token-transfer cases
+// on the EVM→Stellar lane: the pair-matrix suite plus the rate-limit
+// exhaustion error path (see bnmTokenTransferCases).
 func TestEVMToStellarTCAPIBnmTokenTransfers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
 	}
+	// The two direction funcs run concurrently; their cases are independent
+	// (separate lanes/pools, messageID-keyed assertions).
+	t.Parallel()
 
 	configOutputPath := "../env/env-stellar-evm-out.toml"
 	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
@@ -122,19 +129,26 @@ func TestEVMToStellarTCAPIBnmTokenTransfers(t *testing.T) {
 	// the stellar example receiver, which rejects them without the policy.
 	seedStellarReceiverPolicy(t, env, l, src, dst)
 
-	// One Args per direction: every EVM burn-mint token is 18-dec and every
-	// stellar BnM token 7-dec, so the exact ÷10^11 conversion is identical
-	// for every combo.
-	combos := bnmCombinations(t, lib, configOutputPath, src, dst)
-	suiteArgs := token_transfer.Args{
-		Run:                 bnmTokenTransferRun(),
-		TransferAmount:      new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)), // 1000 tokens, EVM base units
-		DestBalanceIncrease: new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(7), nil)),  // 1000 tokens, stellar base units
-	}
-	for _, tc := range token_transfer.All(lib, src, dst, combos, suiteArgs) {
-		runBnmTokenTransferCase(t, ctx, tc)
-	}
-	for _, tc := range token_transfer.All17(lib, src, dst, combos, suiteArgs) {
-		runBnmTokenTransferCase(t, ctx, tc)
+	cases := bnmTokenTransferCases(t, env, lib, configOutputPath, src, dst)
+	for _, tc := range cases {
+		if !tc.HavePrerequisites(ctx) {
+			t.Logf("Skipping %s because current environment does not have the prerequisites", tc.Name())
+			continue
+		}
+		t.Run(tc.Name(), func(t *testing.T) {
+			// Cases are independent (each combo is its own pool pair and
+			// token), so they run concurrently; serial cases (shared pool
+			// config mutation) defer past the loop and run alone.
+			if s, ok := tc.(serialTestCase); !ok || !s.Serial() {
+				t.Parallel()
+			}
+			res, runErr := tc.Run(ccv.Plog.WithContext(t.Context()))
+			if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+				// The on-chain CCIPError code rides in the dest event's
+				// ReturnData; surface it for diagnosis (4-byte selector).
+				t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
+			}
+			require.NoError(t, runErr, tc.Name())
+		})
 	}
 }
