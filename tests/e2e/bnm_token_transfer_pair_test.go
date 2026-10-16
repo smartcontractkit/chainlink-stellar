@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
@@ -67,25 +68,23 @@ func bnmTokenTransferArgs(env *helpers.E2ETestEnv, src uint64) token_transfer.Ar
 	}
 }
 
-// bnmEOACaseGroups returns one group per combo with both EOA cases: the
+// bnmEOACases returns both EOA cases per combo, flat and in order: the
 // combo-finality variant (token_transfer.All parity) and the default-finality
-// variant (All17 parity, 2.0.0 pairs only) — same (receiver, token) per combo.
-func bnmEOACaseGroups(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []bnmCaseGroup {
+// variant (All17 parity, 2.0.0 pairs only). Cases run sequentially, so the
+// shared (receiver, token) balance per combo cannot interleave.
+func bnmEOACases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []tcapi.TestCase {
 	args := bnmTokenTransferArgs(env, src)
-	var groups []bnmCaseGroup
+	var cases []tcapi.TestCase
 	for _, combo := range bnmCombinations(t, lib, configOutputPath, src, dst) {
 		qual := combo.LocalPoolAddressRef().Qualifier
-		group := []tcapi.TestCase{
-			token_transfer.TokenTransfer(lib, src, dst, combo, combo.FinalityConfig(), true,
-				fmt.Sprintf("token transfer EOA (%s)", qual), args),
-		}
+		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, combo.FinalityConfig(), true,
+			fmt.Sprintf("token transfer EOA (%s)", qual), args))
 		if devenvcommon.Is17Combination(combo) {
-			group = append(group, token_transfer.TokenTransfer(lib, src, dst, combo, 0, true,
+			cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, 0, true,
 				fmt.Sprintf("token transfer 1.7.0 EOA default finality (%s)", qual), args))
 		}
-		groups = append(groups, bnmCaseGroup{name: qual, cases: group})
 	}
-	return groups
+	return cases
 }
 
 // bnmMockReceiverCases returns the mock-receiver cases per 2.0.0 pair
@@ -123,27 +122,14 @@ func bnmMockReceiverFastFinalityCases(t *testing.T, env *helpers.E2ETestEnv, lib
 	return cases
 }
 
-// runBnmTokenTransferGroups runs each group as a parallel subtest with its
-// cases sequential (a group's cases share the (receiver, token) balance).
-func runBnmTokenTransferGroups(t *testing.T, groups []bnmCaseGroup) {
-	for _, g := range groups {
-		t.Run(g.name, func(t *testing.T) {
-			t.Parallel()
-			for _, tc := range g.cases {
-				runBnmTokenTransferCase(t, tc)
-			}
-		})
-	}
-}
-
-// runBnmTokenTransferCases runs prerequisite-gated cases as parallel
-// subtests — only for case sets that share no (receiver, token) balance.
+// runBnmTokenTransferCases runs the cases sequentially, one named subtest
+// per case. Sequential by design: each CI leg runs one case type in one
+// direction, so no two sends ever overlap — the EVM send path races
+// same-nonce approve/send transactions and the stellar RPC rejects bursts
+// with TRY_AGAIN_LATER when sends overlap.
 func runBnmTokenTransferCases(t *testing.T, cases []tcapi.TestCase) {
 	for _, tc := range cases {
-		t.Run(tc.Name(), func(t *testing.T) {
-			t.Parallel()
-			runBnmTokenTransferCase(t, tc)
-		})
+		runBnmTokenTransferCase(t, tc)
 	}
 }
 
@@ -158,15 +144,6 @@ func runBnmTokenTransferCase(t *testing.T, tc tcapi.TestCase) {
 		t.Logf("%s: dest ReturnData: 0x%x", tc.Name(), res.Dest.Event.ReturnData)
 	}
 	require.NoError(t, runErr, tc.Name())
-}
-
-// bnmCaseGroup is one combo's token-transfer cases. Every group shares its
-// combo's (receiver, token) balances — the stellar receiver contract is the
-// receiver of every dest-side case — so groups run concurrently while the
-// cases within a group run sequentially (balance reads must not interleave).
-type bnmCaseGroup struct {
-	name  string
-	cases []tcapi.TestCase
 }
 
 // firstIs17Combination picks the shared symmetric 2.0.0 pair combo for a
@@ -228,7 +205,38 @@ func bnmCombinations(t *testing.T, lib ccv.Lib, configOutputPath string, localSe
 	require.NoError(t, err)
 	combos, err := devenvcommon.TokenCombinationsFromPoolPairs(ds, pairs)
 	require.NoError(t, err)
-	return combos
+	return bnmSupportedCombinations(combos)
+}
+
+// bnmSupportedCombinations filters the env-declared combos to the CCV
+// qualifier sets the tcapi token case supports: the default committee only
+// ([] or [default]). Non-default qualifiers are excluded until the ccv-side
+// case models their receipts and observes via their own aggregator — its
+// SetupOffchainClients is default-committee-only today.
+func bnmSupportedCombinations(combos []devenvcommon.TokenCombination) []devenvcommon.TokenCombination {
+	var out []devenvcommon.TokenCombination
+	for _, combo := range combos {
+		if bnmQualifierSupported(combo.LocalPoolAddressRef().Qualifier) &&
+			bnmQualifierSupported(combo.RemotePoolAddressRef().Qualifier) {
+			out = append(out, combo)
+		}
+	}
+	return out
+}
+
+// bnmQualifierBracket extracts one CCV qualifier bracket ([...]) from a
+// pool qualifier string.
+var bnmQualifierBracket = regexp.MustCompile(`\[([^\]]*)\]`)
+
+// bnmQualifierSupported reports whether every CCV bracket in a pool qualifier
+// is the default committee (empty or "default").
+func bnmQualifierSupported(qualifier string) bool {
+	for _, m := range bnmQualifierBracket.FindAllStringSubmatch(qualifier, -1) {
+		if m[1] != "" && m[1] != "default" {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveComboPoolAddress resolves a combo pool ref's address (the datastore

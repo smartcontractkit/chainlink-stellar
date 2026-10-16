@@ -91,17 +91,15 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 // (see bnmEOACaseGroups). Own CI leg (see test-e2e-tcapi.yaml).
 func TestStellarToEVMTCAPIBnmTokenTransferEOA(t *testing.T) {
 	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
-	t.Parallel()
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
-	runBnmTokenTransferGroups(t, bnmEOACaseGroups(t, env, lib, configOutputPath, src, dst))
+	runBnmTokenTransferCases(t, bnmEOACases(t, env, lib, configOutputPath, src, dst))
 }
 
 // TestStellarToEVMTCAPIBnmTokenTransferMockReceiver runs the mock-receiver
 // token transfers on the Stellar→EVM lane (see bnmMockReceiverCases).
 func TestStellarToEVMTCAPIBnmTokenTransferMockReceiver(t *testing.T) {
 	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
-	t.Parallel()
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
 	runBnmTokenTransferCases(t, bnmMockReceiverCases(t, env, lib, configOutputPath, src, dst))
@@ -112,7 +110,6 @@ func TestStellarToEVMTCAPIBnmTokenTransferMockReceiver(t *testing.T) {
 // (see bnmMockReceiverFastFinalityCases).
 func TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality(t *testing.T) {
 	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
-	t.Parallel()
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
 	runBnmTokenTransferCases(t, bnmMockReceiverFastFinalityCases(t, env, lib, configOutputPath, src, dst))
@@ -122,7 +119,6 @@ func TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality(t *testing.T)
 // exhaustion error path on the Stellar→EVM lane (see bnmRateLimitCase).
 func TestStellarToEVMTCAPIBnmTokenTransferRateLimit(t *testing.T) {
 	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
-	t.Parallel()
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
 	runBnmTokenTransferCase(t, bnmRateLimitCase(t, env, lib, configOutputPath, src, dst))
@@ -132,7 +128,6 @@ func TestStellarToEVMTCAPIBnmTokenTransferRateLimit(t *testing.T) {
 // separate-token-receiver case on the Stellar→EVM lane.
 func TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver(t *testing.T) {
 	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
-	t.Parallel()
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
 	args := bnmTokenTransferArgs(env, src)
