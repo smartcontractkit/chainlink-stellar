@@ -123,6 +123,19 @@ func TestEVMToStellarTCAPIBnmTokenTransferMockReceiver(t *testing.T) {
 	runBnmTokenTransferCases(t, bnmMockReceiverCases(t, env, lib, configOutputPath, src, dst))
 }
 
+// TestEVMToStellarTCAPIBnmTokenTransferMockReceiverFastFinality runs the
+// mock-receiver fast-finality token transfers on the EVM→Stellar lane
+// (see bnmMockReceiverFastFinalityCases).
+func TestEVMToStellarTCAPIBnmTokenTransferMockReceiverFastFinality(t *testing.T) {
+	env, _, l, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	t.Parallel()
+	src := env.DestChainDetails.ChainSelector   // EVM
+	dst := env.SourceChainDetails.ChainSelector // Stellar
+	// FTF deliveries to the stellar example receiver need the seeded policy.
+	seedStellarReceiverPolicy(t, env, l, src, dst)
+	runBnmTokenTransferCases(t, bnmMockReceiverFastFinalityCases(t, env, lib, configOutputPath, src, dst))
+}
+
 // TestEVMToStellarTCAPIBnmTokenTransferRateLimit runs the rate-limit
 // exhaustion error path on the EVM→Stellar lane (see bnmRateLimitCase).
 func TestEVMToStellarTCAPIBnmTokenTransferRateLimit(t *testing.T) {

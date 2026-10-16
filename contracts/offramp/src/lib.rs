@@ -430,11 +430,16 @@ impl OffRampContract {
         };
 
         // --- Message Routing ---
-        // EVM skips `_callReceiver` for token-only (no data and ccipReceiveGasLimit == 0).
+        // EVM skips `_callReceiver` for token-only (no data and
+        // ccipReceiveGasLimit == 0), and for a zero receiver: address(0) has
+        // no code, so EVM's `_isTokenOnlyTransfer` skips the call even with
+        // receive gas. An all-zero receiver is a token-only delivery — never
+        // route to it (receive gas alone must not trigger routing).
         let has_data = message.data.len() > 0;
         let has_receive_gas = message.ccip_receive_gas_limit > 0;
+        let zero_receiver = message.receiver.iter().all(|b| b == 0);
 
-        if has_data || has_receive_gas {
+        if (has_data || has_receive_gas) && !zero_receiver {
             let routing_result = Self::route_verified_message(
                 env,
                 message,
@@ -1042,7 +1047,13 @@ impl OffRampContract {
         source_config: &SourceChainConfig,
         static_config: &StaticConfig,
     ) -> Result<(), CCIPError> {
-        let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+        // EVM parity (OffRamp.sol `_isTokenOnlyTransfer`: address(0) has no
+        // code, so EVM skips the receiver consult for the zero receiver even
+        // with receive gas): an all-zero receiver is a token-only delivery.
+        // Non-zero non-Wasm receivers keep the C-1 require-V2 fail-fast.
+        let zero_receiver = message.receiver.iter().all(|b| b == 0);
+        let is_token_only =
+            (message.data.is_empty() && message.ccip_receive_gas_limit == 0) || zero_receiver;
 
         if is_token_only {
             // === Token-only path (EVM `_getCCVsForMessage` token-only arm — H-10) ===

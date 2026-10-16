@@ -82,6 +82,7 @@ func init() {
 	ccvdeploymentadapters.GetIndexerRegistry().Register(chainsel.FamilyStellar, &StellarCCVDeploymentIndexerConfigAdapter{})
 	ccvdeploymentadapters.GetTokenVerifierRegistry().Register(chainsel.FamilyStellar, &StellarCCVDeploymentTokenVerifierConfigAdapter{})
 	ccvdeploymentadapters.GetCommitteeVerifierOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVCommitteeVerifierOnchainAdapter{})
+	ccvdeploymentadapters.GetTokenPoolOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVTokenPoolOnchainAdapter{})
 
 	// TODO: validate that it's ok to skip registeration
 	//   GetCommitteeVerifierDeployRegistry / GetProtocolContractsDeployRegistry — consumed only by
@@ -91,7 +92,7 @@ func init() {
 	//     non-test callers. Devenv configures Stellar lanes through the ccip ChainFamily adapter.
 	//     If someone does call LaneExpansion on an EVM<->Stellar pair, validateLaneInput fails
 	//     fast with "no adapter registered for chain family \"stellar\"" rather than corrupting.
-	//   GetTokenPoolOnchainRegistry — consumed only by the RemoveRemotePool changeset.
+	//   (GetTokenPoolOnchainRegistry is registered above — RemoveRemotePool.)
 
 	// --- shared infrastructure ---
 	tokenscore.GetTokenAdapterRegistry().RegisterTokenAdapter(

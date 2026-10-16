@@ -989,6 +989,106 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
     );
 }
 
+#[test]
+fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receive_gas() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+
+    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn_remote_id)
+        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+
+    // Mock registry → mock pool.
+    let registry_id = env.register(MockTokenAdminRegistry, ());
+    let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
+    let pool_id = env.register(MockTokenPool, ());
+    let pool_client = MockTokenPoolClient::new(&env, &pool_id);
+    registry_client.set_pool(&Address::generate(&env), &pool_id);
+
+    // Mock VVR → mock verifier so `verify_ccv_quorum` passes.
+    let verifier_id = env.register(MockVerifier, ());
+    let vvr_id = env.register(MockVvr, ());
+    let vvr_client = MockVvrClient::new(&env, &vvr_id);
+    vvr_client.set_verifier(&verifier_id);
+
+    let static_config = StaticConfig {
+        chain_selector: EXEC_TEST_DEST_CHAIN,
+        rmn_proxy: rmn_proxy_id,
+        token_admin_registry: registry_id,
+    };
+
+    let contract_id = env.register(OffRampContract, ());
+    let client = OffRampContractClient::new(&env, &contract_id);
+    client.initialize(&owner, &static_config);
+
+    let router = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router, vvr_id.clone(), onramp.clone(), true);
+
+    // Token-only transfer to a separate token receiver (a throwaway
+    // contract); the MESSAGE receiver is all zeros (the tcapi token-only
+    // convention).
+    let token_receiver_contract = env.register(MockVerifier, ());
+    let token_receiver = offramp_address_field_from_contract(&env, &token_receiver_contract);
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: token_receiver.clone(),
+        extra_data: Bytes::new(&env),
+    };
+
+    // EVM parity: the zero receiver has no code (OffRamp.sol
+    // `_isTokenOnlyTransfer`), so receive gas alone must NOT trigger the
+    // receiver call — without the zero-receiver skip this traps with
+    // ReceiverDoesNotExist.
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 200_000,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: onramp,
+        offramp_address: offramp_address_field_from_contract(&env, &contract_id),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: Bytes::from_array(&env, &[0u8; 32]),
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::new(&env),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(res.is_ok(), "execute must not trap: {:?}", res.err());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "zero-receiver token-only delivery with receive gas must succeed"
+    );
+
+    // The pool released to the separate token receiver, not the zero receiver.
+    assert_eq!(
+        pool_client.last_receiver(),
+        token_receiver_contract,
+        "the pool must release to the separate token receiver"
+    );
+}
+
 // ============================================================
 // L-10: post-release failures must trap — no double release on retry
 // ============================================================

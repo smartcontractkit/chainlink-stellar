@@ -24,6 +24,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	recvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
@@ -100,6 +101,24 @@ func bnmMockReceiverCases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, co
 		qual := combo.LocalPoolAddressRef().Qualifier
 		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, 0, false,
 			fmt.Sprintf("token transfer 1.7.0 mock receiver default finality (%s)", qual), args))
+	}
+	return cases
+}
+
+// bnmMockReceiverFastFinalityCases returns the mock-receiver fast-finality
+// token transfers per 2.0.0 pair (combo finality = a block-depth-1 request):
+// the contract-receiver × FTF combination the standard suite covers only
+// separately (All17 mock = default finality; All FTF = EOA only).
+func bnmMockReceiverFastFinalityCases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) []tcapi.TestCase {
+	args := bnmTokenTransferArgs(env, src)
+	var cases []tcapi.TestCase
+	for _, combo := range bnmCombinations(t, lib, configOutputPath, src, dst) {
+		if !devenvcommon.Is17Combination(combo) {
+			continue
+		}
+		qual := combo.LocalPoolAddressRef().Qualifier
+		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, combo.FinalityConfig(), false,
+			fmt.Sprintf("token transfer 1.7.0 mock receiver fast finality (%s)", qual), args))
 	}
 	return cases
 }
@@ -212,6 +231,27 @@ func bnmCombinations(t *testing.T, lib ccv.Lib, configOutputPath string, localSe
 	return combos
 }
 
+// resolveComboPoolAddress resolves a combo pool ref's address (the datastore
+// rows carry it; the combo refs are lookup keys — their Address is empty).
+func resolveComboPoolAddress(lib ccv.Lib, selector uint64, ref datastore.AddressRef) (string, error) {
+	ds, err := lib.DataStore()
+	if err != nil {
+		return "", err
+	}
+	all, err := ds.Addresses().Fetch()
+	if err != nil {
+		return "", err
+	}
+	for _, r := range all {
+		if r.ChainSelector == selector && string(r.Type) == string(ref.Type) &&
+			r.Version != nil && ref.Version != nil && r.Version.Equal(ref.Version) &&
+			r.Qualifier == ref.Qualifier {
+			return r.Address, nil
+		}
+	}
+	return "", fmt.Errorf("no pool ref found for chain %d type %s version %s qualifier %q", selector, ref.Type, ref.Version, ref.Qualifier)
+}
+
 // bnmTokenTransferRun is the shared run config for the BnM suite cases.
 func bnmTokenTransferRun() tcapi.RunConfig {
 	return tcapi.RunConfig{
@@ -305,21 +345,25 @@ func runRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ET
 	if err != nil {
 		return err
 	}
+	poolAddr, err := resolveComboPoolAddress(lib, src, combo.LocalPoolAddressRef())
+	if err != nil {
+		return err
+	}
 	if srcIsStellar {
-		if err := applyStellarPoolRateLimit(ctx, env, dst, combo, true); err != nil {
+		if err := applyStellarPoolRateLimit(ctx, env, dst, poolAddr, true); err != nil {
 			return err
 		}
 		t.Cleanup(func() {
-			if err := applyStellarPoolRateLimit(context.Background(), env, dst, combo, false); err != nil {
+			if err := applyStellarPoolRateLimit(context.Background(), env, dst, poolAddr, false); err != nil {
 				l.Warn().Err(err).Msg("failed to restore disabled rate limit in cleanup")
 			}
 		})
 	} else {
-		if err := applyEVMPoolRateLimit(env, src, dst, combo, true); err != nil {
+		if err := applyEVMPoolRateLimit(env, src, dst, poolAddr, true); err != nil {
 			return err
 		}
 		t.Cleanup(func() {
-			if err := applyEVMPoolRateLimit(env, src, dst, combo, false); err != nil {
+			if err := applyEVMPoolRateLimit(env, src, dst, poolAddr, false); err != nil {
 				l.Warn().Err(err).Msg("failed to restore disabled rate limit in cleanup")
 			}
 		})
@@ -382,8 +426,8 @@ func rateLimitSource(ctx context.Context, env *helpers.E2ETestEnv, lib ccv.Lib, 
 
 // applyStellarPoolRateLimit sets (tight=true) or clears (tight=false) the
 // outbound rate-limit bucket of the combo's stellar pool for the remote.
-func applyStellarPoolRateLimit(ctx context.Context, env *helpers.E2ETestEnv, dst uint64, combo devenvcommon.TokenCombination, tight bool) error {
-	poolStrkey, err := scval.HexToContractStrkey(combo.LocalPoolAddressRef().Address)
+func applyStellarPoolRateLimit(ctx context.Context, env *helpers.E2ETestEnv, dst uint64, poolAddr string, tight bool) error {
+	poolStrkey, err := scval.HexToContractStrkey(poolAddr)
 	if err != nil {
 		return err
 	}
@@ -398,7 +442,7 @@ func applyStellarPoolRateLimit(ctx context.Context, env *helpers.E2ETestEnv, dst
 
 // applyEVMPoolRateLimit sets (tight=true) or clears (tight=false) the
 // outbound rate-limit bucket of the combo's EVM pool for the remote.
-func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, combo devenvcommon.TokenCombination, tight bool) error {
+func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, poolAddr string, tight bool) error {
 	evmChain, ok := env.CLDFEnv.BlockChains.EVMChains()[src]
 	if !ok {
 		return fmt.Errorf("EVM chain %d not found in environment", src)
@@ -409,7 +453,7 @@ func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, combo deven
 	}
 	_, err := cldf_ops.ExecuteOperation(env.CLDFEnv.OperationsBundle, evmtokenpool.SetRateLimitConfig, evmChain,
 		evmcontract.FunctionInput[[]evmtokenpool.RateLimitConfigArgs]{
-			Address:       common.HexToAddress(combo.LocalPoolAddressRef().Address),
+			Address:       common.HexToAddress(poolAddr),
 			ChainSelector: src,
 			Args: []evmtokenpool.RateLimitConfigArgs{{
 				RemoteChainSelector:       dst,
