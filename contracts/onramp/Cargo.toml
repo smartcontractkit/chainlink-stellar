@@ -22,7 +22,10 @@ doctest = false
 e2e-upgrade-marker = []
 
 [dependencies]
-soroban-sdk = { workspace = true }
+# hazmat-address: raw AddressPayload access for the cross-family wire form of
+# source pool/token addresses (raw 32-byte contract IDs; the cre forwarder
+# precedent).
+soroban-sdk = { workspace = true, features = ["hazmat-address"] }
 common-message = { workspace = true }
 common-guard = { workspace = true }
 common-error = { workspace = true }
@@ -31,7 +34,7 @@ common-interfaces = { workspace = true }
 common-helpers = { workspace = true }
 
 [dev-dependencies]
-soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils", "hazmat-address"] }
 fee-quoter = { workspace = true }
 router = { workspace = true }
 rmn_proxy = { workspace = true }

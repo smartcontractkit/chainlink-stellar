@@ -309,6 +309,26 @@ func (a *accessor) ContractTransmitter() (chainaccess.ContractTransmitter, error
 	return a.contractTransmitter, nil
 }
 
+// CCTPCodec implements chainaccess.Accessor. CCTP is not supported on Stellar,
+// so this always returns a not-available error; only the token verifier's
+// CCTP path calls it, which is never configured for Stellar chains.
+func (a *accessor) CCTPCodec() (chainaccess.CCTPCodec, error) {
+	return nil, errors.New("cctp codec not available: CCTP is not supported on stellar")
+}
+
+// FeeQuoter implements chainaccess.Accessor. No Stellar FeeQuoter
+// implementation exists yet, so this always returns a not-available error
+// (the pricer path that calls it is never configured for Stellar chains).
+func (a *accessor) FeeQuoter() (chainaccess.FeeQuoter, error) {
+	return nil, errors.New("fee quoter not available: stellar fee quoter not implemented")
+}
+
+// GasPriceReader implements chainaccess.Accessor. No Stellar native gas price
+// reader exists yet, so this always returns a not-available error.
+func (a *accessor) GasPriceReader() (chainaccess.GasPriceReader, error) {
+	return nil, errors.New("gas price reader not available: stellar gas price reader not implemented")
+}
+
 // Close implements chainaccess.Accessor. The Stellar accessor is stateless
 // (no background services), so this is a no-op that returns nil.
 func (a *accessor) Close() error {

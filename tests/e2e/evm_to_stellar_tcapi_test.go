@@ -3,6 +3,7 @@ package e2e_tests
 import (
 	"context"
 	"encoding/binary"
+	"math/big"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	ccv "github.com/smartcontractkit/chainlink-ccv/build/devenv"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/basic"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	recvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
@@ -24,13 +26,12 @@ import (
 // Stellar plugs in via the V3DestinationFactory and AddressResolver registered
 // in tests/ccv/chain/register.go.
 //
-// The runnable cases are: EOA receiver default verifier, safe-tag finality,
-// the secondary committee, the custom executor (a custom-qualified stellar
-// executor NOP exists in the env), and the five receiver-verifier cases
-// (required/optional receiver CCVs against the qualified receivers the full
-// deploy records). The reverse lane (stellar_to_evm_tcapi_test.go,
-// TestStellarToEVMTCAPI) runs the same set. Max data size stays excluded
-// until its ccv FeeQuoter fix lands.
+// The full basic suite runs via basic.All; cases whose prerequisites the
+// environment lacks skip via HavePrerequisites. The reverse lane
+// (stellar_to_evm_tcapi_test.go, TestStellarToEVMTCAPI) runs the same set.
+// Max data size works since the ccv fix (#1510) is pinned and the stellar
+// Chain implements the destination-side ExecutionGasLimitProvider this lane
+// needs.
 //
 // Contracts must be compiled before running (from the repo root):
 //
@@ -104,34 +105,7 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 	}
 
 	t.Run("extra args v3 messaging", func(t *testing.T) {
-		// The four cases that pass on this lane; an explicit list rather than
-		// basic.All so CI stays green. custom executor works since the env grew
-		// a custom-qualified stellar executor NOP (stellar-executor-2 in
-		// env-stellar-evm.toml; the EVM source side's custom executor contract
-		// is deployed by ccv's EVM phase). max data size needs the ccv
-		// FeeQuoter calldata-overhead fix (not in the pinned ccv yet).
-		cases := []tcapi.TestCase{
-			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
-			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
-			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
-			basic.CustomExecutor(lib, src, dst, args),
-			// The receiver-verifier cases: the stellar full deploy deploys
-			// qualified receivers (secondary/tertiary/quaternary) configured
-			// with the stellar-side VVR ids, matching this lane's dest. They
-			// rely on cross-family identity agreement between the receiver's
-			// required CCVs and the executor's report + aggregator-stamped
-			// identity (the EVM-side offchain pipeline): executor
-			// ErrInsufficientVerifiers / empty VerifierDestAddress ⇒ ccv
-			// aggregator-config gap; on-chain CCVQuorumNotMet ⇒ stellar
-			// lane-config quorum gap. Cases whose prerequisites the
-			// environment lacks (e.g. a missing committee) skip via
-			// HavePrerequisites below.
-			basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
-			basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
-			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
-			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
-			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
-		}
+		cases := basic.All(lib, src, dst, args)
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
 				t.Logf("Skipping %s because current environment does not have the prerequisites", tc.Name())
@@ -148,5 +122,39 @@ func TestEVMToStellarTCAPI(t *testing.T) {
 				require.NoError(t, runErr, tc.Name())
 			})
 		}
+	})
+
+	t.Run("extra args v3 BnM token transfer", func(t *testing.T) {
+		// The lane's BnM pair: EVM BurnMintTokenPool 2.0.0 with the 18-decimal
+		// BurnMintERC20WithDrip token ↔ stellar burn-mint pool with the
+		// 7-decimal BnM token (deployed by the shared TokenExpansion pipeline,
+		// wired by the shared ConfigureTokensForTransfers + PostConnect). The
+		// destination pool converts by an exact 10^11
+		// (calculate_local_amount), so 1000e18 EVM base units (1000 tokens)
+		// mint exactly 1000e7 stellar base units. Finality 0: the stellar
+		// pool's allowed_finality_config defaults to WAIT_FOR_FINALITY, and
+		// default finality needs no receiver-policy seeding. Args.Send stays
+		// zero — SendV3Message's central gas default applies.
+		evmBase := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+		stellarBase := new(big.Int).Exp(big.NewInt(10), big.NewInt(7), nil)
+		args := token_transfer.Args{
+			Run: tcapi.RunConfig{
+				ConfirmSentTimeout: 30 * time.Second,
+				ConfirmExecTimeout: 7 * time.Minute,
+			},
+			TransferAmount:      new(big.Int).Mul(big.NewInt(1000), evmBase),     // 1000 tokens, EVM base units
+			DestBalanceIncrease: new(big.Int).Mul(big.NewInt(1000), stellarBase), // 1000 tokens, stellar base units
+		}
+		combo := bnmCombination(t, lib, src, dst)
+		tc := token_transfer.TokenTransfer(lib, src, dst, combo, 0 /* default finality */, true, /* EOA receiver */
+			"token transfer EOA default finality (BnM EVM→Stellar)", args)
+		if !tc.HavePrerequisites(ctx) {
+			t.Skip("BnM pair prerequisites not met (lane deploy did not onboard the BnM pair)")
+		}
+		res, runErr := tc.Run(ccv.Plog.WithContext(t.Context()))
+		if runErr != nil && len(res.Dest.Event.ReturnData) > 0 {
+			t.Logf("dest ReturnData: 0x%x", res.Dest.Event.ReturnData)
+		}
+		require.NoError(t, runErr)
 	})
 }
