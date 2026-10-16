@@ -393,8 +393,12 @@ func runRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ET
 	if err == nil {
 		return fmt.Errorf("send must be rejected at the pool rate-limit gate")
 	}
-	if srcIsStellar && !stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenRateLimitReached) {
-		return fmt.Errorf("send failed, but not at the pool rate-limit gate (contract error 312): %w", err)
+	// The pool rate-limit gate has two variants: TokenMaxCapacityExceeded
+	// (311, amount > bucket capacity) and TokenRateLimitReached (312, drained).
+	if srcIsStellar &&
+		!stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenMaxCapacityExceeded) &&
+		!stellarops.IsContractErrorCode(err, tokenpoolbindings.CCIPErrorTokenRateLimitReached) {
+		return fmt.Errorf("send failed, but not at the pool rate-limit gate (contract error 311/312): %w", err)
 	}
 	endBal, err := balReader.GetTokenBalance(ctx, sender, srcToken)
 	if err != nil {
@@ -455,10 +459,12 @@ func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, poolAddr st
 	if !ok {
 		return fmt.Errorf("EVM chain %d not found in environment", src)
 	}
-	var outbound evmtokenpool.Config
+	// All Config fields explicit: nil *big.Int pointers panic the ABI packer.
+	outbound := evmtokenpool.Config{Capacity: big.NewInt(0), Rate: big.NewInt(0)}
 	if tight {
-		outbound = evmtokenpool.Config{IsEnabled: true, Capacity: big.NewInt(1)}
+		outbound = evmtokenpool.Config{IsEnabled: true, Capacity: big.NewInt(1), Rate: big.NewInt(0)}
 	}
+	inbound := evmtokenpool.Config{Capacity: big.NewInt(0), Rate: big.NewInt(0)}
 	_, err := cldf_ops.ExecuteOperation(env.CLDFEnv.OperationsBundle, evmtokenpool.SetRateLimitConfig, evmChain,
 		evmcontract.FunctionInput[[]evmtokenpool.RateLimitConfigArgs]{
 			Address:       common.HexToAddress(poolAddr),
@@ -466,6 +472,7 @@ func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, poolAddr st
 			Args: []evmtokenpool.RateLimitConfigArgs{{
 				RemoteChainSelector:       dst,
 				OutboundRateLimiterConfig: outbound,
+				InboundRateLimiterConfig:  inbound,
 			}},
 		})
 	return err
