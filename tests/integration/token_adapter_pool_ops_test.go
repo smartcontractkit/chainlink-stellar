@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	bmpbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
+	tpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellaradapters "github.com/smartcontractkit/chainlink-stellar/deployment/adapters"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/changesets"
@@ -194,6 +196,47 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Empty(t, rerun.Output.BatchOps, "rerun after transfer emits no proposal")
+	})
+
+	t.Run("configure token for transfers wires the lane idempotently", func(t *testing.T) {
+		// A synthetic EVM-style remote pool/token (20 bytes raw); the sequence
+		// stores both left-padded to 32 on chain.
+		evmRemotePool := make([]byte, 20)
+		evmRemotePool[0] = 0xaa
+		evmRemoteToken := make([]byte, 20)
+		evmRemoteToken[0] = 0xbb
+		input := tokens.ConfigureTokenForTransfersInput{
+			ChainSelector:     sel,
+			TokenPoolAddress:  poolRef.Address,
+			TokenAddress:      tokenRef.Address,
+			PoolType:          bmpops.ContractType,
+			TokenRef:          datastore.AddressRef{Address: tokenRef.Address},
+			ExistingDataStore: sealed,
+			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
+				dst: {RemotePool: evmRemotePool, RemoteToken: evmRemoteToken, RemoteDecimals: 18},
+			},
+		}
+		out, err := cldfops.ExecuteSequence(newBundle(), a.ConfigureTokenForTransfersSequence(), cldfEnv.BlockChains, input)
+		require.NoError(t, err)
+		require.NotEmpty(t, out.Output.BatchOps)
+
+		// The lane is wired on chain: supported, padded remote token and pool.
+		sharedPool := tpoolbindings.NewTokenPoolClient(deployer, poolStrkey)
+		supported, err := sharedPool.IsSupportedChain(ctx, dst)
+		require.NoError(t, err)
+		require.True(t, supported, "remote lane should be supported after configure")
+		remoteToken, err := sharedPool.GetRemoteToken(ctx, dst)
+		require.NoError(t, err)
+		require.Equal(t, common.LeftPadBytes(evmRemoteToken, 32), remoteToken)
+		remotePools, err := sharedPool.GetRemotePools(ctx, dst)
+		require.NoError(t, err)
+		require.Len(t, remotePools, 1)
+		require.Equal(t, common.LeftPadBytes(evmRemotePool, 32), remotePools[0])
+
+		// Idempotent rerun on a fresh bundle: everything already matches, no writes.
+		rerun, err := cldfops.ExecuteSequence(newBundle(), a.ConfigureTokenForTransfersSequence(), cldfEnv.BlockChains, input)
+		require.NoError(t, err)
+		require.Empty(t, rerun.Output.BatchOps, "an already-configured lane must emit no writes")
 	})
 
 	t.Run("rate limits on timelock-owned pool go through the timelock", func(t *testing.T) {

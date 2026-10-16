@@ -176,3 +176,130 @@ var GetAdvancedPoolHooks = cldfops.NewOperation(
 		return c.GetAdvancedPoolHooks(b.GetContext())
 	},
 )
+
+// GetTokenInput identifies a pool token read.
+type GetTokenInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetToken reads pool `get_token` — the wrapped token's strkey.
+var GetToken = cldfops.NewOperation(
+	"token-pool:get-token",
+	stellarops.ContractDeploymentVersion,
+	"Reads the token a token pool wraps",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetTokenInput) (string, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetToken(b.GetContext())
+	},
+)
+
+// GetTokenDecimalsInput identifies a pool token decimals read.
+type GetTokenDecimalsInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetTokenDecimals reads pool `get_token_decimals`.
+var GetTokenDecimals = cldfops.NewOperation(
+	"token-pool:get-token-decimals",
+	stellarops.ContractDeploymentVersion,
+	"Reads the decimals of the token a token pool wraps",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetTokenDecimalsInput) (uint32, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetTokenDecimals(b.GetContext())
+	},
+)
+
+// IsSupportedChainInput identifies a pool remote-chain support read.
+type IsSupportedChainInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+}
+
+// IsSupportedChain reads pool `is_supported_chain` for one remote chain.
+var IsSupportedChain = cldfops.NewOperation(
+	"token-pool:is-supported-chain",
+	stellarops.ContractDeploymentVersion,
+	"Reads whether a token pool supports one remote chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in IsSupportedChainInput) (bool, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.IsSupportedChain(b.GetContext(), in.RemoteChainSelector)
+	},
+)
+
+// GetRemoteTokenInput identifies a pool remote-token read.
+type GetRemoteTokenInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+}
+
+// GetRemoteToken reads pool `get_remote_token` for one remote chain.
+var GetRemoteToken = cldfops.NewOperation(
+	"token-pool:get-remote-token",
+	stellarops.ContractDeploymentVersion,
+	"Reads the remote token bytes a token pool stores for one remote chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetRemoteTokenInput) ([]byte, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetRemoteToken(b.GetContext(), in.RemoteChainSelector)
+	},
+)
+
+// GetRemotePoolsInput identifies a pool remote-pool read.
+type GetRemotePoolsInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+}
+
+// GetRemotePools reads pool `get_remote_pools` for one remote chain.
+var GetRemotePools = cldfops.NewOperation(
+	"token-pool:get-remote-pools",
+	stellarops.ContractDeploymentVersion,
+	"Reads the remote pool addresses a token pool stores for one remote chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetRemotePoolsInput) ([][]byte, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetRemotePools(b.GetContext(), in.RemoteChainSelector)
+	},
+)
+
+// AddRemotePoolInput adds one remote pool entry on a pool. Owner-gated via the
+// invoking identity (no explicit caller arg).
+type AddRemotePoolInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+	RemotePoolAddress   []byte `json:"remote_pool_address"`
+}
+
+// AddRemotePool calls pool `add_remote_pool` for one remote chain.
+var AddRemotePool = cldfops.NewOperation(
+	"token-pool:add-remote-pool",
+	stellarops.ContractDeploymentVersion,
+	"Adds a remote pool entry for one remote chain on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in AddRemotePoolInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.AddRemotePool(b.GetContext(), in.RemoteChainSelector, in.RemotePoolAddress); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// ApplyChainUpdatesInput adds or removes remote chain configs on a pool.
+// Owner-gated via the invoking identity (no explicit caller arg).
+type ApplyChainUpdatesInput struct {
+	ContractID string                      `json:"contract_id"`
+	Adds       []tpoolbindings.ChainUpdate `json:"adds"`
+	Removes    []uint64                    `json:"removes"`
+}
+
+// ApplyChainUpdates calls pool `apply_chain_updates`.
+var ApplyChainUpdates = cldfops.NewOperation(
+	"token-pool:apply-chain-updates",
+	stellarops.ContractDeploymentVersion,
+	"Adds or removes remote chain configs on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyChainUpdatesInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.ApplyChainUpdates(b.GetContext(), in.Adds, in.Removes); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
