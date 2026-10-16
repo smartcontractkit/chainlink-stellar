@@ -182,3 +182,63 @@ var Balance = cldfops.NewOperation(
 		return BalanceOutput{Balance: bal}, nil
 	},
 )
+
+// AddMinterInput matches BnM `add_minter(minter)` (owner-gated).
+type AddMinterInput struct {
+	ContractID string `json:"contract_id"`
+	Minter     string `json:"minter"`
+}
+
+// AddMinter adds a secondary BnM minter (owner-gated). The lane deploy uses it
+// after the `set_admin` handoff demotes the deployer out of MINTERS — the
+// deployer stays the token owner, so it can re-add itself to fund test
+// senders through MintAs.
+var AddMinter = cldfops.NewOperation(
+	"bnm-token:add-minter",
+	stellarops.ContractDeploymentVersion,
+	"Adds a secondary BnM minter (owner-gated)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in AddMinterInput) (stellarops.Void, error) {
+		if in.Minter == "" {
+			return stellarops.Void{}, fmt.Errorf("bnm-token add_minter: minter is required")
+		}
+		args := []xdr.ScVal{scval.AddressToScVal(in.Minter)}
+		if _, err := d.Invoker.InvokeContract(b.GetContext(), in.ContractID, "add_minter", args); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// MintAsInput matches BnM `mint_as(caller, to, amount)` (caller must be in
+// the minters set and signs the transaction).
+type MintAsInput struct {
+	ContractID string   `json:"contract_id"`
+	Caller     string   `json:"caller"`
+	To         string   `json:"to"`
+	Amount     *big.Int `json:"amount"`
+}
+
+// MintAs mints BnM through the multi-minter path (the pool stays MINTERS[0];
+// secondary minters such as the lane deployer mint alongside it).
+var MintAs = cldfops.NewOperation(
+	"bnm-token:mint-as",
+	stellarops.ContractDeploymentVersion,
+	"Mints BnM through mint_as (caller must be in the minters set)",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in MintAsInput) (stellarops.Void, error) {
+		if in.To == "" {
+			return stellarops.Void{}, fmt.Errorf("bnm-token mint_as: to is required")
+		}
+		if in.Amount == nil || in.Amount.Sign() <= 0 {
+			return stellarops.Void{}, fmt.Errorf("bnm-token mint_as: positive amount is required")
+		}
+		args := []xdr.ScVal{
+			scval.AddressToScVal(in.Caller),
+			scval.AddressToScVal(in.To),
+			scval.I128ToScVal(in.Amount),
+		}
+		if _, err := d.Invoker.InvokeContract(b.GetContext(), in.ContractID, "mint_as", args); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

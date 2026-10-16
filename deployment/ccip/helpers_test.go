@@ -91,24 +91,24 @@ func TestDevenvTokenPoolsAddressRefDataStore(t *testing.T) {
 	assert.True(t, found[datastore.ContractType(TestTokenContractType)])
 }
 
-func TestApplyFeeQuoterTestTokenConfig_validation(t *testing.T) {
+func TestApplyFeeQuoterTokenConfig_validation(t *testing.T) {
 	ctx := context.Background()
 	dummy := fee_quoter.NewFeeQuoterClient(nil, "dummy")
 
 	t.Run("nil_client", func(t *testing.T) {
-		err := ApplyFeeQuoterTestTokenConfig(ctx, nil, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "token", []uint64{1})
+		err := ApplyFeeQuoterTokenConfig(ctx, nil, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "token", []uint64{1})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fee quoter client is nil")
 	})
 
 	t.Run("empty_test_token", func(t *testing.T) {
-		err := ApplyFeeQuoterTestTokenConfig(ctx, dummy, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "", []uint64{1})
+		err := ApplyFeeQuoterTokenConfig(ctx, dummy, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "", []uint64{1})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "test token contract id is empty")
+		assert.Contains(t, err.Error(), "token contract id is empty")
 	})
 
 	t.Run("empty_price_updater", func(t *testing.T) {
-		err := ApplyFeeQuoterTestTokenConfig(ctx, dummy, "", "token", []uint64{1})
+		err := ApplyFeeQuoterTokenConfig(ctx, dummy, "", "token", []uint64{1})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "price updater address is empty")
 	})
