@@ -56,6 +56,12 @@ jobs:
           - suite: token-transfer-rate-limit-stellar-to-evm
             pattern: 'TestStellarToEVMTCAPIBnmTokenTransferRateLimit$'
             timeout: 20m
+          - suite: token-transfer-inbound-rate-limit-evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferInboundRateLimit$'
+            timeout: 20m
+          - suite: token-transfer-inbound-rate-limit-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit$'
+            timeout: 20m
           - suite: token-transfer-separate-token-receiver-evm-to-stellar
             pattern: 'TestEVMToStellarTCAPIBnmTokenTransferSeparateTokenReceiver$'
             timeout: 20m
@@ -64,6 +70,9 @@ jobs:
             timeout: 20m
           - suite: token-transfer-remove-remote-pool-evm-to-stellar
             pattern: 'TestEVMToStellarTCAPIBnmTokenTransferRemoveRemotePool$'
+            timeout: 20m
+          - suite: token-transfer-remove-remote-pool-stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferRemoveRemotePool$'
             timeout: 20m
     steps:
       - name: Enable S3 Cache for Self-Hosted Runners
