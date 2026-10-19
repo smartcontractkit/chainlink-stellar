@@ -24,4 +24,9 @@ const (
 	// chainlink-ccv/build/devenv/common.BurnMintTokenPoolType. Duplicated locally
 	// because this module stays free of the chainlink-ccv dependency
 	DevenvCatalogBurnMintTokenPoolType = "BurnMintTokenPool"
+
+	// DevenvCatalogLockReleaseTokenPoolType mirrors
+	// chainlink-ccv/build/devenv/common.LockReleaseTokenPoolType. Duplicated
+	// locally for the same reason.
+	DevenvCatalogLockReleaseTokenPoolType = "LockReleaseTokenPool"
 )

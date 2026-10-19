@@ -506,13 +506,16 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 // ---------------------------------------------------------------------------
 
 // GetSupportedPools returns the pool types and versions the Stellar chain can
-// deploy: burn-mint pools wrapping the BnM token (the shared TokenExpansion /
-// ConfigureTokensForTransfers pipeline deploys one pair per combo; the
-// stellar-side pool remote updates are applied in PostConnect). Lock-release
-// pools stay bespoke (the siloed lane pair is wired in PostConnect).
+// deploy through the shared TokenExpansion / ConfigureTokensForTransfers
+// pipeline (one pair per combo; stellar-side pool remote updates are applied
+// in PostConnect): burn-mint pools and plain lock-release pools (EVM LR
+// capability parity; the pipeline deploys each with its own lock box and a
+// qualifier-keyed BnM token). The bespoke siloed lane pair stays in
+// PostConnect for the legacy hand-written e2e tests.
 func (c *Chain) GetSupportedPools() []devenvcommon.PoolCapability {
 	return []devenvcommon.PoolCapability{
 		{PoolType: stellarccip.DevenvCatalogBurnMintTokenPoolType, PoolVersion: stellarops.ContractDeploymentVersion},
+		{PoolType: stellarccip.DevenvCatalogLockReleaseTokenPoolType, PoolVersion: stellarops.ContractDeploymentVersion},
 	}
 }
 
@@ -525,10 +528,11 @@ const (
 )
 
 // GetTokenExpansionConfigs mirrors the EVM implementation: deploy the LOCAL
-// leg of each combo this chain supports (burn-mint pairs, dedup by full ref)
-// through the shared TokenExpansion pipeline — one BnM token + burn-mint pool
-// per combo, deployed and onboarded by the StellarTokenAdapter sequences,
-// with the deployer pre-funded through the token's mint_as pre-mint.
+// leg of each combo this chain supports (burn-mint and lock-release pairs,
+// dedup by full ref) through the shared TokenExpansion pipeline — one BnM
+// token + one pool per combo (a lock-release combo adds its lock box),
+// deployed and onboarded by the StellarTokenAdapter sequences, with the
+// deployer pre-funded through the token's mint_as pre-mint.
 func (c *Chain) GetTokenExpansionConfigs(
 	env *deployment.Environment,
 	selector uint64,
@@ -711,11 +715,13 @@ func (c *Chain) buildStellarTokenTransferConfig(
 	}, nil
 }
 
-// stellarTokenRefForPool maps a shared burn-mint pool ref to its BnM token
-// ref (same qualifier — the pipeline deploys one token per pool, keyed by the
-// pool's qualifier; EVM TokenRefForPool parity).
+// stellarTokenRefForPool maps a shared pool ref (burn-mint or lock-release)
+// to its BnM token ref (same qualifier — the pipeline deploys one token per
+// pool, keyed by the pool's qualifier; EVM TokenRefForPool parity).
 func stellarTokenRefForPool(poolRef datastore.AddressRef) (datastore.AddressRef, error) {
-	if string(poolRef.Type) != stellarccip.DevenvCatalogBurnMintTokenPoolType {
+	switch string(poolRef.Type) {
+	case stellarccip.DevenvCatalogBurnMintTokenPoolType, stellarccip.DevenvCatalogLockReleaseTokenPoolType:
+	default:
 		return datastore.AddressRef{}, fmt.Errorf("unsupported stellar pool type %q", string(poolRef.Type))
 	}
 	return datastore.AddressRef{

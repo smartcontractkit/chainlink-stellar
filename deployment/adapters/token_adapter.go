@@ -23,9 +23,12 @@ import (
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	bnmops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/bnm_token"
 	bmpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
+	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	sacops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/sac_token"
 	stellardeps "github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
+	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
+	poolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_pool"
 )
 
 var _ tokens.TokenAdapter = (*StellarTokenAdapter)(nil)
@@ -45,12 +48,13 @@ func (a *StellarTokenAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byt
 }
 
 // DeriveTokenAddress resolves the token a Stellar pool wraps for cross-family
-// config. Burn-mint pools wrap their own qualified BnmToken row (the shared
-// pipeline deploys one BnM token per pool, keyed by the pool's qualifier);
-// lock-release pools wrap the single SAC test token.
+// config. Shared-pipeline pools — burn-mint AND lock-release — wrap their own
+// qualified BnmToken row (the pipeline deploys one BnM token per pool, keyed
+// by the pool's qualifier); the bespoke lock-release pools wrap the single SAC
+// test token.
 func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chainSelector uint64, poolRef datastore.AddressRef) (string, error) {
 	switch string(poolRef.Type) {
-	case stellarccip.DevenvCatalogBurnMintTokenPoolType, bmpops.ContractType:
+	case stellarccip.DevenvCatalogBurnMintTokenPoolType, stellarccip.DevenvCatalogLockReleaseTokenPoolType, bmpops.ContractType:
 		ref, err := stellarccip.LookupAddressRef(e.DataStore, chainSelector,
 			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, poolRef.Qualifier)
 		if err != nil {
@@ -185,7 +189,7 @@ func (a *StellarTokenAdapter) DeployTokenPoolForToken() *cldf_ops.Sequence[token
 var stellarDeployTokenPool = cldf_ops.NewSequence(
 	"StellarTokenAdapter.DeployTokenPoolForToken",
 	stellarops.ContractDeploymentVersion,
-	"Deploys a stellar burn-mint pool and onboards its BnM token",
+	"Deploys a stellar token pool (burn-mint or lock-release) and onboards its token",
 	func(b cldf_ops.Bundle, chains cldf_chain.BlockChains, in tokens.DeployTokenPoolInput) (sequences.OnChainOutput, error) {
 		if in.TokenPoolVersion == nil || in.TokenPoolVersion.String() != "2.0.0" {
 			return sequences.OnChainOutput{}, fmt.Errorf("unsupported stellar token pool version %v", in.TokenPoolVersion)
@@ -214,6 +218,8 @@ var stellarDeployTokenPool = cldf_ops.NewSequence(
 			Qualifier: poolQualifier,
 		}
 		if existing, err := poolRef.LookupAddressRef(in.ExistingDataStore, in.ChainSelector); err == nil {
+			// Caveat: the exit keys on the pool row only — a pool row without its
+			// lock box row skips the box (acceptable for fresh devenvs).
 			return sequences.OnChainOutput{Addresses: []datastore.AddressRef{existing}}, nil
 		}
 
@@ -242,36 +248,102 @@ var stellarDeployTokenPool = cldf_ops.NewSequence(
 			return sequences.OnChainOutput{}, fmt.Errorf("lookup local token admin registry: %w", err)
 		}
 
-		wasmPath, err := stellarReleaseWasm("pools_burn_mint_pool.wasm", "burn-mint pool")
-		if err != nil {
-			return sequences.OnChainOutput{}, err
-		}
-		deployOut, err := execStellarAdapterOp(b, deps, bmpops.Deploy, stellarops.DeployInput{
-			WasmPath: wasmPath,
-			Salt:     stellardeployment.GenerateDeterministicSalt(deployerAddr, "burn-mint-pool-"+poolQualifier),
-		})
-		if err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("deploy burn-mint pool: %w", err)
-		}
-		poolID := deployOut.ContractID
+		var poolID string
+		var lockBoxHex string
+		switch in.PoolType {
+		case stellarccip.DevenvCatalogLockReleaseTokenPoolType:
+			// Plain LockRelease pool (EVM LockReleaseTokenPool 2.0.0 parity): a
+			// single immutable lock box fixed at `initialize` holds all liquidity
+			// (deposit at lock_or_burn, withdraw at release_or_mint); PostTokenDeploy
+			// seeds the box. No set_admin — the pool never takes mint authority.
+			boxWasm, err := stellarReleaseWasm("pools_token_lock_box.wasm", "token lock box")
+			if err != nil {
+				return sequences.OnChainOutput{}, err
+			}
+			boxDeploy, err := execStellarAdapterOp(b, deps, tlbops.Deploy, stellarops.DeployInput{
+				WasmPath: boxWasm,
+				Salt:     stellardeployment.GenerateDeterministicSalt(deployerAddr, "lock-release-box-"+poolQualifier),
+			})
+			if err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("deploy token lock box: %w", err)
+			}
+			lockBoxID := boxDeploy.ContractID
+			if _, err := execStellarAdapterOp(b, deps, tlbops.Initialize, tlbops.InitializeInput{
+				ContractID: lockBoxID,
+				Owner:      deployerAddr,
+				Token:      tokenStrkey,
+			}); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("initialize token lock box: %w", err)
+			}
 
-		if _, err := execStellarAdapterOp(b, deps, sacops.SetAdmin, sacops.SetAdminInput{
-			ContractID: tokenStrkey,
-			NewAdmin:   poolID,
-		}); err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("set_admin (BnM mint authority → pool): %w", err)
-		}
+			poolWasm, err := stellarReleaseWasm("pools_lock_release_pool.wasm", "lock-release pool")
+			if err != nil {
+				return sequences.OnChainOutput{}, err
+			}
+			poolDeploy, err := execStellarAdapterOp(b, deps, poolops.Deploy, stellarops.DeployInput{
+				WasmPath: poolWasm,
+				Salt:     stellardeployment.GenerateDeterministicSalt(deployerAddr, "lock-release-pool-"+poolQualifier),
+			})
+			if err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("deploy lock-release pool: %w", err)
+			}
+			poolID = poolDeploy.ContractID
+			if _, err := execStellarAdapterOp(b, deps, lrpops.Initialize, lrpops.InitializeInput{
+				ContractID:    poolID,
+				Owner:         deployerAddr,
+				Token:         tokenStrkey,
+				TokenDecimals: bnmTokenDecimals,
+				Router:        routerID,
+				RampRegistry:  rampRegistryID,
+				RmnProxy:      rmnProxyID,
+				LockBox:       lockBoxID,
+			}); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("initialize lock-release pool: %w", err)
+			}
+			if _, err := execStellarAdapterOp(b, deps, tlbops.AddAllowedCallers, tlbops.AddAllowedCallersInput{
+				ContractID: lockBoxID,
+				Callers:    []string{poolID, deployerAddr},
+			}); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("add lock-release pool and deployer as lock box callers: %w", err)
+			}
+			lockBoxHex, err = stellarutil.StrkeyToHex(lockBoxID)
+			if err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("convert token lock box address: %w", err)
+			}
+		case stellarccip.DevenvCatalogBurnMintTokenPoolType, bmpops.ContractType:
+			wasmPath, err := stellarReleaseWasm("pools_burn_mint_pool.wasm", "burn-mint pool")
+			if err != nil {
+				return sequences.OnChainOutput{}, err
+			}
+			deployOut, err := execStellarAdapterOp(b, deps, bmpops.Deploy, stellarops.DeployInput{
+				WasmPath: wasmPath,
+				Salt:     stellardeployment.GenerateDeterministicSalt(deployerAddr, "burn-mint-pool-"+poolQualifier),
+			})
+			if err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("deploy burn-mint pool: %w", err)
+			}
+			poolID = deployOut.ContractID
 
-		if _, err := execStellarAdapterOp(b, deps, bmpops.Initialize, bmpops.InitializeInput{
-			ContractID:    poolID,
-			Owner:         deployerAddr,
-			Token:         tokenStrkey,
-			TokenDecimals: bnmTokenDecimals,
-			Router:        routerID,
-			RampRegistry:  rampRegistryID,
-			RmnProxy:      rmnProxyID,
-		}); err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("initialize burn-mint pool: %w", err)
+			if _, err := execStellarAdapterOp(b, deps, sacops.SetAdmin, sacops.SetAdminInput{
+				ContractID: tokenStrkey,
+				NewAdmin:   poolID,
+			}); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("set_admin (BnM mint authority → pool): %w", err)
+			}
+
+			if _, err := execStellarAdapterOp(b, deps, bmpops.Initialize, bmpops.InitializeInput{
+				ContractID:    poolID,
+				Owner:         deployerAddr,
+				Token:         tokenStrkey,
+				TokenDecimals: bnmTokenDecimals,
+				Router:        routerID,
+				RampRegistry:  rampRegistryID,
+				RmnProxy:      rmnProxyID,
+			}); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("initialize burn-mint pool: %w", err)
+			}
+		default:
+			return sequences.OnChainOutput{}, fmt.Errorf("unsupported stellar pool type %q", in.PoolType)
 		}
 
 		if _, err := execStellarAdapterOp(b, deps, tarops.ProposeAdministrator, tarops.ProposeAdministratorInput{
@@ -298,11 +370,15 @@ var stellarDeployTokenPool = cldf_ops.NewSequence(
 
 		hexAddr, err := stellarutil.StrkeyToHex(poolID)
 		if err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("convert burn-mint pool address: %w", err)
+			return sequences.OnChainOutput{}, fmt.Errorf("convert token pool address: %w", err)
 		}
-		return sequences.OnChainOutput{Addresses: []datastore.AddressRef{
-			poolRef.FullAddressRef(in.ChainSelector, hexAddr),
-		}}, nil
+		addresses := []datastore.AddressRef{poolRef.FullAddressRef(in.ChainSelector, hexAddr)}
+		if lockBoxHex != "" {
+			// The lock box row rides along so PostTokenDeploy can resolve and fund it.
+			addresses = append(addresses, stellarccip.TokenLockBoxDatastoreRef(poolQualifier).
+				FullAddressRef(in.ChainSelector, lockBoxHex))
+		}
+		return sequences.OnChainOutput{Addresses: addresses}, nil
 	},
 )
 
