@@ -185,32 +185,32 @@ Signing inner: `(bytes32,uint32)`
 
 ### 4.1 Roles
 
-[`types.rs`](../contracts/timelock/src/types.rs): `ADMIN`, `PROPOSER`, `EXECUTOR`, `CANCELLER`, `BYPASSER`. Admin grants/revokes roles; **`initialize`** wires initial role holders and **`min_delay`**.
+[`types.rs`](../contracts/timelock/src/types.rs): `ADMIN`, `PROPOSER`, `CANCELLER`, `BYPASSER`. There is no executor role: `execute_batch` is permissionless once the delay has passed. Admin grants/revokes roles; the timelock holds `ADMIN` itself, so role changes go through a scheduled self-call. **`initialize`** wires initial role holders and **`min_delay`**.
 
 **Design note:** Comments recommend **`admin`** be a **contract** (e.g. multisig), not an EOA.
 
 ### 4.2 Calls & invoke payload
 
-[`Call`](../contracts/timelock/src/types.rs): `to: BytesN<32>`, `data: Bytes` — **no native XLM value** field (v1). `data` uses the **same XDR convention as MCMS `StellarOp.data`** (§2). [`Calls`](../contracts/timelock/src/types.rs) wraps `Vec<Call>` for the Soroban ABI.
+[`Call`](../contracts/timelock/src/types.rs): `target: Address` (a contract), `function: Symbol`, `args_xdr: Bytes` (the XDR-encoded argument vector) — **no native XLM value** field (v1). [`Calls`](../contracts/timelock/src/types.rs) wraps `Vec<Call>` for the Soroban ABI.
 
 ### 4.3 Operation ID hashing
 
-Pure function [`hash_operation_batch`](../contracts/timelock/src/lib.rs) / [`hash_operation_batch_internal`](../contracts/timelock/src/lib.rs):
+Pure function [`hash_operation_batch`](../contracts/timelock/src/lib.rs), implemented in [`encoding.rs`](../contracts/timelock/src/encoding.rs):
 
 ```text
-call_hash_i = keccak256(to_i || keccak256(data_i))
-id = keccak256(n_calls_as_uint256_be || call_hash_0 || … || call_hash_n || predecessor || salt)
+call_hash_i = keccak256(target_contract_id_i || len(function_xdr_i) || function_xdr_i || len(args_xdr_i) || args_xdr_i)
+id = keccak256(DOMAIN || n_calls || call_hash_0 || … || call_hash_n || predecessor || salt)
 ```
 
-`n_calls` is encoded as a **32-byte big-endian uint256**; `predecessor` and `salt` are `bytes32`. This is **independent** of MCMS Merkle leaf hashing.
+`DOMAIN` is `keccak256("RBAC_TIMELOCK_DOMAIN_SEPARATOR_BATCH_STELLAR")`; lengths and `n_calls` are **4-byte big-endian u32**; `predecessor` and `salt` are `bytes32`. This is **independent** of MCMS Merkle leaf hashing.
 
 ### 4.4 Lifecycle & security choices
 
 - **`schedule_batch`:** Checks **`min_delay`**, blocked selectors (**schedule time only**), predecessor readiness; writes **ready timestamp** (`now + delay`) to per-id storage.
-- **`execute_batch`:** Requires executor or admin; requires delay elapsed; **`DONE_TIMESTAMP` (1)** semantics mirror Solidity (`is_operation_done`).
+- **`execute_batch`:** No role check (anyone may call); requires delay elapsed; **`DONE_TIMESTAMP` (1)** semantics mirror Solidity (`is_operation_done`).
 - **Re-entrancy / ordering:** Operation is marked **DONE before** executing inner calls (**stricter than Solidity**, which marks after). On **`CallReverted`**, the whole tx reverts including DONE — matches “no partial success” expectation for atomic batches.
 - **`bypasser_execute_batch`:** No delay; **blocked-selector checks are skipped** (Solidity parity).
-- **Blocked selectors:** Stored as Soroban **`Symbol`** list ([`BLK_SEL`](../contracts/timelock/src/storage.rs)); compared against the decoded invoke symbol from each scheduled call’s `data`.
+- **Blocked functions:** Stored per **(target contract, function)** pair ([`storage.rs`](../contracts/timelock/src/storage.rs), `BlockedFunction` keys); `schedule_batch` checks each call’s `target` and `function`.
 
 ### 4.5 Storage & TTL
 
@@ -252,9 +252,9 @@ Not enforced in code: operators choose whether MCMS **only** drives timelock, or
 
 **Typical gated flow:**
 
-1. Timelock **`initialize`**: include MCMS contract address in **`proposers`** (and assign executors/cancellers/bypassers per policy).
+1. Timelock **`initialize`**: include the proposer MCMS address in **`proposers`** (and the canceller and bypasser MCMS in their roles).
 2. Root on MCMS includes a **`StellarOp`** whose **`to`** is timelock’s contract id and **`data`** encodes **`schedule_batch`** with the batch the multisig intends to queue.
-3. After delay, **`execute_batch`** on timelock runs (invoked by an executor EOA or automation); inner calls hit governed contracts.
+3. After delay, anyone calls **`execute_batch`** on the timelock (CLD's execute workflow does); inner calls hit governed contracts.
 
 MCMS **does not** embed timelock addresses in storage; binding is entirely via **Merkle leaves** and **role configuration** on timelock.
 
