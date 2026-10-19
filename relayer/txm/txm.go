@@ -648,17 +648,15 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
 	}
 	inclusionFee, clampedToMax := s.feeStrat.SeedInclusionFee(currentAttempt, networkFee)
+	logSeed := ctxLogger.Debugw
 	if clampedToMax {
-		ctxLogger.Warnw("seeded inclusion fee clamped to MaxInclusionFee",
-			"percentile", percentile, "networkPercentile", networkFee,
-			"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99,
-			"maxInclusionFee", s.feeStrat.MaxInclusionFee,
-			"attempt", currentAttempt,
-		)
+		logSeed = ctxLogger.Warnw
 	}
-	ctxLogger.Debugw("seeded inclusion fee",
-		"inclusionFee", inclusionFee, "percentile", percentile, "networkPercentile", networkFee,
-		"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99, "attempt", currentAttempt)
+	logSeed("seeded inclusion fee",
+		"inclusionFee", inclusionFee, "clampedToMax", clampedToMax, "maxInclusionFee", s.feeStrat.MaxInclusionFee,
+		"percentile", percentile, "networkPercentile", networkFee,
+		"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99,
+		"attempt", currentAttempt)
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
@@ -783,14 +781,10 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				bumpNetworkFee = peak.percentile(s.rebroadcastPercentile)
 			}
 			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, bumpNetworkFee)
-			if clampedToMax {
-				ctxLogger.Warnw("bumped inclusion fee clamped to MaxInclusionFee",
-					"percentile", s.rebroadcastPercentile, "networkPercentile", bumpNetworkFee,
-					"maxInclusionFee", s.feeStrat.MaxInclusionFee,
-				)
-			}
 			ctxLogger.Warnw("tx rejected, bumping inclusion fee and retrying",
-				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped)
+				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped,
+				"clampedToMax", clampedToMax, "maxInclusionFee", s.feeStrat.MaxInclusionFee,
+				"percentile", s.rebroadcastPercentile, "networkPercentile", bumpNetworkFee)
 			inclusionFee = bumped
 			submitAttempt++
 			select {
