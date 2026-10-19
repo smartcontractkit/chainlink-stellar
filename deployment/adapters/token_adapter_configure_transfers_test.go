@@ -460,3 +460,67 @@ func TestResolveRemoteRateLimitBuckets(t *testing.T) {
 		require.ErrorContains(t, err, "both be specified together")
 	})
 }
+
+func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
+	// Regression: the shared pipeline's pool refs carry the devenv catalog
+	// name "BurnMintTokenPool" while type-keyed dispatch keys on the ops name
+	// "BurnMintPool" — every arm must accept the catalog spelling.
+	t.Parallel()
+	f := newConfigureFixtures(t)
+	poolRef := datastore.AddressRef{
+		ChainSelector: 42,
+		Type:          datastore.ContractType(stellarccip.DevenvCatalogBurnMintTokenPoolType),
+		Address:       f.poolHex,
+	}
+
+	t.Run("configure token for transfers", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
+		unsupported := scval.BoolToScVal(false)
+		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &unsupported)
+		input := tokens.ConfigureTokenForTransfersInput{
+			ChainSelector:     42,
+			TokenPoolAddress:  f.poolHex,
+			TokenAddress:      f.tokenHex,
+			PoolType:          stellarccip.DevenvCatalogBurnMintTokenPoolType,
+			TokenRef:          datastore.AddressRef{Address: f.tokenHex},
+			ExistingDataStore: tarDS(t, f),
+			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
+				7: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
+			},
+		}
+		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		require.Len(t, recordsFor(inv, "apply_chain_updates"), 1)
+		require.NotEmpty(t, out.BatchOps)
+	})
+
+	t.Run("set token pool rate limits", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolOwner(operationstest.NewRecordingInvoker(), f, f.deployer)
+		cfg := tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(10), Rate: big.NewInt(1)}
+		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, tokens.TPRLRemotes{
+			ChainSelector:       42,
+			RemoteChainSelector: 7,
+			TokenPoolRef:        poolRef,
+			ExistingDataStore:   newSealedDatastore(),
+			RateLimitBuckets:    []tokens.TPRLRateLimitBucket{{OutboundRateLimiterConfig: cfg, InboundRateLimiterConfig: cfg}},
+		})
+		require.NoError(t, err)
+		require.Len(t, recordsFor(inv, "set_rate_limit_config"), 1)
+		require.Len(t, out.BatchOps, 1)
+	})
+
+	t.Run("update authorities ref collection", func(t *testing.T) {
+		t.Parallel()
+		void := scval.VoidScVal()
+		inv := operationstest.NewRecordingInvoker().WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &void)
+		refs, err := collectPoolOwnershipRefs(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, newSealedDatastore(), tokens.UpdateAuthoritiesInput{
+			ChainSelector: 42,
+			TokenPoolRef:  poolRef,
+		})
+		require.NoError(t, err)
+		require.Len(t, refs, 1)
+		require.Equal(t, bmpops.ContractType, string(refs[0].Type), "the ref must be normalized for owner dispatch")
+	})
+}

@@ -105,7 +105,7 @@ func collectPoolOwnershipRefs(b cldf_ops.Bundle, deps stellardeps.StellarDeps, d
 	if err != nil {
 		return nil, fmt.Errorf("normalize pool address: %w", err)
 	}
-	refs := []datastore.AddressRef{input.TokenPoolRef}
+	refs := []datastore.AddressRef{normalizePoolRefType(input.TokenPoolRef)}
 	switch string(input.TokenPoolRef.Type) {
 	case lrops.ContractType:
 		lockboxRef, err := stellarccip.TokenLockBoxDatastoreRef(input.TokenPoolRef.Qualifier).LookupAddressRef(ds, input.ChainSelector)
@@ -187,14 +187,15 @@ func (a *StellarTokenAdapter) SetTokenPoolRateLimits() *cldf_ops.Sequence[tokens
 // per call with caller = timelock (the contract require_auths the caller,
 // which the timelock satisfies as the invoking ancestor).
 func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, deployerAddr string, input tokens.TPRLRemotes) (sequences.OnChainOutput, error) {
-	poolStrkey, err := ownership.NormalizeContractAddress(input.TokenPoolRef.Address)
+	poolRef := normalizePoolRefType(input.TokenPoolRef)
+	poolStrkey, err := ownership.NormalizeContractAddress(poolRef.Address)
 	if err != nil {
 		return sequences.OnChainOutput{}, fmt.Errorf("normalize pool address: %w", err)
 	}
-	if !isRateLimitPoolType(input.TokenPoolRef.Type) {
+	if !isRateLimitPoolType(poolRef.Type) {
 		return sequences.OnChainOutput{}, fmt.Errorf(
 			"unsupported pool type %q for rate limits on chain %d (supported: %s, %s, %s)",
-			input.TokenPoolRef.Type, input.ChainSelector, bmpops.ContractType, lrops.ContractType, slrrops.ContractType)
+			poolRef.Type, poolRef.ChainSelector, bmpops.ContractType, lrops.ContractType, slrrops.ContractType)
 	}
 
 	timelockStrkey, hasTimelock, err := cllTimelockStrkey(input.ExistingDataStore, input.ChainSelector)
@@ -202,7 +203,7 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 		return sequences.OnChainOutput{}, err
 	}
 
-	owner, err := ownership.ContractOwner(b.GetContext(), deps, input.TokenPoolRef)
+	owner, err := ownership.ContractOwner(b.GetContext(), deps, poolRef)
 	if err != nil {
 		return sequences.OnChainOutput{}, fmt.Errorf("read owner of pool %s: %w", poolStrkey, err)
 	}
@@ -358,6 +359,17 @@ func isRateLimitPoolType(t datastore.ContractType) bool {
 		return true
 	}
 	return false
+}
+
+// normalizePoolRefType maps a pool ref's type to the ops-package type that
+// type-keyed dispatch (ownership reads, pool-type checks) keys on: the shared
+// pipeline's pool refs carry the devenv catalog name "BurnMintTokenPool"
+// while the ops packages name the same pool "BurnMintPool".
+func normalizePoolRefType(ref datastore.AddressRef) datastore.AddressRef {
+	if string(ref.Type) == stellarccip.DevenvCatalogBurnMintTokenPoolType {
+		ref.Type = datastore.ContractType(bmpops.ContractType)
+	}
+	return ref
 }
 
 // rateLimiterConfigToBinding maps the chain-agnostic rate limiter config to

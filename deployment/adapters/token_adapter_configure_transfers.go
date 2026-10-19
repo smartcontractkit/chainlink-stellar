@@ -215,7 +215,11 @@ func (a *StellarTokenAdapter) ConfigureTokenForTransfersSequence() *cldf_ops.Seq
 func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps, deployerAddr string, input tokens.ConfigureTokenForTransfersInput) (sequences.OnChainOutput, error) {
 	ds := input.ExistingDataStore
 
-	if !isRateLimitPoolType(datastore.ContractType(input.PoolType)) {
+	poolRef := normalizePoolRefType(datastore.AddressRef{
+		ChainSelector: input.ChainSelector,
+		Type:          datastore.ContractType(input.PoolType),
+	})
+	if !isRateLimitPoolType(poolRef.Type) {
 		return sequences.OnChainOutput{}, fmt.Errorf(
 			"unsupported pool type %q on chain %d (supported: burn-mint, lock-release, siloed)", input.PoolType, input.ChainSelector)
 	}
@@ -223,11 +227,7 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 	if err != nil {
 		return sequences.OnChainOutput{}, fmt.Errorf("normalize pool address on chain %d: %w", input.ChainSelector, err)
 	}
-	poolRef := datastore.AddressRef{
-		ChainSelector: input.ChainSelector,
-		Type:          datastore.ContractType(input.PoolType),
-		Address:       poolStrkey,
-	}
+	poolRef.Address = poolStrkey
 	tokenStrkey, err := resolveTokenStrkey(b, deps, poolStrkey, input.TokenRef)
 	if err != nil {
 		return sequences.OnChainOutput{}, err
@@ -257,7 +257,7 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 	if err != nil {
 		return sequences.OnChainOutput{}, fmt.Errorf("read local decimals of pool %s: %w", poolStrkey, err)
 	}
-	poolRouter, err := newSorobanWriteRouter(b, deps, deployerAddr, ds, input.ChainSelector, poolStrkey, input.PoolType)
+	poolRouter, err := newSorobanWriteRouter(b, deps, deployerAddr, ds, input.ChainSelector, poolStrkey, string(poolRef.Type))
 	if err != nil {
 		return sequences.OnChainOutput{}, err
 	}
