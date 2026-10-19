@@ -134,7 +134,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 		t.Parallel()
 		input := poolRateLimitInput(t, f, newSealedDatastore())
 		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, f.deployer)
-		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 		require.NoError(t, err)
 		// One bucket per call, invoked directly with caller = deployer.
 		recs := rateLimitRecords(inv)
@@ -150,7 +150,8 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 			ff, ok := recs[i].Args[4].GetB()
 			require.True(t, ok)
 			require.Equal(t, fastFinality, ff)
-			wantOut := rateLimiterConfigToBinding(input.RateLimitBuckets[i].OutboundRateLimiterConfig)
+			wantOut, wantErr := rateLimiterConfigToBinding(input.RateLimitBuckets[i].OutboundRateLimiterConfig)
+			require.NoError(t, wantErr)
 			require.Equal(t, scval.MustToScVal(wantOut.ToScVal()), recs[i].Args[2])
 		}
 		// Direct-exec marker: one ExecInfo-marked empty batch op.
@@ -163,7 +164,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 		input := poolRateLimitInput(t, f, timelockDS(t, f))
 		// Rate-limit admin unset (void): owner alone routes the proposal.
 		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.timelock, "")
-		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 		require.NoError(t, err)
 		require.Empty(t, rateLimitRecords(inv), "no direct invokes on a timelock-owned pool")
 		require.Len(t, out.BatchOps, 1)
@@ -197,7 +198,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 			inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, f.deployer)
 			current := scval.Uint32ToScVal(0)
 			inv = inv.WithSimulateResultForContract(f.pool, "get_allowed_finality_config", &current)
-			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 			require.NoError(t, err)
 			var setRec *operationstest.InvokeRecord
 			for _, r := range inv.Records() {
@@ -216,7 +217,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 			inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, f.deployer)
 			current := scval.Uint32ToScVal(want)
 			inv = inv.WithSimulateResultForContract(f.pool, "get_allowed_finality_config", &current)
-			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 			require.NoError(t, err)
 			for _, r := range inv.Records() {
 				require.NotEqual(t, "set_allowed_finality_config", r.Fn, "matching finality must not be rewritten")
@@ -233,7 +234,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 			t.Parallel()
 			skipInput := input
 			skipInput.SkipIfMissingPermissions = true
-			out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, skipInput)
+			out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, skipInput)
 			require.NoError(t, err)
 			require.Empty(t, out.BatchOps)
 			require.Empty(t, rateLimitRecords(inv))
@@ -241,7 +242,7 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 
 		t.Run("error without skip", func(t *testing.T) {
 			t.Parallel()
-			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+			_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 			require.ErrorContains(t, err, "are neither deployer")
 		})
 	})
@@ -251,8 +252,48 @@ func TestStellarTokenAdapter_SetTokenPoolRateLimits(t *testing.T) {
 		input := poolRateLimitInput(t, f, newSealedDatastore())
 		input.TokenPoolRef.Type = "SomeOtherPool"
 		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, f.deployer)
-		_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		_, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
 		require.ErrorContains(t, err, "unsupported pool type")
+	})
+
+	t.Run("finality routes by the owner while buckets route by the admin", func(t *testing.T) {
+		t.Parallel()
+		// set_allowed_finality_config is owner-only while the buckets accept
+		// the rate-limit admin: a timelock-owned pool with a deployer
+		// rate-limit admin must execute the buckets directly and queue the
+		// finality change as a proposal — not attempt an unauthorized direct
+		// finality write.
+		input := poolRateLimitInput(t, f, timelockDS(t, f))
+		input.AllowedFinalityConfig = finality.Config{WaitForSafe: true}
+		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.timelock, f.deployer)
+		current := scval.Uint32ToScVal(0)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_allowed_finality_config", &current)
+		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, input)
+		require.NoError(t, err)
+		// The buckets ran directly under the deployer rate-limit admin.
+		require.Len(t, rateLimitRecords(inv), 2)
+		// The finality change did NOT run directly.
+		for _, r := range inv.Records() {
+			require.NotEqual(t, "set_allowed_finality_config", r.Fn)
+		}
+		// Both results are preserved: the direct-exec marker plus a proposal
+		// transaction for the owner-routed finality write.
+		var marker, finalityProposal bool
+		for _, op := range out.BatchOps {
+			if len(op.Transactions) == 0 {
+				marker = true
+				continue
+			}
+			for _, tx := range op.Transactions {
+				fn, _, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
+				require.NoError(t, err)
+				if fn == "set_allowed_finality_config" {
+					finalityProposal = true
+				}
+			}
+		}
+		require.True(t, marker)
+		require.True(t, finalityProposal)
 	})
 
 	t.Run("sequence errors on missing chain", func(t *testing.T) {
@@ -372,10 +413,12 @@ func TestStellarTokenAdapter_UpdateAuthorities_errorPaths(t *testing.T) {
 
 func TestRateLimiterConfigToBinding(t *testing.T) {
 	t.Parallel()
-	cfg := rateLimiterConfigToBinding(tokens.RateLimiterConfig{})
+	cfg, err := rateLimiterConfigToBinding(tokens.RateLimiterConfig{})
+	require.NoError(t, err)
 	require.Equal(t, tpoolbindings.RateLimitConfig{}, cfg)
 
-	cfg = rateLimiterConfigToBinding(tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(1), Rate: big.NewInt(2)})
+	cfg, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(1), Rate: big.NewInt(2)})
+	require.NoError(t, err)
 	require.True(t, cfg.IsEnabled)
 	require.Equal(t, xdr.Uint64(1), cfg.Capacity.Lo)
 	require.Equal(t, xdr.Uint64(0), cfg.Capacity.Hi)
@@ -383,18 +426,31 @@ func TestRateLimiterConfigToBinding(t *testing.T) {
 
 	// The 2^64 boundary splits across hi/lo.
 	edge := new(big.Int).Lsh(big.NewInt(1), 64)
-	cfg = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: edge})
+	cfg, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: edge})
+	require.NoError(t, err)
 	require.Equal(t, xdr.Uint64(1), cfg.Capacity.Hi)
 	require.Equal(t, xdr.Uint64(0), cfg.Capacity.Lo)
 
 	// The U128 upper bound fits without truncation.
 	max := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 128), big.NewInt(1))
-	cfg = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: max})
+	cfg, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: max})
+	require.NoError(t, err)
 	require.Equal(t, xdr.Uint64(math.MaxUint64), cfg.Capacity.Lo)
 	require.Equal(t, xdr.Uint64(math.MaxUint64), cfg.Capacity.Hi)
 
-	cfg = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: nil})
+	cfg, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: nil})
+	require.NoError(t, err)
 	require.Equal(t, scval.U128{}, cfg.Capacity)
+
+	// Negative amounts are rejected, not coerced into unsigned garbage.
+	_, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Capacity: big.NewInt(-1)})
+	require.ErrorContains(t, err, "negative amount")
+
+	// Amounts wider than 128 bits are rejected, not truncated: 2^128+1000
+	// must not silently apply as 1000.
+	over := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 128), big.NewInt(1000))
+	_, err = rateLimiterConfigToBinding(tokens.RateLimiterConfig{Rate: over})
+	require.ErrorContains(t, err, "exceeds the 128-bit limit")
 }
 
 func TestCllTimelockStrkey(t *testing.T) {

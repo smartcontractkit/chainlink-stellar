@@ -87,7 +87,7 @@ func TestFeeAdapterReadback(t *testing.T) {
 	apply("FeeQuoter", func() (datastore.MutableDataStore, error) {
 		out, err := changesets.DeployFeeQuoter{}.Apply(*env, changesets.DeployFeeQuoterConfig{
 			ChainSelector: sel,
-			FeeToken:     feeToken,
+			FeeToken:      feeToken,
 		})
 		return out.DataStore, err
 	})
@@ -99,7 +99,7 @@ func TestFeeAdapterReadback(t *testing.T) {
 
 	token := stellarutil.MustGenerateMockContractID("fee-readback", "token")
 	wantFeeArgs := fees.TokenTransferFeeArgs{
-		DestBytesOverhead: 10,
+		DestBytesOverhead: 32,
 		DestGasOverhead:   50_000,
 		MinFeeUSDCents:    3,
 		IsEnabled:         true,

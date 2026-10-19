@@ -228,6 +228,23 @@ func TestStellarFeeAdapter_GetOnchainDestChainConfig(t *testing.T) {
 		require.Equal(t, want, got)
 	})
 
+	t.Run("unrepresentable on-chain values are rejected", func(t *testing.T) {
+		t.Parallel()
+		// On-chain fields are u32; the shared lane type narrows four of them.
+		// A value like a 300% link premium must error, not truncate to 44 and
+		// risk being written back by a read/modify/write changeset.
+		onchain := fqbindings.DestChainConfig{
+			IsEnabled:          true,
+			LinkPremiumPercent: 300,
+		}
+		val, err := onchain.ToScVal()
+		require.NoError(t, err)
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForContract(fqStrkey, "get_dest_chain_config", &val)
+		_, err = getOnchainDestChainConfig(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, fqStrkey, 42, 7)
+		require.ErrorContains(t, err, "link premium percent 300 exceeds the uint8 lane field")
+	})
+
 	t.Run("not configured returns the zero config", func(t *testing.T) {
 		t.Parallel()
 		inv := operationstest.NewRecordingInvoker().

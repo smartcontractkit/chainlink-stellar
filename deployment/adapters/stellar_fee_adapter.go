@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -171,13 +172,26 @@ func getOnchainDestChainConfig(b cldf_ops.Bundle, deps stellardeps.StellarDeps, 
 	if report.Output == nil {
 		return lanes.FeeQuoterDestChainConfig{}, nil
 	}
-	return destChainConfigToLanes(*report.Output), nil
+	return destChainConfigToLanes(*report.Output)
 }
 
 // destChainConfigToLanes is the inverse of the write-side mapping in
-// stellarsequences.StellarApplyDestChainConfig. The write side widens the
-// uint8/uint16 lane fields, so the round trip is lossless.
-func destChainConfigToLanes(cfg fqbindings.DestChainConfig) lanes.FeeQuoterDestChainConfig {
+// stellarsequences.StellarApplyDestChainConfig. The on-chain fields are u32
+// while the shared lane type narrows four of them; unrepresentable values are
+// rejected so a read/modify/write cannot persist truncated settings.
+func destChainConfigToLanes(cfg fqbindings.DestChainConfig) (lanes.FeeQuoterDestChainConfig, error) {
+	if cfg.DestGasPerPayloadByte > math.MaxUint8 {
+		return lanes.FeeQuoterDestChainConfig{}, fmt.Errorf("dest gas per payload byte %d exceeds the uint8 lane field", cfg.DestGasPerPayloadByte)
+	}
+	if cfg.DefaultTokenFeeUsd > math.MaxUint16 {
+		return lanes.FeeQuoterDestChainConfig{}, fmt.Errorf("default token fee usd %d exceeds the uint16 lane field", cfg.DefaultTokenFeeUsd)
+	}
+	if cfg.NetworkFeeUsdCents > math.MaxUint16 {
+		return lanes.FeeQuoterDestChainConfig{}, fmt.Errorf("network fee usd cents %d exceeds the uint16 lane field", cfg.NetworkFeeUsdCents)
+	}
+	if cfg.LinkPremiumPercent > math.MaxUint8 {
+		return lanes.FeeQuoterDestChainConfig{}, fmt.Errorf("link premium percent %d exceeds the uint8 lane field", cfg.LinkPremiumPercent)
+	}
 	return lanes.FeeQuoterDestChainConfig{
 		IsEnabled:                   cfg.IsEnabled,
 		MaxDataBytes:                cfg.MaxDataBytes,
@@ -191,7 +205,7 @@ func destChainConfigToLanes(cfg fqbindings.DestChainConfig) lanes.FeeQuoterDestC
 		V2Params: &lanes.FeeQuoterV2Params{
 			LinkFeeMultiplierPercent: uint8(cfg.LinkPremiumPercent),
 		},
-	}
+	}, nil
 }
 
 // GetOnRampRef implements fees.FeeResolver: resolves the OnRamp serving the

@@ -137,6 +137,29 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 	poolClient := bmpbindings.NewBurnMintPoolClient(deployer, poolStrkey)
 
 	t.Run("rate limits on deployer-owned pool execute directly", func(t *testing.T) {
+		// Wire the dst lane first while the deployer still owns the pool:
+		// set_rate_limit_config rejects unsupported chains
+		// (ChainNotSupported), and the pool is born with no remote lanes.
+		// Distinct synthetic values (0xcc/0xdd) so the later configuration
+		// subtest still exercises a real (replacement) change.
+		lanePool := make([]byte, 20)
+		lanePool[0] = 0xcc
+		laneToken := make([]byte, 20)
+		laneToken[0] = 0xdd
+		wireOut, err := cldfops.ExecuteSequence(newBundle(), a.ConfigureTokenForTransfersSequence(), cldfEnv.BlockChains, tokens.ConfigureTokenForTransfersInput{
+			ChainSelector:     sel,
+			TokenPoolAddress:  poolRef.Address,
+			TokenAddress:      tokenRef.Address,
+			PoolType:          bmpops.ContractType,
+			TokenRef:          datastore.AddressRef{Address: tokenRef.Address},
+			ExistingDataStore: sealed,
+			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
+				dst: {RemotePool: lanePool, RemoteToken: laneToken, RemoteDecimals: 18},
+			},
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, wireOut.Output.BatchOps, "the lane must be wired before the rate-limit calls")
+
 		out, err := cldfops.ExecuteSequence(newBundle(), a.SetTokenPoolRateLimits(), cldfEnv.BlockChains, poolRateLimitsInput(sel, dst, poolRef, sealed, 1_000))
 		require.NoError(t, err)
 		require.Len(t, out.Output.BatchOps, 1)
@@ -219,6 +242,20 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 		out, err := cldfops.ExecuteSequence(newBundle(), a.ConfigureTokenForTransfersSequence(), cldfEnv.BlockChains, input)
 		require.NoError(t, err)
 		require.NotEmpty(t, out.Output.BatchOps)
+		// The pool is timelock-owned at this point: the lane replacement rides
+		// proposals — execute them through the timelock before reading back.
+		calls := timelockbindings.Calls{}
+		for _, op := range out.Output.BatchOps {
+			for _, tx := range op.Transactions {
+				txCalls, err := helpers.TimelockCallsFromProposalTx(tx)
+				require.NoError(t, err)
+				calls.Inner = append(calls.Inner, txCalls.Inner...)
+			}
+		}
+		require.NotEmpty(t, calls.Inner, "the remote-token change must emit proposals")
+		var pred, execSalt [32]byte
+		execSalt[31] = 3
+		helpers.MCMSTimelockScheduleAndExecute(t, ctx, e2eEnv, gov, calls, pred, execSalt)
 
 		// The lane is wired on chain: supported, padded remote token and pool.
 		sharedPool := tpoolbindings.NewTokenPoolClient(deployer, poolStrkey)

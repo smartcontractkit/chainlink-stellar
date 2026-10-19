@@ -176,7 +176,7 @@ func (a *StellarTokenAdapter) SetTokenPoolRateLimits() *cldf_ops.Sequence[tokens
 			if err != nil {
 				return sequences.OnChainOutput{}, fmt.Errorf("stellar deployer from chain %d: %w", input.ChainSelector, err)
 			}
-			return setTokenPoolRateLimits(b, stellardeps.FromDeployer(dep), dep.SignerAddress(), input)
+			return setTokenPoolRateLimits(b, stellardeps.FromDeployer(dep), dep.SignerAddress(), false, input)
 		},
 	)
 }
@@ -185,8 +185,11 @@ func (a *StellarTokenAdapter) SetTokenPoolRateLimits() *cldf_ops.Sequence[tokens
 // owns (or is rate-limit admin of) executes directly (an ExecInfo-marked
 // empty batch op); a timelock-owned pool gets one MCMS proposal transaction
 // per call with caller = timelock (the contract require_auths the caller,
-// which the timelock satisfies as the invoking ancestor).
-func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, deployerAddr string, input tokens.TPRLRemotes) (sequences.OnChainOutput, error) {
+// which the timelock satisfies as the invoking ancestor). prerequisiteStaged
+// forces the proposal path: the lane this update depends on is only proposed,
+// so a direct call would run before the lane exists (ChainNotSupported) or be
+// deleted by a later replacement removal.
+func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, deployerAddr string, prerequisiteStaged bool, input tokens.TPRLRemotes) (sequences.OnChainOutput, error) {
 	poolRef := normalizePoolRefType(input.TokenPoolRef)
 	poolStrkey, err := ownership.NormalizeContractAddress(poolRef.Address)
 	if err != nil {
@@ -220,6 +223,12 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 
 	caller := ""
 	switch {
+	case prerequisiteStaged:
+		if owner != timelockStrkey {
+			return sequences.OnChainOutput{}, fmt.Errorf(
+				"a staged prerequisite implies a timelock-owned lane, but pool %s owner is %q", poolStrkey, owner)
+		}
+		caller = timelockStrkey
 	case owner == deployerAddr || rlAdmin == deployerAddr:
 		caller = deployerAddr
 	case hasTimelock && (owner == timelockStrkey || rlAdmin == timelockStrkey):
@@ -249,7 +258,11 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 			return sequences.OnChainOutput{}, fmt.Errorf("read allowed finality config of pool %s: %w", poolStrkey, err)
 		}
 		if currentReport.Output != want {
-			if direct {
+			// set_allowed_finality_config is owner-only (the buckets accept the
+			// rate-limit admin too), so it routes by the owner independently
+			// of the bucket caller.
+			switch {
+			case owner == deployerAddr:
 				if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetAllowedFinalityConfig, deps, tpoolops.SetAllowedFinalityConfigInput{
 					ContractID:      poolStrkey,
 					AllowedFinality: want,
@@ -257,7 +270,7 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 					return sequences.OnChainOutput{}, fmt.Errorf("set allowed finality config on pool %s: %w", poolStrkey, err)
 				}
 				executed = true
-			} else {
+			case hasTimelock && owner == timelockStrkey:
 				data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_allowed_finality_config", []xdr.ScVal{
 					scval.Uint32ToScVal(want),
 				})
@@ -265,13 +278,25 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 					return sequences.OnChainOutput{}, err
 				}
 				writes = append(writes, poolRateLimitProposalWrite(input, poolStrkey, data))
+			default:
+				return sequences.OnChainOutput{}, fmt.Errorf(
+					"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
+					poolStrkey, owner, deployerAddr, timelockStrkey)
 			}
 		}
 	}
 
 	for _, bucket := range input.RateLimitBuckets {
-		outbound := rateLimiterConfigToBinding(bucket.OutboundRateLimiterConfig)
-		inbound := rateLimiterConfigToBinding(bucket.InboundRateLimiterConfig)
+		outbound, err := rateLimiterConfigToBinding(bucket.OutboundRateLimiterConfig)
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("outbound rate limit (remote %d, fastFinality %t): %w",
+				input.RemoteChainSelector, bucket.FastFinality, err)
+		}
+		inbound, err := rateLimiterConfigToBinding(bucket.InboundRateLimiterConfig)
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("inbound rate limit (remote %d, fastFinality %t): %w",
+				input.RemoteChainSelector, bucket.FastFinality, err)
+		}
 		if direct {
 			if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetRateLimitConfig, deps, tpoolops.SetRateLimitConfigInput{
 				ContractID:          poolStrkey,
@@ -301,13 +326,14 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 		writes = append(writes, poolRateLimitProposalWrite(input, poolStrkey, data))
 	}
 
-	if direct {
-		if !executed {
-			return sequences.OnChainOutput{}, nil
-		}
+	// Return the direct-exec marker plus every queued proposal — the
+	// finality arm routes by the owner while the buckets route by the
+	// owner-or-admin caller, so both kinds can occur in one call.
+	var ops []mcmstypes.BatchOperation
+	if executed {
 		// Direct-exec marker: an ExecInfo-marked empty batch op (the txs were
 		// sent directly; the shared OutputBuilder drops the empty op).
-		batchOp, err := evmcontract.NewBatchOperationFromWrites([]evmcontract.WriteOutput{{
+		marker, err := evmcontract.NewBatchOperationFromWrites([]evmcontract.WriteOutput{{
 			ChainSelector: input.ChainSelector,
 			Tx: mcmstypes.Transaction{
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(input.TokenPoolRef.Type)},
@@ -318,16 +344,16 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("build batch operation for chain %d: %w", input.ChainSelector, err)
 		}
-		return sequences.OnChainOutput{BatchOps: []mcmstypes.BatchOperation{batchOp}}, nil
+		ops = append(ops, marker)
 	}
-	if len(writes) == 0 {
-		return sequences.OnChainOutput{}, nil
+	if len(writes) > 0 {
+		batchOp, err := evmcontract.NewBatchOperationFromWrites(writes)
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("build batch operation for chain %d: %w", input.ChainSelector, err)
+		}
+		ops = append(ops, batchOp)
 	}
-	batchOp, err := evmcontract.NewBatchOperationFromWrites(writes)
-	if err != nil {
-		return sequences.OnChainOutput{}, fmt.Errorf("build batch operation for chain %d: %w", input.ChainSelector, err)
-	}
-	return sequences.OnChainOutput{BatchOps: []mcmstypes.BatchOperation{batchOp}}, nil
+	return sequences.OnChainOutput{BatchOps: ops}, nil
 }
 
 // poolRateLimitProposalWrite builds one MCMS proposal write for a pool
@@ -373,24 +399,40 @@ func normalizePoolRefType(ref datastore.AddressRef) datastore.AddressRef {
 }
 
 // rateLimiterConfigToBinding maps the chain-agnostic rate limiter config to
-// the on-chain U128 form.
-func rateLimiterConfigToBinding(cfg tokens.RateLimiterConfig) tpoolbindings.RateLimitConfig {
+// the on-chain U128 form. Negative and wider-than-128-bit amounts are
+// rejected before any write: a truncated limit would apply on chain (directly
+// or via proposal) as a different limit than the one requested.
+func rateLimiterConfigToBinding(cfg tokens.RateLimiterConfig) (tpoolbindings.RateLimitConfig, error) {
+	capacity, err := bigIntToU128(cfg.Capacity)
+	if err != nil {
+		return tpoolbindings.RateLimitConfig{}, fmt.Errorf("capacity: %w", err)
+	}
+	rate, err := bigIntToU128(cfg.Rate)
+	if err != nil {
+		return tpoolbindings.RateLimitConfig{}, fmt.Errorf("rate: %w", err)
+	}
 	return tpoolbindings.RateLimitConfig{
 		IsEnabled: cfg.IsEnabled,
-		Capacity:  bigIntToU128(cfg.Capacity),
-		Rate:      bigIntToU128(cfg.Rate),
-	}
+		Capacity:  capacity,
+		Rate:      rate,
+	}, nil
 }
 
-// bigIntToU128 converts a non-negative big.Int to the U128 hi/lo form; values
-// above 2^128-1 are truncated (callers pass token-amount-scaled values).
-func bigIntToU128(v *big.Int) scval.U128 {
+// bigIntToU128 converts a big.Int to the U128 hi/lo form, rejecting negative
+// values and values above 2^128-1.
+func bigIntToU128(v *big.Int) (scval.U128, error) {
 	if v == nil {
-		return scval.U128{}
+		return scval.U128{}, nil
+	}
+	if v.Sign() < 0 {
+		return scval.U128{}, fmt.Errorf("negative amount %s", v.String())
+	}
+	if v.BitLen() > 128 {
+		return scval.U128{}, fmt.Errorf("amount %s exceeds the 128-bit limit", v.String())
 	}
 	lo := new(big.Int).And(v, new(big.Int).SetUint64(math.MaxUint64))
 	hi := new(big.Int).Rsh(v, 64)
-	return scval.U128(xdr.UInt128Parts{Hi: xdr.Uint64(hi.Uint64()), Lo: xdr.Uint64(lo.Uint64())})
+	return scval.U128(xdr.UInt128Parts{Hi: xdr.Uint64(hi.Uint64()), Lo: xdr.Uint64(lo.Uint64())}), nil
 }
 
 // cllTimelockStrkey resolves the CLL-qualifier RBACTimelock strkey from the

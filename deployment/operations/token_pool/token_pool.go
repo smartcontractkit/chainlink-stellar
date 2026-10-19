@@ -303,3 +303,22 @@ var ApplyChainUpdates = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetCurrentRateLimiterStateInput identifies a pool rate-limit state read.
+type GetCurrentRateLimiterStateInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+	FastFinality        bool   `json:"fast_finality"`
+}
+
+// GetCurrentRateLimiterState reads pool `get_current_rate_limiter_state` for
+// one remote chain and finality bucket.
+var GetCurrentRateLimiterState = cldfops.NewOperation(
+	"token-pool:get-current-rate-limiter-state",
+	stellarops.ContractDeploymentVersion,
+	"Reads the current rate limiter bucket state for one remote chain on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetCurrentRateLimiterStateInput) (*tpoolbindings.RateLimiterState, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetCurrentRateLimiterState(b.GetContext(), in.RemoteChainSelector, in.FastFinality)
+	},
+)
