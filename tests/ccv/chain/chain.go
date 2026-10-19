@@ -1247,7 +1247,15 @@ func (c *Chain) GetTokenBalance(ctx context.Context, address, tokenAddress proto
 	if ctrErr == nil && ctrBal != nil && ctrBal.Sign() > 0 {
 		return ctrBal, nil
 	}
-	// Genuine zero balance or a failing account read: prior behavior.
+	// A successful contract-form read (zero included) outranks a failed
+	// account-form read: a contract holder encoded as an account hits SAC
+	// trustline errors (#13) on real SAC tokens while the contract form
+	// reads fine — the holder is exactly one of the two forms, so trust the
+	// form that works.
+	if ctrErr == nil && ctrBal != nil {
+		return ctrBal, nil
+	}
+	// Genuine zero balance or both reads failing: prior behavior.
 	return acctBal, acctErr
 }
 
