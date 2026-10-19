@@ -31,11 +31,11 @@ import (
 var _ tokens.TokenAdapter = (*StellarTokenAdapter)(nil)
 
 // StellarTokenAdapter implements tokens.TokenAdapter for Stellar token pools.
-// Pool deployment and TAR registration are handled by the deploy sequences
-// below (shared TokenExpansion pipeline); stellar-side pool chain updates are
-// applied during PostConnect, so ConfigureTokenForTransfersSequence is a no-op.
-// The adapter's remaining role is address/decimals resolution so the shared
-// ConfigureTokensForTransfers changeset can resolve Stellar pool/token
+// Pool deployment is handled by the deploy sequences below (shared
+// TokenExpansion pipeline); pool ops (UpdateAuthorities, rate limits, TAR
+// registration, per-remote chain updates) live in token_adapter_pool_ops.go
+// and token_adapter_configure_transfers.go. Address/decimals resolution lets
+// the shared ConfigureTokensForTransfers changeset resolve Stellar pool/token
 // addresses when configuring EVM pools with Stellar remotes.
 type StellarTokenAdapter struct{}
 
@@ -313,31 +313,6 @@ func (a *StellarTokenAdapter) DeployTokenVerify(e deployment.Environment, in tok
 	if _, err := tokenRef.LookupAddressRef(e.DataStore, in.ChainSelector); err != nil {
 		return fmt.Errorf("BnM token %q not deployed on chain %d: %w", in.Symbol, in.ChainSelector, err)
 	}
-	return nil
-}
-
-var stellarConfigureTokenNoOp = cldf_ops.NewSequence(
-	"StellarConfigureTokenForTransfers",
-	stellarops.ContractDeploymentVersion,
-	"No-op: Stellar token pool chain updates are applied during PostConnect",
-	func(_ cldf_ops.Bundle, _ cldf_chain.BlockChains, _ tokens.ConfigureTokenForTransfersInput) (sequences.OnChainOutput, error) {
-		return sequences.OnChainOutput{}, nil
-	},
-)
-
-func (a *StellarTokenAdapter) ConfigureTokenForTransfersSequence() *cldf_ops.Sequence[tokens.ConfigureTokenForTransfersInput, sequences.OnChainOutput, cldf_chain.BlockChains] {
-	return stellarConfigureTokenNoOp
-}
-
-func (a *StellarTokenAdapter) ManualRegistration() *cldf_ops.Sequence[tokens.ManualRegistrationSequenceInput, sequences.OnChainOutput, cldf_chain.BlockChains] {
-	return nil
-}
-
-func (a *StellarTokenAdapter) SetTokenPoolRateLimits() *cldf_ops.Sequence[tokens.TPRLRemotes, sequences.OnChainOutput, cldf_chain.BlockChains] {
-	return nil
-}
-
-func (a *StellarTokenAdapter) UpdateAuthorities() *cldf_ops.Sequence[tokens.UpdateAuthoritiesInput, sequences.OnChainOutput, *deployment.Environment] {
 	return nil
 }
 

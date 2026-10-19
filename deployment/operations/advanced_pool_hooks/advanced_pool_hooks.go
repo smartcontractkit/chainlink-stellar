@@ -195,3 +195,21 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetCcvConfigInput identifies an Advanced Pool Hooks CCV config read.
+type GetCcvConfigInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+}
+
+// GetCcvConfig reads the hooks' stored CCV config for one remote chain; nil
+// when the remote has no config.
+var GetCcvConfig = cldfops.NewOperation(
+	"advanced-pool-hooks:get-ccv-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the CCV config stored on Advanced Pool Hooks for one remote chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetCcvConfigInput) (*aphbindings.CCVConfig, error) {
+		c := aphbindings.NewAdvancedPoolHooksClient(d.Invoker, in.ContractID)
+		return c.GetCcvConfig(b.GetContext(), in.RemoteChainSelector)
+	},
+)

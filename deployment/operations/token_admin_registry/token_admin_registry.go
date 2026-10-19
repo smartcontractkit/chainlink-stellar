@@ -154,3 +154,42 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetTokenConfigInput identifies a token admin registry token config read.
+type GetTokenConfigInput struct {
+	ContractID string `json:"contract_id"`
+	LocalToken string `json:"local_token"`
+}
+
+// GetTokenConfig reads the registry's admin/pending-admin/pool record for a
+// token.
+var GetTokenConfig = cldfops.NewOperation(
+	"token-admin-registry:get-token-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the token config (admin, pending admin, pool) for one token",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetTokenConfigInput) (*tarbindings.TokenConfig, error) {
+		c := tarbindings.NewTokenAdminRegistryClient(d.Invoker, in.ContractID)
+		return c.GetTokenConfig(b.GetContext(), in.LocalToken)
+	},
+)
+
+// TransferAdminRoleInput transfers a token's admin role to a new admin.
+type TransferAdminRoleInput struct {
+	ContractID string  `json:"contract_id"`
+	LocalToken string  `json:"local_token"`
+	NewAdmin   *string `json:"new_admin,omitempty"`
+}
+
+// TransferAdminRole calls `transfer_admin_role` (invoked by the current admin).
+var TransferAdminRole = cldfops.NewOperation(
+	"token-admin-registry:transfer-admin-role",
+	stellarops.ContractDeploymentVersion,
+	"Transfers a token's admin role to a new admin in TokenAdminRegistry",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in TransferAdminRoleInput) (stellarops.Void, error) {
+		c := tarbindings.NewTokenAdminRegistryClient(d.Invoker, in.ContractID)
+		if err := c.TransferAdminRole(b.GetContext(), in.LocalToken, in.NewAdmin); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
