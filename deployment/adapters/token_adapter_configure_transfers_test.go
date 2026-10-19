@@ -15,6 +15,7 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
+	aphbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/advanced_pool_hooks"
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	scval "github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -91,6 +92,10 @@ func stubPoolReads(t *testing.T, inv *operationstest.RecordingInvoker, f configu
 	t.Helper()
 	decimals := scval.Uint32ToScVal(7)
 	inv = inv.WithSimulateResultForContract(f.pool, "get_token_decimals", &decimals)
+	// No AdvancedPoolHooks wired by default; later stubs for the same
+	// contract+fn override this one.
+	voidHooks := scval.VoidScVal()
+	inv = inv.WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &voidHooks)
 	inv = stubPoolOwner(inv, f, f.deployer)
 	return stubTarConfig(t, stubTarOwner(inv, f, f.deployer), f, tarbindings.TokenConfig{})
 }
@@ -253,6 +258,8 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &unsupported)
 		decimals := scval.Uint32ToScVal(7)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_token_decimals", &decimals)
+		voidHooks := scval.VoidScVal()
+		inv = inv.WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &voidHooks)
 		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, newInput(nil))
 		require.NoError(t, err)
 
@@ -340,6 +347,8 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &unsupported)
 		decimals := scval.Uint32ToScVal(7)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_token_decimals", &decimals)
+		voidHooks := scval.VoidScVal()
+		inv = inv.WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &voidHooks)
 		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
 			in.ExistingDataStore = ds.Seal()
 		}))
@@ -380,17 +389,81 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 
 	t.Run("unsupported inputs fail loudly", func(t *testing.T) {
 		t.Parallel()
-		inv := stubPoolOwner(operationstest.NewRecordingInvoker(), f, f.deployer)
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
 
-		t.Run("CCV lists", func(t *testing.T) {
+		t.Run("CCV lists are skipped when no hooks are wired", func(t *testing.T) {
 			t.Parallel()
 			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
 				rc := in.RemoteChains[7]
-				rc.InboundCCVs = []string{"0x1"}
+				rc.InboundCCVs = []string{f.timelock}
+				rc.OutboundCCVs = []string{f.timelock}
+				in.RemoteChains[7] = rc
+			})
+			// stubPoolReads stubs no-hooks-wired; complete the new-lane reads.
+			skipSupported := scval.BoolToScVal(false)
+			skipInv := inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &skipSupported)
+			_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: skipInv}, f.deployer, input)
+			require.NoError(t, err, "EVM parity: CCV lists are unused when no AdvancedPoolHooks is wired")
+			require.Empty(t, recordsFor(skipInv, "apply_ccv_config_updates"))
+		})
+
+		t.Run("CCV lists apply to the wired AdvancedPoolHooks", func(t *testing.T) {
+			t.Parallel()
+			aph := stellarutil.MustGenerateMockContractID("deployer", "cfg-test-aph")
+			hooks := scval.AddressToScVal(aph)
+			inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f).
+				WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &hooks)
+			// The APH owner is the deployer (direct exec) and the remote has
+			// no stored config yet.
+			aphOwner := scval.AddressToScVal(f.deployer)
+			inv = inv.WithSimulateResultForContract(aph, "owner", &aphOwner)
+			unconfigured := scval.VoidScVal()
+			inv = inv.WithSimulateResultForContract(aph, "get_ccv_config", &unconfigured)
+			notSupported := scval.BoolToScVal(false)
+			inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &notSupported)
+			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
+				rc := in.RemoteChains[7]
+				rc.InboundCCVs = []string{f.timelock}
+				rc.OutboundCCVs = []string{f.timelock}
 				in.RemoteChains[7] = rc
 			})
 			_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
-			require.ErrorContains(t, err, "CCV")
+			require.NoError(t, err)
+			applies := recordsFor(inv, "apply_ccv_config_updates")
+			require.Len(t, applies, 1)
+			wantArg := aphbindings.CCVConfigArg{
+				RemoteChainSelector: 7,
+				InboundCcvs:         []string{f.timelock},
+				OutboundCcvs:        []string{f.timelock},
+			}
+			require.Equal(t, scval.StructSliceToScVal([]aphbindings.CCVConfigArg{wantArg}), applies[0].Args[0])
+		})
+
+		t.Run("matching stored CCV config is not rewritten", func(t *testing.T) {
+			t.Parallel()
+			aph := stellarutil.MustGenerateMockContractID("deployer", "cfg-test-aph")
+			hooks := scval.AddressToScVal(aph)
+			inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f).
+				WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &hooks)
+			aphOwner := scval.AddressToScVal(f.deployer)
+			inv = inv.WithSimulateResultForContract(aph, "owner", &aphOwner)
+			storedVal, err := aphbindings.CCVConfig{
+				InboundCcvs:  []string{f.timelock},
+				OutboundCcvs: []string{f.timelock},
+			}.ToScVal()
+			require.NoError(t, err)
+			inv = inv.WithSimulateResultForContract(aph, "get_ccv_config", &storedVal)
+			notSupported := scval.BoolToScVal(false)
+			inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &notSupported)
+			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
+				rc := in.RemoteChains[7]
+				rc.InboundCCVs = []string{f.timelock}
+				rc.OutboundCCVs = []string{f.timelock}
+				in.RemoteChains[7] = rc
+			})
+			_, err = configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+			require.NoError(t, err)
+			require.Empty(t, recordsFor(inv, "apply_ccv_config_updates"), "matching config must not be rewritten")
 		})
 
 		t.Run("pool-level token transfer fee config", func(t *testing.T) {

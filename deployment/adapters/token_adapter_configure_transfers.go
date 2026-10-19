@@ -16,12 +16,14 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	mcmstypes "github.com/smartcontractkit/mcms/types"
 
+	aphbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/advanced_pool_hooks"
 	tpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	scval "github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	aphops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/advanced_pool_hooks"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
 	tpoolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_pool"
@@ -239,14 +241,9 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 			return sequences.OnChainOutput{}, fmt.Errorf("normalize registry pool address on chain %d: %w", input.ChainSelector, err)
 		}
 	}
-	// Input validation first: unsupported arms fail fast before any
+	// Input validation first: the unsupported arm fails fast before any
 	// on-chain read.
 	for remoteSel, rc := range input.RemoteChains {
-		if len(rc.InboundCCVs) > 0 || len(rc.OutboundCCVs) > 0 ||
-			len(rc.InboundCCVsToAddAboveThreshold) > 0 || len(rc.OutboundCCVsToAddAboveThreshold) > 0 {
-			return sequences.OnChainOutput{}, fmt.Errorf(
-				"per-remote CCV lists are not supported by the stellar adapter (remote %d)", remoteSel)
-		}
 		if rc.TokenTransferFeeConfig != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf(
 				"pool-level token transfer fee config is not supported by the stellar adapter (remote %d); use the fee changesets instead", remoteSel)
@@ -261,24 +258,33 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 	if err != nil {
 		return sequences.OnChainOutput{}, err
 	}
+	// CCV lists apply to the pool's AdvancedPoolHooks, not the pool — like
+	// EVM, the arm is skipped entirely when no hooks are wired.
+	hooksReport, err := cldf_ops.ExecuteOperation(b, tpoolops.GetAdvancedPoolHooks, deps, tpoolops.GetAdvancedPoolHooksInput{ContractID: poolStrkey})
+	if err != nil {
+		return sequences.OnChainOutput{}, fmt.Errorf("read AdvancedPoolHooks of pool %s: %w", poolStrkey, err)
+	}
+	var aphRouter *sorobanWriteRouter
+	if hooksReport.Output != nil && *hooksReport.Output != "" {
+		aphRouter, err = newSorobanWriteRouter(b, deps, deployerAddr, ds, input.ChainSelector, *hooksReport.Output, aphops.ContractType)
+		if err != nil {
+			return sequences.OnChainOutput{}, err
+		}
+	}
 
 	var batchOps []mcmstypes.BatchOperation
 
 	// Per-remote configuration: chain updates and rate limits.
 	for remoteSel, rc := range input.RemoteChains {
-		if len(rc.InboundCCVs) > 0 || len(rc.OutboundCCVs) > 0 ||
-			len(rc.InboundCCVsToAddAboveThreshold) > 0 || len(rc.OutboundCCVsToAddAboveThreshold) > 0 {
-			return sequences.OnChainOutput{}, fmt.Errorf(
-				"per-remote CCV lists are not supported by the stellar adapter (remote %d)", remoteSel)
-		}
-		if rc.TokenTransferFeeConfig != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf(
-				"pool-level token transfer fee config is not supported by the stellar adapter (remote %d); use the fee changesets instead", remoteSel)
-		}
-
 		buckets, hasRateLimitInput, err := resolveRemoteRateLimitBuckets(input, rc, uint8(decimalsReport.Output))
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("resolve rate limit buckets for remote %d: %w", remoteSel, err)
+		}
+
+		if aphRouter != nil {
+			if err := applyPoolCCVConfig(b, deps, aphRouter, remoteSel, rc); err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("apply CCV config for remote %d: %w", remoteSel, err)
+			}
 		}
 
 		supportedReport, err := cldf_ops.ExecuteOperation(b, tpoolops.IsSupportedChain, deps, tpoolops.IsSupportedChainInput{
@@ -645,4 +651,102 @@ func containsBytes(list [][]byte, want []byte) bool {
 		}
 	}
 	return false
+}
+
+// applyPoolCCVConfig mirrors EVM's makeCCVUpdates with a stored-config
+// comparison: provided CCV lists replace the stored ones, empty lists keep the
+// stored values (EVM keeps the on-chain effective values), and the
+// include-defaults flags are preserved. Nothing is applied when the resolved
+// arg matches the stored config.
+func applyPoolCCVConfig(
+	b cldf_ops.Bundle, deps stellardeps.StellarDeps,
+	aphRouter *sorobanWriteRouter, remoteSel uint64,
+	rc tokens.RemoteChainConfig[[]byte, string],
+) error {
+	storedReport, err := cldf_ops.ExecuteOperation(b, aphops.GetCcvConfig, deps, aphops.GetCcvConfigInput{
+		ContractID: aphRouter.contractID, RemoteChainSelector: remoteSel,
+	})
+	if err != nil {
+		return fmt.Errorf("read stored CCV config: %w", err)
+	}
+	stored := aphbindings.CCVConfig{}
+	hasStored := storedReport.Output != nil
+	if hasStored {
+		stored = *storedReport.Output
+	}
+
+	arg := aphbindings.CCVConfigArg{RemoteChainSelector: remoteSel}
+	arg.OutboundCcvs, arg.OutboundIncludeDefaults = ccvListOrStored(rc.OutboundCCVs, stored.OutboundCcvs, stored.OutboundIncludeDefaults)
+	arg.InboundCcvs, arg.InboundIncludeDefaults = ccvListOrStored(rc.InboundCCVs, stored.InboundCcvs, stored.InboundIncludeDefaults)
+	arg.ThresholdOutboundCcvs = ccvListOrStoredList(rc.OutboundCCVsToAddAboveThreshold, stored.ThresholdOutboundCcvs)
+	arg.ThresholdInboundCcvs = ccvListOrStoredList(rc.InboundCCVsToAddAboveThreshold, stored.ThresholdInboundCcvs)
+
+	// Skip when nothing changes; skip a would-be-removal of an unconfigured
+	// remote (an empty arg on a fresh remote is a no-op either way).
+	if ccvArgMatchesStored(arg, stored, hasStored) {
+		return nil
+	}
+	if !hasStored && len(arg.OutboundCcvs) == 0 && len(arg.InboundCcvs) == 0 &&
+		len(arg.ThresholdOutboundCcvs) == 0 && len(arg.ThresholdInboundCcvs) == 0 {
+		return nil
+	}
+
+	return aphRouter.route(aphRouter.owner, func() error {
+		_, err := cldf_ops.ExecuteOperation(b, aphops.ApplyCCVConfigUpdates, deps, aphops.ApplyCCVConfigUpdatesInput{
+			ContractID: aphRouter.contractID, Configs: []aphbindings.CCVConfigArg{arg},
+		})
+		return err
+	}, "apply_ccv_config_updates", []xdr.ScVal{
+		scval.StructSliceToScVal([]aphbindings.CCVConfigArg{arg}),
+	})
+}
+
+// ccvListOrStored resolves one CCV list: a provided list replaces the stored
+// one (dropping its include-defaults flag), an empty list keeps the stored
+// list with its flag.
+func ccvListOrStored(provided, stored []string, storedIncludeDefaults bool) ([]string, bool) {
+	if len(provided) > 0 {
+		return provided, false
+	}
+	return stored, storedIncludeDefaults
+}
+
+// ccvListOrStoredList resolves one threshold CCV list the same way.
+func ccvListOrStoredList(provided, stored []string) []string {
+	if len(provided) > 0 {
+		return provided
+	}
+	return stored
+}
+
+// ccvArgMatchesStored reports whether the resolved arg reproduces the stored
+// config (lists compare unordered, EVM comparison parity).
+func ccvArgMatchesStored(arg aphbindings.CCVConfigArg, stored aphbindings.CCVConfig, hasStored bool) bool {
+	if !hasStored {
+		return false
+	}
+	return unorderedStringsEqual(arg.OutboundCcvs, stored.OutboundCcvs) &&
+		arg.OutboundIncludeDefaults == stored.OutboundIncludeDefaults &&
+		unorderedStringsEqual(arg.InboundCcvs, stored.InboundCcvs) &&
+		arg.InboundIncludeDefaults == stored.InboundIncludeDefaults &&
+		unorderedStringsEqual(arg.ThresholdOutboundCcvs, stored.ThresholdOutboundCcvs) &&
+		unorderedStringsEqual(arg.ThresholdInboundCcvs, stored.ThresholdInboundCcvs)
+}
+
+// unorderedStringsEqual compares two string slices ignoring order.
+func unorderedStringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, s := range a {
+		counts[s]++
+	}
+	for _, s := range b {
+		counts[s]--
+		if counts[s] < 0 {
+			return false
+		}
+	}
+	return true
 }
