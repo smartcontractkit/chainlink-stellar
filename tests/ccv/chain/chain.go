@@ -583,9 +583,11 @@ func (c *Chain) GetTokenExpansionConfigs(
 }
 
 // PostTokenDeploy applies FeeQuoter pricing for every deployed shared BnM
-// pair token, mirroring the SAC test token's treatment: the OnRamp threads
+// pair token (mirroring the SAC test token's treatment: the OnRamp threads
 // the token fee's dest gas overhead into the on-wire execution gas limit, so
-// under-configuring it risks NOT_ENOUGH_GAS_FOR_CALL on EVM destinations.
+// under-configuring it risks NOT_ENOUGH_GAS_FOR_CALL on EVM destinations) and
+// seeds the lock box of every deployed shared lock-release pool (the box
+// holds all liquidity, never the pool).
 func (c *Chain) PostTokenDeploy(
 	env *deployment.Environment,
 	selector uint64,
@@ -617,6 +619,10 @@ func (c *Chain) PostTokenDeploy(
 		}
 	}
 	c.logger.Info().Int("poolCount", len(deployedRefs)).Msg("FeeQuoter BnM token fees applied (post-token-deploy)")
+
+	if err := c.fundLockReleasePoolLockBoxes(env, selector, deployedRefs); err != nil {
+		return fmt.Errorf("fund lock-release pool lock boxes: %w", err)
+	}
 	return nil
 }
 

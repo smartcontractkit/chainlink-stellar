@@ -1,10 +1,10 @@
 // This file holds the PostConnect wiring for the shared-pipeline stellar
-// burn-mint pools: each pool's remote updates toward its paired EVM
-// counterpart. The pairs themselves (one BnM token + burn-mint pool per
-// combo) are deployed by the shared TokenExpansion pipeline via the
-// StellarTokenAdapter sequences (see GetTokenExpansionConfigs); the EVM side
-// of every pair is wired by the shared ConfigureTokensForTransfers pipeline,
-// which runs before PostConnect.
+// pools (burn-mint and plain lock-release): each pool's remote updates
+// toward its paired EVM counterpart. The pairs themselves (one BnM token +
+// one pool per combo) are deployed by the shared TokenExpansion pipeline via
+// the StellarTokenAdapter sequences (see GetTokenExpansionConfigs); the EVM
+// side of every pair is wired by the shared ConfigureTokensForTransfers
+// pipeline, which runs before PostConnect.
 package ccvchain
 
 import (
@@ -45,8 +45,9 @@ var sharedPairAllowedFinalityU32 = func() uint32 {
 	return binary.BigEndian.Uint32(raw[:])
 }()
 
-// configureSharedBnmPools applies every shared-pipeline stellar burn-mint
-// pool's remote updates. The pipeline derives each pool's qualifier as
+// configureSharedBnmPools applies every shared-pipeline stellar pool's
+// (burn-mint or lock-release) remote updates. The pipeline derives each
+// pool's qualifier as
 // "TEST (A, B)::A" (A = this pool's own description, B = the counterpart's),
 // so the counterpart pool ref resolves deterministically by swapping the
 // instance suffix — no resolver heuristics.
@@ -71,7 +72,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 			continue
 		}
 		if string(ref.Type) != stellarccip.DevenvCatalogBurnMintTokenPoolType &&
-			string(ref.Type) != "LockReleaseTokenPool" {
+			string(ref.Type) != stellarccip.DevenvCatalogLockReleaseTokenPoolType {
 			continue
 		}
 		if ref.Version == nil {
@@ -104,14 +105,22 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 	evmAllowedPools := make(map[allowedPoolKey]struct{})
 
 	for _, ref := range allRefs {
-		if ref.ChainSelector != stellarSelector ||
-			string(ref.Type) != stellarccip.DevenvCatalogBurnMintTokenPoolType ||
-			ref.Version == nil {
+		if ref.ChainSelector != stellarSelector || ref.Version == nil {
+			continue
+		}
+		// Shared pipeline stellar pools: burn-mint and (plain) lock-release.
+		// Both implement the shared pool entrypoints the wiring below uses
+		// (ApplyChainUpdates, SetAllowedFinalityConfig); a lock-release pool's
+		// counterpart is always an EVM burn-mint pool (pairing rules forbid
+		// LR↔LR), which the EVM counterpart index already covers.
+		switch string(ref.Type) {
+		case stellarccip.DevenvCatalogBurnMintTokenPoolType, stellarccip.DevenvCatalogLockReleaseTokenPoolType:
+		default:
 			continue
 		}
 		poolStrkey, err := scval.HexToContractStrkey(ref.Address)
 		if err != nil {
-			return fmt.Errorf("convert burn-mint pool address %s: %w", ref.Address, err)
+			return fmt.Errorf("convert shared pool address %s: %w", ref.Address, err)
 		}
 		counterpartType, counterpartVersion, counterpartQualifier, err := sharedPairCounterpart(ref.Qualifier)
 		if err != nil {
@@ -125,7 +134,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 				c.logger.Warn().
 					Uint64("evmChain", rs).
 					Str("counterpart", counterpartQualifier).
-					Msg("No counterpart pool found for a shared stellar burn-mint pool")
+					Msg("No counterpart pool found for a shared stellar pool")
 				continue
 			}
 			// 2.0.0+ counterpart pools gate lockOrBurn on allowed finality the
@@ -139,7 +148,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 				c.logger.Warn().
 					Uint64("evmChain", rs).
 					Str("counterpart", counterpart.Qualifier).
-					Msg("No counterpart token found for a shared stellar burn-mint pool")
+					Msg("No counterpart token found for a shared stellar pool")
 				continue
 			}
 			remotePoolBytes, err := stellarccip.AddressBytesHex(counterpart, rs)
@@ -167,9 +176,9 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 		}
 		poolClient := tokenpoolbindings.NewTokenPoolClient(c.deployer, poolStrkey)
 		if err := poolClient.ApplyChainUpdates(context.Background(), updates, nil); err != nil {
-			return fmt.Errorf("apply chain updates for shared burn-mint pool %q: %w", ref.Qualifier, err)
+			return fmt.Errorf("apply chain updates for shared pool %q: %w", ref.Qualifier, err)
 		}
-		// Fast-finality admission (stellar side): the burn-mint pool defaults
+		// Fast-finality admission (stellar side): the pool defaults
 		// to wait-for-finality only, and lock_or_burn gates FTF requests on the
 		// allowed config (finality codec ensure_requested_finality_allowed),
 		// so combo-finality cases (block-depth-1 requests) would be rejected
@@ -178,7 +187,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 		// changeset (TokenFeeAdapter), which the devenv never runs — PostConnect
 		// applies it directly. Owner-gated EOA write; idempotent.
 		if err := poolClient.SetAllowedFinalityConfig(context.Background(), sharedPairAllowedFinalityU32); err != nil {
-			return fmt.Errorf("set allowed finality for shared burn-mint pool %q: %w", ref.Qualifier, err)
+			return fmt.Errorf("set allowed finality for shared pool %q: %w", ref.Qualifier, err)
 		}
 	}
 
