@@ -200,9 +200,11 @@ func (d *Deployer) extendTTL(ctx context.Context, keys []xdr.LedgerKey, extendTo
 		return nil, err
 	}
 
-	if _, err := d.signSubmitAndWait(ctx, tx, deadline, "extend "); err != nil {
+	_, txHash, err := d.signSubmitAndWait(ctx, tx, deadline, "extend ")
+	if err != nil {
 		return nil, fmt.Errorf("extend transaction failed: %w", err)
 	}
+	d.logSubmittedTx(txHash, "op", "extend TTL")
 	return d.liveUntilLedgers(ctx, keys)
 }
 

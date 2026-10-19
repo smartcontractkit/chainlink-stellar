@@ -77,7 +77,7 @@ func (a *StellarCCVTokenPoolOnchainAdapter) RemoveRemotePool() *cldf_ops.Sequenc
 			if !ok {
 				return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf("stellar chain %d not found in environment", input.ChainSelector)
 			}
-			dep, err := stellardeployment.NewDeployerFromChain(ch)
+			dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 			if err != nil {
 				return ccvdeploymentadapters.RemoveRemotePoolOutput{}, fmt.Errorf("stellar deployer from chain %d: %w", input.ChainSelector, err)
 			}
@@ -146,7 +146,7 @@ func (a *StellarCCVTokenPoolOnchainAdapter) ResolveRemotePoolAddress(e deploymen
 	if !ok {
 		return nil, fmt.Errorf("stellar chain %d not found in environment", chainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return nil, fmt.Errorf("stellar deployer from chain %d: %w", chainSelector, err)
 	}

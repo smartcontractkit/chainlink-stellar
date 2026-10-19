@@ -112,7 +112,7 @@ var StellarCurse = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -185,7 +185,7 @@ var StellarUncurse = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}

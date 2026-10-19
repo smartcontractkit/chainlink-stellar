@@ -112,7 +112,7 @@ var stellarDeployToken = cldf_ops.NewSequence(
 		if !ok {
 			return sequences.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("build stellar deployer: %w", err)
 		}
@@ -198,7 +198,7 @@ var stellarDeployTokenPool = cldf_ops.NewSequence(
 		if !ok {
 			return sequences.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("build stellar deployer: %w", err)
 		}

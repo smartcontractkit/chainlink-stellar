@@ -144,7 +144,7 @@ func TestBuildAndSubmitTransaction_BudgetExceededStickyAcrossOverload(t *testing
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, op)
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, sends.Load())
 	require.Len(t, declared, 3)

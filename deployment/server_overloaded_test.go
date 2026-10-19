@@ -55,7 +55,7 @@ func TestBuildAndSubmitTransaction_ServerOverloadedRetries(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	meta, err := d.buildAndSubmitTransaction(context.Background(), src, op)
+	meta, _, err := d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.EqualValues(t, 3, sends.Load(), "two TRY_AGAIN_LATER refusals should be followed by a third accepted submission")
@@ -88,7 +88,7 @@ func TestBuildAndSubmitTransaction_ServerOverloadedRetriesExhausted(t *testing.T
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, op)
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "server overloaded, try again later")
 	assert.EqualValues(t, 3, sends.Load(), "the refusal should be retried exactly maxAttempts times before giving up")

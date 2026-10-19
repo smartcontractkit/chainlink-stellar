@@ -161,7 +161,7 @@ func (a *StellarTokenAdapter) ManualRegistration() *cldf_ops.Sequence[tokens.Man
 			if !ok {
 				return sequences.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", input.ChainSelector)
 			}
-			dep, err := stellardeployment.NewDeployerFromChain(ch)
+			dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 			if err != nil {
 				return sequences.OnChainOutput{}, fmt.Errorf("stellar deployer from chain %d: %w", input.ChainSelector, err)
 			}
@@ -207,7 +207,7 @@ func (a *StellarTokenAdapter) ConfigureTokenForTransfersSequence() *cldf_ops.Seq
 			if !ok {
 				return sequences.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", input.ChainSelector)
 			}
-			dep, err := stellardeployment.NewDeployerFromChain(ch)
+			dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 			if err != nil {
 				return sequences.OnChainOutput{}, fmt.Errorf("stellar deployer from chain %d: %w", input.ChainSelector, err)
 			}

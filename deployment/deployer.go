@@ -11,6 +11,7 @@ import (
 	"time"
 
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -158,6 +159,13 @@ func WithTxnTimeBound(d time.Duration) DeployerOption {
 	}
 }
 
+// WithLogger sets an optional logger that records every submitted transaction
+// hash with the operation's context, so pipeline and test logs show what was
+// actually sent on chain.
+func WithLogger(l cldflogger.Logger) DeployerOption {
+	return func(dep *Deployer) { dep.logger = l }
+}
+
 // Deployer handles Soroban contract deployment and initialization.
 type Deployer struct {
 	rpcClient         stellarRPCClient
@@ -171,6 +179,9 @@ type Deployer struct {
 	// feeBumpFactor multiplies the simulation's MinResourceFee to derive the
 	// submitted fee (1.25 = 25% above minimum). Defaults to 1.25.
 	feeBumpFactor float64
+	// logger, when set, records every submitted transaction hash with the
+	// operation's context (see logSubmittedTx). Optional: nil stays silent.
+	logger cldflogger.Logger
 	// txnTimeBound is the validity window for every submitted transaction:
 	// waitForTransaction polls for exactly this duration, so the poll
 	// deadline and MaxTime stay in sync. Defaults to defaultTxnTimeBound.
@@ -287,10 +298,11 @@ func (d *Deployer) uploadWASM(ctx context.Context, wasmBytes []byte) (xdr.Hash, 
 	}
 
 	// Build and submit transaction
-	resultMeta, err := d.buildAndSubmitTransaction(ctx, sourceAccount, uploadOp)
+	resultMeta, txHash, err := d.buildAndSubmitTransaction(ctx, sourceAccount, uploadOp)
 	if err != nil {
 		return xdr.Hash{}, err
 	}
+	d.logSubmittedTx(txHash, "op", "upload contract wasm")
 
 	// Extract WASM hash from result
 	wasmHash, err := extractWASMHash(resultMeta)
@@ -360,10 +372,11 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 	}
 
 	// Build and submit transaction
-	resultMeta, err := d.buildAndSubmitTransaction(ctx, sourceAccount, createOp)
+	resultMeta, txHash, err := d.buildAndSubmitTransaction(ctx, sourceAccount, createOp)
 	if err != nil {
 		return "", err
 	}
+	d.logSubmittedTx(txHash, "op", "create contract instance")
 
 	// Extract contract ID from result
 	contractID, err := extractContractID(resultMeta)
@@ -408,10 +421,11 @@ func (d *Deployer) InvokeContract(ctx context.Context, contractID string, functi
 	}
 
 	// Build and submit transaction
-	resultMeta, err := d.buildAndSubmitTransaction(ctx, sourceAccount, invokeOp)
+	resultMeta, txHash, err := d.buildAndSubmitTransaction(ctx, sourceAccount, invokeOp)
 	if err != nil {
 		return nil, err
 	}
+	d.logSubmittedTx(txHash, "contract", contractID, "fn", functionName)
 
 	// Extract return value from result
 	returnVal, err := extractReturnValue(resultMeta)
@@ -640,19 +654,23 @@ func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccoun
 // submitMaxAttempts bounds the retry rounds.
 const submitMaxAttempts = 3
 
-func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, error) {
+// buildAndSubmitTransaction builds, signs, and submits a transaction, retrying
+// recoverable drift (see the typed errors below) from a fresh simulation.
+// submitMaxAttempts bounds the retry rounds. Returns the confirmed meta with
+// the submitted transaction's hash.
+func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation) (*xdr.TransactionMeta, string, error) {
 	prevBudgetExceeded := false
 	for attempt := 1; ; attempt++ {
-		meta, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt, prevBudgetExceeded)
+		meta, txHash, err := d.buildSimulateAndSubmitOnce(ctx, sourceAccount, op, attempt, prevBudgetExceeded)
 		if err == nil {
-			return meta, nil
+			return meta, txHash, nil
 		}
 		var rle *resourceLimitExceededError
 		var ifr *insufficientFeeRejectedError
 		var soe *serverOverloadedError
 		var tto *transactionTimedOutError
 		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == submitMaxAttempts {
-			return nil, err
+			return nil, "", err
 		}
 		// Resource inflation answers a budget-exceeded failure, and the flag is
 		// sticky: an intervening overload/fee rejection never executed, so the
@@ -665,20 +683,21 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 			// let the node drain its submission queue.
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, "", ctx.Err()
 			case <-time.After(time.Duration(attempt) * serverOverloadedBackoff):
 			}
 		}
 		sourceAccount, err = d.getSourceAccount(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get source account for retry: %w", err)
+			return nil, "", fmt.Errorf("failed to get source account for retry: %w", err)
 		}
 	}
 }
 
 // buildSimulateAndSubmitOnce performs a single build -> simulate -> (restore)
-// -> assemble -> submit round of buildAndSubmitTransaction.
-func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int, prevBudgetExceeded bool) (*xdr.TransactionMeta, error) {
+// -> assemble -> submit round of buildAndSubmitTransaction, returning the
+// confirmed meta with the submitted transaction's hash.
+func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount *txnbuild.SimpleAccount, op txnbuild.Operation, attempt int, prevBudgetExceeded bool) (*xdr.TransactionMeta, string, error) {
 	// Establish a single deadline shared by the transaction's time-bound and the
 	// confirmation poll, so they are always in sync. After a successful auto-restore
 	// path, the deadline is refreshed (restore can consume most of the initial window).
@@ -702,35 +721,35 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build transaction: %w", err)
+		return nil, "", fmt.Errorf("failed to build transaction: %w", err)
 	}
 
 	txXDR, err := tx.Base64()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get transaction XDR: %w", err)
+		return nil, "", fmt.Errorf("failed to get transaction XDR: %w", err)
 	}
 
 	simResult, err := d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
 		Transaction: txXDR,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("simulation failed: %w", err)
+		return nil, "", fmt.Errorf("simulation failed: %w", err)
 	}
 
 	if simResult.Error != "" {
-		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
+		return nil, "", fmt.Errorf("simulation error: %s", simResult.Error)
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
 	// them first, then rebuild and re-simulate the original transaction.
 	if d.autoRestore && simResult.RestorePreamble != nil {
 		if err := d.restoreFootprint(ctx, *simResult.RestorePreamble); err != nil {
-			return nil, fmt.Errorf("failed to restore expired ledger entries: %w", err)
+			return nil, "", fmt.Errorf("failed to restore expired ledger entries: %w", err)
 		}
 
 		sourceAccount, err = d.getSourceAccount(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get source account after restore: %w", err)
+			return nil, "", fmt.Errorf("failed to get source account after restore: %w", err)
 		}
 
 		// Restore + re-fetch can use most of the window started at function entry. Refresh so
@@ -747,85 +766,103 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 			},
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to rebuild transaction after restore: %w", err)
+			return nil, "", fmt.Errorf("failed to rebuild transaction after restore: %w", err)
 		}
 
 		txXDR, err = tx.Base64()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get transaction XDR after restore: %w", err)
+			return nil, "", fmt.Errorf("failed to get transaction XDR after restore: %w", err)
 		}
 
 		simResult, err = d.rpcClient.SimulateTransaction(ctx, protocolrpc.SimulateTransactionRequest{
 			Transaction: txXDR,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("simulation failed after restore: %w", err)
+			return nil, "", fmt.Errorf("simulation failed after restore: %w", err)
 		}
 
 		if simResult.Error != "" {
-			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
+			return nil, "", fmt.Errorf("simulation error after restore: %s", simResult.Error)
 		}
 		if simResult.RestorePreamble != nil {
 			// The RPC should capture all archived entries in one
 			// RestorePreamble; a second one means an RPC inconsistency — fail
 			// so the caller retries from a clean state.
-			return nil, fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
+			return nil, "", fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
 		}
 	}
 
 	assembledTx, err := d.assembleTransaction(ctx, tx, simResult, txnDeadline, attempt, prevBudgetExceeded)
 	if err != nil {
-		return nil, fmt.Errorf("failed to assemble transaction: %w", err)
+		return nil, "", fmt.Errorf("failed to assemble transaction: %w", err)
 	}
 
-	return d.signSubmitAndWait(ctx, assembledTx, txnDeadline, "")
+	meta, txHash, err := d.signSubmitAndWait(ctx, assembledTx, txnDeadline, "")
+	if err != nil {
+		return nil, "", err
+	}
+	return meta, txHash, nil
 }
 
 // signSubmitAndWait signs tx, submits it, and waits for confirmation until
 // deadline, which must match the transaction's MaxTime. label prefixes the
-// word "transaction" in errors (e.g. "restore ").
-func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transaction, deadline time.Time, label string) (*xdr.TransactionMeta, error) {
+// word "transaction" in errors (e.g. "restore "). The submitted transaction's
+// hash is returned alongside the confirmed meta.
+func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transaction, deadline time.Time, label string) (*xdr.TransactionMeta, string, error) {
 	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, tx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign %stransaction: %w", label, err)
+		return nil, "", fmt.Errorf("failed to sign %stransaction: %w", label, err)
 	}
 
 	signedXDR, err := signedTx.Base64()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signed %stransaction XDR: %w", label, err)
+		return nil, "", fmt.Errorf("failed to get signed %stransaction XDR: %w", label, err)
 	}
 
 	submitResult, err := d.rpcClient.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
 		Transaction: signedXDR,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to submit %stransaction: %w", label, err)
+		return nil, "", fmt.Errorf("failed to submit %stransaction: %w", label, err)
 	}
 
 	switch submitResult.Status {
 	case "PENDING", "DUPLICATE":
 		// Transaction was accepted, continue to wait for confirmation
 	case "TRY_AGAIN_LATER":
-		return nil, &serverOverloadedError{label: label}
+		return nil, "", &serverOverloadedError{label: label}
 	case "ERROR":
 		if submitResult.ErrorResultXDR != "" {
 			// txInsufficientFee: the ledger shifted between our simulation and
 			// inclusion (e.g. a sibling upload of identical WASM bytes).
 			// Retryable — never executed.
 			if isTxInsufficientFee(submitResult.ErrorResultXDR) {
-				return nil, &insufficientFeeRejectedError{
+				return nil, "", &insufficientFeeRejectedError{
 					label:     label,
 					resultXDR: submitResult.ErrorResultXDR,
 				}
 			}
-			return nil, fmt.Errorf("%stransaction rejected: %v (diagnostics: %v)", label, submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
+			return nil, "", fmt.Errorf("%stransaction rejected: %v (diagnostics: %v)", label, submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
 		}
-		return nil, fmt.Errorf("%stransaction rejected with status ERROR", label)
+		return nil, "", fmt.Errorf("%stransaction rejected with status ERROR", label)
 	default:
-		return nil, fmt.Errorf("unexpected %stransaction status: %s", label, submitResult.Status)
+		return nil, "", fmt.Errorf("unexpected %stransaction status: %s", label, submitResult.Status)
 	}
 
-	return d.waitForTransaction(ctx, submitResult.Hash, deadline)
+	meta, err := d.waitForTransaction(ctx, submitResult.Hash, deadline)
+	if err != nil {
+		return nil, "", err
+	}
+	return meta, submitResult.Hash, nil
+}
+
+// logSubmittedTx records a confirmed transaction's hash with the operation's
+// context. Silent when no logger is set (unit tests, silent callers).
+func (d *Deployer) logSubmittedTx(hash string, keysAndValues ...any) {
+	if d.logger == nil || hash == "" {
+		return
+	}
+	d.logger.Infow("submitted stellar transaction", append([]any{"hash", hash}, keysAndValues...)...)
 }
 
 // waitForTransaction polls until the transaction is confirmed or the deadline expires.
@@ -1023,9 +1060,11 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 		return fmt.Errorf("failed to build restore transaction: %w", err)
 	}
 
-	if _, err := d.signSubmitAndWait(ctx, tx, restoreDeadline, "restore "); err != nil {
+	_, txHash, err := d.signSubmitAndWait(ctx, tx, restoreDeadline, "restore ")
+	if err != nil {
 		return fmt.Errorf("restore transaction failed: %w", err)
 	}
+	d.logSubmittedTx(txHash, "op", "restore footprint")
 	return nil
 }
 
@@ -1511,8 +1550,10 @@ func (d *Deployer) DeploySACToken(ctx context.Context, asset xdr.Asset) (string,
 		SourceAccount: d.signer.Address(),
 	}
 
-	if _, err = d.buildAndSubmitTransaction(ctx, src, op); err != nil {
+	if _, txHash, err := d.buildAndSubmitTransaction(ctx, src, op); err != nil {
 		return "", fmt.Errorf("deploy SAC: %w", err)
+	} else {
+		d.logSubmittedTx(txHash, "op", "deploy SAC token")
 	}
 	return contractID, nil
 }
@@ -1599,8 +1640,10 @@ func (d *Deployer) SendNativePayment(ctx context.Context, destinationStrkey stri
 		Amount:      fmt.Sprintf("%d", stroops),
 		Asset:       txnbuild.NativeAsset{},
 	}
-	if _, err = d.buildAndSubmitTransaction(ctx, src, payment); err != nil {
+	if _, txHash, err := d.buildAndSubmitTransaction(ctx, src, payment); err != nil {
 		return err
+	} else {
+		d.logSubmittedTx(txHash, "op", "native payment", "destination", destinationStrkey)
 	}
 	return nil
 }
