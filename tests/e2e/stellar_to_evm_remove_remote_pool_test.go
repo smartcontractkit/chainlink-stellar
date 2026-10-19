@@ -3,6 +3,7 @@ package e2e_tests
 import (
 	"bytes"
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 	"testing"
@@ -126,11 +127,16 @@ func TestStellarToEVMTCAPIBnmTokenTransferRemoveRemotePool(t *testing.T) {
 		"the wrapped pool revert must be the release gate's InvalidSourcePoolAddress, got: 0x%x", poolRevert)
 }
 
-// decodeEVMTokenHandlingError unpacks the EVM OffRamp's
-// TokenHandlingError(address, bytes) from an ExecutionStateChanged FAILURE's
-// return data (the EVM OffRamp wraps pool releaseOrMint reverts in it —
-// OffRamp.sol `_releaseOrMintSingleToken` try/catch) and returns the wrapped
-// pool revert bytes.
+// decodeEVMTokenHandlingError extracts the wrapped pool revert bytes from an
+// ExecutionStateChanged FAILURE's return data (the EVM OffRamp wraps pool
+// releaseOrMint reverts in TokenHandlingError(address, bytes) — OffRamp.sol
+// `_releaseOrMintSingleToken` try/catch). The OffRamp's `_callWithGasBuffer`
+// caps the recorded revert at Internal.MAX_RET_BYTES (selector + 4 words),
+// so the wrapped revert is truncated: the inner length prefix can declare
+// more bytes than are present — typically only the inner error's 4-byte
+// selector plus the first argument word survive. Walk the head manually (a
+// full abi unpack rejects the capped data) and return the bytes actually
+// present; callers must only rely on the leading 4-byte inner selector.
 func decodeEVMTokenHandlingError(returnData []byte) ([]byte, error) {
 	offRampABI, err := abi.JSON(strings.NewReader(offrampoperations.OffRampABI))
 	if err != nil {
@@ -143,16 +149,18 @@ func decodeEVMTokenHandlingError(returnData []byte) ([]byte, error) {
 	if len(returnData) < 4 || !bytes.Equal(returnData[:4], tokenErr.ID[:4]) {
 		return nil, fmt.Errorf("return data 0x%x is not TokenHandlingError", returnData)
 	}
-	vals, err := tokenErr.Inputs.Unpack(returnData[4:])
-	if err != nil {
-		return nil, fmt.Errorf("unpack TokenHandlingError: %w", err)
+	// Args region after the selector: [0:32] the target address head, then
+	// the offset of the dynamic bytes field (always 64 for this shape).
+	if len(returnData) < 4+64 {
+		return nil, fmt.Errorf("TokenHandlingError head truncated: %d bytes", len(returnData))
 	}
-	if len(vals) != 2 {
-		return nil, fmt.Errorf("TokenHandlingError unpacked %d values, want 2", len(vals))
+	offset := new(big.Int).SetBytes(returnData[4+32 : 4+64]).Uint64()
+	if offset != 64 {
+		return nil, fmt.Errorf("TokenHandlingError bytes offset %d, want 64", offset)
 	}
-	poolRevert, ok := vals[1].([]byte)
-	if !ok {
-		return nil, fmt.Errorf("TokenHandlingError err field is %T, want []byte", vals[1])
+	inner := returnData[4+offset:]
+	if len(inner) < 32+4 {
+		return nil, fmt.Errorf("TokenHandlingError wrapped revert missing (length word + selector)")
 	}
-	return poolRevert, nil
+	return inner[32:], nil
 }
