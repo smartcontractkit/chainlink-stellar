@@ -69,11 +69,12 @@ func (AddressResolver) GetCommitteeCCV(ds datastore.DataStore, chainSelector uin
 func (AddressResolver) GetToken(ds datastore.DataStore, chainSelector uint64, poolRef datastore.AddressRef) (protocol.UnknownAddress, error) {
 	var tokenRef stellarccip.DatastoreSorobanContractRef
 	switch string(poolRef.Type) {
-	case devenvcommon.LockReleaseTokenPoolType:
-		tokenRef = stellarccip.DevenvTestTokenDatastoreRef()
-	case devenvcommon.BurnMintTokenPoolType:
-		// Shared-pipeline burn-mint pools wrap their own qualified BnM
-		// token (one token per pool, keyed by the pool's qualifier).
+	case devenvcommon.LockReleaseTokenPoolType, devenvcommon.BurnMintTokenPoolType:
+		// Shared-pipeline pools — burn-mint AND lock-release — wrap their
+		// own qualified BnM token (one token per pool, keyed by the pool's
+		// qualifier). The bespoke siloed/legacy pools carry the native
+		// types ("lock_release_token_pool"/"siloed_lock_release_token_pool")
+		// and never reach this case.
 		tokenRef = stellarccip.BnmTokenDatastoreRef()
 		tokenRef.Qualifier = poolRef.Qualifier
 	default:

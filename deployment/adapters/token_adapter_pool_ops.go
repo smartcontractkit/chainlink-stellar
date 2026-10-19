@@ -106,7 +106,7 @@ func collectPoolOwnershipRefs(b cldf_ops.Bundle, deps stellardeps.StellarDeps, d
 		return nil, fmt.Errorf("normalize pool address: %w", err)
 	}
 	refs := []datastore.AddressRef{normalizePoolRefType(input.TokenPoolRef)}
-	switch string(input.TokenPoolRef.Type) {
+	switch string(refs[0].Type) {
 	case lrops.ContractType:
 		lockboxRef, err := stellarccip.TokenLockBoxDatastoreRef(input.TokenPoolRef.Qualifier).LookupAddressRef(ds, input.ChainSelector)
 		if err != nil {
@@ -389,11 +389,15 @@ func isRateLimitPoolType(t datastore.ContractType) bool {
 
 // normalizePoolRefType maps a pool ref's type to the ops-package type that
 // type-keyed dispatch (ownership reads, pool-type checks) keys on: the shared
-// pipeline's pool refs carry the devenv catalog name "BurnMintTokenPool"
-// while the ops packages name the same pool "BurnMintPool".
+// pipeline's pool refs carry the devenv catalog names "BurnMintTokenPool" /
+// "LockReleaseTokenPool" while the ops packages name the same pools
+// "BurnMintPool" / "LockReleasePool".
 func normalizePoolRefType(ref datastore.AddressRef) datastore.AddressRef {
-	if string(ref.Type) == stellarccip.DevenvCatalogBurnMintTokenPoolType {
+	switch string(ref.Type) {
+	case stellarccip.DevenvCatalogBurnMintTokenPoolType:
 		ref.Type = datastore.ContractType(bmpops.ContractType)
+	case stellarccip.DevenvCatalogLockReleaseTokenPoolType:
+		ref.Type = datastore.ContractType(lrops.ContractType)
 	}
 	return ref
 }
