@@ -1,6 +1,7 @@
 package e2e_tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -24,9 +25,11 @@ import (
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/chainreg"
 	devenvcommon "github.com/smartcontractkit/chainlink-ccv/build/devenv/common"
+	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/tests/e2e/tcapi/token_transfer"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
+	"github.com/smartcontractkit/chainlink-common/pkg/utils/tests"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -424,29 +427,145 @@ func runRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ET
 	return nil
 }
 
-// evmRateLimitRevertHit reports whether an EVM source send error carries one
-// of the pool's rate-limit custom-error selectors. A rate-limit rejection
-// reverts the send transaction at lockOrBurn, and the confirm layer embeds the
-// raw revert data in the returned error's text, so the "0x"-prefixed 4-byte
-// selector (derived from the shared 2.0.0 TokenPool ABI) is matchable there —
-// the string-substring analog of the stellar IsContractErrorCode pattern.
-func evmRateLimitRevertHit(sendErr error) bool {
-	if sendErr == nil {
-		return false
+// bnmInboundRateLimitCase returns the inbound rate-limit-exhaustion case for
+// one direction: a capacity-1/rate-0 inbound bucket on the destination pool
+// for the remote rejects execution at the pool's inbound rate-limit gate
+// (the send and verification are unaffected — the gate is destination-side);
+// nothing is delivered; the disabled config is restored on test cleanup.
+func bnmInboundRateLimitCase(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutputPath string, src, dst uint64) tcapi.TestCase {
+	srcIsStellar := src == env.SourceChainDetails.ChainSelector
+	combo, found := firstIs17Combination(t, lib, configOutputPath, src, dst)
+	return bnmTestCase{
+		name:    "token transfer inbound rate limit exceeded",
+		prereqs: func(context.Context) bool { return found },
+		run: func(ctx context.Context) (tcapi.RunResult, error) {
+			if !found {
+				return tcapi.RunResult{}, fmt.Errorf("no 2.0.0×2.0.0 pair combo in this environment")
+			}
+			return tcapi.RunResult{}, runInboundRateLimitExhaustion(ctx, t, env, lib, src, dst, srcIsStellar, combo)
+		},
 	}
+}
+
+// runInboundRateLimitExhaustion sets the tight inbound bucket on the
+// destination pool, sends, and asserts the execution rejection at the pool's
+// inbound rate-limit gate (311 = TokenMaxCapacityExceeded, 312 =
+// TokenRateLimitReached; capacity 1 with these amounts always trips 311). On
+// a stellar destination a pool failure reverts the entire execute transaction
+// without an execution event, so the rejection is proven by a direct manual
+// execute of the verified message; on an EVM destination the OffRamp catches
+// the pool failure and records a retryable FAILURE whose ReturnData carries
+// TokenHandlingError wrapping the pool's rate-limit revert.
+func runInboundRateLimitExhaustion(ctx context.Context, t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, src, dst uint64, srcIsStellar bool, combo devenvcommon.TokenCombination) error {
+	args := bnmTokenTransferArgs(env, src)
+	poolAddr, err := resolveComboPoolAddress(lib, dst, combo.RemotePoolAddressRef())
+	if err != nil {
+		return err
+	}
+	if srcIsStellar {
+		// Destination pool is EVM: the send succeeds and the destination
+		// records FAILURE; the return data must decode to the exact pool
+		// rate-limit rejection — a failure at an earlier run stage would
+		// prove nothing about the inbound gate.
+		if err := applyEVMPoolInboundRateLimit(env, dst, src, poolAddr, true); err != nil {
+			return err
+		}
+		t.Cleanup(func() {
+			if err := applyEVMPoolInboundRateLimit(env, dst, src, poolAddr, false); err != nil {
+				zerolog.Ctx(ctx).Warn().Err(err).Msg("failed to restore disabled inbound rate limit in cleanup")
+			}
+		})
+		post := token_transfer.TokenTransfer(lib, src, dst, combo, 0, true, "inbound rate limit after", args)
+		postRes, postErr := post.Run(ctx)
+		if postErr == nil {
+			return fmt.Errorf("execution must be rejected at the pool inbound rate-limit gate")
+		}
+		if postRes.Dest.Event.State != cciptestinterfaces.ExecutionStateFailure {
+			return fmt.Errorf("the destination must record a FAILURE at the inbound gate; a send/observation-stage failure would prove nothing (run error: %v)", postErr)
+		}
+		poolRevert, decErr := decodeEVMTokenHandlingError(postRes.Dest.Event.ReturnData)
+		if decErr != nil {
+			return fmt.Errorf("FAILURE return data must be TokenHandlingError wrapping the pool revert (run error: %v): %w", postErr, decErr)
+		}
+		if !evmRateLimitRevertDataHit(poolRevert) {
+			return fmt.Errorf("execute failed, but not at the pool inbound rate-limit gate (TokenMaxCapacityExceeded/TokenRateLimitReached), pool revert: 0x%x (run error: %v)", poolRevert, postErr)
+		}
+		return nil
+	}
+	// Destination pool is stellar: a pool failure reverts the whole execute
+	// transaction with no execution event, so the rejection is proven by a
+	// manual execute of the verified message (see
+	// manuallyExecuteEVMToStellarTransfer).
+	if err := applyStellarPoolInboundRateLimit(ctx, env, src, poolAddr, true); err != nil {
+		return err
+	}
+	t.Cleanup(func() {
+		if err := applyStellarPoolInboundRateLimit(context.Background(), env, src, poolAddr, false); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("failed to restore disabled inbound rate limit in cleanup")
+		}
+	})
+	execErr := manuallyExecuteEVMToStellarTransfer(ctx, t, env, lib, src, dst, combo, args.TransferAmount)
+	if execErr == nil {
+		return fmt.Errorf("execution must be rejected at the pool inbound rate-limit gate")
+	}
+	if !stellarops.IsContractErrorCode(execErr, tokenpoolbindings.CCIPErrorTokenMaxCapacityExceeded) &&
+		!stellarops.IsContractErrorCode(execErr, tokenpoolbindings.CCIPErrorTokenRateLimitReached) {
+		return fmt.Errorf("execute failed, but not at the pool inbound rate-limit gate (contract error 311/312): %w", execErr)
+	}
+	return nil
+}
+
+// evmRateLimitErrorSelectors returns the 4-byte selectors of the EVM pool's
+// rate-limit custom errors (TokenMaxCapacityExceeded, TokenRateLimitReached)
+// from the shared 2.0.0 TokenPool ABI.
+func evmRateLimitErrorSelectors() [][4]byte {
 	parsed, err := abi.JSON(strings.NewReader(evmtokenpool.TokenPoolABI))
 	if err != nil {
 		// The ABI is a compile-time constant; a parse failure is a bug, and
 		// treating it as "no hit" would silently loosen the rejection check.
 		panic(fmt.Sprintf("parse TokenPool ABI: %v", err))
 	}
-	msg := sendErr.Error()
+	var selectors [][4]byte
 	for _, name := range []string{"TokenMaxCapacityExceeded", "TokenRateLimitReached"} {
 		e, ok := parsed.Errors[name]
 		if !ok {
 			panic(fmt.Sprintf("error %q not found in TokenPool ABI", name))
 		}
-		if strings.Contains(msg, hexutil.Encode(e.ID[:4])) {
+		var sel [4]byte
+		copy(sel[:], e.ID[:4])
+		selectors = append(selectors, sel)
+	}
+	return selectors
+}
+
+// evmRateLimitRevertHit reports whether an EVM source send error carries one
+// of the pool's rate-limit custom-error selectors. A rate-limit rejection
+// reverts the send transaction at lockOrBurn, and the confirm layer embeds the
+// raw revert data in the returned error's text, so the "0x"-prefixed 4-byte
+// selector is matchable there — the string-substring analog of the stellar
+// IsContractErrorCode pattern.
+func evmRateLimitRevertHit(sendErr error) bool {
+	if sendErr == nil {
+		return false
+	}
+	msg := sendErr.Error()
+	for _, sel := range evmRateLimitErrorSelectors() {
+		if strings.Contains(msg, hexutil.Encode(sel[:])) {
+			return true
+		}
+	}
+	return false
+}
+
+// evmRateLimitRevertDataHit reports whether raw EVM pool revert data carries
+// one of the pool's rate-limit custom-error selectors (the wrapped revert a
+// destination FAILURE records inside TokenHandlingError).
+func evmRateLimitRevertDataHit(revertData []byte) bool {
+	if len(revertData) < 4 {
+		return false
+	}
+	for _, sel := range evmRateLimitErrorSelectors() {
+		if bytes.Equal(revertData[:4], sel[:]) {
 			return true
 		}
 	}
@@ -519,4 +638,106 @@ func applyEVMPoolRateLimit(env *helpers.E2ETestEnv, src, dst uint64, poolAddr st
 			}},
 		})
 	return err
+}
+
+// applyStellarPoolInboundRateLimit sets (tight=true) or clears (tight=false)
+// the inbound rate-limit bucket of the combo's stellar pool for the remote.
+func applyStellarPoolInboundRateLimit(ctx context.Context, env *helpers.E2ETestEnv, remote uint64, poolAddr string, tight bool) error {
+	poolStrkey, err := scval.HexToContractStrkey(poolAddr)
+	if err != nil {
+		return err
+	}
+	poolClient := tokenpoolbindings.NewTokenPoolClient(env.Deployer, poolStrkey)
+	var inbound tokenpoolbindings.RateLimitConfig
+	if tight {
+		inbound = tokenpoolbindings.RateLimitConfig{IsEnabled: true, Capacity: scval.U128{Lo: 1}}
+	}
+	return poolClient.SetRateLimitConfig(ctx, env.Deployer.SignerAddress(), remote,
+		tokenpoolbindings.RateLimitConfig{}, inbound, false)
+}
+
+// applyEVMPoolInboundRateLimit sets (tight=true) or clears (tight=false) the
+// inbound rate-limit bucket of the combo's EVM pool for the remote.
+func applyEVMPoolInboundRateLimit(env *helpers.E2ETestEnv, poolChain, remote uint64, poolAddr string, tight bool) error {
+	evmChain, ok := env.CLDFEnv.BlockChains.EVMChains()[poolChain]
+	if !ok {
+		return fmt.Errorf("EVM chain %d not found in environment", poolChain)
+	}
+	// All Config fields explicit: nil *big.Int pointers panic the ABI packer.
+	inbound := evmtokenpool.Config{Capacity: big.NewInt(0), Rate: big.NewInt(0)}
+	if tight {
+		inbound = evmtokenpool.Config{IsEnabled: true, Capacity: big.NewInt(1), Rate: big.NewInt(0)}
+	}
+	outbound := evmtokenpool.Config{Capacity: big.NewInt(0), Rate: big.NewInt(0)}
+	_, err := cldf_ops.ExecuteOperation(env.CLDFEnv.OperationsBundle, evmtokenpool.SetRateLimitConfig, evmChain,
+		evmcontract.FunctionInput[[]evmtokenpool.RateLimitConfigArgs]{
+			Address:       common.HexToAddress(poolAddr),
+			ChainSelector: poolChain,
+			Args: []evmtokenpool.RateLimitConfigArgs{{
+				RemoteChainSelector:       remote,
+				OutboundRateLimiterConfig: outbound,
+				InboundRateLimiterConfig:  inbound,
+			}},
+		})
+	return err
+}
+
+// manuallyExecuteEVMToStellarTransfer sends an EVM→Stellar token transfer,
+// confirms the source send, waits for verification and indexing, then directly
+// executes the verified message (the permissionless execute path) and returns
+// the raw execute error. A stellar pool failure reverts the entire execute
+// transaction without an execution event — the relayer's exec-event wait
+// timing out would be indistinguishable from a source-side failure — so a
+// destination-gate rejection is proven by executing inline (the same recipe
+// as the remove-remote-pool and permissionless-exec tests).
+func manuallyExecuteEVMToStellarTransfer(ctx context.Context, t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, src, dst uint64, combo devenvcommon.TokenCombination, amount *big.Int) error {
+	_, srcToken, err := rateLimitSource(ctx, env, lib, src, combo)
+	if err != nil {
+		return err
+	}
+	receiver, err := env.Chains[dst].GetEOAReceiverAddress()
+	if err != nil {
+		return err
+	}
+	evmSrc := env.Chains[src]
+	sentEvent, err := evmSrc.SendMessage(ctx, dst,
+		cciptestinterfaces.MessageFields{
+			Receiver:    receiver,
+			TokenAmount: cciptestinterfaces.TokenAmount{Amount: amount, TokenAddress: srcToken},
+		},
+		cciptestinterfaces.MessageOptions{}, messageV3Version)
+	if err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+	if _, err := evmSrc.ConfirmSendOnSource(ctx, dst,
+		cciptestinterfaces.MessageEventKey{MessageID: sentEvent.MessageID}, evmSentTimeout); err != nil {
+		return fmt.Errorf("wait for sent event: %w", err)
+	}
+	defaultAggregatorClient := env.AggregatorClients[devenvcommon.DefaultCommitteeVerifierQualifier]
+	if defaultAggregatorClient == nil {
+		return fmt.Errorf("default committee verifier aggregator client not found")
+	}
+	testCtx := e2e.NewTestingContext(t, t.Context(), env.Chains, defaultAggregatorClient, env.IndexerMonitor)
+	result, err := testCtx.AssertMessage(protocol.Bytes32(sentEvent.MessageID), e2e.AssertMessageOptions{
+		TickInterval:            1 * time.Second,
+		ExpectedVerifierResults: combo.ExpectedVerifierResults(),
+		Timeout:                 tests.WaitTimeout(t),
+		AssertVerifierLogs:      false,
+		AssertExecutorLogs:      false,
+	})
+	if err != nil {
+		return fmt.Errorf("observe message: %w", err)
+	}
+	verifs := result.IndexedVerifications.Results
+	if len(verifs) == 0 {
+		return fmt.Errorf("no indexed verifications to assemble manual-execute arguments")
+	}
+	ccvs := make([]protocol.UnknownAddress, 0, len(verifs))
+	verifierResults := make([][]byte, 0, len(verifs))
+	for _, v := range verifs {
+		ccvs = append(ccvs, v.VerifierResult.VerifierDestAddress)
+		verifierResults = append(verifierResults, v.VerifierResult.CCVData)
+	}
+	_, execErr := env.Chains[dst].ManuallyExecuteMessage(ctx, verifs[0].VerifierResult.Message, 0, ccvs, verifierResults)
+	return execErr
 }

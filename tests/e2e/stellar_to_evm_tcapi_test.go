@@ -39,9 +39,12 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
 	}
-	// The two direction funcs run concurrently; their cases are independent
-	// (separate lanes/pools, messageID-keyed assertions).
-	t.Parallel()
+	// Runs sequentially with TestEVMToStellarTCAPI by design (the basic CI leg
+	// runs both in one process): both suites share the Stellar deployer
+	// account, and each env's deployer tracks the account sequence
+	// independently — overlapping writes (this suite's sends vs. the other's
+	// receiver-policy setup/cleanup) produce bad-sequence rejections the
+	// deployer does not retry (deployment/deployer.go).
 
 	configOutputPath := "../env/env-stellar-evm-out.toml"
 	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
@@ -122,6 +125,16 @@ func TestStellarToEVMTCAPIBnmTokenTransferRateLimit(t *testing.T) {
 	src := env.SourceChainDetails.ChainSelector // Stellar
 	dst := env.DestChainDetails.ChainSelector   // EVM
 	runBnmTokenTransferCase(t, bnmRateLimitCase(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit runs the inbound
+// rate-limit exhaustion error path on the Stellar→EVM lane (see
+// bnmInboundRateLimitCase).
+func TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCase(t, bnmInboundRateLimitCase(t, env, lib, configOutputPath, src, dst))
 }
 
 // TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver runs the
