@@ -25,8 +25,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer, error) {
-	return stellardeployment.NewDeployerFromChain(ch)
+func stellarDeployerFromChain(ch cldfstellar.Chain, opts ...stellardeployment.DeployerOption) (*stellardeployment.Deployer, error) {
+	return stellardeployment.NewDeployerFromChain(ch, opts...)
 }
 
 func timelockMinDelay(in deploy.MCMSDeploymentConfigPerChainWithAddress) (uint64, error) {
@@ -58,7 +58,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 		qual := mcmsutil.QualifierStr(in.Qualifier)
 		label := mcmsutil.QualifierStr(in.Label)
 
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -179,7 +179,7 @@ var FinalizeStellarDeployMCMS = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -280,7 +280,7 @@ var UpdateStellarMCMSConfig = cldfops.NewSequence(
 		if !ok {
 			return output, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return output, err
 		}

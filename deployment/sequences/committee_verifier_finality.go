@@ -48,7 +48,7 @@ var StellarSetCommitteeVerifierFinality = cldfops.NewSequence(
 		if !ok {
 			return output, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return output, fmt.Errorf("stellar deployer from chain: %w", err)
 		}

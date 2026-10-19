@@ -35,7 +35,7 @@ func (StellarMCMSReader) GetChainMetadata(e cldf.Environment, chainSelector uint
 	if !ok {
 		return mcmstypes.ChainMetadata{}, fmt.Errorf("stellar chain %d not in environment", chainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return mcmstypes.ChainMetadata{}, fmt.Errorf("deployer from chain: %w", err)
 	}
