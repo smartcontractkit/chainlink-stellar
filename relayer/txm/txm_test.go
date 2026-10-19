@@ -1957,13 +1957,19 @@ func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
 // --- Fee seeding ---
 
 // feeSeedingHarness drives the fee seeding tests: fee stats and the latest ledger can
-// be changed from the test goroutine without racing the txm, sends are counted, and
-// txs never confirm so advancing the ledger past MaxLedger forces a rebroadcast.
+// be changed from the test goroutine without racing the txm, every sent bid is recorded,
+// and txs never confirm so advancing the ledger past MaxLedger forces a rebroadcast.
 type feeSeedingHarness struct {
 	mock         *mockRPCClient
 	fees         atomic.Pointer[protocolrpc.GetFeeStatsResponse]
 	latestLedger atomic.Uint32
-	sends        atomic.Int32
+	// rejectNextSend, when set, fails the next send with tx_insufficient_fee and replaces
+	// the fee stats with the pointed value before the txm reads them for the bump.
+	rejectNextSend  atomic.Pointer[protocolrpc.GetFeeStatsResponse]
+	insufficientFee protocolrpc.SendTransactionResponse
+
+	mu   sync.Mutex
+	bids []int64 // per-op inclusion fee of every envelope sent, in order
 }
 
 func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *feeSeedingHarness {
@@ -1971,6 +1977,11 @@ func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *f
 	h := &feeSeedingHarness{}
 	h.fees.Store(&fees)
 	h.latestLedger.Store(1000)
+	insufficientFeeXDR, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxInsufficientFee},
+	})
+	require.NoError(t, err)
+	h.insufficientFee = protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insufficientFeeXDR}
 	h.mock = &mockRPCClient{
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
 			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
@@ -1980,8 +1991,18 @@ func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *f
 			return protocolrpc.GetLatestLedgerResponse{Sequence: h.latestLedger.Load()}, nil
 		},
 		getFeeStatsHook: func() (protocolrpc.GetFeeStatsResponse, error) { return *h.fees.Load(), nil },
-		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
-			h.sends.Add(1)
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			bid, err := inclusionFeeOf(req)
+			if err != nil {
+				t.Errorf("decode sent envelope: %v", err)
+			}
+			h.mu.Lock()
+			h.bids = append(h.bids, bid)
+			h.mu.Unlock()
+			if lower := h.rejectNextSend.Swap(nil); lower != nil {
+				h.fees.Store(lower)
+				return h.insufficientFee, nil
+			}
 			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
 		},
 	}
@@ -1990,11 +2011,23 @@ func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *f
 
 func (h *feeSeedingHarness) setFees(fees protocolrpc.GetFeeStatsResponse) { h.fees.Store(&fees) }
 
-// startTxm starts a txm with FeeStatsPollInterval 0 (fetch on every bid) and a fast confirm loop.
+func (h *feeSeedingHarness) rejectNextSendWith(fees protocolrpc.GetFeeStatsResponse) {
+	h.rejectNextSend.Store(&fees)
+}
+
+func (h *feeSeedingHarness) sentBids() []int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]int64(nil), h.bids...)
+}
+
+// startTxm starts a txm with FeeStatsPollInterval 0 (fetch on every bid) and fast confirm
+// and submit-retry loops.
 func (h *feeSeedingHarness) startTxm(t *testing.T, cfg config.TxManagerConfig) *StellarTxm {
 	t.Helper()
 	cfg.FeeStatsPollInterval = clconfig.MustNewDuration(0)
 	cfg.ConfirmPollInterval = clconfig.MustNewDuration(50 * time.Millisecond)
+	cfg.SubmitRetryDelay = clconfig.MustNewDuration(10 * time.Millisecond)
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(h.mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
@@ -2002,44 +2035,44 @@ func (h *feeSeedingHarness) startTxm(t *testing.T, cfg config.TxManagerConfig) *
 	return txm
 }
 
-// broadcast enqueues a noop invoke, waits for its first send and returns the per-op inclusion fee bid.
-func (h *feeSeedingHarness) broadcast(t *testing.T, txm *StellarTxm) (txID string, inclusionFee int64) {
+// waitForSends waits until n envelopes were sent and returns their bids in order.
+func (h *feeSeedingHarness) waitForSends(t *testing.T, n int) []int64 {
 	t.Helper()
-	before := h.sends.Load()
+	require.Eventually(t, func() bool { return len(h.sentBids()) >= n },
+		5*time.Second, 20*time.Millisecond, "waiting for send %d", n)
+	return h.sentBids()
+}
+
+// broadcast enqueues a noop invoke, waits for its first send and returns the bid.
+func (h *feeSeedingHarness) broadcast(t *testing.T, txm *StellarTxm) (txID string, bid int64) {
+	t.Helper()
+	before := len(h.sentBids())
 	txID, err := txm.Enqueue(t.Context(), noopInvokeRequest())
 	require.NoError(t, err)
-	return txID, h.waitForSend(t, before+1)
+	return txID, h.waitForSends(t, before+1)[before]
 }
 
 // expire moves the ledger past every MaxLedger so the confirm loop rebroadcasts, and
-// returns the inclusion fee bid by the next send.
+// returns the bid of the next send.
 func (h *feeSeedingHarness) expire(t *testing.T) int64 {
 	t.Helper()
-	before := h.sends.Load()
+	before := len(h.sentBids())
 	h.latestLedger.Add(1000)
-	return h.waitForSend(t, before+1)
+	return h.waitForSends(t, before+1)[before]
 }
 
-func (h *feeSeedingHarness) waitForSend(t *testing.T, n int32) int64 {
-	t.Helper()
-	require.Eventually(t, func() bool { return h.sends.Load() >= n },
-		5*time.Second, 20*time.Millisecond, "waiting for send %d", n)
-	return lastSentInclusionFee(t, h.mock)
-}
-
-// lastSentInclusionFee returns the per-op inclusion fee of the last envelope the mock received.
-func lastSentInclusionFee(t *testing.T, mock *mockRPCClient) int64 {
-	t.Helper()
-	req := mock.lastSendReq.Load()
-	require.NotNil(t, req)
+// inclusionFeeOf returns the per-op inclusion fee of a sent envelope.
+func inclusionFeeOf(req protocolrpc.SendTransactionRequest) (int64, error) {
 	var env xdr.TransactionEnvelope
-	require.NoError(t, xdr.SafeUnmarshalBase64(req.Transaction, &env))
+	if err := xdr.SafeUnmarshalBase64(req.Transaction, &env); err != nil {
+		return 0, err
+	}
 	tx := env.MustV1().Tx
 	fee := int64(tx.Fee)
 	if tx.Ext.V == 1 && tx.Ext.SorobanData != nil {
 		fee -= int64(tx.Ext.SorobanData.ResourceFee)
 	}
-	return fee / int64(len(tx.Operations))
+	return fee / int64(len(tx.Operations)), nil
 }
 
 func noopInvokeRequest() TxRequest {
@@ -2117,6 +2150,34 @@ func TestStellarTxm_FeePercentilesConfigurable(t *testing.T) {
 			_, fee := h.broadcast(t, txm)
 			assert.Equal(t, tc.wantFirst, fee, "first send")
 			assert.Equal(t, tc.wantResend, h.expire(t), "rebroadcast")
+		})
+	}
+}
+
+func TestStellarTxm_InsufficientFeeBumpBidsRebroadcastPercentile(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg                 config.TxManagerConfig
+		wantFirst, wantBump int64
+	}{
+		"default peak P99":           {config.TxManagerConfig{}, 1_000_000, 26_000_000},
+		"P50 then P90 override":      {config.TxManagerConfig{FirstSendFeePercentile: ptr("P50"), RebroadcastFeePercentile: ptr("P90")}, 100, 1_000_000},
+		"clamped at MaxInclusionFee": {config.TxManagerConfig{MaxInclusionFee: ptr(int64(5_000_000))}, 1_000_000, 5_000_000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+			txm := h.startTxm(t, tc.cfg)
+
+			// Core rejects the first envelope. The sample the txm reads for the bump is
+			// already back at base, so only the retained peak can set the bumped bid.
+			h.rejectNextSendWith(feeStats(100, 100, 100))
+			_, first := h.broadcast(t, txm)
+			assert.Equal(t, tc.wantFirst, first, "first send")
+			assert.Equal(t, tc.wantBump, h.waitForSends(t, 2)[1], "bid after tx_insufficient_fee")
 		})
 	}
 }
