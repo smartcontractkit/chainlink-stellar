@@ -23,8 +23,10 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	bmpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/burn_mint_pool"
+	lrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 )
 
 // configureFixtures holds the identities one configure/registration test needs.
@@ -37,6 +39,8 @@ type configureFixtures struct {
 	deployer string
 	timelock string
 	third    string
+	// lockBox backs the lock-release ownership-ref collection fixture.
+	lockBox string
 	// evmRemote is a 20-byte EVM-style remote pool address; evmRemoteToken likewise.
 	evmRemote      []byte
 	evmRemoteToken []byte
@@ -51,6 +55,7 @@ func newConfigureFixtures(t *testing.T) configureFixtures {
 		deployer: stellarutil.MustGenerateMockContractID("deployer", "cfg-test-deployer"),
 		timelock: stellarutil.MustGenerateMockContractID("deployer", "cfg-test-timelock"),
 		third:    stellarutil.MustGenerateMockContractID("deployer", "cfg-test-third"),
+		lockBox:  stellarutil.MustGenerateMockContractID("deployer", "cfg-test-lock-box"),
 	}
 	var err error
 	f.poolHex, err = stellarutil.StrkeyToHex(f.pool)
@@ -867,5 +872,71 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, refs, 1)
 		require.Equal(t, bmpops.ContractType, string(refs[0].Type), "the ref must be normalized for owner dispatch")
+	})
+
+	// LockRelease regression (live Phase-5 failure 2026-10-19): the LR catalog
+	// spelling "LockReleaseTokenPool" previously failed the pool-type gate in
+	// configure-token-for-transfers ("supported: burn-mint, lock-release,
+	// siloed") and, in ref collection, switched on the raw type so the lock
+	// box ownership ref was silently dropped for catalog-typed pools.
+	lrPoolRef := datastore.AddressRef{
+		ChainSelector: 42,
+		Type:          datastore.ContractType(stellarccip.DevenvCatalogLockReleaseTokenPoolType),
+		Address:       f.poolHex,
+		Qualifier:     "LR-Q",
+	}
+
+	t.Run("lock-release catalog type configures token for transfers", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
+		unsupported := scval.BoolToScVal(false)
+		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &unsupported)
+		input := tokens.ConfigureTokenForTransfersInput{
+			ChainSelector:     42,
+			TokenPoolAddress:  f.poolHex,
+			TokenAddress:      f.tokenHex,
+			PoolType:          stellarccip.DevenvCatalogLockReleaseTokenPoolType,
+			TokenRef:          datastore.AddressRef{Address: f.tokenHex},
+			ExistingDataStore: tarDS(t, f),
+			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
+				7: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
+			},
+		}
+		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		require.Len(t, recordsFor(inv, "apply_chain_updates"), 1)
+		require.NotEmpty(t, out.BatchOps)
+	})
+
+	t.Run("lock-release catalog type sets token pool rate limits", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolOwner(operationstest.NewRecordingInvoker(), f, f.deployer)
+		cfg := tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(10), Rate: big.NewInt(1)}
+		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, tokens.TPRLRemotes{
+			ChainSelector:       42,
+			RemoteChainSelector: 7,
+			TokenPoolRef:        lrPoolRef,
+			ExistingDataStore:   newSealedDatastore(),
+			RateLimitBuckets:    []tokens.TPRLRateLimitBucket{{OutboundRateLimiterConfig: cfg, InboundRateLimiterConfig: cfg}},
+		})
+		require.NoError(t, err)
+		require.Len(t, recordsFor(inv, "set_rate_limit_config"), 1)
+		require.Len(t, out.BatchOps, 1)
+	})
+
+	t.Run("lock-release catalog type collects the lock box ownership ref", func(t *testing.T) {
+		t.Parallel()
+		void := scval.VoidScVal()
+		inv := operationstest.NewRecordingInvoker().WithSimulateResultForContract(f.pool, "get_advanced_pool_hooks", &void)
+		ds := datastore.NewMemoryDataStore()
+		require.NoError(t, stellarccip.TokenLockBoxDatastoreRef(lrPoolRef.Qualifier).UpsertDeployedStrKey(ds, 42, f.lockBox))
+		refs, err := collectPoolOwnershipRefs(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, ds.Seal(), tokens.UpdateAuthoritiesInput{
+			ChainSelector: 42,
+			TokenPoolRef:  lrPoolRef,
+		})
+		require.NoError(t, err)
+		require.Len(t, refs, 2)
+		require.Equal(t, lrops.ContractType, string(refs[0].Type), "the pool ref must be normalized for owner dispatch")
+		require.Equal(t, tlbops.ContractType, string(refs[1].Type), "the matching-qualifier lock box ref must ride along")
 	})
 }
