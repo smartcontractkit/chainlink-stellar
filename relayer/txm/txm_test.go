@@ -1981,9 +1981,8 @@ func noopInvokeRequest() TxRequest {
 	}
 }
 
-// broadcastAndReadInclusionFee enqueues a noop invoke and returns the per-op inclusion
-// fee of the envelope the mock received.
-func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCClient) int64 {
+// enqueueNoopAndWaitUnconfirmed enqueues a noop invoke and waits for its first broadcast.
+func enqueueNoopAndWaitUnconfirmed(t *testing.T, txm *StellarTxm) string {
 	t.Helper()
 	txID, err := txm.Enqueue(t.Context(), noopInvokeRequest())
 	require.NoError(t, err)
@@ -1991,7 +1990,12 @@ func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCCl
 		status, err := txm.GetStatus(txID)
 		return err == nil && status == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond, "tx should move to Unconfirmed")
+	return txID
+}
 
+// lastSentInclusionFee returns the per-op inclusion fee of the last envelope the mock received.
+func lastSentInclusionFee(t *testing.T, mock *mockRPCClient) int64 {
+	t.Helper()
 	req := mock.lastSendReq.Load()
 	require.NotNil(t, req)
 	var env xdr.TransactionEnvelope
@@ -2004,37 +2008,63 @@ func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCCl
 	return fee / int64(len(tx.Operations))
 }
 
-func TestStellarTxm_FirstBroadcastBidsPeakP99(t *testing.T) {
-	t.Parallel()
-
-	mock := feeSeedingMock(t, feeStats(100, 100, 26_000_000))
-	cfg := config.TxManagerConfig{FeeStatsPollInterval: clconfig.MustNewDuration(0)}
-	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
-	require.NoError(t, err)
-	require.NoError(t, txm.Start(t.Context()))
-	t.Cleanup(func() { require.NoError(t, txm.Close()) })
-
-	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock), "first broadcast bids P99, not P50")
-
-	// P99 drops; the peak within FeeStatsLookback still sets the bid.
-	mock.getFeeStatsResp = feeStats(100, 100, 100)
-	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock))
+func broadcastAndReadInclusionFee(t *testing.T, txm *StellarTxm, mock *mockRPCClient) int64 {
+	t.Helper()
+	enqueueNoopAndWaitUnconfirmed(t, txm)
+	return lastSentInclusionFee(t, mock)
 }
 
-func TestStellarTxm_ZeroFeeStatsLookbackBidsLatestP99(t *testing.T) {
-	t.Parallel()
-
-	mock := feeSeedingMock(t, feeStats(100, 100, 26_000_000))
-	cfg := config.TxManagerConfig{
-		FeeStatsPollInterval: clconfig.MustNewDuration(0),
-		FeeStatsLookback:     clconfig.MustNewDuration(0),
-	}
+func newFeeSeedingTxm(t *testing.T, mock *mockRPCClient, cfg config.TxManagerConfig) *StellarTxm {
+	t.Helper()
 	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
 	require.NoError(t, err)
 	require.NoError(t, txm.Start(t.Context()))
 	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+	return txm
+}
 
-	assert.Equal(t, int64(26_000_000), broadcastAndReadInclusionFee(t, txm, mock))
+func TestStellarTxm_FirstBroadcastBidsPeakP90(t *testing.T) {
+	t.Parallel()
+
+	mock := feeSeedingMock(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := newFeeSeedingTxm(t, mock, config.TxManagerConfig{FeeStatsPollInterval: clconfig.MustNewDuration(0)})
+
+	assert.Equal(t, int64(1_000_000), broadcastAndReadInclusionFee(t, txm, mock), "first broadcast bids P90, not P50 or P99")
+
+	// P90 drops; the peak within FeeStatsLookback still sets the bid.
+	mock.getFeeStatsResp = feeStats(100, 100, 100)
+	assert.Equal(t, int64(1_000_000), broadcastAndReadInclusionFee(t, txm, mock))
+}
+
+func TestStellarTxm_RebroadcastBidsPeakP99(t *testing.T) {
+	t.Parallel()
+
+	mock := feeSeedingMock(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := newFeeSeedingTxm(t, mock, config.TxManagerConfig{FeeStatsPollInterval: clconfig.MustNewDuration(0)})
+
+	txID := enqueueNoopAndWaitUnconfirmed(t, txm)
+	require.Equal(t, int64(1_000_000), lastSentInclusionFee(t, mock))
+
+	txm.transactionsMapLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsMapLock.RUnlock()
+	require.NotNil(t, tracked)
+
+	tracked.Attempt.Store(1)
+	txm.simulateAssembleSignAndSend(t.Context(), tracked)
+	assert.Equal(t, int64(26_000_000), lastSentInclusionFee(t, mock), "rebroadcast bids P99")
+}
+
+func TestStellarTxm_ZeroFeeStatsLookbackBidsLatestP90(t *testing.T) {
+	t.Parallel()
+
+	mock := feeSeedingMock(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := newFeeSeedingTxm(t, mock, config.TxManagerConfig{
+		FeeStatsPollInterval: clconfig.MustNewDuration(0),
+		FeeStatsLookback:     clconfig.MustNewDuration(0),
+	})
+
+	assert.Equal(t, int64(1_000_000), broadcastAndReadInclusionFee(t, txm, mock))
 
 	mock.getFeeStatsResp = feeStats(100, 100, 100)
 	assert.Equal(t, int64(100), broadcastAndReadInclusionFee(t, txm, mock))

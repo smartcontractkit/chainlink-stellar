@@ -58,8 +58,8 @@ type TxManagerConfig struct {
 	// Soroban inclusion fee percentiles in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
-	// FeeStatsLookback is how long GetFeeStats samples are kept; the inclusion fee
-	// is seeded from the highest Soroban P99 among them.
+	// FeeStatsLookback is how long GetFeeStats samples are kept. First sends bid the
+	// highest Soroban P90 among them, rebroadcasts and fee bumps the highest P99.
 	FeeStatsLookback *clconfig.Duration `toml:"FeeStatsLookback"`
 
 	// Retry & timeout

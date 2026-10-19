@@ -20,10 +20,9 @@ type feeSample struct {
 }
 
 // feeTracker caches GetFeeStats Soroban inclusion fee percentiles, refreshing at most
-// once per pollInterval, and keeps the samples from the last lookback. Its bid is the
-// highest P99 among them. A non-positive pollInterval fetches on every call; a
-// non-positive lookback keeps only the latest sample. On refresh error the samples
-// already held are used (stale-while-revalidate).
+// once per pollInterval, and keeps the samples from the last lookback. A non-positive
+// pollInterval fetches on every call; a non-positive lookback keeps only the latest
+// sample. On refresh error the samples already held are used (stale-while-revalidate).
 type feeTracker struct {
 	mu           sync.Mutex
 	pollInterval time.Duration
@@ -37,9 +36,10 @@ func newFeeTracker(pollInterval, lookback time.Duration) *feeTracker {
 	return &feeTracker{pollInterval: pollInterval, lookback: lookback, now: time.Now}
 }
 
-// sorobanInclusionFeeBid returns the highest Soroban inclusion fee P99 within lookback
-// and the latest sample. It errors only when no sample has ever been fetched.
-func (t *feeTracker) sorobanInclusionFeeBid(ctx context.Context, client feeStatsRPC) (bid uint64, latest feeSample, err error) {
+// sorobanInclusionFees returns the highest value of each Soroban inclusion fee
+// percentile within lookback (peak) and the latest sample. It errors only when no
+// sample has ever been fetched.
+func (t *feeTracker) sorobanInclusionFees(ctx context.Context, client feeStatsRPC) (peak, latest feeSample, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -47,7 +47,7 @@ func (t *feeTracker) sorobanInclusionFeeBid(ctx context.Context, client feeStats
 	if len(t.samples) == 0 || t.pollInterval <= 0 || now.Sub(t.samples[len(t.samples)-1].at) >= t.pollInterval {
 		resp, fetchErr := client.GetFeeStats(ctx)
 		if fetchErr != nil && len(t.samples) == 0 {
-			return 0, feeSample{}, fetchErr
+			return feeSample{}, feeSample{}, fetchErr
 		}
 		if fetchErr == nil {
 			t.samples = append(t.samples, feeSample{
@@ -61,9 +61,11 @@ func (t *feeTracker) sorobanInclusionFeeBid(ctx context.Context, client feeStats
 	t.prune(now)
 
 	for _, s := range t.samples {
-		bid = max(bid, s.p99)
+		peak.p50 = max(peak.p50, s.p50)
+		peak.p90 = max(peak.p90, s.p90)
+		peak.p99 = max(peak.p99, s.p99)
 	}
-	return bid, t.samples[len(t.samples)-1], nil
+	return peak, t.samples[len(t.samples)-1], nil
 }
 
 // prune drops samples older than lookback, always keeping the latest one.

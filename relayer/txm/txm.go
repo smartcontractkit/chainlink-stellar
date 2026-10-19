@@ -626,11 +626,15 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	// Seed from the feeTracker bid (highest recent P99), capped at MaxInclusionFee.
+	// First sends bid the highest recent P90, rebroadcasts the highest recent P99,
+	// capped at MaxInclusionFee.
 	var networkFee uint64
 	var latestFees feeSample
-	if bid, latest, fsErr := s.feeTracker.sorobanInclusionFeeBid(ctx, client); fsErr == nil {
-		networkFee, latestFees = bid, latest
+	if peak, latest, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
+		networkFee, latestFees = peak.p90, latest
+		if currentAttempt > 0 {
+			networkFee = peak.p99
+		}
 	} else {
 		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
 	}
@@ -644,7 +648,8 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		)
 	}
 	ctxLogger.Debugw("seeded inclusion fee",
-		"inclusionFee", inclusionFee, "networkPercentile", networkFee, "latestP99", latestFees.p99, "attempt", currentAttempt)
+		"inclusionFee", inclusionFee, "networkPercentile", networkFee,
+		"latestP90", latestFees.p90, "latestP99", latestFees.p99, "attempt", currentAttempt)
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
@@ -765,8 +770,8 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		if retryReason == ErrorReasonInsufficientFee {
 			var bumpNetworkFee uint64
-			if bid, _, fsErr := s.feeTracker.sorobanInclusionFeeBid(ctx, client); fsErr == nil {
-				bumpNetworkFee = bid
+			if peak, _, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
+				bumpNetworkFee = peak.p99
 			}
 			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, bumpNetworkFee)
 			if clampedToMax {

@@ -45,20 +45,20 @@ func TestFeeTracker_UsesTTLBetweenCalls(t *testing.T) {
 	tr, clock := newTestFeeTracker(5*time.Second, time.Minute)
 	ctx := t.Context()
 
-	bid, latest, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, latest, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(300), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 200, p99: 300}, peak)
 	assert.Equal(t, feeSample{at: clock.t, p50: 100, p90: 200, p99: 300}, latest)
 	assert.Equal(t, int32(1), client.calls.Load())
 
 	clock.advance(4 * time.Second)
-	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(300), bid)
+	assert.Equal(t, uint64(300), peak.p99)
 	assert.Equal(t, int32(1), client.calls.Load(), "second call within TTL must not hit RPC")
 
 	clock.advance(time.Second)
-	_, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	_, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), client.calls.Load(), "call at TTL refreshes")
 }
@@ -69,9 +69,9 @@ func TestFeeTracker_ZeroPollIntervalAlwaysFetches(t *testing.T) {
 	tr, _ := newTestFeeTracker(0, time.Minute)
 	ctx := t.Context()
 
-	_, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	_, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	_, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	_, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), client.calls.Load())
 }
@@ -82,7 +82,7 @@ func TestFeeTracker_StaleWhileRevalidate(t *testing.T) {
 	tr, clock := newTestFeeTracker(10*time.Millisecond, time.Minute)
 	ctx := t.Context()
 
-	_, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	_, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), client.calls.Load())
 
@@ -90,9 +90,9 @@ func TestFeeTracker_StaleWhileRevalidate(t *testing.T) {
 	client.err = assert.AnError
 	client.resp = protocolrpc.GetFeeStatsResponse{}
 
-	bid, latest, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, latest, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err, "should serve stale data when refresh fails")
-	assert.Equal(t, uint64(30), bid)
+	assert.Equal(t, feeSample{p50: 10, p90: 20, p99: 30}, peak)
 	assert.Equal(t, uint64(10), latest.p50)
 	assert.Equal(t, int32(2), client.calls.Load())
 }
@@ -102,58 +102,59 @@ func TestFeeTracker_FirstFetchErrorNoData(t *testing.T) {
 	client := &countingFeeStatsClient{err: assert.AnError}
 	tr, _ := newTestFeeTracker(time.Hour, time.Minute)
 
-	_, _, err := tr.sorobanInclusionFeeBid(t.Context(), client)
+	_, _, err := tr.sorobanInclusionFees(t.Context(), client)
 	assert.Error(t, err)
 	assert.Equal(t, int32(1), client.calls.Load())
 }
 
-func TestFeeTracker_BidsPeakP99WithinLookback(t *testing.T) {
+func TestFeeTracker_PeaksWithinLookback(t *testing.T) {
 	t.Parallel()
 	client := &countingFeeStatsClient{resp: feeStats(100, 100, 100)}
 	tr, clock := newTestFeeTracker(5*time.Second, 2*time.Minute)
 	ctx := t.Context()
 
-	bid, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(100), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 100, p99: 100}, peak)
 
-	// P99 jumps while P50 and P90 stay at base.
+	// P90 and P99 jump while P50 stays at base.
 	clock.advance(5 * time.Second)
-	client.resp = feeStats(100, 100, 26_000_000)
-	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	client.resp = feeStats(100, 1_000_000, 26_000_000)
+	peak, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(26_000_000), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 1_000_000, p99: 26_000_000}, peak)
 
-	// P99 falls within the lookback: still bid the peak.
+	// Each percentile falls within the lookback: still report its peak.
 	clock.advance(5 * time.Second)
 	client.resp = feeStats(100, 100, 1_000_000)
-	bid, latest, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, latest, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(26_000_000), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 1_000_000, p99: 26_000_000}, peak)
+	assert.Equal(t, uint64(100), latest.p90)
 	assert.Equal(t, uint64(1_000_000), latest.p99)
 
 	// The peak sample ages out of the lookback.
 	clock.advance(2 * time.Minute)
-	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(1_000_000), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 100, p99: 1_000_000}, peak)
 }
 
 func TestFeeTracker_ZeroLookbackKeepsLatestOnly(t *testing.T) {
 	t.Parallel()
-	client := &countingFeeStatsClient{resp: feeStats(100, 100, 26_000_000)}
+	client := &countingFeeStatsClient{resp: feeStats(100, 1_000_000, 26_000_000)}
 	tr, clock := newTestFeeTracker(5*time.Second, 0)
 	ctx := t.Context()
 
-	bid, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(26_000_000), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 1_000_000, p99: 26_000_000}, peak)
 
 	clock.advance(5 * time.Second)
 	client.resp = feeStats(100, 100, 100)
-	bid, _, err = tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err = tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(100), bid)
+	assert.Equal(t, feeSample{p50: 100, p90: 100, p99: 100}, peak)
 	assert.Len(t, tr.samples, 1)
 }
 
@@ -163,12 +164,12 @@ func TestFeeTracker_RefreshErrorKeepsOldSampleBeyondLookback(t *testing.T) {
 	tr, clock := newTestFeeTracker(5*time.Second, time.Minute)
 	ctx := t.Context()
 
-	_, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	_, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
 
 	clock.advance(time.Hour)
 	client.err = assert.AnError
-	bid, _, err := tr.sorobanInclusionFeeBid(ctx, client)
+	peak, _, err := tr.sorobanInclusionFees(ctx, client)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(5_000), bid)
+	assert.Equal(t, uint64(5_000), peak.p99)
 }
