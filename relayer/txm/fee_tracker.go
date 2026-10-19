@@ -8,6 +8,8 @@ import (
 	"time"
 
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+
+	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 )
 
 // feeStatsRPC is the subset of RPCClient needed to refresh Soroban fee stats.
@@ -29,6 +31,23 @@ const (
 	feeP90
 	feeP99
 )
+
+// Fallbacks for invalid fee seeding config; must match the docs.toml defaults.
+const (
+	defaultFirstSendFeePercentile   = feeP90
+	defaultRebroadcastFeePercentile = feeP99
+)
+
+// feePercentileOrDefault parses value, falling back to def with a warning when it is not
+// P50, P90 or P99.
+func feePercentileOrDefault(lggr logger.Logger, field, value string, def feePercentile) feePercentile {
+	p, err := parseFeePercentile(value)
+	if err != nil {
+		lggr.Warnw("unknown fee percentile, using default", "field", field, "value", value, "default", def)
+		return def
+	}
+	return p
+}
 
 // parseFeePercentile accepts "P50", "P90" or "P99", case-insensitively.
 func parseFeePercentile(s string) (feePercentile, error) {

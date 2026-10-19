@@ -92,19 +92,14 @@ func New(
 		return nil, fmt.Errorf("resolve network passphrase: %w", err)
 	}
 
-	firstSendPercentile, err := parseFeePercentile(*cfg.FirstSendFeePercentile)
-	if err != nil {
-		return nil, fmt.Errorf("FirstSendFeePercentile: %w", err)
-	}
-	rebroadcastPercentile, err := parseFeePercentile(*cfg.RebroadcastFeePercentile)
-	if err != nil {
-		return nil, fmt.Errorf("RebroadcastFeePercentile: %w", err)
-	}
+	lggr := logger.Named(lgr, "StellarTxm")
+	firstSendPercentile := feePercentileOrDefault(lggr, "FirstSendFeePercentile", *cfg.FirstSendFeePercentile, defaultFirstSendFeePercentile)
+	rebroadcastPercentile := feePercentileOrDefault(lggr, "RebroadcastFeePercentile", *cfg.RebroadcastFeePercentile, defaultRebroadcastFeePercentile)
 
 	metrics := NewStellarTxmMetrics(lgr, chainID)
 
 	return &StellarTxm{
-		baseLogger: logger.Named(lgr, "StellarTxm"),
+		baseLogger: lggr,
 		keystore:   keystore,
 		config:     cfg,
 		chainID:    chainID,

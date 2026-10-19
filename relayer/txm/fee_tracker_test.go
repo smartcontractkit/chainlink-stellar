@@ -9,6 +9,8 @@ import (
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 type countingFeeStatsClient struct {
@@ -186,4 +188,15 @@ func TestParseFeePercentile(t *testing.T) {
 		_, err := parseFeePercentile(in)
 		assert.Error(t, err, in)
 	}
+}
+
+func TestFeeSeedingDefaultsMatchDocs(t *testing.T) {
+	t.Parallel()
+	d := config.Defaults().TxManager
+	first, err := parseFeePercentile(*d.FirstSendFeePercentile)
+	require.NoError(t, err)
+	assert.Equal(t, defaultFirstSendFeePercentile, first)
+	rebroadcast, err := parseFeePercentile(*d.RebroadcastFeePercentile)
+	require.NoError(t, err)
+	assert.Equal(t, defaultRebroadcastFeePercentile, rebroadcast)
 }

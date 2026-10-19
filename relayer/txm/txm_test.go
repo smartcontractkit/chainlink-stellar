@@ -18,6 +18,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
@@ -2134,15 +2135,20 @@ func TestStellarTxm_ZeroFeeStatsLookbackBidsLatestP90(t *testing.T) {
 	assert.Equal(t, int64(100), fee)
 }
 
-func TestNew_RejectsUnknownFeePercentile(t *testing.T) {
+func TestNew_InvalidFeeSeedingFallsBackToDefaults(t *testing.T) {
 	t.Parallel()
 
+	lggr, logs := logger.TestObserved(t, zapcore.WarnLevel)
 	mock := newFeeSeedingHarness(t, feeStats(1, 2, 3)).mock
-	for name, cfg := range map[string]config.TxManagerConfig{
-		"first send":  {FirstSendFeePercentile: ptr("P95")},
-		"rebroadcast": {RebroadcastFeePercentile: ptr("max")},
-	} {
-		_, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
-		require.ErrorContains(t, err, "fee percentile", name)
+	cfg := config.TxManagerConfig{
+		FirstSendFeePercentile:   ptr("P95"),
+		RebroadcastFeePercentile: ptr("max"),
 	}
+	txm, err := New(lggr, &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+
+	assert.Equal(t, feeP90, txm.firstSendPercentile)
+	assert.Equal(t, feeP99, txm.rebroadcastPercentile)
+	assert.Equal(t, 2*time.Minute, txm.feeTracker.lookback, "FeeStatsLookback default")
+	assert.Equal(t, 2, logs.FilterMessageSnippet("unknown fee percentile").Len())
 }
