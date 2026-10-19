@@ -18,8 +18,8 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// StellarMCMSReader implements changesets.MCMSReader for a single Soroban MCMS contract
-// (proposer/bypasser/canceller share one on-chain instance; datastore may hold alias refs).
+// StellarMCMSReader implements changesets.MCMSReader for Stellar. Each role (proposer,
+// canceller, bypasser) is its own MCMS contract; the timelock action picks which one.
 type StellarMCMSReader struct{}
 
 var _ changesets.MCMSReader = (StellarMCMSReader{})
