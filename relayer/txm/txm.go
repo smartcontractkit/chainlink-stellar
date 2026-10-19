@@ -63,7 +63,9 @@ type StellarTxm struct {
 	done          sync.WaitGroup
 	stop          chan struct{}
 
-	feeTracker *feeTracker
+	feeTracker            *feeTracker
+	firstSendPercentile   feePercentile
+	rebroadcastPercentile feePercentile
 
 	getClient         func(context.Context) (RPCClient, error)
 	networkPassphrase string
@@ -90,6 +92,15 @@ func New(
 		return nil, fmt.Errorf("resolve network passphrase: %w", err)
 	}
 
+	firstSendPercentile, err := parseFeePercentile(*cfg.FirstSendFeePercentile)
+	if err != nil {
+		return nil, fmt.Errorf("FirstSendFeePercentile: %w", err)
+	}
+	rebroadcastPercentile, err := parseFeePercentile(*cfg.RebroadcastFeePercentile)
+	if err != nil {
+		return nil, fmt.Errorf("RebroadcastFeePercentile: %w", err)
+	}
+
 	metrics := NewStellarTxmMetrics(lgr, chainID)
 
 	return &StellarTxm{
@@ -100,7 +111,9 @@ func New(
 		metrics:    metrics,
 		feeStrat:   NewFeeStrategyFromConfig(cfg),
 
-		feeTracker: newFeeTracker(cfg.FeeStatsPollInterval.Duration(), cfg.FeeStatsLookback.Duration()),
+		feeTracker:            newFeeTracker(cfg.FeeStatsPollInterval.Duration(), cfg.FeeStatsLookback.Duration()),
+		firstSendPercentile:   firstSendPercentile,
+		rebroadcastPercentile: rebroadcastPercentile,
 
 		transactions: make(map[string]*StellarTx),
 
@@ -626,30 +639,31 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	// First sends bid the highest recent P90, rebroadcasts the highest recent P99,
-	// capped at MaxInclusionFee.
+	// Seed from the highest configured percentile within FeeStatsLookback, capped at
+	// MaxInclusionFee.
+	percentile := s.firstSendPercentile
+	if currentAttempt > 0 {
+		percentile = s.rebroadcastPercentile
+	}
 	var networkFee uint64
 	var latestFees feeSample
 	if peak, latest, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
-		networkFee, latestFees = peak.p90, latest
-		if currentAttempt > 0 {
-			networkFee = peak.p99
-		}
+		networkFee, latestFees = peak.percentile(percentile), latest
 	} else {
 		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
 	}
 	inclusionFee, clampedToMax := s.feeStrat.SeedInclusionFee(currentAttempt, networkFee)
 	if clampedToMax {
 		ctxLogger.Warnw("seeded inclusion fee clamped to MaxInclusionFee",
-			"networkPercentile", networkFee,
+			"percentile", percentile, "networkPercentile", networkFee,
 			"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99,
 			"maxInclusionFee", s.feeStrat.MaxInclusionFee,
 			"attempt", currentAttempt,
 		)
 	}
 	ctxLogger.Debugw("seeded inclusion fee",
-		"inclusionFee", inclusionFee, "networkPercentile", networkFee,
-		"latestP90", latestFees.p90, "latestP99", latestFees.p99, "attempt", currentAttempt)
+		"inclusionFee", inclusionFee, "percentile", percentile, "networkPercentile", networkFee,
+		"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99, "attempt", currentAttempt)
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
@@ -771,12 +785,12 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		if retryReason == ErrorReasonInsufficientFee {
 			var bumpNetworkFee uint64
 			if peak, _, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
-				bumpNetworkFee = peak.p99
+				bumpNetworkFee = peak.percentile(s.rebroadcastPercentile)
 			}
 			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, bumpNetworkFee)
 			if clampedToMax {
 				ctxLogger.Warnw("bumped inclusion fee clamped to MaxInclusionFee",
-					"networkPercentile", bumpNetworkFee,
+					"percentile", s.rebroadcastPercentile, "networkPercentile", bumpNetworkFee,
 					"maxInclusionFee", s.feeStrat.MaxInclusionFee,
 				)
 			}

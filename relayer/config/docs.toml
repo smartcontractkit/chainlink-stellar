@@ -25,8 +25,12 @@ ResourceFeeBuffer = 15000 # Default
 RestoreFeeBuffer = 10000 # Default
 # FeeStatsPollInterval controls how often GetFeeStats is called to refresh Soroban inclusion fee percentiles in the feeTracker. Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 FeeStatsPollInterval = '5s' # Default
-# FeeStatsLookback is how long GetFeeStats samples are kept. First sends bid the highest Soroban P90 seen within the lookback, rebroadcasts and insufficient-fee bumps the highest P99, so a short surge that barely moves the RPC's long-window percentiles is still priced in. Zero keeps only the latest sample.
+# FeeStatsLookback is how long GetFeeStats samples are kept. Bids use the highest value of the configured percentile seen within the lookback, so a short surge that barely moves the RPC's long-window percentiles is still priced in. Zero keeps only the latest sample.
 FeeStatsLookback = '2m' # Default
+# FirstSendFeePercentile is the Soroban inclusion fee percentile (P50, P90 or P99) that seeds the first broadcast of a tx.
+FirstSendFeePercentile = 'P90' # Default
+# RebroadcastFeePercentile is the Soroban inclusion fee percentile (P50, P90 or P99) that seeds rebroadcasts and insufficient-fee bumps.
+RebroadcastFeePercentile = 'P99' # Default
 # MaxSimulateAttempts is the maximum number of SimulateTransaction attempts before treating the failure as terminal.
 MaxSimulateAttempts = 3 # Default
 # MaxSubmitRetryAttempts is the maximum number of SendTransaction retries within a single broadcast attempt.

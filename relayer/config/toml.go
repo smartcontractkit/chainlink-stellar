@@ -86,6 +86,14 @@ func (c *TxManagerConfig) SetFrom(f *TxManagerConfig) {
 		v := *f.FeeStatsLookback
 		c.FeeStatsLookback = &v
 	}
+	if f.FirstSendFeePercentile != nil {
+		v := *f.FirstSendFeePercentile
+		c.FirstSendFeePercentile = &v
+	}
+	if f.RebroadcastFeePercentile != nil {
+		v := *f.RebroadcastFeePercentile
+		c.RebroadcastFeePercentile = &v
+	}
 	if f.MaxSimulateAttempts != nil {
 		v := *f.MaxSimulateAttempts
 		c.MaxSimulateAttempts = &v

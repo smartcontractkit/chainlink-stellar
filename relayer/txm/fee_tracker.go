@@ -2,6 +2,8 @@ package txm
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,50 @@ type feeStatsRPC interface {
 type feeSample struct {
 	at            time.Time
 	p50, p90, p99 uint64
+}
+
+// feePercentile selects which Soroban inclusion fee percentile seeds a bid.
+type feePercentile uint8
+
+const (
+	feeP50 feePercentile = iota
+	feeP90
+	feeP99
+)
+
+// parseFeePercentile accepts "P50", "P90" or "P99", case-insensitively.
+func parseFeePercentile(s string) (feePercentile, error) {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "P50":
+		return feeP50, nil
+	case "P90":
+		return feeP90, nil
+	case "P99":
+		return feeP99, nil
+	}
+	return 0, fmt.Errorf("unknown fee percentile %q (want P50, P90 or P99)", s)
+}
+
+func (p feePercentile) String() string {
+	switch p {
+	case feeP50:
+		return "P50"
+	case feeP90:
+		return "P90"
+	default:
+		return "P99"
+	}
+}
+
+func (s feeSample) percentile(p feePercentile) uint64 {
+	switch p {
+	case feeP50:
+		return s.p50
+	case feeP90:
+		return s.p90
+	default:
+		return s.p99
+	}
 }
 
 // feeTracker caches GetFeeStats Soroban inclusion fee percentiles, refreshing at most

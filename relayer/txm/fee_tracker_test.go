@@ -173,3 +173,17 @@ func TestFeeTracker_RefreshErrorKeepsOldSampleBeyondLookback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(5_000), peak.p99)
 }
+
+func TestParseFeePercentile(t *testing.T) {
+	t.Parallel()
+	sample := feeSample{p50: 1, p90: 2, p99: 3}
+	for in, want := range map[string]uint64{"P50": 1, "p90": 2, " P99 ": 3} {
+		p, err := parseFeePercentile(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, sample.percentile(p), in)
+	}
+	for _, in := range []string{"", "P95", "99"} {
+		_, err := parseFeePercentile(in)
+		assert.Error(t, err, in)
+	}
+}
