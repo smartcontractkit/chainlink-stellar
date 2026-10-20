@@ -9,7 +9,6 @@ package ccvchain
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"strings"
 
@@ -18,15 +17,16 @@ import (
 	evmonramp "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/onramp"
 	evmtokenpool "github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/token_pool"
 	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
+	tokenscore "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	"github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
-	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvchainprod "github.com/smartcontractkit/chainlink-stellar/ccv/chain"
+	stellaradapters "github.com/smartcontractkit/chainlink-stellar/deployment/adapters"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
 
@@ -37,13 +37,6 @@ import (
 // default to wait-for-finality only, which rejects the fast-finality
 // requests the tcapi combo finality produces (block-depth 1).
 var sharedPairAllowedFinality = finality.Config{WaitForSafe: true, BlockDepth: 1}
-
-// sharedPairAllowedFinalityU32 is the stellar bindings' uint32 form of
-// sharedPairAllowedFinality (same on-wire bytes4 encoding).
-var sharedPairAllowedFinalityU32 = func() uint32 {
-	raw := sharedPairAllowedFinality.Raw()
-	return binary.BigEndian.Uint32(raw[:])
-}()
 
 // configureSharedBnmPools applies every shared-pipeline stellar pool's
 // (burn-mint or lock-release) remote updates. The pipeline derives each
@@ -127,7 +120,7 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 			return fmt.Errorf("parse shared pair qualifier %q: %w", ref.Qualifier, err)
 		}
 
-		var updates []tokenpoolbindings.ChainUpdate
+		remoteChains := make(map[uint64]tokenscore.RemoteChainConfig[[]byte, string], len(evmRemoteSelectors))
 		for _, rs := range evmRemoteSelectors {
 			counterpart, ok := poolsBy[poolKey{rs, counterpartType, counterpartVersion, counterpartQualifier}]
 			if !ok {
@@ -159,35 +152,35 @@ func (c *Chain) configureSharedBnmPools(env *deployment.Environment, stellarSele
 			if err != nil {
 				return fmt.Errorf("encode counterpart token address for %d: %w", rs, err)
 			}
-			// The inbound token_transfer.source_pool_address is abi-encoded by
-			// the EVM OnRamp and the pool's is_remote_source_pool check compares
-			// it byte-exactly, so store the same 32-byte abi-encoded form.
-			remotePoolBytes = common.LeftPadBytes(remotePoolBytes, 32)
-			updates = append(updates, tokenpoolbindings.ChainUpdate{
-				RemoteChainSelector:       rs,
-				RemotePoolAddresses:       [][]byte{remotePoolBytes},
-				RemoteTokenAddress:        remoteTokenBytes,
-				OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
-				InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
-			})
+			// Raw family-native bytes both ways: the configure sequence applies
+			// the wire forms itself (pool left-padded to 32 for the pool's
+			// byte-exact source-pool compare, token family-native).
+			remoteChains[rs] = tokenscore.RemoteChainConfig[[]byte, string]{
+				RemotePool:  remotePoolBytes,
+				RemoteToken: remoteTokenBytes,
+			}
 		}
-		if len(updates) == 0 {
+		if len(remoteChains) == 0 {
 			continue
 		}
-		poolClient := tokenpoolbindings.NewTokenPoolClient(c.deployer, poolStrkey)
-		if err := poolClient.ApplyChainUpdates(context.Background(), updates, nil); err != nil {
-			return fmt.Errorf("apply chain updates for shared pool %q: %w", ref.Qualifier, err)
-		}
-		// Fast-finality admission (stellar side): the pool defaults
-		// to wait-for-finality only, and lock_or_burn gates FTF requests on the
-		// allowed config (finality codec ensure_requested_finality_allowed),
-		// so combo-finality cases (block-depth-1 requests) would be rejected
-		// without this. The pipeline would apply the AllowedFinalityConfig
-		// declared in the TokenTransferConfig, but only through the pool-config
-		// changeset (TokenFeeAdapter), which the devenv never runs — PostConnect
-		// applies it directly. Owner-gated EOA write; idempotent.
-		if err := poolClient.SetAllowedFinalityConfig(context.Background(), sharedPairAllowedFinalityU32); err != nil {
-			return fmt.Errorf("set allowed finality for shared pool %q: %w", ref.Qualifier, err)
+		// One configure-sequence call per shared pool — the same path the
+		// shared pipeline drives — carrying the lane writes and the
+		// fast-finality admission (the pool defaults to wait-for-finality
+		// only; without the allowed config, combo-finality requests would be
+		// rejected). The pipeline already registered these pairs, so this
+		// call is chain-updates + allowed-finality only; read-before-write
+		// idempotent, so re-runs no-op against the pipeline's own writes.
+		adapter := &stellaradapters.StellarTokenAdapter{}
+		if _, err := cldf_ops.ExecuteSequence(env.OperationsBundle, adapter.ConfigureTokenForTransfersSequence(), env.BlockChains, tokenscore.ConfigureTokenForTransfersInput{
+			ChainSelector:               stellarSelector,
+			TokenPoolAddress:            poolStrkey,
+			PoolType:                    string(ref.Type),
+			RemoteChains:                remoteChains,
+			ExistingDataStore:           env.DataStore,
+			AllowedFinalityConfig:       sharedPairAllowedFinality,
+			SkipTokenAdminRegistrySetup: true,
+		}); err != nil {
+			return fmt.Errorf("configure shared pool %q for transfers: %w", ref.Qualifier, err)
 		}
 	}
 

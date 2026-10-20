@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
@@ -56,6 +55,7 @@ import (
 	contracttransmitter "github.com/smartcontractkit/chainlink-stellar/ccv/contract_transmitter"
 	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	stellaradapters "github.com/smartcontractkit/chainlink-stellar/deployment/adapters"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
@@ -352,12 +352,8 @@ func (c *Chain) PostConnect(env *deployment.Environment, selector uint64, remote
 	}
 
 	if c.tokenPoolClient != nil && c.testTokenContractID != "" {
-		chainUpdates, err := c.buildPoolChainUpdates(env.DataStore, remoteSelectors)
-		if err != nil {
-			return fmt.Errorf("build pool chain updates: %w", err)
-		}
-		if err := c.tokenPoolClient.ApplyChainUpdates(context.Background(), chainUpdates, nil); err != nil {
-			return fmt.Errorf("apply pool chain updates in post-connect: %w", err)
+		if err := c.configureSiloedPoolForTransfers(env, selector, remoteSelectors); err != nil {
+			return fmt.Errorf("configure siloed pool for transfers: %w", err)
 		}
 
 		if c.tokenLockBoxContractID != "" {
@@ -629,9 +625,9 @@ func (c *Chain) PostTokenDeploy(
 // GetTokenTransferConfigs mirrors the EVM implementation: the hand-curated
 // catalog filtered by the datastore, emitting configs only for remote
 // selectors that hold the combo's remote pool ref, merged per local pool. The
-// shared ConfigureAllTokenTransfers pipeline applies them; the stellar-side
-// pool remote updates are applied in PostConnect (the adapter's configure
-// sequence is a documented no-op).
+// shared ConfigureAllTokenTransfers pipeline applies them through the
+// adapter's configure sequence; PostConnect wires the bespoke siloed pair the
+// pipeline does not cover through the same sequence.
 func (c *Chain) GetTokenTransferConfigs(
 	env *deployment.Environment,
 	selector uint64,
@@ -1723,34 +1719,37 @@ func (c *Chain) configureSiloedPoolLockBoxes(bundle cldf_ops.Bundle, remoteSelec
 	return nil
 }
 
-func (c *Chain) buildPoolChainUpdates(ds datastore.DataStore, remoteSelectors []uint64) ([]tokenpoolbindings.ChainUpdate, error) {
-	var updates []tokenpoolbindings.ChainUpdate
+// configureSiloedPoolForTransfers wires the bespoke siloed pool + test token
+// pair the shared pool pipeline does not cover (its pool type is outside the
+// GetSupportedPools catalog) through the token adapter's configure sequence —
+// the same read-before-write, idempotent path the shared pipeline drives for
+// the catalog pairs, so every stellar-side pool chain update travels one
+// route. The pool address and the remote token are passed raw
+// (family-native): the sequence applies the wire forms itself (pool
+// left-padded to 32, token family-native). TAR registration is already done
+// at post-deploy, so this call is chain-updates-only.
+func (c *Chain) configureSiloedPoolForTransfers(env *deployment.Environment, selector uint64, remoteSelectors []uint64) error {
+	remoteChains := make(map[uint64]tokenscore.RemoteChainConfig[[]byte, string], len(remoteSelectors))
 	for _, rs := range remoteSelectors {
-		remotePoolBytes, remoteTokenBytes, err := resolveRemotePoolAndToken(ds, rs)
+		poolBytes, tokenBytes, err := resolveRemotePoolAndToken(env.DataStore, rs)
 		if err != nil {
-			return nil, fmt.Errorf("resolve remote pool/token for %d: %w", rs, err)
+			return fmt.Errorf("resolve remote pool/token for %d: %w", rs, err)
 		}
-		// The inbound message's token_transfer.source_pool_address is abi-encoded
-		// by the source chain's OnRamp. For an EVM source that is abi.encode(address),
-		// i.e. the 20-byte address left-padded to 32 bytes (Internal.SourceTokenData:
-		// "sourcePoolAddress ... abi encoded in the case of EVM chains"). The pool's
-		// is_remote_source_pool check (C-3) compares the stored remote_pool_address
-		// against that message field with exact byte equality, so the stored value
-		// must be in the SAME 32-byte abi-encoded form. resolveRemotePoolAndToken
-		// returns the raw EVM address (20 bytes); left-pad to 32 to match. For
-		// Stellar remotes the address is already 32 bytes, so LeftPadBytes is a
-		// no-op. This mirrors the EVM pool side, which stores the Stellar pool via
-		// common.LeftPadBytes(_, 32) in paddedAddressBytes.
-		remotePoolBytes = common.LeftPadBytes(remotePoolBytes, 32)
-		updates = append(updates, tokenpoolbindings.ChainUpdate{
-			RemoteChainSelector:       rs,
-			RemotePoolAddresses:       [][]byte{remotePoolBytes},
-			RemoteTokenAddress:        remoteTokenBytes,
-			OutboundRateLimiterConfig: tokenpoolbindings.RateLimitConfig{},
-			InboundRateLimiterConfig:  tokenpoolbindings.RateLimitConfig{},
-		})
+		remoteChains[rs] = tokenscore.RemoteChainConfig[[]byte, string]{
+			RemotePool:  poolBytes,
+			RemoteToken: tokenBytes,
+		}
 	}
-	return updates, nil
+	adapter := &stellaradapters.StellarTokenAdapter{}
+	_, err := cldf_ops.ExecuteSequence(env.OperationsBundle, adapter.ConfigureTokenForTransfersSequence(), env.BlockChains, tokenscore.ConfigureTokenForTransfersInput{
+		ChainSelector:               selector,
+		TokenPoolAddress:            c.tokenPoolContractID,
+		PoolType:                    lrpoolops.ContractType,
+		RemoteChains:                remoteChains,
+		ExistingDataStore:           env.DataStore,
+		SkipTokenAdminRegistrySetup: true,
+	})
+	return err
 }
 
 func (c *Chain) buildOffRampSourceConfigs(ds datastore.DataStore, remoteSelectors []uint64) ([]offrampbindings.SourceChainConfigArgs, error) {
