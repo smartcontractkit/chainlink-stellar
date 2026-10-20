@@ -99,13 +99,13 @@ type stellarTxmMetrics struct {
 	chainID string
 
 	// Transaction lifecycle metrics
-	broadcastedTxs         metric.Int64Counter
-	successTxs             metric.Int64Counter
-	pendingTxs             metric.Int64Gauge
-	outcomeTxs             metric.Int64Counter
-	maxAttemptsReached     metric.Int64Counter
-	submitRejected         metric.Int64Counter
-	timeUntilTxConfirmed   metric.Float64Histogram
+	broadcastedTxs       metric.Int64Counter
+	successTxs           metric.Int64Counter
+	pendingTxs           metric.Int64Gauge
+	outcomeTxs           metric.Int64Counter
+	maxAttemptsReached   metric.Int64Counter
+	submitRejected       metric.Int64Counter
+	timeUntilTxConfirmed metric.Float64Histogram
 
 	// Stellar-specific metrics
 	restore      metric.Int64Counter
