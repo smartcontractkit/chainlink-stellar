@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"math/big"
 	"os"
 	"strings"
 	"testing"
@@ -203,7 +202,7 @@ func TestGetBlocksHeaders(t *testing.T) {
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		blockNumbers := []*big.Int{big.NewInt(100)}
+		blockNumbers := []uint64{100}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
 		require.NoError(t, err)
 		require.Len(t, headers, 1)
@@ -253,14 +252,14 @@ func TestGetBlocksHeaders(t *testing.T) {
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		blockNumbers := []*big.Int{big.NewInt(100), big.NewInt(200)}
+		blockNumbers := []uint64{100, 200}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
 		require.NoError(t, err)
 		require.Len(t, headers, 2)
 		assert.Equal(t, "RMNREMOTE", reader.rmnRemoteAddress)
 	})
 
-	t.Run("returns error when ledger not found", func(t *testing.T) {
+	t.Run("omits header when ledger not found", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
 		mockClient.On("GetLedgers", mock.Anything, mock.Anything).Return(
@@ -273,14 +272,13 @@ func TestGetBlocksHeaders(t *testing.T) {
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		blockNumbers := []*big.Int{big.NewInt(999999999)}
+		blockNumbers := []uint64{999999999}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
-		require.Error(t, err)
-		require.Nil(t, headers)
-		assert.Contains(t, err.Error(), "not found")
+		require.NoError(t, err)
+		require.Empty(t, headers, "not-found ledger must be omitted, not errored")
 	})
 
-	t.Run("returns error when GetLedgers fails", func(t *testing.T) {
+	t.Run("omits header when GetLedgers fails", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
 		mockClient.On("GetLedgers", mock.Anything, mock.Anything).Return(
@@ -291,14 +289,13 @@ func TestGetBlocksHeaders(t *testing.T) {
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		blockNumbers := []*big.Int{big.NewInt(100)}
+		blockNumbers := []uint64{100}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
-		require.Error(t, err)
-		require.Nil(t, headers)
-		assert.Contains(t, err.Error(), "failed to get ledger")
+		require.NoError(t, err)
+		require.Empty(t, headers, "failed ledger fetch must be omitted, not errored")
 	})
 
-	t.Run("returns error when ledger sequence mismatch", func(t *testing.T) {
+	t.Run("omits header when ledger sequence mismatch", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
 		// Return a different sequence than requested
@@ -319,26 +316,24 @@ func TestGetBlocksHeaders(t *testing.T) {
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		blockNumbers := []*big.Int{big.NewInt(100)}
+		blockNumbers := []uint64{100}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
-		require.Error(t, err)
-		require.Nil(t, headers)
-		assert.Contains(t, err.Error(), "ledger seq mismatch")
+		require.NoError(t, err)
+		require.Empty(t, headers, "seq-mismatch ledger must be omitted, not errored")
 	})
 
-	t.Run("returns error when block number exceeds uint32 range", func(t *testing.T) {
+	t.Run("omits header when block number exceeds uint32 range", func(t *testing.T) {
 		mockClient := mocks.NewMockRPCClient(t)
 
 		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
 		require.NoError(t, err)
 
-		// Create a number larger than uint32 max
-		bigNumber := new(big.Int).SetUint64(1 << 33) // > MaxUint32
-		blockNumbers := []*big.Int{bigNumber}
+		// A number larger than uint32 max (ledger seq) is out of range on
+		// Stellar; it is omitted per the chainaccess contract.
+		blockNumbers := []uint64{1 << 33}
 		headers, err := reader.GetBlocksHeaders(context.Background(), blockNumbers)
-		require.Error(t, err)
-		require.Nil(t, headers)
-		assert.Contains(t, err.Error(), "exceeds uint32")
+		require.NoError(t, err)
+		require.Empty(t, headers, "out-of-range ledger must be omitted, not errored")
 	})
 }
 
@@ -358,8 +353,8 @@ func TestToBytes32(t *testing.T) {
 	// truncated (63), even-length truncated (32), and over-length (66).
 	for _, in := range []string{
 		"0x" + strings.Repeat("ab", 31) + "a", // 63: odd-length truncation
-		"0x" + strings.Repeat("ab", 16),      // 32: even-length truncation
-		"0x" + strings.Repeat("ab", 33),      // 66: over-length
+		"0x" + strings.Repeat("ab", 16),       // 32: even-length truncation
+		"0x" + strings.Repeat("ab", 33),       // 66: over-length
 	} {
 		_, err := toBytes32(in)
 		require.Error(t, err)

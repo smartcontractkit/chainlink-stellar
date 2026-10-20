@@ -522,18 +522,6 @@ type OutboundImplRemovedEvent struct {
 // OutboundImplRemovedEventTopic is the event topic identifier.
 const OutboundImplRemovedEventTopic = "vvr_OutboundImplRemoved"
 
-// OwnershipTransferredEvent represents the OwnershipTransferredEvent event.
-// Topics: [vvr_OwnerTransferred]
-type OwnershipTransferredEvent struct {
-	NewOwner string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// OwnershipTransferredEventTopic is the event topic identifier.
-const OwnershipTransferredEventTopic = "vvr_OwnerTransferred"
-
 // RoleGrantedEvent represents the RoleGrantedEvent event.
 // Topics: [auth_RoleGranted]
 type RoleGrantedEvent struct {

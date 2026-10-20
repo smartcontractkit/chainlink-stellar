@@ -402,6 +402,22 @@ func (c *McmsClient) TransferOwnership(ctx context.Context, newOwner string) err
 	return nil
 }
 
+// ExtendContractTtls calls the extend_contract_ttls function on the contract.
+func (c *McmsClient) ExtendContractTtls(ctx context.Context, contracts []string, extendTo uint32) error {
+	args := []xdr.ScVal{
+		scval.AddressSliceToScVal(contracts),
+		scval.Uint32ToScVal(extendTo),
+	}
+
+	result, err := c.invoker.InvokeContract(ctx, c.contractID, "extend_contract_ttls", args)
+	if err != nil {
+		return fmt.Errorf("failed to call extend_contract_ttls: %w", err)
+	}
+
+	_ = result // void return
+	return nil
+}
+
 // CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
 func (c *McmsClient) CancelOwnershipTransfer(ctx context.Context) error {
 	args := []xdr.ScVal{}

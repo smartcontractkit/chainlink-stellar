@@ -11,8 +11,6 @@ flowchart LR
 	click chain-selectors href "https://github.com/smartcontractkit/chain-selectors"
 	chainlink-aptos
 	click chainlink-aptos href "https://github.com/smartcontractkit/chainlink-aptos"
-	chainlink-automation
-	click chainlink-automation href "https://github.com/smartcontractkit/chainlink-automation"
 	chainlink-canton
 	click chainlink-canton href "https://github.com/smartcontractkit/chainlink-canton"
 	chainlink-canton/authentication
@@ -32,6 +30,7 @@ flowchart LR
 	chainlink-ccip/deployment
 	click chainlink-ccip/deployment href "https://github.com/smartcontractkit/chainlink-ccip"
 	chainlink-ccv --> chainlink-ccip/chains/evm
+	chainlink-ccv --> chainlink-common/x/config
 	chainlink-ccv --> chainlink-protos/chainlink-ccv/committee-verifier
 	chainlink-ccv --> chainlink-protos/chainlink-ccv/heartbeat
 	chainlink-ccv --> chainlink-protos/chainlink-ccv/message-discovery
@@ -59,6 +58,8 @@ flowchart LR
 	click chainlink-common/keystore href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-common/pkg/chipingress
 	click chainlink-common/pkg/chipingress href "https://github.com/smartcontractkit/chainlink-common"
+	chainlink-common/x/config --> chainlink-common
+	click chainlink-common/x/config href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-data-streams
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
@@ -79,7 +80,6 @@ flowchart LR
 	chainlink-deployments-framework --> go-daml
 	chainlink-deployments-framework --> mcms
 	click chainlink-deployments-framework href "https://github.com/smartcontractkit/chainlink-deployments-framework"
-	chainlink-evm --> chainlink-automation
 	chainlink-evm --> chainlink-common/keystore
 	chainlink-evm --> chainlink-data-streams
 	chainlink-evm --> chainlink-evm/gethwrappers
@@ -200,6 +200,7 @@ flowchart LR
 		 chainlink-common
 		 chainlink-common/keystore
 		 chainlink-common/pkg/chipingress
+		 chainlink-common/x/config
 	end
 	click chainlink-common-repo href "https://github.com/smartcontractkit/chainlink-common"
 
@@ -296,6 +297,7 @@ flowchart LR
 	chainlink-ccip/deployment
 	click chainlink-ccip/deployment href "https://github.com/smartcontractkit/chainlink-ccip"
 	chainlink-ccv --> chainlink-ccip/chains/evm
+	chainlink-ccv --> chainlink-common/x/config
 	chainlink-ccv --> chainlink-evm
 	chainlink-ccv --> chainlink-protos/chainlink-ccv/committee-verifier
 	chainlink-ccv --> chainlink-protos/chainlink-ccv/heartbeat
@@ -335,6 +337,8 @@ flowchart LR
 	click chainlink-common/pkg/monitoring href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-common/pkg/values
 	click chainlink-common/pkg/values href "https://github.com/smartcontractkit/chainlink-common"
+	chainlink-common/x/config --> chainlink-common
+	click chainlink-common/x/config href "https://github.com/smartcontractkit/chainlink-common"
 	chainlink-data-streams
 	click chainlink-data-streams href "https://github.com/smartcontractkit/chainlink-data-streams"
 	chainlink-deployments-framework --> ccip-owner-contracts
@@ -342,7 +346,6 @@ flowchart LR
 	chainlink-deployments-framework --> chainlink-testing-framework/seth
 	chainlink-deployments-framework --> mcms
 	click chainlink-deployments-framework href "https://github.com/smartcontractkit/chainlink-deployments-framework"
-	chainlink-evm --> chainlink-automation
 	chainlink-evm --> chainlink-common/keystore
 	chainlink-evm --> chainlink-data-streams
 	chainlink-evm --> chainlink-evm/gethwrappers
@@ -460,6 +463,7 @@ flowchart LR
 	chainlink/deployment --> chainlink-ton/deployment
 	chainlink/deployment --> chainlink/v2
 	click chainlink/deployment href "https://github.com/smartcontractkit/chainlink"
+	chainlink/v2 --> chainlink-automation
 	chainlink/v2 --> chainlink-ccip/chains/solana
 	chainlink/v2 --> chainlink-evm
 	chainlink/v2 --> chainlink-feeds
@@ -550,6 +554,7 @@ flowchart LR
 		 chainlink-common/pkg/chipingress
 		 chainlink-common/pkg/monitoring
 		 chainlink-common/pkg/values
+		 chainlink-common/x/config
 	end
 	click chainlink-common-repo href "https://github.com/smartcontractkit/chainlink-common"
 

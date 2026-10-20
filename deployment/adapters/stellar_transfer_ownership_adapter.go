@@ -69,7 +69,7 @@ func (a *StellarTransferOwnershipAdapter) ShouldAcceptOwnershipWithTransferOwner
 	if !ok {
 		return false, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return false, err
 	}
