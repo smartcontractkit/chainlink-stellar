@@ -8,6 +8,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
+	chainsel "github.com/smartcontractkit/chain-selectors"
+
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	tokens "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
@@ -30,6 +32,11 @@ import (
 )
 
 // configureFixtures holds the identities one configure/registration test needs.
+// testRemoteSel is a real EVM-family selector: the pool-configure sequence
+// resolves the remote family to pick the remote token's native wire form, so
+// the fixture remote must be a selector the chain-selectors registry knows.
+var testRemoteSel = chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector
+
 type configureFixtures struct {
 	pool     string
 	poolHex  string
@@ -352,7 +359,7 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 			TokenRef:          datastore.AddressRef{Address: f.tokenHex},
 			ExistingDataStore: tarDS(t, f),
 			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
-				7: {
+				testRemoteSel: {
 					RemotePool:     f.evmRemote,
 					RemoteToken:    f.evmRemoteToken,
 					RemoteDecimals: 18,
@@ -379,7 +386,7 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 
 		applies := recordsFor(inv, "apply_chain_updates")
 		require.Len(t, applies, 1)
-		wantUpdate, err := poolChainUpdate(7, newInput(nil).RemoteChains[7], tokens.TPRLRateLimitBucket{})
+		wantUpdate, err := poolChainUpdate(testRemoteSel, newInput(nil).RemoteChains[testRemoteSel], tokens.TPRLRateLimitBucket{})
 		require.NoError(t, err)
 		require.Equal(t, scval.StructSliceToScVal([]tpoolbindings.ChainUpdate{wantUpdate}), applies[0].Args[0])
 		// Disabled rate limits on a fresh lane: no separate set_rate_limit_config.
@@ -402,7 +409,7 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		inv = stubTarConfig(t, inv, f, tarbindings.TokenConfig{Administrator: &admin, TokenPool: &pool})
 		supported := scval.BoolToScVal(true)
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
-		remoteToken := scval.BytesToScVal(common.LeftPadBytes(f.evmRemoteToken, 32))
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
 		remotePools := scval.VecToScVal([]xdr.ScVal{scval.BytesToScVal(common.LeftPadBytes(f.evmRemote, 32))})
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &remotePools)
@@ -420,7 +427,7 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
 		supported := scval.BoolToScVal(true)
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
-		remoteToken := scval.BytesToScVal(common.LeftPadBytes(f.evmRemoteToken, 32))
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
 		empty := scval.VecToScVal(nil)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &empty)
@@ -456,7 +463,7 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		// with the preserved limits riding the ChainUpdate.
 		applies := recordsFor(inv, "apply_chain_updates")
 		require.Len(t, applies, 1, "the replacement must be one atomic call")
-		want, wantErr := poolChainUpdate(7, newInput(nil).RemoteChains[7], tokens.TPRLRateLimitBucket{
+		want, wantErr := poolChainUpdate(testRemoteSel, newInput(nil).RemoteChains[testRemoteSel], tokens.TPRLRateLimitBucket{
 			OutboundRateLimiterConfig: tokenBucketToRateLimiter(live.Outbound),
 			InboundRateLimiterConfig:  tokenBucketToRateLimiter(live.Inbound),
 		})
@@ -514,15 +521,15 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 	t.Run("input rate limits are applied", func(t *testing.T) {
 		t.Parallel()
 		input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-			rc := in.RemoteChains[7]
+			rc := in.RemoteChains[testRemoteSel]
 			rc.OutboundRateLimiterConfig = &tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 1000, Rate: 10}
 			rc.InboundRateLimiterConfig = &tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 2000, Rate: 20}
-			in.RemoteChains[7] = rc
+			in.RemoteChains[testRemoteSel] = rc
 		})
 		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
 		supported := scval.BoolToScVal(true)
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
-		remoteToken := scval.BytesToScVal(common.LeftPadBytes(f.evmRemoteToken, 32))
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
 		remotePools := scval.VecToScVal([]xdr.ScVal{scval.BytesToScVal(common.LeftPadBytes(f.evmRemote, 32))})
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &remotePools)
@@ -537,19 +544,19 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		// synthesized disabled default would unlimit (or alter) limits the
 		// caller never asked to change.
 		input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-			rc := in.RemoteChains[7]
+			rc := in.RemoteChains[testRemoteSel]
 			rc.OutboundRateLimits = []tokens.RateLimitConfig{
 				{FastFinality: true, RateLimit: tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 5, Rate: 1}},
 			}
 			rc.InboundRateLimits = []tokens.RateLimitConfig{
 				{FastFinality: true, RateLimit: tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 5, Rate: 1}},
 			}
-			in.RemoteChains[7] = rc
+			in.RemoteChains[testRemoteSel] = rc
 		})
 		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
 		supported := scval.BoolToScVal(true)
 		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
-		remoteToken := scval.BytesToScVal(common.LeftPadBytes(f.evmRemoteToken, 32))
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
 		remotePools := scval.VecToScVal([]xdr.ScVal{scval.BytesToScVal(common.LeftPadBytes(f.evmRemote, 32))})
 		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &remotePools)
@@ -600,14 +607,14 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		}))
 		input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
 			in.ExistingDataStore = ds.Seal()
-			rc := in.RemoteChains[7]
+			rc := in.RemoteChains[testRemoteSel]
 			rc.OutboundRateLimits = []tokens.RateLimitConfig{
 				{FastFinality: true, RateLimit: tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 5, Rate: 1}},
 			}
 			rc.InboundRateLimits = []tokens.RateLimitConfig{
 				{FastFinality: true, RateLimit: tokens.RateLimiterConfigFloatInput{IsEnabled: true, Capacity: 5, Rate: 1}},
 			}
-			in.RemoteChains[7] = rc
+			in.RemoteChains[testRemoteSel] = rc
 		})
 		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
 		// The pool owner is the timelock; the deployer holds the rate-limit
@@ -652,10 +659,10 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		t.Run("CCV lists are skipped when no hooks are wired", func(t *testing.T) {
 			t.Parallel()
 			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-				rc := in.RemoteChains[7]
+				rc := in.RemoteChains[testRemoteSel]
 				rc.InboundCCVs = []string{f.timelock}
 				rc.OutboundCCVs = []string{f.timelock}
-				in.RemoteChains[7] = rc
+				in.RemoteChains[testRemoteSel] = rc
 			})
 			// stubPoolReads stubs no-hooks-wired; complete the new-lane reads.
 			skipSupported := scval.BoolToScVal(false)
@@ -680,17 +687,17 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 			notSupported := scval.BoolToScVal(false)
 			inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &notSupported)
 			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-				rc := in.RemoteChains[7]
+				rc := in.RemoteChains[testRemoteSel]
 				rc.InboundCCVs = []string{f.timelock}
 				rc.OutboundCCVs = []string{f.timelock}
-				in.RemoteChains[7] = rc
+				in.RemoteChains[testRemoteSel] = rc
 			})
 			_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
 			require.NoError(t, err)
 			applies := recordsFor(inv, "apply_ccv_config_updates")
 			require.Len(t, applies, 1)
 			wantArg := aphbindings.CCVConfigArg{
-				RemoteChainSelector: 7,
+				RemoteChainSelector: testRemoteSel,
 				InboundCcvs:         []string{f.timelock},
 				OutboundCcvs:        []string{f.timelock},
 			}
@@ -714,10 +721,10 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 			notSupported := scval.BoolToScVal(false)
 			inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &notSupported)
 			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-				rc := in.RemoteChains[7]
+				rc := in.RemoteChains[testRemoteSel]
 				rc.InboundCCVs = []string{f.timelock}
 				rc.OutboundCCVs = []string{f.timelock}
-				in.RemoteChains[7] = rc
+				in.RemoteChains[testRemoteSel] = rc
 			})
 			_, err = configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
 			require.NoError(t, err)
@@ -727,9 +734,9 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		t.Run("pool-level token transfer fee config", func(t *testing.T) {
 			t.Parallel()
 			input := newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
-				rc := in.RemoteChains[7]
+				rc := in.RemoteChains[testRemoteSel]
 				rc.TokenTransferFeeConfig = &tokens.PartialTokenTransferFeeConfig{}
-				in.RemoteChains[7] = rc
+				in.RemoteChains[testRemoteSel] = rc
 			})
 			_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
 			require.ErrorContains(t, err, "token transfer fee")
@@ -836,7 +843,7 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 			TokenRef:          datastore.AddressRef{Address: f.tokenHex},
 			ExistingDataStore: tarDS(t, f),
 			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
-				7: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
+				testRemoteSel: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
 			},
 		}
 		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
@@ -851,7 +858,7 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 		cfg := tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(10), Rate: big.NewInt(1)}
 		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, tokens.TPRLRemotes{
 			ChainSelector:       42,
-			RemoteChainSelector: 7,
+			RemoteChainSelector: testRemoteSel,
 			TokenPoolRef:        poolRef,
 			ExistingDataStore:   newSealedDatastore(),
 			RateLimitBuckets:    []tokens.TPRLRateLimitBucket{{OutboundRateLimiterConfig: cfg, InboundRateLimiterConfig: cfg}},
@@ -899,7 +906,7 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 			TokenRef:          datastore.AddressRef{Address: f.tokenHex},
 			ExistingDataStore: tarDS(t, f),
 			RemoteChains: map[uint64]tokens.RemoteChainConfig[[]byte, string]{
-				7: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
+				testRemoteSel: {RemotePool: f.evmRemote, RemoteToken: f.evmRemoteToken, RemoteDecimals: 18},
 			},
 		}
 		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
@@ -914,7 +921,7 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 		cfg := tokens.RateLimiterConfig{IsEnabled: true, Capacity: big.NewInt(10), Rate: big.NewInt(1)}
 		out, err := setTokenPoolRateLimits(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, false, tokens.TPRLRemotes{
 			ChainSelector:       42,
-			RemoteChainSelector: 7,
+			RemoteChainSelector: testRemoteSel,
 			TokenPoolRef:        lrPoolRef,
 			ExistingDataStore:   newSealedDatastore(),
 			RateLimitBuckets:    []tokens.TPRLRateLimitBucket{{OutboundRateLimiterConfig: cfg, InboundRateLimiterConfig: cfg}},
@@ -939,4 +946,44 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 		require.Equal(t, lrops.ContractType, string(refs[0].Type), "the pool ref must be normalized for owner dispatch")
 		require.Equal(t, tlbops.ContractType, string(refs[1].Type), "the matching-qualifier lock box ref must ride along")
 	})
+}
+
+func TestRemoteTokenWireBytes(t *testing.T) {
+	t.Parallel()
+	evmSel := chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector
+	stellarSel := chainsel.STELLAR_MAINNET.Selector
+	raw20 := make([]byte, 20)
+	raw20[0] = 0xbb
+	padded := common.LeftPadBytes(raw20, 32)
+	badPrefix := make([]byte, 32)
+	copy(badPrefix, padded)
+	badPrefix[0] = 0x01
+
+	tests := []struct {
+		name    string
+		sel     uint64
+		token   []byte
+		want    []byte
+		wantErr string
+	}{
+		{name: "evm native passes through", sel: evmSel, token: raw20, want: raw20},
+		{name: "evm zero-padded trims to native", sel: evmSel, token: padded, want: raw20},
+		{name: "stellar native passes through", sel: stellarSel, token: padded, want: padded},
+		{name: "wrong length errors", sel: evmSel, token: make([]byte, 24), wantErr: "want the family-native"},
+		{name: "non-zero prefix errors", sel: evmSel, token: badPrefix, wantErr: "want the family-native"},
+		{name: "empty errors", sel: evmSel, token: nil, wantErr: "empty remote token"},
+		{name: "unknown selector errors", sel: 7, token: raw20, wantErr: "get chain family"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := remoteTokenWireBytes(tc.sel, tc.token)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				require.Equal(t, tc.want, got)
+			} else {
+				require.ErrorContains(t, err, tc.wantErr)
+			}
+		})
+	}
 }

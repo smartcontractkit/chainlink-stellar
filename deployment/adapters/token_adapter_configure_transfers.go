@@ -304,10 +304,11 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 		}
 
 		if !supportedReport.Output {
-			// New lane: one ChainUpdate with the left-padded-32 wire
-			// encoding (the same form PostConnect writes, so the two
-			// writers cannot double-apply). A fresh lane starts unlimited
-			// unless the input supplies the default bucket.
+			// New lane: one ChainUpdate — the pool address in the
+			// left-padded-32 wire form and the token in the remote family's
+			// native form (the same forms the raw PostConnect writer uses,
+			// so the two writers cannot double-apply). A fresh lane starts
+			// unlimited unless the input supplies the default bucket.
 			add, err := poolChainUpdate(remoteSel, rc, bucketOrZero(defBucket))
 			if err != nil {
 				return sequences.OnChainOutput{}, err
@@ -350,7 +351,11 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("read remote token of pool %s for %d: %w", poolStrkey, remoteSel, err)
 		}
-		if !bytes.Equal(remoteTokenReport.Output, common.LeftPadBytes(rc.RemoteToken, 32)) {
+		wantRemoteToken, err := remoteTokenWireBytes(remoteSel, rc.RemoteToken)
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("remote chain %d: %w", remoteSel, err)
+		}
+		if !bytes.Equal(remoteTokenReport.Output, wantRemoteToken) {
 			// Remote token changed: replace the lane atomically — one
 			// apply_chain_updates carrying the removal and the re-add, so a
 			// failed re-add cannot leave the lane removed. The replacement
@@ -511,9 +516,12 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 	return sequences.OnChainOutput{BatchOps: batchOps}, nil
 }
 
-// poolChainUpdate builds the ChainUpdate for one remote with the
-// left-padded-32 wire encoding both writers (this sequence and devenv
-// PostConnect) use.
+// poolChainUpdate builds the ChainUpdate for one remote: the pool address in
+// the left-padded-32 wire form counterpart pools compare by (exact bytes),
+// and the token in the remote family's native form — the stellar OnRamp
+// carries remote_token_address verbatim into the message, and an EVM
+// destination OffRamp rejects a dest token that is not its native 20 bytes
+// (see remoteTokenWireBytes).
 func poolChainUpdate(remoteSel uint64, rc tokens.RemoteChainConfig[[]byte, string], bucket tokens.TPRLRateLimitBucket) (tpoolbindings.ChainUpdate, error) {
 	outbound, err := rateLimiterConfigToBinding(bucket.OutboundRateLimiterConfig)
 	if err != nil {
@@ -523,13 +531,39 @@ func poolChainUpdate(remoteSel uint64, rc tokens.RemoteChainConfig[[]byte, strin
 	if err != nil {
 		return tpoolbindings.ChainUpdate{}, fmt.Errorf("inbound rate limit (remote %d): %w", remoteSel, err)
 	}
+	remoteToken, err := remoteTokenWireBytes(remoteSel, rc.RemoteToken)
+	if err != nil {
+		return tpoolbindings.ChainUpdate{}, fmt.Errorf("remote token (remote %d): %w", remoteSel, err)
+	}
 	return tpoolbindings.ChainUpdate{
 		RemoteChainSelector:       remoteSel,
 		RemotePoolAddresses:       [][]byte{common.LeftPadBytes(rc.RemotePool, 32)},
-		RemoteTokenAddress:        common.LeftPadBytes(rc.RemoteToken, 32),
+		RemoteTokenAddress:        remoteToken,
 		OutboundRateLimiterConfig: outbound,
 		InboundRateLimiterConfig:  inbound,
 	}, nil
+}
+
+// remoteTokenWireBytes returns the remote token bytes a stellar pool must
+// store: the remote family's native form. A 32-byte zero-left-padded input
+// (the form the shared changeset supplies) is trimmed to the native tail;
+// any other wrong length is an error, never a silent reshape — a stored
+// token no destination accepts fails every send.
+func remoteTokenWireBytes(remoteSel uint64, token []byte) ([]byte, error) {
+	if len(token) == 0 {
+		return nil, fmt.Errorf("empty remote token address")
+	}
+	native, err := stellarccip.AddressBytesLength(remoteSel)
+	if err != nil {
+		return nil, fmt.Errorf("get chain family for remote chain %d: %w", remoteSel, err)
+	}
+	if len(token) == int(native) {
+		return token, nil
+	}
+	if len(token) == 32 && int(native) < 32 && bytes.Trim(token[:32-int(native)], "\x00") == nil {
+		return token[32-int(native):], nil
+	}
+	return nil, fmt.Errorf("remote token address is %d bytes, want the family-native %d", len(token), native)
 }
 
 // resolveRemoteRateLimitBuckets resolves the per-remote TPRL buckets the
