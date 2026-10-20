@@ -311,7 +311,97 @@ func TestStellarTxm_BroadcastPipeline_TooLateResimulatesAtOnceWithFreshBounds(t 
 
 	first, second := <-sent, <-sent
 	assert.Equal(t, first.SeqNum(), second.SeqNum())
-	assert.Equal(t, first.LedgerBounds().MaxLedger+5, second.LedgerBounds().MaxLedger)
+	// The RPC only moved 5 ledgers, but the rejection proved the validating node had reached
+	// MaxLedger-1, so the new bounds start from there.
+	offset := *txm.config.LedgerBoundsOffset
+	assert.Equal(t, uint32(first.LedgerBounds().MaxLedger)-1+offset, uint32(second.LedgerBounds().MaxLedger))
+}
+
+func TestStellarTxm_BroadcastPipeline_ExhaustedRetriesFailWithoutFinalDelay(t *testing.T) {
+	t.Parallel()
+
+	tooLate, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxTooLate},
+	})
+	require.NoError(t, err)
+
+	var sends atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			sends.Add(1)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: tooLate}, nil
+		},
+	}
+
+	// The last attempt is the first one past the immediate retries. With a one-hour delay the
+	// tx can only fail within the deadline if that attempt does not sleep before the budget check.
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(maxImmediateTooLateRetries + 1)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Hour),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Failed
+	}, 5*time.Second, 10*time.Millisecond, "exhausted submit attempts must fail without a final SubmitRetryDelay sleep")
+	assert.Equal(t, int32(maxImmediateTooLateRetries+1), sends.Load())
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	assert.Equal(t, 0, store.InflightCount())
+	assert.Equal(t, int64(101), store.GetNextSequence(), "the never-sent sequence must be released")
+}
+
+func TestStellarTxm_BroadcastPipeline_SequenceUsedKeepsOtherTxTracked(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+
+	// Another tx already holds sequence 101. The head is forced back onto it to reach the
+	// "sequence used" path, which the head fix makes unreachable through the store API.
+	store, err := txm.accountStore.CreateTxStore(testAddress, 101)
+	require.NoError(t, err)
+	require.NoError(t, store.AddUnconfirmed(101, "other-tx", 1050, 0, &StellarTx{ID: "other"}))
+	store.lock.Lock()
+	store.nextSequence = 101
+	store.lock.Unlock()
+
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Failed
+	}, 5*time.Second, 10*time.Millisecond)
+
+	unconfirmed := store.GetUnconfirmed()
+	require.Len(t, unconfirmed, 1, "the other tx must stay tracked")
+	assert.Equal(t, "other-tx", unconfirmed[0].Hash)
 }
 
 func TestStellarTxm_BroadcastPipeline_TooLateBacksOffAfterImmediateRetries(t *testing.T) {
