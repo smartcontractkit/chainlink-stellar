@@ -813,9 +813,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		if retryReason == ErrorReasonTooLate {
 			// The rejection proves the validating node has reached maxLedger-1, so the next bounds
 			// start from there even if the RPC still reports an older latest ledger.
-			if maxLedger > 0 {
-				headFloor = max(headFloor, maxLedger-1)
-			}
+			headFloor = max(headFloor, maxLedger-1)
 			if immediateTooLateRetries < maxImmediateTooLateRetries {
 				// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
 				immediateTooLateRetries++
