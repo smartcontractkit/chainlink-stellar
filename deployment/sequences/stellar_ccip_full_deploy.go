@@ -103,6 +103,10 @@ func statReleaseWasm(path, displayName string) error {
 // time, not during the deploy, so the deploy itself needs no NOP/committee data. It is kept as a
 // parameter for callers that hold one (CCV's stash → [StellarDeployChainContracts], or
 // [RunStellarCCIPFullDeployForCCV] which converts CCV topology) and for future deploy-time needs.
+//
+// Output addresses carry only the refs this run recorded (new deploys, adoptions, strkey→hex
+// rewrites); refs seeded from ExistingAddresses are never re-reported, so a re-run where every
+// contract already exists records no refs.
 func RunStellarCCIPFullDeploy(
 	ctx context.Context,
 	b cldf_ops.Bundle,
@@ -122,6 +126,12 @@ func RunStellarCCIPFullDeploy(
 
 	ds := datastore.NewMemoryDataStore()
 	if err := stellarccip.MergeExistingAddressRefs(ds, in.ExistingAddresses); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+	// Baseline of the seeded refs: the final output reports only refs recorded
+	// past this point, never the seeded ExistingAddresses rows.
+	baseline, err := ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
 
@@ -949,7 +959,47 @@ func RunStellarCCIPFullDeploy(
 	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	return seq_core.OnChainOutput{Addresses: addrs}, nil
+	return seq_core.OnChainOutput{Addresses: refsRecordedThisRun(addrs, baseline)}, nil
+}
+
+// addressRefIdentity is the datastore row identity of an address ref.
+type addressRefIdentity struct {
+	chain   uint64
+	typ     datastore.ContractType
+	qual    string
+	version string
+}
+
+func refIdentity(r datastore.AddressRef) addressRefIdentity {
+	version := ""
+	if r.Version != nil {
+		version = r.Version.String()
+	}
+	return addressRefIdentity{
+		chain:   r.ChainSelector,
+		typ:     r.Type,
+		qual:    r.Qualifier,
+		version: version,
+	}
+}
+
+// refsRecordedThisRun filters final down to the refs recorded this run: rows whose
+// identity is absent from the baseline, or whose address changed against it (the
+// hand-recorded strkey → hex rewrite). Unchanged baseline rows are not re-reported.
+func refsRecordedThisRun(final, baseline []datastore.AddressRef) []datastore.AddressRef {
+	base := make(map[addressRefIdentity]string, len(baseline))
+	for _, r := range baseline {
+		base[refIdentity(r)] = r.Address
+	}
+	recorded := make([]datastore.AddressRef, 0, len(final))
+	for _, r := range final {
+		id := refIdentity(r)
+		if addr, ok := base[id]; ok && addr == r.Address {
+			continue
+		}
+		recorded = append(recorded, r)
+	}
+	return recorded
 }
 
 // qualifiedReceiverPlan mirrors one row of ccv's EVM buildMockReceivers matrix

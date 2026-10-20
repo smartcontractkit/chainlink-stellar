@@ -155,6 +155,9 @@ func TestOffRampSetSourceOnRamps(t *testing.T) {
 		require.Empty(t, out.MCMSTimelockProposals, "deployer-key mode submits directly")
 		require.Equal(t, [][]byte{patchedOnRamp}, readOnRamps())
 
+		// Fresh bundle: the reader must read chain state, not replay the setter's
+		// cached read of the same op on the previous bundle.
+		cldfEnv.OperationsBundle = newBundle()
 		// The reader on the registered ChainFamily adapter returns the same
 		// whitelist in the wire form the source chain uses.
 		family, ok := ccvadapters.GetChainFamilyRegistry().GetChainFamily(chainsel.FamilyStellar)
