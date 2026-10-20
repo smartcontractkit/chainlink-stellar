@@ -42,6 +42,11 @@ var (
 		Help: "Transactions that exhausted their retry budget (lifecycle or infra) before failing",
 	}, []string{"chainID", "budget"})
 
+	promStellarTxmSubmitRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellar_txm_tx_submit_rejected",
+		Help: "SendTransaction results that were not accepted, by reason (bad_seq, insufficient_fee, too_late, try_again_later, ...)",
+	}, []string{"chainID", "reason"})
+
 	promStellarTxmTimeUntilTxConfirmed = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "txm_time_until_tx_confirmed",
 		Help: "The amount of time elapsed from a transaction being broadcast to being included in a ledger.",
@@ -82,6 +87,7 @@ type TxmMetrics interface {
 	IncrementRetryTxs(context.Context, RetryReason)
 	IncrementDroppedTxs(context.Context, DropReason)
 	IncrementMaxAttemptsReached(context.Context, RetryBudget)
+	IncrementSubmitRejected(context.Context, ErrorReason)
 	IncrementRestore(context.Context, RestoreOutcome)
 	ObserveSimulationDuration(context.Context, int64)
 	ObserveInclusionFee(context.Context, int64)
@@ -95,12 +101,13 @@ type stellarTxmMetrics struct {
 	chainID string
 
 	// Transaction lifecycle metrics
-	broadcastedTxs         metric.Int64Counter
-	successTxs             metric.Int64Counter
-	pendingTxs             metric.Int64Gauge
-	outcomeTxs             metric.Int64Counter
-	maxAttemptsReached     metric.Int64Counter
-	timeUntilTxConfirmed   metric.Float64Histogram
+	broadcastedTxs       metric.Int64Counter
+	successTxs           metric.Int64Counter
+	pendingTxs           metric.Int64Gauge
+	outcomeTxs           metric.Int64Counter
+	maxAttemptsReached   metric.Int64Counter
+	submitRejected       metric.Int64Counter
+	timeUntilTxConfirmed metric.Float64Histogram
 
 	// Stellar-specific metrics
 	restore      metric.Int64Counter
@@ -137,6 +144,11 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 	maxAttemptsReached, err := meter.Int64Counter("stellar_txm_tx_max_attempts_reached")
 	if err != nil {
 		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_tx_max_attempts_reached: %w", err))
+	}
+
+	submitRejected, err := meter.Int64Counter("stellar_txm_tx_submit_rejected")
+	if err != nil {
+		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_tx_submit_rejected: %w", err))
 	}
 
 	timeUntilTxConfirmed, err := meter.Float64Histogram("txm_time_until_tx_confirmed")
@@ -192,6 +204,7 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 		pendingTxs:           pendingTxs,
 		outcomeTxs:           outcomeTxs,
 		maxAttemptsReached:   maxAttemptsReached,
+		submitRejected:       submitRejected,
 		timeUntilTxConfirmed: timeUntilTxConfirmed,
 
 		restore:      restore,
@@ -260,6 +273,15 @@ func (m *stellarTxmMetrics) IncrementMaxAttemptsReached(ctx context.Context, bud
 	m.maxAttemptsReached.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
 }
 
+func (m *stellarTxmMetrics) IncrementSubmitRejected(ctx context.Context, reason ErrorReason) {
+	promStellarTxmSubmitRejected.WithLabelValues(m.chainID, string(reason)).Add(1)
+	otelAttrs := append(
+		m.getOtelAttributes(),
+		attribute.String("reason", string(reason)),
+	)
+	m.submitRejected.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+}
+
 func (m *stellarTxmMetrics) recordOutcome(ctx context.Context, outcome, reason string) {
 	promStellarTxmOutcomeTxs.WithLabelValues(m.chainID, outcome, reason).Add(1)
 	otelAttrs := append(
@@ -320,6 +342,8 @@ func (noopStellarTxmMetrics) IncrementRetryTxs(context.Context, RetryReason) {}
 func (noopStellarTxmMetrics) IncrementDroppedTxs(context.Context, DropReason) {}
 
 func (noopStellarTxmMetrics) IncrementMaxAttemptsReached(context.Context, RetryBudget) {}
+
+func (noopStellarTxmMetrics) IncrementSubmitRejected(context.Context, ErrorReason) {}
 
 func (noopStellarTxmMetrics) IncrementRestore(context.Context, RestoreOutcome) {}
 

@@ -349,7 +349,7 @@ func TestBuildAndSubmitTransaction_WithRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	op := testInvokeOp(d.signer.Address())
-	meta, err := d.buildAndSubmitTransaction(context.Background(), src, op)
+	meta, _, err := d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 
@@ -388,7 +388,7 @@ func TestBuildAndSubmitTransaction_NoRestore(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	meta, err := d.buildAndSubmitTransaction(context.Background(), src, op)
+	meta, _, err := d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.EqualValues(t, 1, simCount.Load(), "should simulate exactly once when no restore needed")
@@ -419,7 +419,7 @@ func TestBuildAndSubmitTransaction_RestoreFails(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, op)
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to restore expired ledger entries")
 }
@@ -551,7 +551,7 @@ func TestBuildAndSubmitTransaction_AutoRestoreDisabled(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	meta, err := d.buildAndSubmitTransaction(context.Background(), src, op)
+	meta, _, err := d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 
@@ -591,7 +591,7 @@ func TestBuildAndSubmitTransaction_SecondRestorePreambleErrors(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, testInvokeOp(d.signer.Address()))
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, testInvokeOp(d.signer.Address()))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected second RestorePreamble")
 	assert.EqualValues(t, 2, simCount.Load(), "should simulate twice before erroring")
@@ -710,7 +710,7 @@ func TestBuildAndSubmitTransaction_FeeBumpApplied(t *testing.T) {
 
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, testInvokeOp(d.signer.Address()))
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, testInvokeOp(d.signer.Address()))
 	require.NoError(t, err)
 
 	// Fee rule: the Soroban resource fee (with its bump) is paid once, via

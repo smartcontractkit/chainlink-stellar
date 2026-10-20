@@ -41,12 +41,6 @@ pub struct DestChainConfigSetEvent {
     pub config: DestChainConfig,
 }
 
-#[contractevent(topics = ["onramp_1_7_OwnershipTransferred"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OwnershipTransferredEvent {
-    pub new_owner: Address,
-}
-
 /// Emitted by `forward_from_router` ONLY when the `e2e-upgrade-marker` cargo
 /// feature is enabled. The default (feature-off) shipped Wasm never emits this,
 /// so the event's presence after a send is unambiguous evidence that the

@@ -1,11 +1,13 @@
 package txm
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,6 +34,7 @@ func TestNoopStellarTxmMetrics(t *testing.T) {
 		m.IncrementDroppedTxs(ctx, DropReasonChannelFullNewRejected)
 		m.IncrementMaxAttemptsReached(ctx, RetryBudgetLifecycle)
 		m.IncrementMaxAttemptsReached(ctx, RetryBudgetInfra)
+		m.IncrementSubmitRejected(ctx, ErrorReasonTooLate)
 		m.IncrementRestore(ctx, RestoreOutcomeInitiated)
 		m.IncrementRestore(ctx, RestoreOutcomeSuccess)
 		m.IncrementRestore(ctx, RestoreOutcomeFailed)
@@ -79,6 +82,50 @@ func TestStellarTxm_Metrics_BroadcastIncrementsCounter(t *testing.T) {
 
 	broadcastAfter := testutil.ToFloat64(promStellarTxmBroadcastedTxs.WithLabelValues(chainID))
 	assert.Equal(t, float64(1), broadcastAfter-broadcastBefore, "broadcast counter should increment once")
+}
+
+func TestStellarTxm_Metrics_SubmitRejectedIncrementsCounter(t *testing.T) {
+	chainID := chainsel.STELLAR_TESTNET.ChainID
+	rejectedBefore := testutil.ToFloat64(promStellarTxmSubmitRejected.WithLabelValues(chainID, string(ErrorReasonTooLate)))
+
+	tooLate, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxTooLate},
+	})
+	require.NoError(t, err)
+
+	var sends atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			if sends.Add(1) == 1 {
+				return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: tooLate}, nil
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+	}
+
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(mock), chainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Unconfirmed
+	}, 5*time.Second, 50*time.Millisecond, "tx should reach Unconfirmed after the retry")
+
+	rejectedAfter := testutil.ToFloat64(promStellarTxmSubmitRejected.WithLabelValues(chainID, string(ErrorReasonTooLate)))
+	assert.Equal(t, float64(1), rejectedAfter-rejectedBefore, "one too_late rejection should be counted")
 }
 
 func TestStellarTxm_Metrics_ConfirmIncrementsSuccess(t *testing.T) {

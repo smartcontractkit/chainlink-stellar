@@ -63,7 +63,9 @@ type StellarTxm struct {
 	done          sync.WaitGroup
 	stop          chan struct{}
 
-	feeTracker *feeTracker
+	feeTracker            *feeTracker
+	firstSendPercentile   feePercentile
+	rebroadcastPercentile feePercentile
 
 	getClient         func(context.Context) (RPCClient, error)
 	networkPassphrase string
@@ -90,17 +92,23 @@ func New(
 		return nil, fmt.Errorf("resolve network passphrase: %w", err)
 	}
 
+	lggr := logger.Named(lgr, "StellarTxm")
+	firstSendPercentile := feePercentileOrDefault(lggr, "FirstSendFeePercentile", *cfg.FirstSendFeePercentile, defaultFirstSendFeePercentile)
+	rebroadcastPercentile := feePercentileOrDefault(lggr, "RebroadcastFeePercentile", *cfg.RebroadcastFeePercentile, defaultRebroadcastFeePercentile)
+
 	metrics := NewStellarTxmMetrics(lgr, chainID)
 
 	return &StellarTxm{
-		baseLogger: logger.Named(lgr, "StellarTxm"),
+		baseLogger: lggr,
 		keystore:   keystore,
 		config:     cfg,
 		chainID:    chainID,
 		metrics:    metrics,
 		feeStrat:   NewFeeStrategyFromConfig(cfg),
 
-		feeTracker: newFeeTracker(cfg.FeeStatsPollInterval.Duration()),
+		feeTracker:            newFeeTracker(cfg.FeeStatsPollInterval.Duration(), cfg.FeeStatsLookback.Duration()),
+		firstSendPercentile:   firstSendPercentile,
+		rebroadcastPercentile: rebroadcastPercentile,
 
 		transactions: make(map[string]*StellarTx),
 
@@ -609,10 +617,15 @@ func (s *StellarTxm) broadcastLoop() {
 	}
 }
 
+// maxImmediateTooLateRetries bounds the back-to-back re-simulations after tx_too_late. Past it
+// the RPC has lagged the validating node for longer than fresh bounds can fix, so the retry
+// backs off like the other retryable rejections.
+const maxImmediateTooLateRetries = 2
+
 // simulateAssembleSignAndSend runs the full Stellar broadcast pipeline for a
 // single transaction: simulate → (restore archived entries) → assemble →
 // sign → send, with retry on transient failures and inclusion-fee bumping
-// seeded from feeTracker GetFeeStats Soroban percentiles.
+// seeded from feeTracker.
 func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *StellarTx) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 	if tx.abandoned() {
@@ -651,38 +664,42 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	// Seed inclusion fee from live network data (P50 first broadcast, P99 rebroadcasts),
-	// via feeTracker to cap GetFeeStats RPC rate. A rebroadcast also outbids the previous
-	// envelope, which was not included at its bid.
-	// SeedInclusionFee and RebroadcastInclusionFee cap the result at MaxInclusionFee
-	var networkPercentile uint64
-	if fees, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
-		if currentAttempt > 0 {
-			networkPercentile = fees.p99
-		} else {
-			networkPercentile = fees.p50
-		}
+	// Seed from the highest configured percentile within FeeStatsLookback, capped at
+	// MaxInclusionFee. A rebroadcast also outbids the previous envelope, which was not
+	// included at its bid.
+	percentile := s.firstSendPercentile
+	if currentAttempt > 0 {
+		percentile = s.rebroadcastPercentile
+	}
+	var networkFee uint64
+	var latestFees feeSample
+	if peak, latest, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
+		networkFee, latestFees = peak.percentile(percentile), latest
 	} else {
 		ctxLogger.Warnw("getFeeStats failed, using geometric baseline", "error", fsErr)
 	}
 	var inclusionFee int64
 	var clampedToMax bool
 	if currentAttempt > 0 {
-		inclusionFee, clampedToMax = s.feeStrat.RebroadcastInclusionFee(currentAttempt, tx.InclusionFee, networkPercentile)
+		inclusionFee, clampedToMax = s.feeStrat.RebroadcastInclusionFee(currentAttempt, tx.InclusionFee, networkFee)
 	} else {
-		inclusionFee, clampedToMax = s.feeStrat.SeedInclusionFee(currentAttempt, networkPercentile)
+		inclusionFee, clampedToMax = s.feeStrat.SeedInclusionFee(currentAttempt, networkFee)
 	}
+	logSeed := ctxLogger.Debugw
 	if clampedToMax {
-		ctxLogger.Warnw("seeded inclusion fee clamped to MaxInclusionFee — possible misbehaving RPC",
-			"networkPercentile", networkPercentile,
-			"previousInclusionFee", tx.InclusionFee,
-			"maxInclusionFee", s.feeStrat.MaxInclusionFee,
-			"attempt", currentAttempt,
-		)
+		logSeed = ctxLogger.Warnw
 	}
+	logSeed("seeded inclusion fee",
+		"inclusionFee", inclusionFee, "clampedToMax", clampedToMax, "maxInclusionFee", s.feeStrat.MaxInclusionFee,
+		"percentile", percentile, "networkPercentile", networkFee,
+		"latestP50", latestFees.p50, "latestP90", latestFees.p90, "latestP99", latestFees.p99,
+		"previousInclusionFee", tx.InclusionFee, "attempt", currentAttempt)
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
+	immediateTooLateRetries := uint(0)
+	var headFloor uint32 // a ledger the validating node is known to have reached (from tx_too_late)
+	var lastRejectReason ErrorReason
 
 	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
 		if tx.abandoned() {
@@ -691,7 +708,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
-		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq)
+		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq, headFloor)
 		if err != nil {
 			ctxLogger.Errorw("simulation failed", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSimulation)
@@ -788,8 +805,17 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
+		lastRejectReason = retryReason
+		s.metrics.IncrementSubmitRejected(ctx, retryReason)
+
 		if fatalErr {
 			ctxLogger.Errorw("fatal error during broadcast", "reason", retryReason)
+			if retryReason == ErrorReasonStoreAdd {
+				// The store holds this sequence for another tx; releasing it would drop that tx's
+				// tracking entry and hand the sequence out again.
+				s.markTxFailed(ctx, tx, retryReason)
+				return
+			}
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, retryReason)
 			return
 		}
@@ -817,24 +843,22 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 
 		if retryReason == ErrorReasonInsufficientFee {
-			var networkP90 uint64
-			if fees, fsErr := s.feeTracker.sorobanInclusionPercentiles(ctx, client); fsErr == nil {
-				networkP90 = fees.p90
+			var bumpNetworkFee uint64
+			if peak, _, fsErr := s.feeTracker.sorobanInclusionFees(ctx, client); fsErr == nil {
+				bumpNetworkFee = peak.percentile(s.rebroadcastPercentile)
 			}
 			required := requiredInclusionFee(submitResult.ErrorResultXDR, resourceFee)
-			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, max(networkP90, required))
-			if clampedToMax {
-				ctxLogger.Warnw("bumped inclusion fee clamped to MaxInclusionFee — possible misbehaving RPC",
-					"networkPercentile", networkP90,
-					"requiredInclusionFee", required,
-					"maxInclusionFee", s.feeStrat.MaxInclusionFee,
-				)
-			}
+			bumped, clampedToMax := s.feeStrat.BumpInclusionFee(inclusionFee, max(bumpNetworkFee, required))
 			ctxLogger.Warnw("tx rejected, bumping inclusion fee and retrying",
 				"reason", retryReason, "attempt", submitAttempt, "prevFee", inclusionFee, "newFee", bumped,
+				"clampedToMax", clampedToMax, "maxInclusionFee", s.feeStrat.MaxInclusionFee,
+				"percentile", s.rebroadcastPercentile, "networkPercentile", bumpNetworkFee,
 				"requiredInclusionFee", required)
 			inclusionFee = bumped
 			submitAttempt++
+			if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+				break
+			}
 			select {
 			case <-time.After(s.config.SubmitRetryDelay.Duration()):
 			case <-ctx.Done():
@@ -845,17 +869,28 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 
 		if retryReason == ErrorReasonTooLate {
-			// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
-			ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds", "attempt", submitAttempt)
-			submitAttempt++
-			continue
+			// The rejection proves the validating node has reached maxLedger-1, so the next bounds
+			// start from there even if the RPC still reports an older latest ledger.
+			headFloor = max(headFloor, maxLedger-1)
+			if immediateTooLateRetries < maxImmediateTooLateRetries {
+				// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
+				immediateTooLateRetries++
+				ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds",
+					"attempt", submitAttempt, "maxLedger", maxLedger, "headFloor", headFloor)
+				submitAttempt++
+				continue
+			}
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
+		// Other retryable errors (e.g. try_again_later, tx_internal_error) and tx_too_late past
+		// the immediate retries (the RPC keeps lagging the validating node): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
 		submitAttempt++
+		if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+			break
+		}
 		select {
 		case <-time.After(s.config.SubmitRetryDelay.Duration()):
 		case <-ctx.Done():
@@ -864,15 +899,19 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	ctxLogger.Errorw("exhausted all submit attempts")
+	ctxLogger.Errorw("exhausted all submit attempts", "lastRejectReason", lastRejectReason)
 	s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonMaxRetries)
 }
 
+// prepareAndSimulateWithRetry builds and simulates the preliminary tx. Its ledger bounds start
+// from the estimated network head or headFloor, whichever is higher; headFloor is a ledger the
+// validating node is already known to have reached.
 func (s *StellarTxm) prepareAndSimulateWithRetry(
 	ctx context.Context,
 	client RPCClient,
 	tx *StellarTx,
 	seq int64,
+	headFloor uint32,
 ) (*txnbuild.Transaction, protocolrpc.SimulateTransactionResponse, uint32, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 
@@ -900,7 +939,7 @@ func (s *StellarTxm) prepareAndSimulateWithRetry(
 		if tx.LedgerBoundsOffset > 0 {
 			offset = tx.LedgerBoundsOffset
 		}
-		tx.MaxLedger = latestLedger.Sequence + offset
+		tx.MaxLedger = max(latestLedger.Sequence, headFloor) + offset
 
 		prelimTx, err := s.buildPreliminaryTx(tx, seq, tx.MaxLedger)
 		if err != nil {
@@ -910,7 +949,7 @@ func (s *StellarTxm) prepareAndSimulateWithRetry(
 		simResult, err := s.simulateTransaction(ctx, client, prelimTx)
 		if err == nil {
 			head := s.estimateNetworkHead(ctx, ctxLogger, latestLedger, simResult.LatestLedger, time.Now())
-			tx.MaxLedger = head + offset
+			tx.MaxLedger = max(head, headFloor) + offset
 			return prelimTx, simResult, tx.MaxLedger, nil
 		}
 

@@ -14,14 +14,15 @@ import (
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
-// TestStellarToEVMTCAPI runs the chain-agnostic tcapi basic cases that pass on
-// the EVM→Stellar lane (default verifier, safe-tag finality, secondary
-// committee, custom executor, and the five receiver-verifier cases against the
-// EVM-side per-qualifier mock receivers) on the Stellar→EVM lane — the reverse
-// of TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The
-// cases resolve CCV/executor from the SOURCE-side (Stellar) resolver and encode
-// them through the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban
+// TestStellarToEVMTCAPI runs the tcapi basic messaging suite (basic.All:
+// default verifier, safe-tag finality, secondary committee, custom executor,
+// max data size, and the five receiver-verifier cases against the EVM-side
+// per-qualifier mock receivers) on the Stellar→EVM lane — the reverse of
+// TestEVMToStellarTCAPI (evm_to_stellar_tcapi_test.go). The cases resolve
+// CCV/executor from the SOURCE-side (Stellar) resolver and encode them
+// through the stellar V3SourceFactory (BuildV3ExtraArgs → Soroban
 // GenericExtraArgsV3 XDR), which is the encoding the Stellar OnRamp parses.
+// Token transfers live in their own suite: TestStellarToEVMTCAPIBnmTokenTransfers.
 //
 // Contracts must be compiled before running (from the repo root):
 //
@@ -33,11 +34,17 @@ import (
 //
 // Once the devenv is running, run the test (also from the tests dir):
 //
-//	go test -v -timeout 25m ./e2e/... -run 'TestStellar(ToEVM)?TCAPI'
+//	go test -v -timeout 25m ./e2e/... -run 'TestStellar(ToEVM)?TCAPI$'
 func TestStellarToEVMTCAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode; requires a running devenv environment")
 	}
+	// Runs sequentially with TestEVMToStellarTCAPI by design (the basic CI leg
+	// runs both in one process): both suites share the Stellar deployer
+	// account, and each env's deployer tracks the account sequence
+	// independently — overlapping writes (this suite's sends vs. the other's
+	// receiver-policy setup/cleanup) produce bad-sequence rejections the
+	// deployer does not retry (deployment/deployer.go).
 
 	configOutputPath := "../env/env-stellar-evm-out.toml"
 	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
@@ -62,40 +69,7 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 	}
 
 	t.Run("extra args v3 messaging", func(t *testing.T) {
-		// The four cases that pass on the EVM→Stellar lane (see
-		// TestEVMToStellarTCAPI): default verifier, safe-tag finality, the secondary
-		// committee, and the custom executor. max data size is likewise
-		// excluded until its fix lands.
-		//
-		// The custom executor case names the stellar-side custom executor
-		// (GetExecutor(stellar, "custom"), deployed by the full deploy via
-		// nonDefaultExecutorQualifiers). The message's 32-byte executor ID only
-		// matters off-chain: the EVM dest decodes the envelope with
-		// MessageV1Codec, which carries an unchecked ccv_and_executor_hash, and
-		// the executor plugin byte-matches it against
-		// defaultExecutorAddress[stellar source] — populated in the EVM custom
-		// executor's job spec from the stellar chain config (the stellar
-		// entry the executor_pools.custom pool carries).
-		cases := []tcapi.TestCase{
-			basic.EOAReceiverDefaultVerifier(lib, src, dst, args),
-			basic.EOAReceiverDefaultVerifier_SafeTag(lib, src, dst, args),
-			basic.EOAReceiverSecondaryVerifier(lib, src, dst, args),
-			basic.CustomExecutor(lib, src, dst, args),
-			// The receiver-verifier cases: on this lane the dest is EVM,
-			// where ccv's EVM phase deploys the per-qualifier mock receivers
-			// (buildMockReceivers) configured with the EVM-side VVR ids,
-			// while the stellar source's executor report + aggregator stamps
-			// travel through the stellar offchain pipeline — exercising
-			// cross-family CCV identity agreement between the executor's
-			// submitted identity and the EVM receivers' required CCVs.
-			// Cases whose prerequisites the environment lacks (e.g. a
-			// missing committee) skip via HavePrerequisites below.
-			basic.ReceiverSecondaryVerifierRequired(lib, src, dst, args),
-			basic.ReceiverSecondaryRequiredTertiaryOptionalThreshold1(lib, src, dst, args),
-			basic.ReceiverQuaternaryAllThreeVerifiers(lib, src, dst, args),
-			basic.ReceiverQuaternaryDefaultAndSecondary(lib, src, dst, args),
-			basic.ReceiverQuaternaryDefaultAndTertiary(lib, src, dst, args),
-		}
+		cases := basic.All(lib, src, dst, args)
 		for _, tc := range cases {
 			if !tc.HavePrerequisites(ctx) {
 				t.Logf("Skipping %s because current environment does not have the prerequisites", tc.Name())
@@ -113,4 +87,62 @@ func TestStellarToEVMTCAPI(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferEOA runs the EOA-receiver token
+// transfers on the Stellar→EVM lane: both finality variants per combo
+// (see bnmEOACaseGroups). Own CI leg (see test-e2e-tcapi.yaml).
+func TestStellarToEVMTCAPIBnmTokenTransferEOA(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCases(t, bnmEOACases(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferMockReceiver runs the mock-receiver
+// token transfers on the Stellar→EVM lane (see bnmMockReceiverCases).
+func TestStellarToEVMTCAPIBnmTokenTransferMockReceiver(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCases(t, bnmMockReceiverCases(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality runs the
+// mock-receiver fast-finality token transfers on the Stellar→EVM lane
+// (see bnmMockReceiverFastFinalityCases).
+func TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCases(t, bnmMockReceiverFastFinalityCases(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferRateLimit runs the rate-limit
+// exhaustion error path on the Stellar→EVM lane (see bnmRateLimitCase).
+func TestStellarToEVMTCAPIBnmTokenTransferRateLimit(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCase(t, bnmRateLimitCase(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit runs the inbound
+// rate-limit exhaustion error path on the Stellar→EVM lane (see
+// bnmInboundRateLimitCase).
+func TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	runBnmTokenTransferCase(t, bnmInboundRateLimitCase(t, env, lib, configOutputPath, src, dst))
+}
+
+// TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver runs the
+// separate-token-receiver case on the Stellar→EVM lane.
+func TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver(t *testing.T) {
+	env, _, _, lib, configOutputPath := newBnmTokenTransferEnv(t)
+	src := env.SourceChainDetails.ChainSelector // Stellar
+	dst := env.DestChainDetails.ChainSelector   // EVM
+	args := bnmTokenTransferArgs(env, src)
+	runBnmTokenTransferCase(t, bnmSeparateTokenReceiverCase(t, env, lib, configOutputPath, src, dst, args))
 }

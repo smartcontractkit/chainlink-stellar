@@ -72,7 +72,11 @@ func acceptOwnershipCall(t *testing.T, forwarderID string) timelockbindings.Call
 // assertForwarderRejectsNonOwner asserts an owner-gated forwarder entrypoint rejects a caller
 // that is not the current owner. Post-handoff the owner is the timelock, so a direct EOA call
 // fails the Ownable require_owner -> owner.require_auth() check. Soroban surfaces this either as
-// a simulation trap (Error(Contract, #<code>)) or as a post-submit "transaction failed".
+// a simulation trap (Error(Contract, #<code>)), a post-submit "transaction failed", or — since
+// the deployer re-simulates with the attached auth — an auth-layer rejection at simulation:
+// authenticating the timelock contract goes through its __check_auth export, which timelock.wasm
+// does not have, so any direct caller traps with Error(Auth, InvalidAction) before the
+// contract's own logic runs.
 func assertForwarderRejectsNonOwner(t *testing.T, ctx context.Context, dep *deployment.Deployer, forwarderID, function string, args []xdr.ScVal) {
 	t.Helper()
 	if _, simErr := dep.SimulateContract(ctx, forwarderID, function, args); simErr != nil {
@@ -87,8 +91,9 @@ func assertForwarderRejectsNonOwner(t *testing.T, ctx context.Context, dep *depl
 	msg := invokeErr.Error()
 	hasContract := strings.Contains(msg, "Error(Contract") && strings.Contains(msg, fmt.Sprintf("#%d", crebindings.CCIPErrorNotOwner))
 	hasTxFail := strings.Contains(msg, "transaction failed")
-	if !hasContract && !hasTxFail {
-		t.Fatalf("expected Error(Contract, #%d) or transaction failed for %s, got: %v",
+	hasAuthFail := strings.Contains(msg, "Error(Auth, InvalidAction)")
+	if !hasContract && !hasTxFail && !hasAuthFail {
+		t.Fatalf("expected Error(Contract, #%d), transaction failed, or auth rejection for %s, got: %v",
 			crebindings.CCIPErrorNotOwner, function, invokeErr)
 	}
 }

@@ -430,11 +430,16 @@ impl OffRampContract {
         };
 
         // --- Message Routing ---
-        // EVM skips `_callReceiver` for token-only (no data and ccipReceiveGasLimit == 0).
+        // EVM skips `_callReceiver` for token-only (no data and
+        // ccipReceiveGasLimit == 0), and for a zero receiver: address(0) has
+        // no code, so EVM's `_isTokenOnlyTransfer` skips the call even with
+        // receive gas. The canonical zero receiver is a token-only delivery —
+        // never route to it (receive gas alone must not trigger routing).
         let has_data = message.data.len() > 0;
         let has_receive_gas = message.ccip_receive_gas_limit > 0;
+        let zero_receiver = Self::is_canonical_zero_receiver(&message.receiver);
 
-        if has_data || has_receive_gas {
+        if (has_data || has_receive_gas) && !zero_receiver {
             let routing_result = Self::route_verified_message(
                 env,
                 message,
@@ -531,6 +536,17 @@ impl OffRampContract {
         let sk = StrkeyContract(hash);
         let encoded = sk.to_string();
         Ok(Address::from_str(env, encoded.as_str()))
+    }
+
+    /// The canonical zero receiver: exactly the 32-byte zero address — the Soroban analog of
+    /// EVM `address(0)` (whose empty code makes `_isTokenOnlyTransfer` skip the receiver). The
+    /// message decoder does not enforce the receiver length, and a bare `iter().all()` would
+    /// also grant the token-only exception to an empty or short all-zero receiver — letting a
+    /// data/gas message skip receiver validation and delivery, while `get_ccvs_for_message`
+    /// rejects the same malformed receiver (`InvalidReceiverLength`, EVM `InvalidEVMAddress`
+    /// parity). Only the canonical form gets the exception.
+    fn is_canonical_zero_receiver(receiver: &Bytes) -> bool {
+        receiver.len() == 32 && receiver.iter().all(|b| b == 0)
     }
 
     /// Pool-required CCVs for an inbound token transfer (EVM `OffRamp._getCCVsFromPool`).
@@ -1042,7 +1058,14 @@ impl OffRampContract {
         source_config: &SourceChainConfig,
         static_config: &StaticConfig,
     ) -> Result<(), CCIPError> {
-        let is_token_only = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+        // EVM parity (OffRamp.sol `_isTokenOnlyTransfer`: address(0) has no
+        // code, so EVM skips the receiver consult for the zero receiver even
+        // with receive gas): the canonical zero receiver is a token-only
+        // delivery. Non-zero non-Wasm receivers keep the C-1 require-V2
+        // fail-fast.
+        let zero_receiver = Self::is_canonical_zero_receiver(&message.receiver);
+        let is_token_only =
+            (message.data.is_empty() && message.ccip_receive_gas_limit == 0) || zero_receiver;
 
         if is_token_only {
             // === Token-only path (EVM `_getCCVsForMessage` token-only arm — H-10) ===
