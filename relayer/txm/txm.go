@@ -821,6 +821,9 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			prevSeq := seq
 			seq = txStore.GetNextSequence()
 			submitAttempt++
+			if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+				break
+			}
 			// An unchanged sequence means the account still waits on an earlier envelope of ours;
 			// give it time to land or expire instead of spending the remaining attempts at once.
 			if seq == prevSeq {
@@ -1112,6 +1115,20 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				latestLedger, latestCloseTime = ledger.Sequence, ledger.LedgerCloseTime
 			}
 
+			// stellar-rpc reads the tx row before the ledger range, so a NOT_FOUND reply whose latest
+			// ledger is the last one that can include the tx may predate that ledger's commit. A second
+			// read starts after that commit, so only a second NOT_FOUND proves the envelope expired.
+			if resp.LatestLedger != 0 && atLastIncludableLedger(latestLedger, utx) {
+				again, againErr := client.GetTransaction(ctx, protocolrpc.GetTransactionRequest{Hash: hash})
+				if againErr != nil || again.Status != protocolrpc.TransactionStatusNotFound || again.LatestLedger == 0 {
+					ctxLogger.Infow("tx at its last includable ledger, checking it again on the next poll",
+						"hash", hash, "status", again.Status, "error", againErr)
+					totalPending++
+					continue
+				}
+				latestLedger, latestCloseTime = again.LatestLedger, again.LatestLedgerCloseTime
+			}
+
 			// NOT_FOUND: the envelope is in no ledger up to latestLedger. Recycle the sequence
 			// only once no later ledger can include it; recycling on enqueue age would let two
 			// envelopes land on one sequence.
@@ -1153,6 +1170,12 @@ func cannotBeIncluded(latestLedger uint32, latestCloseTime int64, utx *Unconfirm
 	ledgerExpired := utx.MaxLedger > 0 && latestLedger+1 >= utx.MaxLedger
 	timeExpired := utx.MaxTime > 0 && latestCloseTime > utx.MaxTime
 	return ledgerExpired || timeExpired
+}
+
+// atLastIncludableLedger reports whether latestLedger is the last ledger that can include the
+// envelope; MaxLedger is exclusive.
+func atLastIncludableLedger(latestLedger uint32, utx *UnconfirmedTx) bool {
+	return utx.MaxLedger > 0 && latestLedger+1 == utx.MaxLedger
 }
 
 // statusUnknownMargin is how long past an envelope's time bound, by node clock, its status may stay
