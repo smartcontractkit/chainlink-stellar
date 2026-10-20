@@ -1936,8 +1936,15 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 			wantTxStatus: commontypes.Unconfirmed,
 		},
 		{
-			name:         "last ledger inside the bounds closed recycles the sequence",
+			name:         "last ledger inside the bounds closed keeps tx pending for one more ledger",
 			getTxResp:    notFoundAt(maxLedger-1, maxTime-100),
+			wantNextSeq:  seq + 1,
+			wantInflight: 1,
+			wantTxStatus: commontypes.Unconfirmed,
+		},
+		{
+			name:         "ledger MaxLedger closed recycles the sequence",
+			getTxResp:    notFoundAt(maxLedger, maxTime-100),
 			wantNextSeq:  seq,
 			wantInflight: 0,
 			wantTxStatus: commontypes.Failed,
@@ -1966,7 +1973,7 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 		{
 			name:         "latest ledger missing from the response falls back to GetLatestLedger",
 			getTxResp:    notFoundAt(0, 0),
-			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 1},
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger},
 			wantNextSeq:  seq,
 			wantInflight: 0,
 			wantTxStatus: commontypes.Failed,
@@ -1974,7 +1981,7 @@ func TestStellarTxm_CheckUnconfirmed_RecyclesSequenceOnlyWhenNetworkCannotInclud
 		{
 			name:         "latest ledger missing and GetLatestLedger inside the bounds keeps tx pending",
 			getTxResp:    notFoundAt(0, 0),
-			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 2},
+			latestLedger: &protocolrpc.GetLatestLedgerResponse{Sequence: maxLedger - 1},
 			wantNextSeq:  seq + 1,
 			wantInflight: 1,
 			wantTxStatus: commontypes.Unconfirmed,
