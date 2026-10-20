@@ -192,11 +192,13 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 			TokenPoolRef:  poolRef,
 		})
 		require.NoError(t, err)
-		// The deployer still owns the pool: transfer_ownership ran directly;
+		// The deployer still owns the pool: transfer_ownership ran directly (the
+		// ExecInfo marker op — the changeset-level OutputBuilder drops it), and
 		// accept_ownership (pending owner = timelock) routes to an MCMS proposal.
-		require.Len(t, out.Output.BatchOps, 1)
-		require.Len(t, out.Output.BatchOps[0].Transactions, 1)
-		tx := out.Output.BatchOps[0].Transactions[0]
+		require.Len(t, out.Output.BatchOps, 2, "direct-transfer marker op + accept-ownership proposal")
+		require.Empty(t, out.Output.BatchOps[0].Transactions, "the direct transfer is the marker op")
+		require.Len(t, out.Output.BatchOps[1].Transactions, 1)
+		tx := out.Output.BatchOps[1].Transactions[0]
 		fn, _, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
 		require.NoError(t, err)
 		require.Equal(t, "accept_ownership", fn)

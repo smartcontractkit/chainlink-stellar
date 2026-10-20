@@ -171,7 +171,11 @@ func TestOffRampSetSourceOnRamps(t *testing.T) {
 
 	t.Run("timelock-owned patch routes to an executed MCMS proposal", func(t *testing.T) {
 		gov := helpers.DeployMCMSStackWithRoles(t, ctx, e2eEnv, sel, cciputils.CLLQualifier, helpers.DefaultMCMSTimelockMinDelaySec)
-		require.NoError(t, ds.Addresses().Upsert(mcmsutil.StellarTimelockDatastoreRef(sel, cciputils.CLLQualifier, gov.TimelockID)))
+		// Record the whole MCMS stack: the changeset's MCMS proposal path
+		// resolves the role multisigs and the timelock from the datastore.
+		for _, r := range gov.Refs {
+			require.NoError(t, ds.Addresses().Upsert(r))
+		}
 		cldfEnv.DataStore = ds.Seal()
 
 		// Hand the OffRamp to the timelock: raw transfer, then accept through

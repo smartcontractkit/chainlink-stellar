@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	mcmstypes "github.com/smartcontractkit/mcms/types"
@@ -59,6 +60,10 @@ type MCMSGovernanceStack struct {
 	BypasserMCMSID  string
 	// BypasserClient signs bypasser roots for the no-delay execution path.
 	BypasserClient *mcmsbindings.McmsClient
+	// Refs are the DeployStellarMCMS output refs (role multisigs + RBAC
+	// timelock); upsert them into the test datastore so changeset-level MCMS
+	// lookups (FindStellarMCMSAddressRef, FindStellarTimelockAddressRef) resolve.
+	Refs []datastore.AddressRef
 }
 
 // ContractIDToBytes32 decodes a Soroban contract strkey into a 32-byte contract id.
@@ -544,6 +549,7 @@ func DeployMCMSStackWithRoles(
 		CancellerMCMSID: cancellerID,
 		BypasserMCMSID:  bypasserID,
 		BypasserClient:  mcmsbindings.NewMcmsClient(env.Deployer, bypasserID),
+		Refs:            refs,
 	}
 }
 
