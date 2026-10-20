@@ -69,6 +69,10 @@ func TestCCVDeploymentAdapterRegistrations_stellar(t *testing.T) {
 	require.NoError(t, err, "TokenPoolOnchain")
 	_, err = ccvdeploymentadapters.GetLaneConfigRegistry().Get(sel)
 	require.NoError(t, err, "LaneConfig")
+	_, err = ccvdeploymentadapters.GetCommitteeVerifierDeployRegistry().Get(sel)
+	require.NoError(t, err, "CommitteeVerifierDeploy")
+	_, err = ccvdeploymentadapters.GetProtocolContractsDeployRegistry().Get(sel)
+	require.NoError(t, err, "ProtocolContractsDeploy")
 }
 
 func TestStellarDeployChainContractsAdapter_smoke(t *testing.T) {

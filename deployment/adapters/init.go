@@ -89,13 +89,8 @@ func init() {
 	ccvdeploymentadapters.GetCommitteeVerifierOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVCommitteeVerifierOnchainAdapter{})
 	ccvdeploymentadapters.GetTokenPoolOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVTokenPoolOnchainAdapter{})
 	ccvdeploymentadapters.GetLaneConfigRegistry().Register(chainsel.FamilyStellar, &StellarCCVLaneConfigAdapter{})
-
-	// TODO: validate that it's ok to skip registration
-	//   GetCommitteeVerifierDeployRegistry / GetProtocolContractsDeployRegistry — consumed only by
-	//     ccv's DeployProtocolContracts changeset; Stellar deploys through the ccip
-	//     GetDeployChainContractsRegistry entry above.
-	//   (GetLaneConfigRegistry is registered above — LaneExpansion / PromoteLaneRouter.)
-	//   (GetTokenPoolOnchainRegistry is registered above — RemoveRemotePool.)
+	ccvdeploymentadapters.GetCommitteeVerifierDeployRegistry().Register(chainsel.FamilyStellar, &StellarCCVCommitteeVerifierDeployAdapter{})
+	ccvdeploymentadapters.GetProtocolContractsDeployRegistry().Register(chainsel.FamilyStellar, &StellarCCVProtocolContractsDeployAdapter{})
 
 	// --- shared infrastructure ---
 	tokenscore.GetTokenAdapterRegistry().RegisterTokenAdapter(
