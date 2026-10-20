@@ -114,11 +114,22 @@ func (f *FeeStrategy) BumpInclusionFee(currentInclusionFee int64, minFee uint64)
 
 // RebroadcastInclusionFee returns the inclusion fee for lifecycle attempt `attempt` (> 0) of a tx
 // whose previous envelope bid previousInclusionFee and was not included: SeedInclusionFee, raised
-// to at least previousInclusionFee * BumpMultiplier so a fee surge cannot strand the tx at its old bid.
+// to at least the previous bid and, while that is under one bump above networkPercentile, to
+// previousInclusionFee * BumpMultiplier. The percentile is the highest price the network has shown,
+// so bidding more than one bump above it buys nothing; when core wants more it says so with
+// tx_insufficient_fee, which BumpInclusionFee handles.
 func (f *FeeStrategy) RebroadcastInclusionFee(attempt uint64, previousInclusionFee int64, networkPercentile uint64) (fee int64, clampedToMax bool) {
 	fee, clampedToMax = f.SeedInclusionFee(attempt, networkPercentile)
-	if outbid, outbidClamped := f.BumpInclusionFee(previousInclusionFee, networkPercentile); outbid > fee {
-		return outbid, outbidClamped
+	outbid := int64(math.Ceil(float64(previousInclusionFee) * f.BumpMultiplier))
+	if networkPercentile > 0 {
+		ceiling := int64(math.Ceil(float64(networkPercentile) * f.BumpMultiplier)) //nolint:gosec // same as SeedInclusionFee
+		outbid = max(previousInclusionFee, min(outbid, ceiling))
 	}
-	return fee, clampedToMax
+	if outbid <= fee {
+		return fee, clampedToMax
+	}
+	if outbid > f.MaxInclusionFee {
+		return f.MaxInclusionFee, true
+	}
+	return outbid, false
 }
