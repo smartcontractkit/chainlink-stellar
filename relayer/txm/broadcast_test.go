@@ -314,6 +314,86 @@ func TestStellarTxm_BroadcastPipeline_TooLateResimulatesAtOnceWithFreshBounds(t 
 	assert.Equal(t, first.LedgerBounds().MaxLedger+5, second.LedgerBounds().MaxLedger)
 }
 
+func TestStellarTxm_BroadcastPipeline_TooLateBacksOffAfterImmediateRetries(t *testing.T) {
+	t.Parallel()
+
+	tooLate, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxTooLate},
+	})
+	require.NoError(t, err)
+
+	var latestLedger atomic.Uint32
+	latestLedger.Store(1000)
+	sent := make(chan xdr.TransactionEnvelope, 10)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedger.Load()}, nil
+		},
+		simulateResp: protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			var env xdr.TransactionEnvelope
+			if err := xdr.SafeUnmarshalBase64(req.Transaction, &env); err != nil {
+				return protocolrpc.SendTransactionResponse{}, err
+			}
+			sent <- env
+			// The RPC keeps lagging the validating node: every send is too late.
+			latestLedger.Add(5)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: tooLate}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(10)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Hour),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	_, err = txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	// The first send and maxImmediateTooLateRetries re-simulations run back to back.
+	var envs []xdr.TransactionEnvelope
+	for len(envs) <= maxImmediateTooLateRetries {
+		select {
+		case env := <-sent:
+			envs = append(envs, env)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("expected %d back-to-back sends, got %d", maxImmediateTooLateRetries+1, len(envs))
+		}
+	}
+	for i := 1; i < len(envs); i++ {
+		assert.Equal(t, envs[0].SeqNum(), envs[i].SeqNum())
+		assert.Greater(t, envs[i].LedgerBounds().MaxLedger, envs[i-1].LedgerBounds().MaxLedger)
+	}
+
+	// The next retry waits SubmitRetryDelay (an hour here), so nothing more is sent.
+	select {
+	case <-sent:
+		t.Fatal("tx_too_late past the immediate retry budget must back off, not re-send at once")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func TestStellarTxm_BroadcastPipeline_BadSeqRetry(t *testing.T) {
 	t.Parallel()
 

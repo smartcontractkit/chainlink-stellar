@@ -447,13 +447,10 @@ func TestTxStore_ReleaseAndRetryLifecycle(t *testing.T) {
 	require.NoError(t, store.AddUnconfirmed(50, "hash-50", 200, 0, nil))
 	assert.Equal(t, int64(51), store.GetNextSequence())
 
-	// Tx B: gets seq 51, but simulation fails before SendTransaction.
-	// Without Release, nextSequence is still 51 (GetNextSequence is read-only),
-	// so a retry would naturally get 51 again. However, Release is needed
-	// when the sequence was tracked in unconfirmedSequences before the failure.
-	// Simulate that case:
+	// Tx B: seq 51 is tracked as unconfirmed (nextSequence becomes 52), then a later
+	// step fails and the broadcaster releases it. Release must drop the tracking entry
+	// and hand 51 out again before 52.
 	require.NoError(t, store.AddUnconfirmed(51, "hash-51", 200, 0, nil))
-	// nextSequence is now 52
 
 	// Assembly/signing fails — Release the sequence
 	store.Release(51)

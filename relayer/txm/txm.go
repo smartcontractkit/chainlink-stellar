@@ -588,6 +588,11 @@ func (s *StellarTxm) broadcastLoop() {
 	}
 }
 
+// maxImmediateTooLateRetries bounds the back-to-back re-simulations after tx_too_late. Past it
+// the RPC has lagged the validating node for longer than fresh bounds can fix, so the retry
+// backs off like the other retryable rejections.
+const maxImmediateTooLateRetries = 2
+
 // simulateAssembleSignAndSend runs the full Stellar broadcast pipeline for a
 // single transaction: simulate → (restore archived entries) → assemble →
 // sign → send, with retry on transient failures and inclusion-fee bumping
@@ -650,6 +655,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
+	immediateTooLateRetries := uint(0)
 
 	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
 		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq)
@@ -790,14 +796,16 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		if retryReason == ErrorReasonTooLate {
+		if retryReason == ErrorReasonTooLate && immediateTooLateRetries < maxImmediateTooLateRetries {
 			// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
+			immediateTooLateRetries++
 			ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds", "attempt", submitAttempt)
 			submitAttempt++
 			continue
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
+		// Other retryable errors (e.g. try_again_later, tx_internal_error) and tx_too_late past
+		// the immediate retries (the RPC keeps lagging the validating node): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
