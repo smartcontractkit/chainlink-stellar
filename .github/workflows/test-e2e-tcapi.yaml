@@ -105,9 +105,9 @@ jobs:
       - name: Generate bindings
         run: make generate-bindings
 
-      - name: Clean Cargo artifacts
-        run: cargo clean
-
+      # No cargo clean here: generate-bindings already built the wasm workspace
+      # (gen_interfaces.sh runs stellar contract build), so make build below is a
+      # warm rebuild. .dockerignore excludes target/ from the image builds' context.
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
 
