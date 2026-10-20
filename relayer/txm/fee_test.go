@@ -304,10 +304,12 @@ func TestFeeStrategy_RebroadcastInclusionFee(t *testing.T) {
 		wantFee     int64
 		wantClamped bool
 	}{
-		{"outbids the previous envelope", 1, 2_000, 500, 3_000, false},
+		{"outbids the previous envelope while under one bump above the network", 1, 1_000, 1_200, 1_500, false},
+		{"outbid stops one bump above the network percentile", 1, 2_000, 1_500, 2_250, false},
+		{"never below the previous bid when the network is far under it", 1, 2_000, 500, 2_000, false},
 		{"network percentile above the outbid wins", 1, 2_000, 4_000, 4_000, false},
 		{"geometric baseline when the previous bid is unknown", 2, 0, 0, 225, false},
-		{"outbid clamped to max", 3, 8_000, 0, 10_000, true},
+		{"unbounded outbid without network data, clamped to max", 3, 8_000, 0, 10_000, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
