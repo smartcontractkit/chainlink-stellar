@@ -1190,7 +1190,7 @@ func TestStellarTxm_EnqueueAndWait_AbandonedTxIsNotRebroadcast(t *testing.T) {
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
 	require.Error(t, result.Error)
-	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandoned))
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedRebroadcast))
 	assert.Equal(t, int32(1), sends.Load(), "expired tx without a waiting caller must not be rebroadcast")
 	store := txm.accountStore.GetTxStore(testAddress)
 	assert.Equal(t, int64(101), store.GetNextSequence(), "the expired sequence is free for the next tx")
@@ -1244,7 +1244,7 @@ func TestStellarTxm_EnqueueAndWait_AbandonedTxReleasesSequenceDuringSubmitRetrie
 	result, err := txm.GetTransactionResult(txID)
 	require.NoError(t, err)
 	require.Error(t, result.Error)
-	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandoned))
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedSubmitRetry))
 	store := txm.accountStore.GetTxStore(testAddress)
 	assert.Equal(t, int64(101), store.GetNextSequence(), "the reserved sequence is released")
 	assert.Equal(t, 0, store.InflightCount())
@@ -1266,7 +1266,7 @@ func TestStellarTxm_MaybeRetry_DropsAbandonedTxWithoutRequeue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, commontypes.Failed, result.Status)
 	require.Error(t, result.Error)
-	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandoned))
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedRebroadcast))
 }
 
 // --- getSequenceNumber tests ---
