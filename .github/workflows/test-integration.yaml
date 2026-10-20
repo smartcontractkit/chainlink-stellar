@@ -1,7 +1,8 @@
 name: Integration Tests
 
-# Runs all integration tests under tests/integration except TestTokenPool (token_pool_test.go
-# and siloed_pool_migration_test.go). Those run in test-integration-token-pool.yaml.
+# Runs all integration tests under tests/integration except TestTokenPool* (token_pool_test.go,
+# token_pool_rate_limit_reader_test.go and siloed_pool_migration_test.go). Those run in
+# test-integration-token-pool.yaml.
 #
 # The tests are split across four matrix shards (each on its own runner with its own
 # Stellar container) because they are Soroban-tx-latency bound and used to run strictly
@@ -37,17 +38,17 @@ jobs:
       fail-fast: false
       matrix:
         # The four -run regexes partition all tests except TestTokenPool* (own
-        # workflow) and TestMain: ramps = 8, router-rmn-cv = 7,
-        # governance-changesets = 5, pools-hooks = 8.
+        # workflow) and TestMain: ramps = 9, router-rmn-cv = 7,
+        # governance-changesets = 7, pools-hooks = 10.
         include:
           - shard: ramps
             run: '^Test(OnRamp|OffRamp)'
           - shard: router-rmn-cv
             run: '^Test(Router|RmnRemote|CommitteeVerifier|VersionedVerifierResolver|TokenAdminRegistry)'
           - shard: governance-changesets
-            run: '^Test(GovernanceTimelock|Mcms|Component|Peripheral)'
+            run: '^Test(GovernanceTimelock|Mcms|Component|Peripheral|CCVDeployAdapters|ConfigureTokenPool)'
           - shard: pools-hooks
-            run: '^Test(BnmTokenPool|LinkToken|AdvancedPoolHooks)'
+            run: '^Test(BnmTokenPool|LinkToken|AdvancedPoolHooks|FeeAdapterReadback|TokenAdapterPoolOps)'
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
