@@ -47,12 +47,24 @@ func FindStellarMCMSAddressRef(e cldf.Environment, chainSelector uint64, input m
 // FindStellarTimelockAddressRef resolves RBACTimelock from the datastore. It fails closed:
 // there is no fallback to an MCMS contract (We deploy a distinct timelock).
 func FindStellarTimelockAddressRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) (frameworkdatastore.AddressRef, error) {
-	refs := e.DataStore.Addresses().Filter()
-	ref := ccipdatastore.GetAddressRef(refs, chainSelector, utils.RBACTimelock, deploy.MCMSVersion, input.Qualifier)
+	ref := LookupStellarTimelockAddressRef(e, chainSelector, input)
 	if ref.Address == "" {
 		return frameworkdatastore.AddressRef{}, fmt.Errorf(
 			"no Stellar RBACTimelock address found for chain %d qualifier %q",
 			chainSelector, input.Qualifier)
 	}
 	return ref, nil
+}
+
+// LookupStellarTimelockAddressRef resolves RBACTimelock from the datastore,
+// returning an empty ref when the chain has no RBACTimelock at the MCMS
+// version — EOA lanes deploy none (an empty input qualifier matches any
+// qualifier, mirroring the shared GetAddressRef semantics). It never errors:
+// MCMSReader.GetTimelockRef must not error, because callers such as token
+// expansion resolve the timelock unconditionally and detect MCMS-less setups
+// via the empty ref (the EVM/Solana reader contract). There is still no
+// fallback to an MCMS contract (we deploy a distinct timelock).
+func LookupStellarTimelockAddressRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) frameworkdatastore.AddressRef {
+	refs := e.DataStore.Addresses().Filter()
+	return ccipdatastore.GetAddressRef(refs, chainSelector, utils.RBACTimelock, deploy.MCMSVersion, input.Qualifier)
 }

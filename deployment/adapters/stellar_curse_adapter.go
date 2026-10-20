@@ -133,7 +133,7 @@ func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) er
 	if !ok {
 		return fmt.Errorf("stellar chain %d not found in environment", selector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return fmt.Errorf("build deployer on chain %d: %w", selector, err)
 	}
@@ -179,7 +179,7 @@ func (a *StellarCurseAdapter) IsSubjectCursedOnChain(e cldf.Environment, selecto
 	if !ok {
 		return false, fmt.Errorf("stellar chain %d not in environment", selector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return false, err
 	}
@@ -196,7 +196,7 @@ func (a *StellarCurseAdapter) IsChainConnectedToTargetChain(e cldf.Environment, 
 	if !ok {
 		return false, fmt.Errorf("stellar chain %d not in environment", selector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return false, err
 	}
@@ -268,7 +268,7 @@ func (a *StellarCurseAdapter) ListConnectedChains(e cldf.Environment, selector u
 	if !ok {
 		return nil, fmt.Errorf("stellar chain %d not in environment", selector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return nil, err
 	}

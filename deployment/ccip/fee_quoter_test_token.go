@@ -9,28 +9,28 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ApplyFeeQuoterTestTokenConfig sets oracle price and per-destination token transfer fee
-// configs for the devenv test SAC token on FeeQuoter.
+// ApplyFeeQuoterTokenConfig sets oracle price and per-destination token transfer fee
+// configs for a 7-decimal lane token (the devenv SAC test token or the BnM token) on FeeQuoter.
 // priceUpdater must be an address in FeeQuoter's authorized-callers set and must match the invoker's auth.
-func ApplyFeeQuoterTestTokenConfig(
+func ApplyFeeQuoterTokenConfig(
 	ctx context.Context,
 	feeQuoterClient *fee_quoter.FeeQuoterClient,
 	priceUpdater string,
-	testToken string,
+	token string,
 	allSelectors []uint64,
 ) error {
 	if feeQuoterClient == nil {
 		return fmt.Errorf("fee quoter client is nil")
 	}
-	if testToken == "" {
-		return fmt.Errorf("test token contract id is empty")
+	if token == "" {
+		return fmt.Errorf("token contract id is empty")
 	}
 	if priceUpdater == "" {
 		return fmt.Errorf("price updater address is empty")
 	}
 	tokenPriceUpdates := fee_quoter.PriceUpdates{
 		TokenPriceUpdates: []fee_quoter.TokenPriceUpdate{{
-			Token: testToken,
+			Token: token,
 			// Devenv test token is a 7-decimal SAC. USDPriceWith18Decimals
 			// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per 1e18
 			// smallest units", scaled by decimals: $1 × 10^(36-7) = 1e29.
@@ -48,7 +48,7 @@ func ApplyFeeQuoterTestTokenConfig(
 	tokenFeeConfigs := make([]fee_quoter.TokenFeeConfigArgs, 0, len(allSelectors))
 	for _, rs := range allSelectors {
 		tokenFeeConfigs = append(tokenFeeConfigs, fee_quoter.TokenFeeConfigArgs{
-			Token:             testToken,
+			Token:             token,
 			DestChainSelector: rs,
 			Config: fee_quoter.TokenTransferFeeConfig{
 				FeeUsdCents:       25,

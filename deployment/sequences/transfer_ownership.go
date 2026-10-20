@@ -44,7 +44,7 @@ var StellarTransferOwnershipViaMCMS = cldfops.NewSequence(
 		if !ok {
 			return output, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return output, err
 		}
@@ -120,7 +120,7 @@ var StellarAcceptOwnership = cldfops.NewSequence(
 		if !ok {
 			return output, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return output, err
 		}
