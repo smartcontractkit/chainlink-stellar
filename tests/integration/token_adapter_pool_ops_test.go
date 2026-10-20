@@ -73,6 +73,7 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 			Client:            rpcClient,
 			NetworkPassphrase: passphrase,
 		}}),
+		OperationsBundle: newBundle(),
 	}
 
 	// Lean core: the refs the pool deploy sequence resolves.

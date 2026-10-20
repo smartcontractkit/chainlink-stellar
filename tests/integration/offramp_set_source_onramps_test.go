@@ -109,8 +109,10 @@ func TestOffRampSetSourceOnRamps(t *testing.T) {
 
 	// Pre-wire the source lane raw: the setter is a patch tool by design and
 	// fails fast on an unconfigured lane (the same raw call the devenv
-	// PostConnect path makes). The Router field is preserved by the setter on
-	// every patch; any on-chain contract address works for the fixture.
+	// PostConnect path makes). The Router and DefaultCcvs fields are preserved
+	// by the setter on every patch; any on-chain contract address works for
+	// the fixtures. DefaultCcvs must be seeded non-empty: validate() rejects
+	// an empty default CCV set (H-11 / INV-CFG-5).
 	tarStr, err := ccip.TokenAdminRegistryDatastoreRef().LookupStrkey(cldfEnv.DataStore, sel)
 	require.NoError(t, err)
 	require.NoError(t, offRampClient.ApplySourceChainCfgUpdates(ctx, []offrampbindings.SourceChainConfigArgs{{
@@ -118,6 +120,7 @@ func TestOffRampSetSourceOnRamps(t *testing.T) {
 		Router:              tarStr,
 		IsEnabled:           true,
 		OnRamps:             [][]byte{initialOnRamp},
+		DefaultCcvs:         []string{tarStr},
 	}}))
 
 	readOnRamps := func() [][]byte {

@@ -113,7 +113,7 @@ func TestCCVDeployAdapters(t *testing.T) {
 		cldfEnv.OperationsBundle = newBundle()
 		rerun, err := cs.Apply(cldfEnv, cvInput)
 		require.NoError(t, err)
-		require.Empty(t, rerun.DataStore.Addresses().Filter(nil), "re-run records no new refs")
+		require.Empty(t, rerun.DataStore.Addresses().Filter(), "re-run records no new refs")
 		require.Empty(t, rerun.MCMSTimelockProposals)
 
 		_ = cvRef
@@ -133,7 +133,7 @@ func TestCCVDeployAdapters(t *testing.T) {
 		require.NoError(t, cs.VerifyPreconditions(cldfEnv, protocolInput))
 		out, err := cs.Apply(cldfEnv, protocolInput)
 		require.NoError(t, err)
-		require.NotEmpty(t, out.DataStore.Addresses().Filter(nil), "the full deploy records component refs")
+		require.NotEmpty(t, out.DataStore.Addresses().Filter(), "the full deploy records component refs")
 
 		// Deployer-key owned: no refs flagged for ownership transfer, and the
 		// EOA-only deploy emits no MCMS proposals.
@@ -156,7 +156,7 @@ func TestCCVDeployAdapters(t *testing.T) {
 		cldfEnv.OperationsBundle = newBundle()
 		rerun, err := cs.Apply(cldfEnv, protocolInput)
 		require.NoError(t, err)
-		require.Empty(t, rerun.DataStore.Addresses().Filter(nil), "re-run records no new refs")
+		require.Empty(t, rerun.DataStore.Addresses().Filter(), "re-run records no new refs")
 		require.Empty(t, rerun.MCMSTimelockProposals)
 	})
 }
