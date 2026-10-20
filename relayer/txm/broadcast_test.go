@@ -641,6 +641,52 @@ func TestStellarTxm_BroadcastPipeline_BadSeqWaitsWhileAccountIsBehind(t *testing
 	}
 }
 
+func TestStellarTxm_BroadcastPipeline_BadSeqExhaustedRetriesFailWithoutFinalDelay(t *testing.T) {
+	t.Parallel()
+
+	badSeq, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxBadSeq},
+	})
+	require.NoError(t, err)
+
+	var sends atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp:        protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			sends.Add(1)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: badSeq}, nil
+		},
+	}
+
+	// The on-chain sequence never moves, so every attempt would wait. With a one-hour delay the tx
+	// can only fail within the deadline if the last attempt does not sleep before the budget check.
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(1)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Hour),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	txID, err := txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := txm.GetStatus(txID)
+		return err == nil && status == commontypes.Failed
+	}, 5*time.Second, 10*time.Millisecond, "exhausted bad_seq attempts must fail without a final SubmitRetryDelay sleep")
+	assert.Equal(t, int32(1), sends.Load())
+
+	store := txm.accountStore.GetTxStore(testAddress)
+	assert.Equal(t, 0, store.InflightCount())
+	assert.Equal(t, int64(101), store.GetNextSequence(), "the never-sent sequence must be released")
+}
+
 func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	accountXDR := buildAccountEntryXDR(t, testAddress, 100)
