@@ -42,6 +42,9 @@ func TestCCIPAdapterRegistrations_stellar(t *testing.T) {
 	_, ok = changesets.GetRegistry().GetMCMSReader(chainsel.FamilyStellar)
 	require.True(t, ok, "MCMSReader")
 
+	_, ok = deploy.GetAddressNormalizerRegistry().GetAddressNormalizer(chainsel.FamilyStellar)
+	require.True(t, ok, "AddressNormalizer")
+
 	_, ok = tokens.GetTokenAdapterRegistry().GetTokenAdapter(chainsel.FamilyStellar, v2)
 	require.True(t, ok, "TokenAdapter 2.0.0")
 }

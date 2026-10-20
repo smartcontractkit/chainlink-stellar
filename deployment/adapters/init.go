@@ -40,6 +40,11 @@ func init() {
 	changesets.GetRegistry().RegisterMCMSReader(chainsel.FamilyStellar, &StellarMCMSReader{})
 	deploy.GetTransferOwnershipRegistry().RegisterAdapter(chainsel.FamilyStellar, deploy.MCMSVersion, &StellarTransferOwnershipAdapter{})
 	deploy.GetTransferOwnershipRegistry().RegisterAdapter(chainsel.FamilyStellar, v2, &StellarTransferOwnershipAdapter{})
+	// Without this the ccip token changesets skip ref normalization for stellar
+	// (TryNormalizeAddressRef) or fail outright (RoundTripAddress in
+	// RemoveRemotePools), and alternate encodings of one address silently become
+	// different refs.
+	deploy.GetAddressNormalizerRegistry().RegisterAddressNormalizer(chainsel.FamilyStellar, &StellarAddressNormalizer{})
 
 	// chainlink-ccip v2_0_0 adapters
 	//

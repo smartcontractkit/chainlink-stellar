@@ -322,3 +322,139 @@ var GetCurrentRateLimiterState = cldfops.NewOperation(
 		return c.GetCurrentRateLimiterState(b.GetContext(), in.RemoteChainSelector, in.FastFinality)
 	},
 )
+
+// GetRouterInput identifies a pool router read.
+type GetRouterInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetRouter reads pool `get_router`; nil means no router is set.
+var GetRouter = cldfops.NewOperation(
+	"token-pool:get-router",
+	stellarops.ContractDeploymentVersion,
+	"Reads the router of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetRouterInput) (*string, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetRouter(b.GetContext())
+	},
+)
+
+// GetFeeAdminInput identifies a pool fee-admin read.
+type GetFeeAdminInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetFeeAdmin reads pool `get_fee_admin`; nil means no fee admin is set.
+var GetFeeAdmin = cldfops.NewOperation(
+	"token-pool:get-fee-admin",
+	stellarops.ContractDeploymentVersion,
+	"Reads the fee admin of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetFeeAdminInput) (*string, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetFeeAdmin(b.GetContext())
+	},
+)
+
+// SetRouterInput sets the pool's router. Owner-only on chain.
+type SetRouterInput struct {
+	ContractID string `json:"contract_id"`
+	Router     string `json:"router"`
+}
+
+// SetRouter calls pool `set_router` (no explicit caller: the contract
+// require_auths the invoking owner).
+var SetRouter = cldfops.NewOperation(
+	"token-pool:set-router",
+	stellarops.ContractDeploymentVersion,
+	"Sets the router of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetRouterInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetRouter(b.GetContext(), in.Router); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// SetRateLimitAdminInput sets the pool's rate-limit admin. Owner-only on chain.
+type SetRateLimitAdminInput struct {
+	ContractID string `json:"contract_id"`
+	Admin      string `json:"admin"`
+}
+
+// SetRateLimitAdmin calls pool `set_rate_limit_admin` (no explicit caller: the
+// contract require_auths the invoking owner).
+var SetRateLimitAdmin = cldfops.NewOperation(
+	"token-pool:set-rate-limit-admin",
+	stellarops.ContractDeploymentVersion,
+	"Sets the rate-limit admin of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetRateLimitAdminInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetRateLimitAdmin(b.GetContext(), in.Admin); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// SetFeeAdminInput sets the pool's fee admin. Owner-only on chain.
+type SetFeeAdminInput struct {
+	ContractID string `json:"contract_id"`
+	FeeAdmin   string `json:"fee_admin"`
+}
+
+// SetFeeAdmin calls pool `set_fee_admin` (no explicit caller: the contract
+// require_auths the invoking owner).
+var SetFeeAdmin = cldfops.NewOperation(
+	"token-pool:set-fee-admin",
+	stellarops.ContractDeploymentVersion,
+	"Sets the fee admin of a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in SetFeeAdminInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.SetFeeAdmin(b.GetContext(), in.FeeAdmin); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
+// GetTokenTransferFeeConfigInput identifies a pool per-remote fee config read.
+type GetTokenTransferFeeConfigInput struct {
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
+}
+
+// GetTokenTransferFeeConfig reads pool `get_token_transfer_fee_config` for one
+// destination chain.
+var GetTokenTransferFeeConfig = cldfops.NewOperation(
+	"token-pool:get-token-transfer-fee-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the token transfer fee config for one destination chain on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetTokenTransferFeeConfigInput) (*tpoolbindings.TokenTransferFeeConfig, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		return c.GetTokenTransferFeeConfig(b.GetContext(), in.DestChainSelector)
+	},
+)
+
+// ApplyTokenFeeConfigUpdatesInput applies pool per-remote fee config updates.
+// Owner-only on chain.
+type ApplyTokenFeeConfigUpdatesInput struct {
+	ContractID string                                     `json:"contract_id"`
+	Adds       []tpoolbindings.TokenTransferFeeConfigArgs `json:"adds"`
+	Disables   []uint64                                   `json:"disables"`
+}
+
+// ApplyTokenFeeConfigUpdates calls pool `apply_token_fee_config_updates` (no
+// explicit caller: the contract require_auths the invoking owner).
+var ApplyTokenFeeConfigUpdates = cldfops.NewOperation(
+	"token-pool:apply-token-fee-config-updates",
+	stellarops.ContractDeploymentVersion,
+	"Applies per-remote token transfer fee config updates on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in ApplyTokenFeeConfigUpdatesInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.ApplyTokenFeeConfigUpdates(b.GetContext(), in.Adds, in.Disables); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)

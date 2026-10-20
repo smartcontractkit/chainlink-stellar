@@ -251,38 +251,15 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 	if !input.AllowedFinalityConfig.IsZero() {
 		raw := input.AllowedFinalityConfig.Raw()
 		want := binary.BigEndian.Uint32(raw[:])
-		currentReport, err := cldf_ops.ExecuteOperation(b, tpoolops.GetAllowedFinalityConfig, deps, tpoolops.GetAllowedFinalityConfigInput{
-			ContractID: poolStrkey,
-		})
+		exec, proposal, err := applyPoolAllowedFinality(b, deps, owner, deployerAddr, timelockStrkey, hasTimelock, input.ChainSelector, input.TokenPoolRef.Type, poolStrkey, want)
 		if err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("read allowed finality config of pool %s: %w", poolStrkey, err)
+			return sequences.OnChainOutput{}, err
 		}
-		if currentReport.Output != want {
-			// set_allowed_finality_config is owner-only (the buckets accept the
-			// rate-limit admin too), so it routes by the owner independently
-			// of the bucket caller.
-			switch {
-			case owner == deployerAddr:
-				if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetAllowedFinalityConfig, deps, tpoolops.SetAllowedFinalityConfigInput{
-					ContractID:      poolStrkey,
-					AllowedFinality: want,
-				}); err != nil {
-					return sequences.OnChainOutput{}, fmt.Errorf("set allowed finality config on pool %s: %w", poolStrkey, err)
-				}
-				executed = true
-			case hasTimelock && owner == timelockStrkey:
-				data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_allowed_finality_config", []xdr.ScVal{
-					scval.Uint32ToScVal(want),
-				})
-				if err != nil {
-					return sequences.OnChainOutput{}, err
-				}
-				writes = append(writes, poolRateLimitProposalWrite(input, poolStrkey, data))
-			default:
-				return sequences.OnChainOutput{}, fmt.Errorf(
-					"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
-					poolStrkey, owner, deployerAddr, timelockStrkey)
-			}
+		if exec {
+			executed = true
+		}
+		if proposal != nil {
+			writes = append(writes, *proposal)
 		}
 	}
 
@@ -360,14 +337,69 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 // entrypoint, marked as a Soroban invoke (same encoding the ownership
 // sequences emit).
 func poolRateLimitProposalWrite(input tokens.TPRLRemotes, poolStrkey string, data []byte) evmcontract.WriteOutput {
+	return poolProposalWrite(input.ChainSelector, input.TokenPoolRef.Type, poolStrkey, data)
+}
+
+// poolProposalWrite builds one MCMS proposal write for a pool entrypoint,
+// marked as a Soroban invoke (same encoding the ownership sequences emit).
+func poolProposalWrite(chainSelector uint64, poolType datastore.ContractType, poolStrkey string, data []byte) evmcontract.WriteOutput {
 	return evmcontract.WriteOutput{
-		ChainSelector: input.ChainSelector,
+		ChainSelector: chainSelector,
 		Tx: mcmstypes.Transaction{
-			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(input.TokenPoolRef.Type)},
+			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(poolType)},
 			To:                poolStrkey,
 			Data:              data,
 			AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
 		},
+	}
+}
+
+// applyPoolAllowedFinality applies one pool's allowed-finality write with
+// owner routing: an equal current value skips, the deployer executes
+// directly, and the CLL timelock gets an MCMS proposal (set_allowed_finality_config
+// is owner-only; the rate-limit buckets accept the admin too, so the finality
+// arm routes by the owner alone).
+func applyPoolAllowedFinality(
+	b cldf_ops.Bundle,
+	deps stellardeps.StellarDeps,
+	owner, deployerAddr, timelockStrkey string,
+	hasTimelock bool,
+	chainSelector uint64,
+	poolType datastore.ContractType,
+	poolStrkey string,
+	want uint32,
+) (bool, *evmcontract.WriteOutput, error) {
+	currentReport, err := cldf_ops.ExecuteOperation(b, tpoolops.GetAllowedFinalityConfig, deps, tpoolops.GetAllowedFinalityConfigInput{
+		ContractID: poolStrkey,
+	})
+	if err != nil {
+		return false, nil, fmt.Errorf("read allowed finality config of pool %s: %w", poolStrkey, err)
+	}
+	if currentReport.Output == want {
+		return false, nil, nil
+	}
+	switch {
+	case owner == deployerAddr:
+		if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetAllowedFinalityConfig, deps, tpoolops.SetAllowedFinalityConfigInput{
+			ContractID:      poolStrkey,
+			AllowedFinality: want,
+		}); err != nil {
+			return false, nil, fmt.Errorf("set allowed finality config on pool %s: %w", poolStrkey, err)
+		}
+		return true, nil, nil
+	case hasTimelock && owner == timelockStrkey:
+		data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_allowed_finality_config", []xdr.ScVal{
+			scval.Uint32ToScVal(want),
+		})
+		if err != nil {
+			return false, nil, err
+		}
+		write := poolProposalWrite(chainSelector, poolType, poolStrkey, data)
+		return false, &write, nil
+	default:
+		return false, nil, fmt.Errorf(
+			"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
+			poolStrkey, owner, deployerAddr, timelockStrkey)
 	}
 }
 
