@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -28,7 +30,13 @@ import (
 // ConfigureChainForLanes hook applies committee verifier signature quorums
 // (sequences.StellarConfigureChainForLanes). Legacy lanes.ConnectChains is
 // unsupported for Stellar unless a LaneAdapter is reintroduced.
-type StellarChainFamilyAdapter struct{}
+type StellarChainFamilyAdapter struct {
+	// readOwner is a seam over the ownership read used by
+	// SetOffRampSourceOnRamps, so tests can fake the owner without an RPC; nil
+	// uses ownership.ContractOwner. The globally registered instance is the
+	// zero value, which uses the real read.
+	readOwner func(ctx context.Context, deps stellardeps.StellarDeps, ref datastore.AddressRef) (string, error)
+}
 
 var _ ccvadapters.ChainFamily = (*StellarChainFamilyAdapter)(nil)
 
@@ -80,7 +88,7 @@ func (a *StellarChainFamilyAdapter) GetFQAddress(ds datastore.DataStore, chainSe
 func (a *StellarChainFamilyAdapter) GetFeeQuoterDestChainConfig() lanes.FeeQuoterDestChainConfig {
 	return lanes.FeeQuoterDestChainConfig{
 		IsEnabled:                   true,
-		MaxDataBytes:                50_000,
+		MaxDataBytes:                12_451, // instruction-capped: calibration found 13,613 the largest executing payload under the localnet 100M cap (24,801 fails max-declared)
 		MaxPerMsgGasLimit:           4_000_000,
 		DestGasOverhead:             350_000,
 		DestGasPerPayloadByteBase:   16,
@@ -151,7 +159,7 @@ func (a *StellarChainFamilyAdapter) GetDefaultFeeQuoterDestChainConfig(
 	}
 	return ccvadapters.FeeQuoterDestChainConfigOverrides{
 		IsEnabled:                   ptr(true),
-		MaxDataBytes:                ptr(uint32(50_000)),
+		MaxDataBytes:                ptr(uint32(12_451)), // instruction-capped: calibration found 13,613 the largest executing payload under the localnet 100M cap (24,801 fails max-declared)
 		MaxPerMsgGasLimit:           ptr(uint32(4_000_000)),
 		DestGasOverhead:             ptr(uint32(350_000)),
 		DestGasPerPayloadByteBase:   ptr(uint8(16)),

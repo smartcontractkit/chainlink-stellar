@@ -2,6 +2,7 @@ package mcmsutil
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
@@ -14,16 +15,16 @@ import (
 )
 
 func TestMCMSRoleDeploySalt_deterministicAndDistinct(t *testing.T) {
-	a1 := MCMSRoleDeploySalt(7, "q", RoleProposer)
-	a2 := MCMSRoleDeploySalt(7, "q", RoleProposer)
+	a1 := MCMSRoleDeploySalt(7, "q", "", RoleProposer)
+	a2 := MCMSRoleDeploySalt(7, "q", "", RoleProposer)
 	require.True(t, bytes.Equal(a1[:], a2[:]), "same inputs must be deterministic")
 
 	// Distinct across roles, and distinct from the timelock salt.
 	salts := map[string][32]byte{
-		"proposer":  MCMSRoleDeploySalt(7, "q", RoleProposer),
-		"canceller": MCMSRoleDeploySalt(7, "q", RoleCanceller),
-		"bypasser":  MCMSRoleDeploySalt(7, "q", RoleBypasser),
-		"timelock":  TimelockDeploySalt(7, "q"),
+		"proposer":  MCMSRoleDeploySalt(7, "q", "", RoleProposer),
+		"canceller": MCMSRoleDeploySalt(7, "q", "", RoleCanceller),
+		"bypasser":  MCMSRoleDeploySalt(7, "q", "", RoleBypasser),
+		"timelock":  TimelockDeploySalt(7, "q", ""),
 	}
 	seen := map[[32]byte]string{}
 	for name, s := range salts {
@@ -32,6 +33,15 @@ func TestMCMSRoleDeploySalt_deterministicAndDistinct(t *testing.T) {
 		}
 		seen[s] = name
 	}
+}
+
+func TestDeploySalt_label(t *testing.T) {
+	// An empty label must keep the salts of stacks deployed before labels existed.
+	require.Equal(t, sha256.Sum256([]byte("stellar-mcms:proposer:7:q")), MCMSRoleDeploySalt(7, "q", "", RoleProposer))
+	require.Equal(t, sha256.Sum256([]byte("stellar-timelock:7:q")), TimelockDeploySalt(7, "q", ""))
+
+	require.Equal(t, sha256.Sum256([]byte("stellar-mcms:proposer:7:q:v2")), MCMSRoleDeploySalt(7, "q", "v2", RoleProposer))
+	require.Equal(t, sha256.Sum256([]byte("stellar-timelock:7:q:v2")), TimelockDeploySalt(7, "q", "v2"))
 }
 
 func TestMCMSRole_DatastoreTypeAndLabel(t *testing.T) {

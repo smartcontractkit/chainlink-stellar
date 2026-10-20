@@ -224,3 +224,19 @@ var Upgrade = cldfops.NewOperation(
 		return stellarops.Void{}, nil
 	},
 )
+
+// GetAllLockBoxConfigsInput identifies a siloed pool lockbox table read.
+type GetAllLockBoxConfigsInput struct {
+	ContractID string `json:"contract_id"`
+}
+
+// GetAllLockBoxConfigs reads the siloed pool's full lockbox table.
+var GetAllLockBoxConfigs = cldfops.NewOperation(
+	"siloed-lock-release-pool:get-all-lock-box-configs",
+	stellarops.ContractDeploymentVersion,
+	"Reads all lockbox configs from the siloed lock-release pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetAllLockBoxConfigsInput) ([]slrbindings.LockBoxEntry, error) {
+		c := slrbindings.NewSiloedLockReleasePoolClient(d.Invoker, in.ContractID)
+		return c.GetAllLockBoxConfigs(b.GetContext())
+	},
+)

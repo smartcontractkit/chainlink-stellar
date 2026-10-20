@@ -62,7 +62,7 @@ func TestBuildAndSubmitTransaction_TimedOutRetries(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	meta, err := d.buildAndSubmitTransaction(context.Background(), src, op)
+	meta, _, err := d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.EqualValues(t, 2, sends.Load(), "the timed-out submission should be followed by a second accepted one")
@@ -100,7 +100,7 @@ func TestBuildAndSubmitTransaction_TimedOutRetriesExhausted(t *testing.T) {
 	src, err := d.getSourceAccount(context.Background())
 	require.NoError(t, err)
 
-	_, err = d.buildAndSubmitTransaction(context.Background(), src, op)
+	_, _, err = d.buildAndSubmitTransaction(context.Background(), src, op)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "transaction timed out")
 	assert.EqualValues(t, 3, sends.Load(), "the timeout should be retried exactly maxAttempts times before giving up")

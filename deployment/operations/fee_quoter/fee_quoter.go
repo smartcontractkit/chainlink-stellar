@@ -184,3 +184,24 @@ var GetDestChainConfig = cldfops.NewOperation(
 		return out, nil
 	},
 )
+
+// GetTokenFeeConfigInput identifies a FeeQuoter token fee config read.
+type GetTokenFeeConfigInput struct {
+	ContractID        string `json:"contract_id"`
+	DestChainSelector uint64 `json:"dest_chain_selector"`
+	Token             string `json:"token"`
+}
+
+// GetTokenFeeConfig reads FeeQuoter `get_token_fee_config` for one token on
+// one destination chain. Unconfigured tokens get the contract's default
+// disabled config (zero fee, is_enabled false) — unlike get_dest_chain_config
+// there is no not-found error to map.
+var GetTokenFeeConfig = cldfops.NewOperation(
+	"fee_quoter:get-token-fee-config",
+	stellarops.ContractDeploymentVersion,
+	"Reads the FeeQuoter token transfer fee config for one token on one destination chain",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in GetTokenFeeConfigInput) (*fqbindings.TokenTransferFeeConfig, error) {
+		c := fqbindings.NewFeeQuoterClient(d.Invoker, in.ContractID)
+		return c.GetTokenFeeConfig(b.GetContext(), in.DestChainSelector, in.Token)
+	},
+)

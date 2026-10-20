@@ -53,11 +53,19 @@ type TxManagerConfig struct {
 	FeeBumpMultiplier *float64 `toml:"FeeBumpMultiplier"`
 	ResourceFeeBuffer *int64   `toml:"ResourceFeeBuffer"`
 	RestoreFeeBuffer  *int64   `toml:"RestoreFeeBuffer"`
-	MaxResourceFee *int64 `toml:"MaxResourceFee"`
+	MaxResourceFee    *int64   `toml:"MaxResourceFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
-	// Soroban inclusion fee P50/P90/P99 in the feeTracker; back-to-back broadcasts reuse values.
+	// Soroban inclusion fee percentiles in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
 	FeeStatsPollInterval *clconfig.Duration `toml:"FeeStatsPollInterval"`
+	// FeeStatsLookback is how long GetFeeStats samples are kept; bids use the highest
+	// value of the configured percentile among them.
+	FeeStatsLookback *clconfig.Duration `toml:"FeeStatsLookback"`
+	// FirstSendFeePercentile and RebroadcastFeePercentile pick the Soroban inclusion fee
+	// percentile (P50, P90 or P99) that seeds the first broadcast and, respectively,
+	// rebroadcasts and insufficient-fee bumps.
+	FirstSendFeePercentile   *string `toml:"FirstSendFeePercentile"`
+	RebroadcastFeePercentile *string `toml:"RebroadcastFeePercentile"`
 
 	// Retry & timeout
 	MaxSimulateAttempts       *uint              `toml:"MaxSimulateAttempts"`
@@ -125,6 +133,16 @@ func (c *TxManagerConfig) Resolve() {
 	if c.FeeStatsPollInterval == nil {
 		v := *d.FeeStatsPollInterval
 		c.FeeStatsPollInterval = &v
+	}
+	if c.FeeStatsLookback == nil {
+		v := *d.FeeStatsLookback
+		c.FeeStatsLookback = &v
+	}
+	if c.FirstSendFeePercentile == nil {
+		c.FirstSendFeePercentile = ptr(*d.FirstSendFeePercentile)
+	}
+	if c.RebroadcastFeePercentile == nil {
+		c.RebroadcastFeePercentile = ptr(*d.RebroadcastFeePercentile)
 	}
 	if c.MaxSimulateAttempts == nil {
 		c.MaxSimulateAttempts = ptr(*d.MaxSimulateAttempts)

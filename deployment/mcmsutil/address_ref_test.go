@@ -84,3 +84,39 @@ func TestFindStellarTimelockAddressRef_noMCMSFallback(t *testing.T) {
 		require.Error(t, err, "must not fall back to the MCMS contract")
 	})
 }
+
+func TestLookupStellarTimelockAddressRef_emptyOnMiss(t *testing.T) {
+	chainSel := uint64(42)
+	qual := "q1"
+	tlAddr := "CTLOCKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY"
+
+	ds := datastore.NewMemoryDataStore()
+	require.NoError(t, ds.Addresses().Upsert(StellarTimelockDatastoreRef(chainSel, qual, tlAddr)))
+	env := cldf.Environment{DataStore: ds.Seal()}
+
+	t.Run("resolves the timelock under its exact qualifier", func(t *testing.T) {
+		got := LookupStellarTimelockAddressRef(env, chainSel, mcmsutils.Input{Qualifier: qual, TimelockAction: mcmstypes.TimelockActionSchedule})
+		require.Equal(t, tlAddr, got.Address)
+	})
+
+	t.Run("empty qualifier is qualifier-agnostic", func(t *testing.T) {
+		// The shared GetAddressRef semantics: an empty qualifier matches any
+		// qualifier, so a governance-stack-qualified timelock still resolves —
+		// a qualifier mismatch can never be the reason for an empty result.
+		got := LookupStellarTimelockAddressRef(env, chainSel, mcmsutils.Input{Qualifier: "", TimelockAction: mcmstypes.TimelockActionSchedule})
+		require.Equal(t, tlAddr, got.Address)
+	})
+
+	t.Run("no timelock deployed returns an empty ref, not an error", func(t *testing.T) {
+		// EOA lanes deploy no RBACTimelock; the miss must surface as an empty
+		// ref (the EVM/Solana reader contract), never as a deploy failure —
+		// and an MCMS role ref alone must not be fallen back to either.
+		noTL := datastore.NewMemoryDataStore()
+		ref, err := StellarMCMSRoleDatastoreRef(chainSel, qual, RoleProposer, "CPROPOSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		require.NoError(t, err)
+		require.NoError(t, noTL.Addresses().Upsert(ref))
+		emptyEnv := cldf.Environment{DataStore: noTL.Seal()}
+		got := LookupStellarTimelockAddressRef(emptyEnv, chainSel, mcmsutils.Input{Qualifier: qual, TimelockAction: mcmstypes.TimelockActionSchedule})
+		require.Empty(t, got.Address)
+	})
+}

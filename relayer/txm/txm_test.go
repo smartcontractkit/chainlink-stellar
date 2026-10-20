@@ -18,6 +18,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
@@ -78,6 +79,7 @@ type mockRPCClient struct {
 	sendHook            func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error)
 	getTransactionHook  func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error)
 	getEventsHook       func(protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error)
+	getFeeStatsHook     func() (protocolrpc.GetFeeStatsResponse, error)
 }
 
 func (m *mockRPCClient) SimulateTransaction(_ context.Context, req protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
@@ -119,6 +121,9 @@ func (m *mockRPCClient) GetLedgers(_ context.Context, _ protocolrpc.GetLedgersRe
 	return m.getLedgersResp, m.getLedgersErr
 }
 func (m *mockRPCClient) GetFeeStats(_ context.Context) (protocolrpc.GetFeeStatsResponse, error) {
+	if m.getFeeStatsHook != nil {
+		return m.getFeeStatsHook()
+	}
 	return m.getFeeStatsResp, m.getFeeStatsErr
 }
 
@@ -1001,8 +1006,8 @@ func TestStellarTxm_ConfirmLoop_RebroadcastOutbidsExpiredEnvelope(t *testing.T) 
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, int64(4_000), envelopeInclusionFee(t, sent[0]), "first broadcast bids P50")
-	assert.Equal(t, int64(6_000), envelopeInclusionFee(t, sent[1]),
+	assert.Equal(t, int64(4_500), envelopeInclusionFee(t, sent[0]), "first broadcast bids P90")
+	assert.Equal(t, int64(6_750), envelopeInclusionFee(t, sent[1]),
 		"rebroadcast outbids the expired envelope by FeeBumpMultiplier when that beats P99")
 }
 
@@ -2274,4 +2279,273 @@ func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
 	assert.Equal(t, int32(0), unexpected.Load(), "every Enqueue returned nil, backpressure or ErrTxmStopped")
 	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
 	require.ErrorIs(t, err, ErrTxmStopped)
+}
+
+// --- Fee seeding ---
+
+// feeSeedingHarness drives the fee seeding tests: fee stats and the latest ledger can
+// be changed from the test goroutine without racing the txm, every sent bid is recorded,
+// and txs never confirm so advancing the ledger past MaxLedger forces a rebroadcast.
+type feeSeedingHarness struct {
+	mock         *mockRPCClient
+	fees         atomic.Pointer[protocolrpc.GetFeeStatsResponse]
+	latestLedger atomic.Uint32
+	// rejectNextSend, when set, fails the next send with tx_insufficient_fee and replaces
+	// the fee stats with the pointed value before the txm reads them for the bump.
+	rejectNextSend  atomic.Pointer[protocolrpc.GetFeeStatsResponse]
+	insufficientFee protocolrpc.SendTransactionResponse
+
+	mu   sync.Mutex
+	bids []int64 // per-op inclusion fee of every envelope sent, in order
+}
+
+func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *feeSeedingHarness {
+	t.Helper()
+	h := &feeSeedingHarness{}
+	h.fees.Store(&fees)
+	h.latestLedger.Store(1000)
+	insufficientFeeXDR, err := xdr.MarshalBase64(xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxInsufficientFee},
+	})
+	require.NoError(t, err)
+	h.insufficientFee = protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusError, ErrorResultXDR: insufficientFeeXDR}
+	h.mock = &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		// The RPC never finds the tx; a NOT_FOUND status with its latest ledger is what lets the
+		// confirm loop expire the envelope (an RPC error would mean "status unknown" instead).
+		getTransactionHook: func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+			return protocolrpc.GetTransactionResponse{
+				LatestLedger:       h.latestLedger.Load(),
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+			}, nil
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: h.latestLedger.Load()}, nil
+		},
+		getFeeStatsHook: func() (protocolrpc.GetFeeStatsResponse, error) { return *h.fees.Load(), nil },
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			bid, err := inclusionFeeOf(req)
+			if err != nil {
+				t.Errorf("decode sent envelope: %v", err)
+			}
+			h.mu.Lock()
+			h.bids = append(h.bids, bid)
+			h.mu.Unlock()
+			if lower := h.rejectNextSend.Swap(nil); lower != nil {
+				h.fees.Store(lower)
+				return h.insufficientFee, nil
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
+		},
+	}
+	return h
+}
+
+func (h *feeSeedingHarness) setFees(fees protocolrpc.GetFeeStatsResponse) { h.fees.Store(&fees) }
+
+func (h *feeSeedingHarness) rejectNextSendWith(fees protocolrpc.GetFeeStatsResponse) {
+	h.rejectNextSend.Store(&fees)
+}
+
+func (h *feeSeedingHarness) sentBids() []int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]int64(nil), h.bids...)
+}
+
+// startTxm starts a txm with FeeStatsPollInterval 0 (fetch on every bid) and fast confirm
+// and submit-retry loops.
+func (h *feeSeedingHarness) startTxm(t *testing.T, cfg config.TxManagerConfig) *StellarTxm {
+	t.Helper()
+	cfg.FeeStatsPollInterval = clconfig.MustNewDuration(0)
+	cfg.ConfirmPollInterval = clconfig.MustNewDuration(50 * time.Millisecond)
+	cfg.SubmitRetryDelay = clconfig.MustNewDuration(10 * time.Millisecond)
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(h.mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+	return txm
+}
+
+// waitForSends waits until n envelopes were sent and returns their bids in order.
+func (h *feeSeedingHarness) waitForSends(t *testing.T, n int) []int64 {
+	t.Helper()
+	require.Eventually(t, func() bool { return len(h.sentBids()) >= n },
+		5*time.Second, 20*time.Millisecond, "waiting for send %d", n)
+	return h.sentBids()
+}
+
+// broadcast enqueues a noop invoke, waits for its first send and returns the bid.
+func (h *feeSeedingHarness) broadcast(t *testing.T, txm *StellarTxm) (txID string, bid int64) {
+	t.Helper()
+	before := len(h.sentBids())
+	txID, err := txm.Enqueue(t.Context(), noopInvokeRequest())
+	require.NoError(t, err)
+	return txID, h.waitForSends(t, before+1)[before]
+}
+
+// expire moves the ledger past every MaxLedger so the confirm loop rebroadcasts, and
+// returns the bid of the next send.
+func (h *feeSeedingHarness) expire(t *testing.T) int64 {
+	t.Helper()
+	before := len(h.sentBids())
+	h.latestLedger.Add(1000)
+	return h.waitForSends(t, before+1)[before]
+}
+
+// inclusionFeeOf returns the per-op inclusion fee of a sent envelope.
+func inclusionFeeOf(req protocolrpc.SendTransactionRequest) (int64, error) {
+	var env xdr.TransactionEnvelope
+	if err := xdr.SafeUnmarshalBase64(req.Transaction, &env); err != nil {
+		return 0, err
+	}
+	tx := env.MustV1().Tx
+	fee := int64(tx.Fee)
+	if tx.Ext.V == 1 && tx.Ext.SorobanData != nil {
+		fee -= int64(tx.Ext.SorobanData.ResourceFee)
+	}
+	return fee / int64(len(tx.Operations)), nil
+}
+
+func noopInvokeRequest() TxRequest {
+	return TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	}
+}
+
+func TestStellarTxm_FirstBroadcastBidsPeakP90(t *testing.T) {
+	t.Parallel()
+
+	h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := h.startTxm(t, config.TxManagerConfig{})
+
+	_, fee := h.broadcast(t, txm)
+	assert.Equal(t, int64(1_000_000), fee, "first broadcast bids P90, not P50 or P99")
+
+	// P90 drops; the peak within FeeStatsLookback still sets the bid.
+	h.setFees(feeStats(100, 100, 100))
+	_, fee = h.broadcast(t, txm)
+	assert.Equal(t, int64(1_000_000), fee)
+}
+
+func TestStellarTxm_RebroadcastBidsPeakP99(t *testing.T) {
+	t.Parallel()
+
+	h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := h.startTxm(t, config.TxManagerConfig{})
+
+	txID, fee := h.broadcast(t, txm)
+	require.Equal(t, int64(1_000_000), fee)
+
+	assert.Equal(t, int64(26_000_000), h.expire(t), "rebroadcast bids P99")
+
+	txm.transactionsMapLock.RLock()
+	tracked := txm.transactions[txID]
+	txm.transactionsMapLock.RUnlock()
+	require.NotNil(t, tracked)
+	assert.Equal(t, uint64(1), tracked.Attempt.Load())
+}
+
+func TestStellarTxm_FeePercentilesConfigurable(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		firstSend, rebroadcast string
+		wantFirst, wantResend  int64
+	}{
+		"P50 then P90": {"P50", "P90", 100, 1_000_000},
+		"P50 then P99": {"P50", "P99", 100, 26_000_000},
+		// A rebroadcast still outbids the expired envelope by FeeBumpMultiplier when the
+		// percentile alone would repeat its bid.
+		"P90 only": {"p90", "p90", 1_000_000, 1_500_000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+			txm := h.startTxm(t, config.TxManagerConfig{
+				FirstSendFeePercentile:   ptr(tc.firstSend),
+				RebroadcastFeePercentile: ptr(tc.rebroadcast),
+			})
+
+			_, fee := h.broadcast(t, txm)
+			assert.Equal(t, tc.wantFirst, fee, "first send")
+			assert.Equal(t, tc.wantResend, h.expire(t), "rebroadcast")
+		})
+	}
+}
+
+func TestStellarTxm_InsufficientFeeBumpBidsRebroadcastPercentile(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg                 config.TxManagerConfig
+		wantFirst, wantBump int64
+	}{
+		"default peak P99":           {config.TxManagerConfig{}, 1_000_000, 26_000_000},
+		"P50 then P90 override":      {config.TxManagerConfig{FirstSendFeePercentile: ptr("P50"), RebroadcastFeePercentile: ptr("P90")}, 100, 1_000_000},
+		"clamped at MaxInclusionFee": {config.TxManagerConfig{MaxInclusionFee: ptr(int64(5_000_000))}, 1_000_000, 5_000_000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+			txm := h.startTxm(t, tc.cfg)
+
+			// Core rejects the first envelope. The sample the txm reads for the bump is
+			// already back at base, so only the retained peak can set the bumped bid.
+			h.rejectNextSendWith(feeStats(100, 100, 100))
+			_, first := h.broadcast(t, txm)
+			assert.Equal(t, tc.wantFirst, first, "first send")
+			assert.Equal(t, tc.wantBump, h.waitForSends(t, 2)[1], "bid after tx_insufficient_fee")
+		})
+	}
+}
+
+func TestStellarTxm_ZeroFeeStatsLookbackBidsLatestP90(t *testing.T) {
+	t.Parallel()
+
+	h := newFeeSeedingHarness(t, feeStats(100, 1_000_000, 26_000_000))
+	txm := h.startTxm(t, config.TxManagerConfig{FeeStatsLookback: clconfig.MustNewDuration(0)})
+
+	_, fee := h.broadcast(t, txm)
+	assert.Equal(t, int64(1_000_000), fee)
+
+	h.setFees(feeStats(100, 100, 100))
+	_, fee = h.broadcast(t, txm)
+	assert.Equal(t, int64(100), fee)
+}
+
+func TestNew_InvalidFeeSeedingFallsBackToDefaults(t *testing.T) {
+	t.Parallel()
+
+	lggr, logs := logger.TestObserved(t, zapcore.WarnLevel)
+	mock := newFeeSeedingHarness(t, feeStats(1, 2, 3)).mock
+	cfg := config.TxManagerConfig{
+		FirstSendFeePercentile:   ptr("P95"),
+		RebroadcastFeePercentile: ptr("max"),
+	}
+	txm, err := New(lggr, &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+
+	assert.Equal(t, feeP90, txm.firstSendPercentile)
+	assert.Equal(t, feeP99, txm.rebroadcastPercentile)
+	assert.Equal(t, 2*time.Minute, txm.feeTracker.lookback, "FeeStatsLookback default")
+	assert.Equal(t, 2, logs.FilterMessageSnippet("unknown fee percentile").Len())
 }

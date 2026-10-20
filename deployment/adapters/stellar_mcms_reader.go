@@ -18,8 +18,8 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// StellarMCMSReader implements changesets.MCMSReader for a single Soroban MCMS contract
-// (proposer/bypasser/canceller share one on-chain instance; datastore may hold alias refs).
+// StellarMCMSReader implements changesets.MCMSReader for Stellar. Each role (proposer,
+// canceller, bypasser) is its own MCMS contract; the timelock action picks which one.
 type StellarMCMSReader struct{}
 
 var _ changesets.MCMSReader = (StellarMCMSReader{})
@@ -35,7 +35,7 @@ func (StellarMCMSReader) GetChainMetadata(e cldf.Environment, chainSelector uint
 	if !ok {
 		return mcmstypes.ChainMetadata{}, fmt.Errorf("stellar chain %d not in environment", chainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return mcmstypes.ChainMetadata{}, fmt.Errorf("deployer from chain: %w", err)
 	}
@@ -62,9 +62,15 @@ func (StellarMCMSReader) GetChainMetadata(e cldf.Environment, chainSelector uint
 }
 
 // GetTimelockRef implements changesets.MCMSReader.
-// Prefers RBACTimelock in the datastore; falls back to the MCMS contract id for legacy deployments.
+// Returns an empty ref (and no error) when the chain has no RBACTimelock in
+// the datastore at the MCMS version — EOA lanes deploy none: callers such as
+// token expansion resolve the timelock unconditionally and detect MCMS-less
+// chains via the empty ref (the EVM/Solana reader contract; an empty input
+// qualifier matches any qualifier, mirroring the shared GetAddressRef
+// semantics). No fallback to an MCMS contract (we deploy a distinct
+// timelock).
 func (StellarMCMSReader) GetTimelockRef(e cldf.Environment, chainSelector uint64, input mcmsutils.Input) (frameworkdatastore.AddressRef, error) {
-	return mcmsutil.FindStellarTimelockAddressRef(e, chainSelector, input)
+	return mcmsutil.LookupStellarTimelockAddressRef(e, chainSelector, input), nil
 }
 
 // GetMCMSRef implements changesets.MCMSReader.

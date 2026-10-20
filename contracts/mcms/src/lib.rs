@@ -431,6 +431,24 @@ impl McmsContract {
         bump_ttls(&env);
         Ok(())
     }
+
+    /// Extends the instance and code TTL of each contract to at least `extend_to` ledgers.
+    ///
+    /// Permissionless, like `ExtendFootprintTtlOp`: the submitter pays the rent. A timelock batch
+    /// can target this MCMS to run it as a proposal; this MCMS's own `execute` cannot (no
+    /// re-entry). Code rent scales with module size, so keep each call within the tx fee limit.
+    pub fn extend_contract_ttls(
+        env: Env,
+        contracts: Vec<Address>,
+        extend_to: u32,
+    ) -> Result<(), McmsError> {
+        let deployer = env.deployer();
+        for contract in contracts.iter() {
+            contract_id(&contract, McmsError::InvalidTarget)?;
+            deployer.extend_ttl(contract, extend_to, extend_to);
+        }
+        Ok(())
+    }
 }
 
 fn apply_config(
