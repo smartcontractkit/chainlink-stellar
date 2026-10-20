@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,9 +64,10 @@ type StellarTxm struct {
 	done          sync.WaitGroup
 	stop          chan struct{}
 
-	feeTracker            *feeTracker
-	firstSendPercentile   feePercentile
-	rebroadcastPercentile feePercentile
+	feeTracker             *feeTracker
+	firstSendPercentile    feePercentile
+	rebroadcastPercentile  feePercentile
+	closeTimeUnknownWarned atomic.Bool
 
 	getClient         func(context.Context) (RPCClient, error)
 	networkPassphrase string
@@ -990,30 +992,51 @@ func (s *StellarTxm) estimateNetworkHead(
 	simLatest uint32,
 	now time.Time,
 ) uint32 {
+	age, known := latestLedgerAge(latest.LedgerCloseTime, now)
+	if known {
+		s.metrics.ObserveRPCLatestLedgerAge(ctx, age)
+	} else {
+		// Without a usable close time the lag is invisible and nothing is compensated; say so
+		// once rather than let an empty histogram pass for a healthy node.
+		s.metrics.IncrementRPCCloseTimeUnknown(ctx)
+		if s.closeTimeUnknownWarned.CompareAndSwap(false, true) {
+			ctxLogger.Warnw("RPC latest ledger has no usable close time; head lag cannot be measured or compensated",
+				"rpcLatestLedger", latest.Sequence, "closeTime", latest.LedgerCloseTime, "now", now.Unix())
+		}
+	}
 	lag := headLagLedgers(latest.LedgerCloseTime, now)
-	s.metrics.ObserveRPCHeadLag(ctx, int64(lag))
 
 	head := max(latest.Sequence, simLatest, latest.Sequence+min(lag, maxHeadLagLedgers))
 	if head == latest.Sequence {
 		return head
 	}
-	logFields := []any{"rpcLatestLedger", latest.Sequence, "simLatestLedger", simLatest, "estimatedHead", head, "headLagLedgers", lag}
+	logFields := []any{"rpcLatestLedger", latest.Sequence, "simLatestLedger", simLatest, "estimatedHead", head, "headLagLedgers", lag, "latestLedgerAge", age}
 	if lag > maxHeadLagLedgers {
 		ctxLogger.Warnw("RPC latest ledger is far behind its close time, capping the head estimate", logFields...)
 	} else {
-		ctxLogger.Infow("RPC latest ledger is behind the network, extending ledger bounds", logFields...)
+		ctxLogger.Debugw("extending ledger bounds past the RPC latest ledger", logFields...)
 	}
 	return head
+}
+
+// latestLedgerAge is how long ago the RPC's latest ledger closed. It is unknown when the close
+// time is missing or ahead of the node clock.
+func latestLedgerAge(closeTime int64, now time.Time) (time.Duration, bool) {
+	if closeTime <= 0 {
+		return 0, false
+	}
+	age := now.Sub(time.Unix(closeTime, 0))
+	if age < 0 {
+		return 0, false
+	}
+	return age, true
 }
 
 // headLagLedgers is how many whole ledgers have likely closed since closeTime. It is 0 when the
 // close time is unknown or ahead of the node clock.
 func headLagLedgers(closeTime int64, now time.Time) uint32 {
-	if closeTime <= 0 {
-		return 0
-	}
-	age := now.Sub(time.Unix(closeTime, 0))
-	if age <= 0 {
+	age, known := latestLedgerAge(closeTime, now)
+	if !known {
 		return 0
 	}
 	return uint32(age / expectedLedgerCloseTime)

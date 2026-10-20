@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -92,7 +93,11 @@ type TxmMetrics interface {
 	ObserveSimulationDuration(context.Context, int64)
 	ObserveInclusionFee(context.Context, int64)
 	ObserveResourceFee(context.Context, int64)
-	ObserveRPCHeadLag(ctx context.Context, ledgers int64)
+	// ObserveRPCLatestLedgerAge records how long ago the RPC's latest ledger closed, by node clock,
+	// at the time a tx was prepared; IncrementRPCCloseTimeUnknown counts the preparations where the
+	// RPC gave no usable close time, so a healthy-looking age histogram cannot hide a blind node.
+	ObserveRPCLatestLedgerAge(ctx context.Context, age time.Duration)
+	IncrementRPCCloseTimeUnknown(ctx context.Context)
 	RecordTimeUntilTxConfirmed(context.Context, float64)
 }
 
@@ -110,11 +115,12 @@ type stellarTxmMetrics struct {
 	timeUntilTxConfirmed metric.Float64Histogram
 
 	// Stellar-specific metrics
-	restore      metric.Int64Counter
-	simDuration  metric.Int64Histogram
-	feeInclusion metric.Int64Histogram
-	feeResource  metric.Int64Histogram
-	rpcHeadLag   metric.Int64Histogram
+	restore             metric.Int64Counter
+	simDuration         metric.Int64Histogram
+	feeInclusion        metric.Int64Histogram
+	feeResource         metric.Int64Histogram
+	rpcLatestLedgerAge  metric.Float64Histogram
+	rpcCloseTimeUnknown metric.Int64Counter
 }
 
 func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
@@ -183,11 +189,16 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_fee_resource_stroops: %w", err))
 	}
 
-	rpcHeadLag, err := meter.Int64Histogram("stellar_txm_rpc_head_lag_ledgers",
-		metric.WithExplicitBucketBoundaries(0, 1, 2, 3, 5, 10, 20),
+	rpcLatestLedgerAge, err := meter.Float64Histogram("stellar_txm_rpc_latest_ledger_age_seconds",
+		metric.WithExplicitBucketBoundaries(2, 4, 6, 8, 10, 15, 20, 30, 60),
 	)
 	if err != nil {
-		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_rpc_head_lag_ledgers: %w", err))
+		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_rpc_latest_ledger_age_seconds: %w", err))
+	}
+
+	rpcCloseTimeUnknown, err := meter.Int64Counter("stellar_txm_rpc_close_time_unknown")
+	if err != nil {
+		initErr = errors.Join(initErr, fmt.Errorf("stellar_txm_rpc_close_time_unknown: %w", err))
 	}
 
 	if initErr != nil {
@@ -207,11 +218,12 @@ func NewStellarTxmMetrics(lggr logger.Logger, chainID string) TxmMetrics {
 		submitRejected:       submitRejected,
 		timeUntilTxConfirmed: timeUntilTxConfirmed,
 
-		restore:      restore,
-		simDuration:  simDuration,
-		feeInclusion: feeInclusion,
-		feeResource:  feeResource,
-		rpcHeadLag:   rpcHeadLag,
+		restore:             restore,
+		simDuration:         simDuration,
+		feeInclusion:        feeInclusion,
+		feeResource:         feeResource,
+		rpcLatestLedgerAge:  rpcLatestLedgerAge,
+		rpcCloseTimeUnknown: rpcCloseTimeUnknown,
 	}
 }
 
@@ -323,8 +335,12 @@ func (m *stellarTxmMetrics) ObserveResourceFee(ctx context.Context, stroops int6
 	m.feeResource.Record(ctx, stroops, metric.WithAttributes(m.getOtelAttributes()...))
 }
 
-func (m *stellarTxmMetrics) ObserveRPCHeadLag(ctx context.Context, ledgers int64) {
-	m.rpcHeadLag.Record(ctx, ledgers, metric.WithAttributes(m.getOtelAttributes()...))
+func (m *stellarTxmMetrics) ObserveRPCLatestLedgerAge(ctx context.Context, age time.Duration) {
+	m.rpcLatestLedgerAge.Record(ctx, age.Seconds(), metric.WithAttributes(m.getOtelAttributes()...))
+}
+
+func (m *stellarTxmMetrics) IncrementRPCCloseTimeUnknown(ctx context.Context) {
+	m.rpcCloseTimeUnknown.Add(ctx, 1, metric.WithAttributes(m.getOtelAttributes()...))
 }
 
 type noopStellarTxmMetrics struct{}
@@ -353,6 +369,8 @@ func (noopStellarTxmMetrics) ObserveInclusionFee(context.Context, int64) {}
 
 func (noopStellarTxmMetrics) ObserveResourceFee(context.Context, int64) {}
 
-func (noopStellarTxmMetrics) ObserveRPCHeadLag(context.Context, int64) {}
+func (noopStellarTxmMetrics) ObserveRPCLatestLedgerAge(context.Context, time.Duration) {}
+
+func (noopStellarTxmMetrics) IncrementRPCCloseTimeUnknown(context.Context) {}
 
 func (noopStellarTxmMetrics) RecordTimeUntilTxConfirmed(context.Context, float64) {}
