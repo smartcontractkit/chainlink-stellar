@@ -8,7 +8,7 @@ go 1.27.1
 require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20261008201732-71faaf9334d7
 	github.com/smartcontractkit/chainlink-protos/cre/go v0.0.0-20260804191526-b7a850ae7648
-	github.com/stellar/go-stellar-sdk v0.7.3
+	github.com/stellar/go-stellar-sdk v0.7.4-0.20261014050248-990270d32ebe
 	github.com/stretchr/testify v1.12.1
 )
 
