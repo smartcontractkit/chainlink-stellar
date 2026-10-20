@@ -285,6 +285,10 @@ func classifySubmitErrorCode(code xdr.TransactionResultCode) (fatal bool, reason
 		return false, ErrorReasonInsufficientFee
 	case xdr.TransactionResultCodeTxInternalError:
 		return false, ErrorReasonInternalError
+	// The bounds came from a ledger the receiving node has already moved past; the retry
+	// re-simulates against the latest ledger and gets fresh bounds.
+	case xdr.TransactionResultCodeTxTooLate:
+		return false, ErrorReasonTooLate
 	default:
 		return true, ErrorReason(code.String())
 	}

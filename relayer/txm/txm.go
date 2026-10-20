@@ -596,6 +596,11 @@ func (s *StellarTxm) broadcastLoop() {
 	}
 }
 
+// maxImmediateTooLateRetries bounds the back-to-back re-simulations after tx_too_late. Past it
+// the RPC has lagged the validating node for longer than fresh bounds can fix, so the retry
+// backs off like the other retryable rejections.
+const maxImmediateTooLateRetries = 2
+
 // simulateAssembleSignAndSend runs the full Stellar broadcast pipeline for a
 // single transaction: simulate → (restore archived entries) → assemble →
 // sign → send, with retry on transient failures and inclusion-fee bumping
@@ -660,9 +665,12 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 	seq := txStore.GetNextSequence()
 	restoreHandled := false
+	immediateTooLateRetries := uint(0)
+	var headFloor uint32 // a ledger the validating node is known to have reached (from tx_too_late)
+	var lastRejectReason ErrorReason
 
 	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
-		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq)
+		prelimTx, simResult, maxLedger, err := s.prepareAndSimulateWithRetry(ctx, client, tx, seq, headFloor)
 		if err != nil {
 			ctxLogger.Errorw("simulation failed", "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonSimulation)
@@ -758,8 +766,17 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
+		lastRejectReason = retryReason
+		s.metrics.IncrementSubmitRejected(ctx, retryReason)
+
 		if fatalErr {
 			ctxLogger.Errorw("fatal error during broadcast", "reason", retryReason)
+			if retryReason == ErrorReasonStoreAdd {
+				// The store holds this sequence for another tx; releasing it would drop that tx's
+				// tracking entry and hand the sequence out again.
+				s.markTxFailed(ctx, tx, retryReason)
+				return
+			}
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, retryReason)
 			return
 		}
@@ -787,6 +804,9 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				"percentile", s.rebroadcastPercentile, "networkPercentile", bumpNetworkFee)
 			inclusionFee = bumped
 			submitAttempt++
+			if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+				break
+			}
 			select {
 			case <-time.After(s.config.SubmitRetryDelay.Duration()):
 			case <-ctx.Done():
@@ -796,11 +816,29 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			continue
 		}
 
-		// Other retryable errors (e.g. try_again_later, tx_internal_error): retry after
+		if retryReason == ErrorReasonTooLate {
+			// The rejection proves the validating node has reached maxLedger-1, so the next bounds
+			// start from there even if the RPC still reports an older latest ledger.
+			headFloor = max(headFloor, maxLedger-1)
+			if immediateTooLateRetries < maxImmediateTooLateRetries {
+				// Waiting cannot make the old bounds valid again; re-simulating at once gets fresh ones.
+				immediateTooLateRetries++
+				ctxLogger.Warnw("tx rejected as too late, re-simulating with fresh bounds",
+					"attempt", submitAttempt, "maxLedger", maxLedger, "headFloor", headFloor)
+				submitAttempt++
+				continue
+			}
+		}
+
+		// Other retryable errors (e.g. try_again_later, tx_internal_error) and tx_too_late past
+		// the immediate retries (the RPC keeps lagging the validating node): retry after
 		// backoff without bumping fees. TRY_AGAIN_LATER is transient RPC/mempool
 		// backpressure, not an insufficient-fee signal.
 		ctxLogger.Warnw("tx rejected with retryable error", "reason", retryReason, "attempt", submitAttempt)
 		submitAttempt++
+		if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
+			break
+		}
 		select {
 		case <-time.After(s.config.SubmitRetryDelay.Duration()):
 		case <-ctx.Done():
@@ -809,15 +847,19 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 		}
 	}
 
-	ctxLogger.Errorw("exhausted all submit attempts")
+	ctxLogger.Errorw("exhausted all submit attempts", "lastRejectReason", lastRejectReason)
 	s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonMaxRetries)
 }
 
+// prepareAndSimulateWithRetry builds and simulates the preliminary tx. Its ledger bounds start
+// from the RPC's latest ledger or headFloor, whichever is higher; headFloor is a ledger the
+// validating node is already known to have reached.
 func (s *StellarTxm) prepareAndSimulateWithRetry(
 	ctx context.Context,
 	client RPCClient,
 	tx *StellarTx,
 	seq int64,
+	headFloor uint32,
 ) (*txnbuild.Transaction, protocolrpc.SimulateTransactionResponse, uint32, error) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 
@@ -845,7 +887,7 @@ func (s *StellarTxm) prepareAndSimulateWithRetry(
 		if tx.LedgerBoundsOffset > 0 {
 			offset = tx.LedgerBoundsOffset
 		}
-		tx.MaxLedger = latestLedger.Sequence + offset
+		tx.MaxLedger = max(latestLedger.Sequence, headFloor) + offset
 
 		prelimTx, err := s.buildPreliminaryTx(tx, seq, tx.MaxLedger)
 		if err != nil {
