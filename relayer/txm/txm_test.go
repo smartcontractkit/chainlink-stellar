@@ -2068,7 +2068,14 @@ func newFeeSeedingHarness(t *testing.T, fees protocolrpc.GetFeeStatsResponse) *f
 		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
 			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
 		},
-		getTransactionErr: errors.New("not found"),
+		// The RPC never finds the tx; a NOT_FOUND status with its latest ledger is what lets the
+		// confirm loop expire the envelope (an RPC error would mean "status unknown" instead).
+		getTransactionHook: func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+			return protocolrpc.GetTransactionResponse{
+				LatestLedger:       h.latestLedger.Load(),
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+			}, nil
+		},
 		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
 			return protocolrpc.GetLatestLedgerResponse{Sequence: h.latestLedger.Load()}, nil
 		},
