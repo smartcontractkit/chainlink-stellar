@@ -372,7 +372,7 @@ func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorRetriesThenSucceeds
 		return st == commontypes.Unconfirmed
 	}, 5*time.Second, 50*time.Millisecond)
 	assert.Equal(t, int32(2), sendCalls.Load())
-	assert.Equal(t, int32(2), simulateCalls.Load(), "submit retry should re-simulate before resubmitting")
+	assert.Equal(t, int32(1), simulateCalls.Load(), "a lost reply resends the same envelope without re-simulating")
 }
 
 func TestStellarTxm_BroadcastPipeline_SendTransactionRPCErrorExhaustsRetryBudget(t *testing.T) {
