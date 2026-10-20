@@ -164,9 +164,16 @@ const (
 	// channel was still full after an attempted oldest-evict (concurrent enqueue race).
 	DropReasonChannelFullNewRejected DropReason = "channel_full_new_rejected"
 
-	// DropReasonCallerAbandoned: every EnqueueAndWait caller stopped waiting (e.g. its
-	// context timed out), so the tx is no longer broadcast.
+	// DropReasonCallerAbandoned prefixes the drops of a tx whose EnqueueAndWait callers all stopped
+	// waiting (e.g. their contexts timed out); the suffix says where the tx was when it was dropped.
 	DropReasonCallerAbandoned DropReason = "caller_abandoned"
+	// DropReasonCallerAbandonedQueued: dropped before this broadcast sent anything.
+	DropReasonCallerAbandonedQueued DropReason = DropReasonCallerAbandoned + "_queued"
+	// DropReasonCallerAbandonedSubmitRetry: dropped between the submit attempts of one broadcast.
+	DropReasonCallerAbandonedSubmitRetry DropReason = DropReasonCallerAbandoned + "_submit_retry"
+	// DropReasonCallerAbandonedRebroadcast: dropped instead of a rebroadcast after an expiry or an
+	// on-chain failure.
+	DropReasonCallerAbandonedRebroadcast DropReason = DropReasonCallerAbandoned + "_rebroadcast"
 )
 
 // RetryReason classifies why a transaction is being retried (post-submit lifecycle retries).

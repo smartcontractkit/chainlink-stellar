@@ -481,16 +481,18 @@ func (s *StellarTxm) releaseSeqAndFailTx(ctx context.Context, txStore *TxStore, 
 
 // dropAbandoned fails a tx nobody waits for, so it stops holding the serial broadcast loop
 // and an account sequence. The caller must not hold a sequence for tx.
-func (s *StellarTxm) dropAbandoned(ctx context.Context, tx *StellarTx) {
+func (s *StellarTxm) dropAbandoned(ctx context.Context, tx *StellarTx, reason DropReason) {
 	tx.mu.Lock()
-	tx.ResultCode = string(DropReasonCallerAbandoned)
+	tx.ResultCode = string(reason)
+	hash := tx.TxHash
 	tx.mu.Unlock()
 
 	s.updateTransactionStatus(tx, commontypes.Failed)
-	s.metrics.IncrementDroppedTxs(ctx, DropReasonCallerAbandoned)
+	s.metrics.IncrementDroppedTxs(ctx, reason)
 
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 	ctxLogger.Infow("dropping tx: every caller stopped waiting",
+		"reason", reason, "hash", hash,
 		"attempt", s.getTransactionAttempt(tx),
 		"age", time.Since(tx.Timestamp).Round(time.Second))
 }
@@ -629,7 +631,7 @@ const maxImmediateTooLateRetries = 2
 func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *StellarTx) {
 	ctxLogger := GetContextedTxLogger(s.baseLogger, tx.ID, tx.Metadata)
 	if tx.abandoned() {
-		s.dropAbandoned(ctx, tx)
+		s.dropAbandoned(ctx, tx, DropReasonCallerAbandonedQueued)
 		return
 	}
 	client, err := s.getClient(ctx)
@@ -697,7 +699,11 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 	for submitAttempt := uint(0); submitAttempt < *s.config.MaxSubmitRetryAttempts; {
 		if tx.abandoned() {
 			txStore.Release(seq)
-			s.dropAbandoned(ctx, tx)
+			reason := DropReasonCallerAbandonedSubmitRetry
+			if submitAttempt == 0 {
+				reason = DropReasonCallerAbandonedQueued
+			}
+			s.dropAbandoned(ctx, tx, reason)
 			return
 		}
 
@@ -1249,7 +1255,7 @@ func (s *StellarTxm) pruneTerminal() {
 // must mark the tx failed.
 func (s *StellarTxm) maybeRetry(ctx context.Context, utx *UnconfirmedTx, reason RetryReason) bool {
 	if utx.Tx.abandoned() {
-		s.dropAbandoned(ctx, utx.Tx)
+		s.dropAbandoned(ctx, utx.Tx, DropReasonCallerAbandonedRebroadcast)
 		return true
 	}
 
