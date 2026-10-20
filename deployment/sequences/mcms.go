@@ -1,9 +1,11 @@
 package sequences
 
 import (
+	"context"
 	"fmt"
 
 	cldfchain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
+	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -12,16 +14,19 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	seqcore "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	timelockops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/timelock"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ownership"
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-func stellarDeployerFromChain(ch cldfstellar.Chain) (*stellardeployment.Deployer, error) {
-	return stellardeployment.NewDeployerFromChain(ch)
+func stellarDeployerFromChain(ch cldfstellar.Chain, opts ...stellardeployment.DeployerOption) (*stellardeployment.Deployer, error) {
+	return stellardeployment.NewDeployerFromChain(ch, opts...)
 }
 
 func timelockMinDelay(in deploy.MCMSDeploymentConfigPerChainWithAddress) (uint64, error) {
@@ -51,8 +56,9 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
 		qual := mcmsutil.QualifierStr(in.Qualifier)
+		label := mcmsutil.QualifierStr(in.Label)
 
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -82,7 +88,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 					return seqcore.OnChainOutput{}, err
 				}
 			}
-			salt := mcmsutil.MCMSRoleDeploySalt(in.ChainSelector, qual, role)
+			salt := mcmsutil.MCMSRoleDeploySalt(in.ChainSelector, qual, label, role)
 			depOut, err := cldfops.ExecuteOperation(b, mcmsops.Deploy, deps, stellarops.DeployInput{WasmPath: mcmsWasm, Salt: salt})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("mcms deploy (%s): %w", role, err)
@@ -98,7 +104,7 @@ var DeployStellarMCMS = cldfops.NewSequence(
 			if err != nil {
 				return seqcore.OnChainOutput{}, err
 			}
-			tlSalt := mcmsutil.TimelockDeploySalt(in.ChainSelector, qual)
+			tlSalt := mcmsutil.TimelockDeploySalt(in.ChainSelector, qual, label)
 			tlOut, err := cldfops.ExecuteOperation(b, timelockops.Deploy, deps, stellarops.DeployInput{WasmPath: tlWasm, Salt: tlSalt})
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("timelock deploy: %w", err)
@@ -173,7 +179,7 @@ var FinalizeStellarDeployMCMS = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -194,41 +200,120 @@ var GrantAdminRoleToTimelockStellar = cldfops.NewSequence(
 	},
 )
 
-// UpdateStellarMCMSConfig applies set_config on each listed MCM contract address.
+// setStellarMCMSConfigForRef sets the signer config on one MCMS. When the
+// deployer owns the MCMS it calls set_config directly. When governanceAddr (the
+// timelock of the MCMS's own stack) owns it, it returns the call as an MCMS
+// proposal transaction instead.
+func setStellarMCMSConfigForRef(
+	ctx context.Context,
+	b cldfops.Bundle,
+	deps stellardeps.StellarDeps,
+	deployerAddr, governanceAddr string,
+	chainSelector uint64,
+	ref datastore.AddressRef,
+	cfg mcmsops.SetConfigInput,
+) (evmcontract.WriteOutput, error) {
+	cid, err := ownership.NormalizeContractAddress(ref.Address)
+	if err != nil {
+		return evmcontract.WriteOutput{}, fmt.Errorf("set_config on chain %d: %w", chainSelector, err)
+	}
+	cfg.ContractID = cid
+
+	owner, err := ownership.ContractOwner(ctx, deps, datastore.AddressRef{Address: cid, Type: mcmsops.ContractType})
+	if err != nil {
+		return evmcontract.WriteOutput{}, fmt.Errorf("read owner %s: %w", cid, err)
+	}
+	switch {
+	case owner == deployerAddr:
+		if _, err := cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, cfg); err != nil {
+			return evmcontract.WriteOutput{}, fmt.Errorf("set_config on %s: %w", cid, err)
+		}
+		return evmcontract.WriteOutput{
+			ChainSelector: chainSelector,
+			ExecInfo:      &evmcontract.ExecInfo{Hash: "stellar-direct-set-config"},
+		}, nil
+	case governanceAddr != "" && owner == governanceAddr:
+		signerAddrs, err := cfg.SignerAddresses.ToScVal()
+		if err != nil {
+			return evmcontract.WriteOutput{}, err
+		}
+		signerGroups, err := cfg.SignerGroups.ToScVal()
+		if err != nil {
+			return evmcontract.WriteOutput{}, err
+		}
+		data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_config", []xdr.ScVal{
+			signerAddrs,
+			signerGroups,
+			scval.Bytes32ToScVal(cfg.GroupQuorums),
+			scval.Bytes32ToScVal(cfg.GroupParents),
+			scval.BoolToScVal(cfg.ClearRoot),
+		})
+		if err != nil {
+			return evmcontract.WriteOutput{}, err
+		}
+		return evmcontract.WriteOutput{
+			ChainSelector: chainSelector,
+			Tx: mcmstypes.Transaction{
+				OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(ref.Type)},
+				To:                cid,
+				Data:              data,
+				AdditionalFields:  stellarMCMSTxAdditionalFields(),
+			},
+		}, nil
+	default:
+		return evmcontract.WriteOutput{}, fmt.Errorf(
+			"MCMS %s owner %q is neither deployer %q nor its %q timelock %q",
+			cid, owner, deployerAddr, ref.Qualifier, governanceAddr,
+		)
+	}
+}
+
+// UpdateStellarMCMSConfig sets the signer config on each listed MCMS. Each MCMS
+// is updated directly when the deployer owns it, or through an MCMS batch op
+// when the timelock of its own stack (same qualifier) owns it.
 var UpdateStellarMCMSConfig = cldfops.NewSequence(
 	"stellar-update-mcms-config",
 	deploy.MCMSVersion,
-	"Updates signer config on Stellar MCMS (single instance)",
-	func(b cldfops.Bundle, chains cldfchain.BlockChains, in deploy.UpdateMCMSConfigInputPerChainWithSelector) (seqcore.OnChainOutput, error) {
+	"Updates signer config on Stellar MCMS directly or through its timelock",
+	func(b cldfops.Bundle, chains cldfchain.BlockChains, in deploy.UpdateMCMSConfigInputPerChainWithSelector) (output seqcore.OnChainOutput, err error) {
 		ch, ok := chains.StellarChains()[in.ChainSelector]
 		if !ok {
-			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
+			return output, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 		}
-		dep, err := stellarDeployerFromChain(ch)
+		dep, err := stellarDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
-			return seqcore.OnChainOutput{}, err
+			return output, err
 		}
 		deps := stellardeps.FromDeployer(dep)
 		signerAddrs, signerGroups, gq, gp, _, err := mcmsutil.ConfigToStellarSetConfig(&in.MCMConfig, true)
 		if err != nil {
-			return seqcore.OnChainOutput{}, err
+			return output, err
+		}
+		cfg := mcmsops.SetConfigInput{
+			SignerAddresses: signerAddrs,
+			SignerGroups:    signerGroups,
+			GroupQuorums:    gq,
+			GroupParents:    gp,
+			ClearRoot:       true,
 		}
 		for _, ref := range in.MCMContracts {
 			if ref.Address == "" {
 				continue
 			}
-			_, err := cldfops.ExecuteOperation(b, mcmsops.SetConfig, deps, mcmsops.SetConfigInput{
-				ContractID:      ref.Address,
-				SignerAddresses: signerAddrs,
-				SignerGroups:    signerGroups,
-				GroupQuorums:    gq,
-				GroupParents:    gp,
-				ClearRoot:       true,
-			})
+			governanceAddr, _ := mcmsutil.FindExistingStellarTimelock(in.ExistingAddresses, in.ChainSelector, ref.Qualifier)
+			wo, err := setStellarMCMSConfigForRef(b.GetContext(), b, deps, dep.SignerAddress(), governanceAddr, in.ChainSelector, ref, cfg)
 			if err != nil {
-				return seqcore.OnChainOutput{}, fmt.Errorf("set_config on %s: %w", ref.Address, err)
+				return output, err
 			}
+			if wo.Executed() {
+				continue
+			}
+			batchOp, err := evmcontract.NewBatchOperationFromWrites([]evmcontract.WriteOutput{wo})
+			if err != nil {
+				return output, err
+			}
+			output.BatchOps = append(output.BatchOps, batchOp)
 		}
-		return seqcore.OnChainOutput{}, nil
+		return output, nil
 	},
 )

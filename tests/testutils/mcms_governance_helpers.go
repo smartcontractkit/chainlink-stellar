@@ -170,7 +170,7 @@ func DeployMCMSAndTimelock(
 
 	mcmsDep, err := cldfops.ExecuteOperation(bundle, mcmsops.Deploy, deps, stellarops.DeployInput{
 		WasmPath: mcmsWasm,
-		Salt:     mcmsutil.MCMSRoleDeploySalt(chainSelector, qualifier, mcmsutil.RoleProposer),
+		Salt:     mcmsutil.MCMSRoleDeploySalt(chainSelector, qualifier, "", mcmsutil.RoleProposer),
 	})
 	require.NoError(t, err)
 	mcmsID := mcmsDep.Output.ContractID
@@ -194,7 +194,7 @@ func DeployMCMSAndTimelock(
 
 	tlDep, err := cldfops.ExecuteOperation(bundle, timelockops.Deploy, deps, stellarops.DeployInput{
 		WasmPath: tlWasm,
-		Salt:     mcmsutil.TimelockDeploySalt(chainSelector, qualifier),
+		Salt:     mcmsutil.TimelockDeploySalt(chainSelector, qualifier, ""),
 	})
 	require.NoError(t, err)
 	tlID := tlDep.Output.ContractID

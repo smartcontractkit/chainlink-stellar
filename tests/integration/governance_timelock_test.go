@@ -54,10 +54,17 @@ func randSalt(t *testing.T) [32]byte {
 	return s
 }
 
-// assertApplyOnrampUpdatesRejectsNonOwner covers two Soroban/RPC behaviors:
+// assertApplyOnrampUpdatesRejectsNonOwner covers three Soroban/RPC rejection
+// surfaces for a non-owner calling apply_onramp_updates while the registry is
+// owned by the timelock contract:
 //   - Simulation traps with Error(Contract, #Unauthorized), or
 //   - Simulation succeeds when owner.require_auth targets another contract (timelock), but
-//     InvokeContract fails after submit ("transaction failed" / require_auth diagnostics).
+//     InvokeContract fails after submit ("transaction failed" / require_auth diagnostics), or
+//   - InvokeContract fails at the deployer's auth re-simulation: require_owner
+//     demands the timelock contract's own authorization, which Soroban
+//     validates via the contract's __check_auth export — timelock.wasm has
+//     none, so any direct caller traps in the auth layer with
+//     Error(Auth, InvalidAction) before the registry logic runs.
 func assertApplyOnrampUpdatesRejectsNonOwner(t *testing.T, ctx context.Context, dep *deployment.Deployer, registryID string, updates []rampbindings.OnRampUpdate) {
 	t.Helper()
 	code := timelockbindings.CCIPErrorUnauthorized
@@ -77,8 +84,9 @@ func assertApplyOnrampUpdatesRejectsNonOwner(t *testing.T, ctx context.Context, 
 	msg := invokeErr.Error()
 	hasContract := strings.Contains(msg, "Error(Contract") && strings.Contains(msg, fmt.Sprintf("#%d", code))
 	hasTxFail := strings.Contains(msg, "transaction failed")
-	if !hasContract && !hasTxFail {
-		t.Fatalf("expected Error(Contract, #%d) or transaction failed, got: %v", code, invokeErr)
+	hasAuthFail := strings.Contains(msg, "Error(Auth, InvalidAction)")
+	if !hasContract && !hasTxFail && !hasAuthFail {
+		t.Fatalf("expected Error(Contract, #%d), transaction failed, or auth rejection, got: %v", code, invokeErr)
 	}
 }
 

@@ -56,7 +56,7 @@ func (a *StellarFeeAggregatorAdapter) GetFeeAggregator(e cldf.Environment, chain
 	if !ok {
 		return "", fmt.Errorf("stellar chain %d not found in environment", chainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
 	if err != nil {
 		return "", fmt.Errorf("stellar deployer from chain: %w", err)
 	}

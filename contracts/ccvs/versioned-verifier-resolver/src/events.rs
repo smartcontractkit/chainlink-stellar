@@ -43,10 +43,3 @@ pub struct FeeAggregatorSetEvent {
     /// The new fee aggregator address
     pub fee_aggregator: Address,
 }
-
-/// Emitted when ownership is transferred.
-#[contractevent(topics = ["vvr_OwnerTransferred"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OwnershipTransferredEvent {
-    pub new_owner: Address,
-}

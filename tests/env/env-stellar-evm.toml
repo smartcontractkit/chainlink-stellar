@@ -217,6 +217,7 @@ execution_interval = 15_000_000_000
 [jd]
   csa_encryption_key = "d1093c0060d50a3c89c189b2e485da5a3ce57f3dcb38ab7e2c0d5f0bb2314a44"
   image = "job-distributor:local"
+  node_connect_timeout = "3m"
 
 # EVM blockchains (Anvil)
 [[blockchains]]
@@ -459,8 +460,6 @@ execution_interval = 15_000_000_000
 
 [[executor]]
   image = "stellarexecutor:dev"
-  # The `port` field was removed in chainlink-ccv changelog/2026-04-27_executor_jd_migration.md;
-  # the executor no longer exposes an HTTP port and registers with JD over WSRPC.
   chain_family = "stellar"
   source_code_path = "../chainlink-stellar/cmd/executor"
   root_path = "../.."
@@ -492,18 +491,6 @@ execution_interval = 15_000_000_000
   source_code_path = "../chainlink-ccv/executor"
   root_path = "../../chainlink-ccv"
   container_name = "evm-custom-executor-1"
-  # Standalone executors register their own JD node named after the container,
-  # and nop_alias must be unique per block (the alias→nodeID map is overwritten
-  # on collision, dropping the default evm-executor-1 node from the lookup —
-  # the shared-NOP env-cl.toml pattern is mode="cl" only). It executes the
-  # tcapi "custom executor" case's Stellar→EVM messages: the stellar-sourced
-  # message names the stellar-side custom executor, and this app's job spec
-  # carries defaultExecutorAddress[stellar] = that contract (from the stellar
-  # chain config the executor_pools.custom pool includes), so the plugin
-  # byte-matches and executes on the EVM dest. The stellar chain entry's
-  # accessor is skipped in the EVM binary (family not registered) — degrade, not
-  # fatal; the address map is populated regardless (ccv cmd/executor/service.go
-  # builds it in a separate loop from the accessors).
   nop_alias = "evm-custom-executor-1"
   executor_qualifier = "custom"
 

@@ -53,7 +53,7 @@ var StellarDeployChainContracts = cldf_ops.NewSequence(
 		if !ok {
 			return DeployChainContractsOutput{}, fmt.Errorf("stellar chain not found for selector %d", input.ChainSelector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return DeployChainContractsOutput{}, fmt.Errorf("stellar deployer from chain: %w", err)
 		}

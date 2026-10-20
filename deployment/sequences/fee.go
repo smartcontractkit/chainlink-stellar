@@ -40,7 +40,7 @@ var StellarSetTokenTransferFee = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.Selector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -94,7 +94,7 @@ var StellarApplyDestChainConfig = cldfops.NewSequence(
 		if !ok {
 			return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", in.Selector)
 		}
-		dep, err := stellardeployment.NewDeployerFromChain(ch)
+		dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 		if err != nil {
 			return seqcore.OnChainOutput{}, err
 		}
@@ -152,7 +152,7 @@ func ApplyStellarFeeAggregator(b cldfops.Bundle, chains cldfchain.BlockChains, e
 	if !ok {
 		return seqcore.OnChainOutput{}, fmt.Errorf("stellar chain %d not found in environment", in.ChainSelector)
 	}
-	dep, err := stellardeployment.NewDeployerFromChain(ch)
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
 	if err != nil {
 		return seqcore.OnChainOutput{}, fmt.Errorf("stellar deployer from chain: %w", err)
 	}
