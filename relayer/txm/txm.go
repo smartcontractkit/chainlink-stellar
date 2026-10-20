@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -731,11 +732,15 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
-		submitResult, err := client.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
-			Transaction: signedXDR,
-		})
-		if err != nil {
-			ctxLogger.Warnw("failed to submit transaction", "attempt", submitAttempt, "error", err)
+		sendReq := protocolrpc.SendTransactionRequest{Transaction: signedXDR}
+		submitResult, err := client.SendTransaction(ctx, sendReq)
+		// A failed call may have reached the RPC after all, so the same signed envelope is sent
+		// again rather than a rebuilt one: core answers DUPLICATE for a queued copy, which is
+		// tracked as accepted, and a landed copy is found by hash below. Rebuilding on the same
+		// sequence would let the payload land twice.
+		lostReply := false
+		for err != nil {
+			ctxLogger.Warnw("failed to submit transaction, resending the same envelope", "attempt", submitAttempt, "error", err)
 			submitAttempt++
 			if submitAttempt >= *s.config.MaxSubmitRetryAttempts {
 				break
@@ -746,10 +751,21 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 				txStore.Release(seq)
 				return
 			}
-			continue
+			lostReply = true
+			submitResult, err = client.SendTransaction(ctx, sendReq)
+		}
+		if err != nil {
+			break
 		}
 
 		accepted, fatalErr, retryReason := s.handleSendResult(ctx, tx, submitResult, seq, txStore, maxLedger, maxTime, localHash)
+		if !accepted && lostReply && s.landedDespiteLostReply(ctx, client, localHash) {
+			// The rejection (bad_seq, too_late) is about the resent copy; the envelope itself landed.
+			ctxLogger.Infow("envelope sent before a lost reply has landed, tracking it", "hash", localHash, "rejection", retryReason)
+			accepted, fatalErr, retryReason = s.handleSendResult(ctx, tx,
+				protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: localHash},
+				seq, txStore, maxLedger, maxTime, localHash)
+		}
 		if accepted {
 			ctxLogger.Debugw("tx broadcast successfully", "attempt", currentAttempt, "seq", seq, "hash", localHash)
 			s.markBroadcastAt(tx)
@@ -811,6 +827,16 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 	ctxLogger.Errorw("exhausted all submit attempts")
 	s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonMaxRetries)
+}
+
+// landedDespiteLostReply reports whether an envelope whose sendTransaction reply was lost is
+// already in a ledger.
+func (s *StellarTxm) landedDespiteLostReply(ctx context.Context, client RPCClient, hash string) bool {
+	resp, err := client.GetTransaction(ctx, protocolrpc.GetTransactionRequest{Hash: hash})
+	if err != nil {
+		return false
+	}
+	return resp.Status == protocolrpc.TransactionStatusSuccess || resp.Status == protocolrpc.TransactionStatusFailed
 }
 
 func (s *StellarTxm) prepareAndSimulateWithRetry(
