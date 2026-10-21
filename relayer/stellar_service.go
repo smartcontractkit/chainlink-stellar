@@ -324,23 +324,55 @@ func (s *stellarService) GetTransaction(ctx context.Context, req stellartypes.Ge
 	if err != nil {
 		return stellartypes.GetTransactionResponse{}, fmt.Errorf("%w: %w", multinode.ErrNodeError, err)
 	}
-	if resp.Status == protocol.TransactionStatusNotFound {
-		return stellartypes.GetTransactionResponse{}, fmt.Errorf("transaction not found: %s", req.TxHash)
+
+	status, err := convertProtocolTxStatus(resp.Status)
+	if err != nil {
+		return stellartypes.GetTransactionResponse{}, fmt.Errorf("get transaction: %w", err)
 	}
 
-	var feeStroops uint64
+	txHash := resp.TransactionHash
+	if txHash == "" {
+		txHash = req.TxHash
+	}
+	out := stellartypes.GetTransactionResponse{
+		Status: status,
+		TxHash: txHash,
+	}
+	if status == stellartypes.GetTransactionStatusNotFound {
+		return out, nil
+	}
+
+	ledger := resp.Ledger
+	closeTime := resp.LedgerCloseTime
+	out.LedgerSequence = &ledger
+	out.LedgerCloseTime = &closeTime
+	out.ResultXDR = resp.ResultXDR
+	out.ResultMetaXDR = resp.ResultMetaXDR
+
 	if resp.ResultXDR != "" {
 		var txResult xdr.TransactionResult
 		if decodeErr := xdr.SafeUnmarshalBase64(resp.ResultXDR, &txResult); decodeErr == nil {
-			feeStroops = uint64(txResult.FeeCharged)
+			fee := uint64(txResult.FeeCharged)
+			out.FeeStroops = &fee
 		}
 	}
 
-	return stellartypes.GetTransactionResponse{
-		FeeStroops:      feeStroops,
-		LedgerSequence:  resp.Ledger,
-		LedgerCloseTime: resp.LedgerCloseTime,
-	}, nil
+	return out, nil
+}
+
+// convertProtocolTxStatus maps a Stellar RPC transaction status string to the
+// domain GetTransactionStatus enum.
+func convertProtocolTxStatus(s string) (stellartypes.GetTransactionStatus, error) {
+	switch s {
+	case protocol.TransactionStatusSuccess:
+		return stellartypes.GetTransactionStatusSuccess, nil
+	case protocol.TransactionStatusFailed:
+		return stellartypes.GetTransactionStatusFailed, nil
+	case protocol.TransactionStatusNotFound:
+		return stellartypes.GetTransactionStatusNotFound, nil
+	default:
+		return stellartypes.GetTransactionStatusUnspecified, fmt.Errorf("unknown transaction status %q", s)
+	}
 }
 
 // SubmitTransaction invokes a Soroban contract via the TXM pipeline.
