@@ -22,6 +22,7 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters" // registers the ccv deploy adapters the changesets dispatch to
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
@@ -80,6 +81,12 @@ func TestCCVDeployAdapters(t *testing.T) {
 		out, err := changesets.DeployRMNProxy{}.Apply(cldfEnv, changesets.DeployRMNProxyConfig{ChainSelector: sel})
 		return out.DataStore, err
 	})
+	// The committee deploy fills the verifier's remote-chain configs with the
+	// stack's Router; the changeset's ExistingAddresses must carry it.
+	apply("Router", func() (datastore.MutableDataStore, error) {
+		out, err := changesets.DeployRouter{}.Apply(cldfEnv, changesets.DeployRouterConfig{ChainSelector: sel})
+		return out.DataStore, err
+	})
 
 	feeAggregator := stellarutil.MustGenerateMockContractID("ccv-deploy-adapters", "fee-aggregator")
 	cvInput := ccvchangesets.DeployCommitteeVerifierInput{
@@ -128,6 +135,23 @@ func TestCCVDeployAdapters(t *testing.T) {
 		require.Len(t, inbound, 1)
 		require.Equal(t, cvID, inbound[0].Verifier)
 		require.Equal(t, stellarutil.DefaultCommitteeVerifierVersionTag(), inbound[0].Version)
+
+		// The verifier's remote-chain config is filled (router + the stellar
+		// family's verification gas), so an outbound quote against the newly
+		// deployed committee succeeds instead of failing with
+		// RemoteChainNotSupported.
+		cvClient := cvbindings.NewCommitteeVerifierClient(deployer, cvID)
+		cvCfg, err := cvClient.GetRemoteChainConfig(ctx, sel)
+		require.NoError(t, err)
+		routerID, err := ccip.RouterDatastoreRef().LookupStrkey(cldfEnv.DataStore, sel)
+		require.NoError(t, err)
+		require.NotNil(t, cvCfg.Router)
+		require.Equal(t, routerID, *cvCfg.Router)
+		require.Equal(t, uint32(60_000), cvCfg.GasForVerification)
+		feeToken := stellarutil.MustGenerateMockContractID("ccv-deploy-adapters", "fee-token")
+		feeResp, err := cvClient.GetFee(ctx, sel, []byte{}, []byte{}, 0, feeToken)
+		require.NoError(t, err, "a newly deployed committee must quote outbound fees")
+		require.Equal(t, uint32(60_000), feeResp.DestGasLimit)
 
 		// Idempotent re-run on a fresh bundle: the refs already exist, so
 		// nothing new records and no batch ops are produced.

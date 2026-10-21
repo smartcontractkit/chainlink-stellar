@@ -1,17 +1,24 @@
 package adapters
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/stretchr/testify/require"
 
+	chainsel "github.com/smartcontractkit/chain-selectors"
 	ccvdeploymentadapters "github.com/smartcontractkit/chainlink-ccv/deployment/adapters"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
@@ -170,8 +177,9 @@ func TestStellarProtocolDeployOutput(t *testing.T) {
 	require.Equal(t, refs, governed.RefsToTransferOwnership)
 	require.Empty(t, governed.BatchOps)
 
-	// Alias rows (the Executor and its proxy row record the same contract) are
-	// deduplicated: the ownership handoff transfers each contract once.
+	// Alias rows resolve to the Executor type and dedupe by address,
+	// order-independently: the proxy row may be the only one recorded (it is
+	// written alone when it was missing or stale), or arrive first.
 	aliasRefs := []datastore.AddressRef{
 		{ChainSelector: 42, Type: "Router", Address: "0x01"},
 		{ChainSelector: 42, Type: "Executor", Address: "0x02"},
@@ -181,6 +189,20 @@ func TestStellarProtocolDeployOutput(t *testing.T) {
 	require.Equal(t, aliasRefs, governedAliased.Addresses)
 	require.Len(t, governedAliased.RefsToTransferOwnership, 2)
 	require.Equal(t, "Executor", string(governedAliased.RefsToTransferOwnership[1].Type))
+
+	aliasOnly := []datastore.AddressRef{{ChainSelector: 42, Type: "Proxy", Address: "0x02"}}
+	governedAliasOnly := stellarProtocolDeployOutput(aliasOnly, false)
+	require.Len(t, governedAliasOnly.RefsToTransferOwnership, 1)
+	require.Equal(t, "Executor", string(governedAliasOnly.RefsToTransferOwnership[0].Type))
+
+	aliasFirst := []datastore.AddressRef{
+		{ChainSelector: 42, Type: "Proxy", Address: "0x02"},
+		{ChainSelector: 42, Type: "Executor", Address: "0x02"},
+	}
+	governedAliasFirst := stellarProtocolDeployOutput(aliasFirst, false)
+	require.Len(t, governedAliasFirst.RefsToTransferOwnership, 1)
+	require.Equal(t, "Executor", string(governedAliasFirst.RefsToTransferOwnership[0].Type))
+	require.Equal(t, "0x02", governedAliasFirst.RefsToTransferOwnership[0].Address)
 }
 
 // TestStellarCCVProtocolContractsDeployAdapter_Sequence pins the wrapper
@@ -199,4 +221,95 @@ func TestStellarCCVProtocolContractsDeployAdapter_Sequence(t *testing.T) {
 func TestStellarCCVDeployAdapters_ReuseFullDeploySequence(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, sequences.StellarDeployChainContracts.ID(), "stellar-deploy-chain-contracts")
+}
+
+// invokedFns lists every function the invoker recorded, reads and writes alike.
+func invokedFns(inv *operationstest.RecordingInvoker) []string {
+	fns := make([]string, 0, len(inv.Records()))
+	for _, rec := range inv.Records() {
+		fns = append(fns, rec.Fn)
+	}
+	return fns
+}
+
+// TestWireVVRImplementations pins the fill-missing contract: a fresh resolver
+// gets every mapping, while existing mappings — including ones pointing at a
+// different verifier — are preserved, so a rerun performs no owner-gated
+// writes once everything is wired.
+func TestWireVVRImplementations(t *testing.T) {
+	t.Parallel()
+	vvrStrkey := stellarutil.MustGenerateMockContractID("deployer", "wire-vvr-test")
+	cvStrkey := stellarutil.MustGenerateMockContractID("deployer", "wire-cv-test")
+	otherStrkey := stellarutil.MustGenerateMockContractID("deployer", "wire-other-test")
+	sel := chainsel.STELLAR_LOCALNET.Selector
+
+	t.Run("fills missing mappings", func(t *testing.T) {
+		t.Parallel()
+		emptyOut := scval.StructSliceToScVal([]vvrbindings.OutboundImplementationArgs{})
+		emptyIn := scval.StructSliceToScVal([]vvrbindings.InboundImplementationArgs{})
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForContract(vvrStrkey, "get_all_outbound_implementations", &emptyOut).
+			WithSimulateResultForContract(vvrStrkey, "get_all_inbound_implementations", &emptyIn)
+
+		require.NoError(t, wireVVRImplementations(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, vvrStrkey, cvStrkey, []uint64{sel}))
+
+		fns := invokedFns(inv)
+		require.Contains(t, fns, "apply_outbound_impl_updates")
+		require.Contains(t, fns, "apply_inbound_impl_updates")
+	})
+
+	t.Run("preserves existing and changed mappings", func(t *testing.T) {
+		t.Parallel()
+		// The outbound entry points at a different verifier: still an existing
+		// mapping, so it is preserved rather than overwritten.
+		out := scval.StructSliceToScVal([]vvrbindings.OutboundImplementationArgs{{
+			DestChainSelector: sel, Verifier: otherStrkey,
+		}})
+		in := scval.StructSliceToScVal([]vvrbindings.InboundImplementationArgs{{
+			Version: stellarutil.DefaultCommitteeVerifierVersionTag(), Verifier: otherStrkey,
+		}})
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForContract(vvrStrkey, "get_all_outbound_implementations", &out).
+			WithSimulateResultForContract(vvrStrkey, "get_all_inbound_implementations", &in)
+
+		require.NoError(t, wireVVRImplementations(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, vvrStrkey, cvStrkey, []uint64{sel}))
+
+		fns := invokedFns(inv)
+		require.NotContains(t, fns, "apply_outbound_impl_updates")
+		require.NotContains(t, fns, "apply_inbound_impl_updates")
+	})
+}
+
+// TestFillCommitteeVerifierRemoteConfigs pins the fill-missing contract: a
+// verifier with no remote entry for a chain gets one (router + verification
+// gas); an existing entry is preserved untouched.
+func TestFillCommitteeVerifierRemoteConfigs(t *testing.T) {
+	t.Parallel()
+	cvStrkey := stellarutil.MustGenerateMockContractID("deployer", "fill-cv-test")
+	routerStrkey := stellarutil.MustGenerateMockContractID("deployer", "fill-router-test")
+	sel := chainsel.STELLAR_LOCALNET.Selector
+
+	t.Run("fills missing remote configs", func(t *testing.T) {
+		t.Parallel()
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateErrorForContract(cvStrkey, "get_remote_chain_config", errors.New("failed to call get_remote_chain_config: RemoteChainNotSupported"))
+
+		require.NoError(t, fillCommitteeVerifierRemoteConfigs(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, cvStrkey, routerStrkey, []uint64{sel}))
+
+		fns := invokedFns(inv)
+		require.Contains(t, fns, "apply_remote_chain_cfg_updates")
+	})
+
+	t.Run("preserves existing entries", func(t *testing.T) {
+		t.Parallel()
+		cfg := cvbindings.RemoteChainConfig{RemoteChainSelector: sel, GasForVerification: 1}
+		cfgVal := scval.MustToScVal(cfg.ToScVal())
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForContract(cvStrkey, "get_remote_chain_config", &cfgVal)
+
+		require.NoError(t, fillCommitteeVerifierRemoteConfigs(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, cvStrkey, routerStrkey, []uint64{sel}))
+
+		fns := invokedFns(inv)
+		require.NotContains(t, fns, "apply_remote_chain_cfg_updates")
+	})
 }

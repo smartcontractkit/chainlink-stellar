@@ -11,7 +11,10 @@ import (
 	ccvdeploymentadapters "github.com/smartcontractkit/chainlink-ccv/deployment/adapters"
 
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	execops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/executor"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
+
+	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/proxy"
 )
 
 // StellarCCVProtocolContractsDeployAdapter implements
@@ -101,13 +104,19 @@ func stellarProtocolDeployOutput(addresses []datastore.AddressRef, deployerKeyOw
 	return out
 }
 
-// dedupeOwnershipRefs drops alias rows — two types recording the same contract,
-// e.g. the Executor and its proxy row — so the ownership handoff transfers each
-// contract once.
+// dedupeOwnershipRefs canonicalizes alias rows to their contract's type and
+// drops duplicates, order-independently: a proxy row records the same contract
+// as its Executor row, and either row may be the only one recorded (the proxy
+// row is written alone when it was missing or stale), so every alias resolves
+// to the Executor type before the address dedup — the ownership handoff then
+// transfers each contract once under a type its dispatch supports.
 func dedupeOwnershipRefs(refs []datastore.AddressRef) []datastore.AddressRef {
 	seen := make(map[string]struct{}, len(refs))
 	out := make([]datastore.AddressRef, 0, len(refs))
 	for _, r := range refs {
+		if r.Type == datastore.ContractType(proxy.ContractType) {
+			r.Type = datastore.ContractType(execops.ContractType)
+		}
 		if _, ok := seen[r.Address]; ok {
 			continue
 		}
