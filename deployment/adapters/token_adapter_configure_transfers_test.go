@@ -13,6 +13,7 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	tokens "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
+	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -948,12 +949,28 @@ func TestStellarTokenAdapter_CatalogPoolType(t *testing.T) {
 	})
 }
 
+// stubChainFamily pins one remote family's address length without
+// implementing the whole ChainFamily surface; only GetAddressBytesLength is
+// called on it.
+type stubChainFamily struct {
+	ccvadapters.ChainFamily
+	length uint8
+}
+
+func (s stubChainFamily) GetAddressBytesLength() uint8 { return s.length }
+
 func TestRemoteTokenWireBytes(t *testing.T) {
 	t.Parallel()
 	evmSel := chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector
 	stellarSel := chainsel.STELLAR_MAINNET.Selector
+	solanaSel := chainsel.SOLANA_DEVNET.Selector
+	// A non-EVM 32-byte family resolves its own length through its
+	// chain-family adapter; nothing else in this package resolves solana.
+	ccvadapters.GetChainFamilyRegistry().RegisterChainFamily(chainsel.FamilySolana, stubChainFamily{length: 32})
 	raw20 := make([]byte, 20)
 	raw20[0] = 0xbb
+	raw32 := make([]byte, 32)
+	raw32[0] = 0xcc
 	padded := common.LeftPadBytes(raw20, 32)
 	badPrefix := make([]byte, 32)
 	copy(badPrefix, padded)
@@ -969,6 +986,8 @@ func TestRemoteTokenWireBytes(t *testing.T) {
 		{name: "evm native passes through", sel: evmSel, token: raw20, want: raw20},
 		{name: "evm zero-padded trims to native", sel: evmSel, token: padded, want: raw20},
 		{name: "stellar native passes through", sel: stellarSel, token: padded, want: padded},
+		{name: "non-evm 32-byte native passes through", sel: solanaSel, token: raw32, want: raw32},
+		{name: "non-evm wrong length errors", sel: solanaSel, token: raw20, wantErr: "want the family-native"},
 		{name: "wrong length errors", sel: evmSel, token: make([]byte, 24), wantErr: "want the family-native"},
 		{name: "non-zero prefix errors", sel: evmSel, token: badPrefix, wantErr: "want the family-native"},
 		{name: "empty errors", sel: evmSel, token: nil, wantErr: "empty remote token"},

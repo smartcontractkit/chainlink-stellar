@@ -68,6 +68,12 @@ func ExecuteTransferOwnership(
 	case tar.ContractType:
 		_, err := cldfops.ExecuteOperation(b, tar.TransferOwnership, deps, tar.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
 		return err
+	case executor.ContractType:
+		_, err := cldfops.ExecuteOperation(b, executor.TransferOwnership, deps, executor.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
+		return err
+	case aph.ContractType:
+		_, err := cldfops.ExecuteOperation(b, aph.TransferOwnership, deps, aph.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
+		return err
 	case cv.ContractType:
 		_, err := cldfops.ExecuteOperation(b, cv.TransferOwnership, deps, cv.TransferOwnershipInput{ContractID: cid, NewOwner: newOwner})
 		return err
@@ -132,6 +138,12 @@ func ExecuteAcceptOwnership(b cldfops.Bundle, deps stellardeps.StellarDeps, ref 
 	case tar.ContractType:
 		_, err := cldfops.ExecuteOperation(b, tar.AcceptOwnership, deps, tar.AcceptOwnershipInput{ContractID: cid})
 		return err
+	case executor.ContractType:
+		_, err := cldfops.ExecuteOperation(b, executor.AcceptOwnership, deps, executor.AcceptOwnershipInput{ContractID: cid})
+		return err
+	case aph.ContractType:
+		_, err := cldfops.ExecuteOperation(b, aph.AcceptOwnership, deps, aph.AcceptOwnershipInput{ContractID: cid})
+		return err
 	case cv.ContractType:
 		_, err := cldfops.ExecuteOperation(b, cv.AcceptOwnership, deps, cv.AcceptOwnershipInput{ContractID: cid})
 		return err
@@ -190,9 +202,8 @@ func ExecuteApplyCurseAdminUpdates(
 
 // ExecuteUpgrade runs the Soroban in-place `upgrade` op for the contract type in
 // ref, swapping the contract's Wasm to newWasmHash. Covers all 18 upgradeable
-// CCIP contracts (17 core + the ccip_receiver example). Unlike
-// ExecuteTransferOwnership this includes executor and advanced_pool_hooks
-// (both have Upgrade ops); cre_forwarder is excluded — it has no Upgrade binding.
+// CCIP contracts (17 core + the ccip_receiver example); cre_forwarder is
+// excluded — it has no Upgrade binding.
 func ExecuteUpgrade(
 	b cldfops.Bundle,
 	deps stellardeps.StellarDeps,

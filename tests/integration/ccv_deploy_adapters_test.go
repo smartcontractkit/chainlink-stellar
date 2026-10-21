@@ -22,6 +22,7 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters" // registers the ccv deploy adapters the changesets dispatch to
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
@@ -42,7 +43,7 @@ func TestCCVDeployAdapters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	_, deployerKP, _, rpcClient, passphrase, _ := GetIsolatedTestEnv(ctx, t)
+	_, deployerKP, deployer, rpcClient, passphrase, _ := GetIsolatedTestEnv(ctx, t)
 	sel := chainsel.STELLAR_LOCALNET.Selector
 
 	newBundle := func() cldfops.Bundle {
@@ -107,6 +108,26 @@ func TestCCVDeployAdapters(t *testing.T) {
 		require.NoError(t, err, "committee verifier ref should record")
 		vvrRef, err := ccip.VVRDatastoreRef().LookupAddressRef(cldfEnv.DataStore, sel)
 		require.NoError(t, err, "versioned verifier resolver ref should record")
+
+		// The resolver is wired to this committee's verifier: the readbacks
+		// return it for the chain's outbound lane and the default inbound
+		// version tag. Without the wiring a lane consulting the resolver fails
+		// with Inbound/OutboundImplementationNotFound.
+		cvID, err := ccip.CommitteeVerifierDatastoreRef().LookupStrkey(cldfEnv.DataStore, sel)
+		require.NoError(t, err)
+		vvrID, err := ccip.VVRDatastoreRef().LookupStrkey(cldfEnv.DataStore, sel)
+		require.NoError(t, err)
+		vvrClient := vvrbindings.NewVersionedVerifierResolverClient(deployer, vvrID)
+		outbound, err := vvrClient.GetAllOutboundImplementations(ctx)
+		require.NoError(t, err)
+		require.Len(t, outbound, 1)
+		require.Equal(t, sel, outbound[0].DestChainSelector)
+		require.Equal(t, cvID, outbound[0].Verifier)
+		inbound, err := vvrClient.GetAllInboundImplementations(ctx)
+		require.NoError(t, err)
+		require.Len(t, inbound, 1)
+		require.Equal(t, cvID, inbound[0].Verifier)
+		require.Equal(t, stellarutil.DefaultCommitteeVerifierVersionTag(), inbound[0].Version)
 
 		// Idempotent re-run on a fresh bundle: the refs already exist, so
 		// nothing new records and no batch ops are produced.

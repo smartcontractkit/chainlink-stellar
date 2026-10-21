@@ -95,3 +95,32 @@ func TestExecuteUpgrade_rejectsUnsupportedType(t *testing.T) {
 		})
 	}
 }
+
+// TestExecuteOwnershipDispatch_routesExecutorAndHooks verifies the executor
+// and advanced_pool_hooks types dispatch to their own transfer/accept ops —
+// both appear in recorded refs the ownership handoff carries (the Executor and
+// its proxy alias; pools' AdvancedPoolHooks).
+func TestExecuteOwnershipDispatch_routesExecutorAndHooks(t *testing.T) {
+	t.Parallel()
+	for _, ct := range []string{executor.ContractType, aph.ContractType} {
+		ct := ct
+		t.Run(ct, func(t *testing.T) {
+			t.Parallel()
+			inv := operationstest.NewRecordingInvoker()
+			deps := stellardeps.StellarDeps{Deploy: &operationstest.FakeDeployer{}, Invoker: inv}
+			cid := stellarutil.MustGenerateMockContractID("deployer", "ownership-dispatch-"+ct)
+			ref := datastore.AddressRef{Address: cid, Type: datastore.ContractType(ct)}
+			newOwner := stellarutil.MustGenerateMockContractID("deployer", "ownership-dispatch-owner")
+
+			require.NoError(t, ExecuteTransferOwnership(operationstest.NewBundle(t), deps, ref, newOwner))
+			rec := inv.Last()
+			require.Equal(t, cid, rec.ContractID)
+			require.Equal(t, "transfer_ownership", rec.Fn)
+
+			require.NoError(t, ExecuteAcceptOwnership(operationstest.NewBundle(t), deps, ref))
+			rec = inv.Last()
+			require.Equal(t, cid, rec.ContractID)
+			require.Equal(t, "accept_ownership", rec.Fn)
+		})
+	}
+}

@@ -96,7 +96,23 @@ func validateStellarProtocolDeployInput(input ccvdeploymentadapters.ProtocolCont
 func stellarProtocolDeployOutput(addresses []datastore.AddressRef, deployerKeyOwned bool) ccvdeploymentadapters.ProtocolContractsDeployOutput {
 	out := ccvdeploymentadapters.ProtocolContractsDeployOutput{Addresses: addresses}
 	if !deployerKeyOwned {
-		out.RefsToTransferOwnership = addresses
+		out.RefsToTransferOwnership = dedupeOwnershipRefs(addresses)
+	}
+	return out
+}
+
+// dedupeOwnershipRefs drops alias rows — two types recording the same contract,
+// e.g. the Executor and its proxy row — so the ownership handoff transfers each
+// contract once.
+func dedupeOwnershipRefs(refs []datastore.AddressRef) []datastore.AddressRef {
+	seen := make(map[string]struct{}, len(refs))
+	out := make([]datastore.AddressRef, 0, len(refs))
+	for _, r := range refs {
+		if _, ok := seen[r.Address]; ok {
+			continue
+		}
+		seen[r.Address] = struct{}{}
+		out = append(out, r)
 	}
 	return out
 }

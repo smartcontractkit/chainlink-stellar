@@ -11,6 +11,7 @@ import (
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	tokens "github.com/smartcontractkit/chainlink-ccip/deployment/tokens"
 	sequences "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
+	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	evmcontract "github.com/smartcontractkit/chainlink-deployments-framework/chain/evm/operations/contract"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -553,7 +554,7 @@ func remoteTokenWireBytes(remoteSel uint64, token []byte) ([]byte, error) {
 	if len(token) == 0 {
 		return nil, fmt.Errorf("empty remote token address")
 	}
-	native, err := stellarccip.AddressBytesLength(remoteSel)
+	native, err := remoteFamilyAddressBytesLength(remoteSel)
 	if err != nil {
 		return nil, fmt.Errorf("get chain family for remote chain %d: %w", remoteSel, err)
 	}
@@ -564,6 +565,29 @@ func remoteTokenWireBytes(remoteSel uint64, token []byte) ([]byte, error) {
 		return token[32-int(native):], nil
 	}
 	return nil, fmt.Errorf("remote token address is %d bytes, want the family-native %d", len(token), native)
+}
+
+// remoteFamilyAddressBytesLength resolves the remote family's native address
+// length from its own chain-family adapter (EVM 20, Solana 32, ...). The local
+// AddressBytesLength helper hard-codes 20 for every non-stellar family, which
+// rejects or truncates the 32-byte token addresses of non-EVM families.
+func remoteFamilyAddressBytesLength(remoteSel uint64) (uint32, error) {
+	family, err := chainsel.GetSelectorFamily(remoteSel)
+	if err != nil {
+		return 0, err
+	}
+	if family == chainsel.FamilyStellar {
+		return stellarccip.StellarAddressByteLen, nil
+	}
+	if fam, ok := ccvadapters.GetChainFamilyRegistry().GetChainFamily(family); ok {
+		return uint32(fam.GetAddressBytesLength()), nil
+	}
+	// EVM remotes must resolve even where the EVM family adapter package is not
+	// linked in (its registration lives in the ccip EVM adapters package init).
+	if family == chainsel.FamilyEVM {
+		return 20, nil
+	}
+	return 0, fmt.Errorf("no chain-family adapter registered for family %q; cannot resolve its native address length", family)
 }
 
 // resolveRemoteRateLimitBuckets resolves the per-remote TPRL buckets the

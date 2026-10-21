@@ -169,6 +169,18 @@ func TestStellarProtocolDeployOutput(t *testing.T) {
 	governed := stellarProtocolDeployOutput(refs, false)
 	require.Equal(t, refs, governed.RefsToTransferOwnership)
 	require.Empty(t, governed.BatchOps)
+
+	// Alias rows (the Executor and its proxy row record the same contract) are
+	// deduplicated: the ownership handoff transfers each contract once.
+	aliasRefs := []datastore.AddressRef{
+		{ChainSelector: 42, Type: "Router", Address: "0x01"},
+		{ChainSelector: 42, Type: "Executor", Address: "0x02"},
+		{ChainSelector: 42, Type: "Proxy", Address: "0x02"},
+	}
+	governedAliased := stellarProtocolDeployOutput(aliasRefs, false)
+	require.Equal(t, aliasRefs, governedAliased.Addresses)
+	require.Len(t, governedAliased.RefsToTransferOwnership, 2)
+	require.Equal(t, "Executor", string(governedAliased.RefsToTransferOwnership[1].Type))
 }
 
 // TestStellarCCVProtocolContractsDeployAdapter_Sequence pins the wrapper

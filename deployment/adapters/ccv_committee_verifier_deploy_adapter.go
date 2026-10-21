@@ -11,11 +11,13 @@ import (
 
 	ccvdeploymentadapters "github.com/smartcontractkit/chainlink-ccv/deployment/adapters"
 
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	vvrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
@@ -73,6 +75,36 @@ var stellarDeployCommitteeVerifierAndResolver = cldf_ops.NewSequence(
 		if err != nil {
 			return ccvdeploymentadapters.CommitteeVerifierDeployOutput{},
 				fmt.Errorf("stellar DeployVVR failed: %w", err)
+		}
+
+		// Wire the resolver to this committee's verifier (the same updates the
+		// full-deploy path applies): outbound per selector in the environment,
+		// inbound at the default version tag. Without them a lane consulting the
+		// resolver fails with Inbound/OutboundImplementationNotFound.
+		verifier := cvReport.Output.ContractID
+		outbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(chains.ListChainSelectors()))
+		for _, remoteSel := range chains.ListChainSelectors() {
+			outbound = append(outbound, vvrbindings.OutboundImplementationUpdate{
+				DestChainSelector: remoteSel,
+				Verifier:          &verifier,
+			})
+		}
+		if _, err := cldf_ops.ExecuteOperation(b, vvrops.ApplyOutboundImplUpdates, deps.StellarDeps, vvrops.ApplyOutboundImplUpdatesInput{
+			ContractID:      vvrReport.Output.ContractID,
+			Implementations: outbound,
+		}); err != nil {
+			return ccvdeploymentadapters.CommitteeVerifierDeployOutput{},
+				fmt.Errorf("apply outbound implementation updates for committee %q: %w", input.Params.Qualifier, err)
+		}
+		if _, err := cldf_ops.ExecuteOperation(b, vvrops.ApplyInboundImplUpdates, deps.StellarDeps, vvrops.ApplyInboundImplUpdatesInput{
+			ContractID: vvrReport.Output.ContractID,
+			Implementations: []vvrbindings.InboundImplementationUpdate{{
+				Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
+				Verifier: &verifier,
+			}},
+		}); err != nil {
+			return ccvdeploymentadapters.CommitteeVerifierDeployOutput{},
+				fmt.Errorf("apply inbound implementation updates for committee %q: %w", input.Params.Qualifier, err)
 		}
 
 		addresses := append(cvReport.Output.Refs, vvrReport.Output.Refs...)
