@@ -226,7 +226,8 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 
 	t.Run("configure token for transfers wires the lane idempotently", func(t *testing.T) {
 		// A synthetic EVM-style remote pool/token (20 bytes raw); the sequence
-		// stores both left-padded to 32 on chain.
+		// stores the pool left-padded to 32 and the token in the family-native
+		// form.
 		evmRemotePool := make([]byte, 20)
 		evmRemotePool[0] = 0xaa
 		evmRemoteToken := make([]byte, 20)
@@ -260,14 +261,16 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 		execSalt[31] = 3
 		helpers.MCMSTimelockScheduleAndExecute(t, ctx, e2eEnv, gov, calls, pred, execSalt)
 
-		// The lane is wired on chain: supported, padded remote token and pool.
+		// The lane is wired on chain: supported; the remote pool left-padded to
+		// 32 and the remote token in the family-native form (the OnRamp carries
+		// it verbatim into messages; an EVM OffRamp rejects non-native tokens).
 		sharedPool := tpoolbindings.NewTokenPoolClient(deployer, poolStrkey)
 		supported, err := sharedPool.IsSupportedChain(ctx, dst)
 		require.NoError(t, err)
 		require.True(t, supported, "remote lane should be supported after configure")
 		remoteToken, err := sharedPool.GetRemoteToken(ctx, dst)
 		require.NoError(t, err)
-		require.Equal(t, common.LeftPadBytes(evmRemoteToken, 32), remoteToken)
+		require.Equal(t, evmRemoteToken, remoteToken)
 		remotePools, err := sharedPool.GetRemotePools(ctx, dst)
 		require.NoError(t, err)
 		require.Len(t, remotePools, 1)

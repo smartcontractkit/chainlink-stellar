@@ -3,6 +3,7 @@ package adapters
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -53,6 +54,21 @@ func (a *StellarFeeAdapter) SetTokenTransferFee(_ datastore.DataStore, fq datast
 			if err != nil {
 				return seqcore.OnChainOutput{}, fmt.Errorf("fee quoter datastore address to strkey for chain %d: %w", in.Selector, err)
 			}
+			// The shared changeset keys the fees by the datastore hex token
+			// address; the sequence's FQ write needs the strkey.
+			normalized := make(map[uint64]map[string]*fees.TokenTransferFeeArgs, len(in.Settings))
+			for dst, tokenFees := range in.Settings {
+				perToken := make(map[string]*fees.TokenTransferFeeArgs, len(tokenFees))
+				for token, feeArgs := range tokenFees {
+					tokenStrkey, err := normalizeFeeTokenAddress(token)
+					if err != nil {
+						return seqcore.OnChainOutput{}, fmt.Errorf("invalid token address %q for chain %d dest chain %d: %w", token, in.Selector, dst, err)
+					}
+					perToken[tokenStrkey] = feeArgs
+				}
+				normalized[dst] = perToken
+			}
+			in.Settings = normalized
 			report, err := cldf_ops.ExecuteSequence(b, stellarsequences.StellarSetTokenTransferFee, chains, stellarsequences.StellarSetTokenTransferFeeInput{
 				SetTokenTransferFeeSequenceInput: in,
 				FQContractID:                     fqStrkey,
@@ -74,15 +90,18 @@ func (a *StellarFeeAdapter) GetOnchainTokenTransferFeeConfig(b cldf_ops.Bundle, 
 }
 
 // getOnchainTokenTransferFeeConfig reads one token's fee config from the
-// FeeQuoter and maps it to the chain-agnostic fee args.
+// FeeQuoter and maps it to the chain-agnostic fee args. The token arrives in
+// either caller form — the 0x-hex datastore address (the shared changeset
+// passes fullTokenRef.Address) or a C…/G… strkey — and the op needs the strkey.
 func getOnchainTokenTransferFeeConfig(b cldf_ops.Bundle, deps stellardeps.StellarDeps, fqStrkey string, src uint64, dst uint64, token string) (fees.TokenTransferFeeArgs, error) {
-	if _, err := decodeTokenStrkey(token); err != nil {
+	tokenStrkey, err := normalizeFeeTokenAddress(token)
+	if err != nil {
 		return fees.TokenTransferFeeArgs{}, fmt.Errorf("invalid token address %q for src %d and dst %d: %w", token, src, dst, err)
 	}
 	report, err := cldf_ops.ExecuteOperation(b, fqops.GetTokenFeeConfig, deps, fqops.GetTokenFeeConfigInput{
 		ContractID:        fqStrkey,
 		DestChainSelector: dst,
-		Token:             token,
+		Token:             tokenStrkey,
 	})
 	if err != nil {
 		return fees.TokenTransferFeeArgs{}, fmt.Errorf("get token fee config for src %d, dst %d, token %s: %w", src, dst, token, err)
@@ -271,6 +290,19 @@ func stellarReadDeps(chains cldf_chain.BlockChains, src uint64) (stellardeps.Ste
 		return stellardeps.StellarDeps{}, fmt.Errorf("stellar deployer from chain %d: %w", src, err)
 	}
 	return stellardeps.FromDeployer(dep), nil
+}
+
+// normalizeFeeTokenAddress accepts a token address in either caller form —
+// the 0x-hex datastore address (the shared changeset passes fullTokenRef.Address)
+// or a C…/G… strkey — and returns the strkey the FeeQuoter ops and bindings use.
+func normalizeFeeTokenAddress(token string) (string, error) {
+	if strings.HasPrefix(token, "0x") {
+		return scval.HexToContractStrkey(token)
+	}
+	if _, err := decodeTokenStrkey(token); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // decodeTokenStrkey validates a token address as a C…/G… strkey.
