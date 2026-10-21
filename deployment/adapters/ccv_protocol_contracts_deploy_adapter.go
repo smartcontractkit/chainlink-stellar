@@ -82,7 +82,7 @@ func (a *StellarCCVProtocolContractsDeployAdapter) DeployProtocolContracts() *cl
 // deploys exactly one, the default executor).
 func validateStellarProtocolDeployInput(input ccvdeploymentadapters.ProtocolContractsDeployInput) error {
 	for _, e := range input.Executors {
-		if e.Qualifier != "" {
+		if e.Qualifier != "" && e.Qualifier != defaultQualifier {
 			return fmt.Errorf("executor qualifier %q unsupported on stellar: the full deploy deploys only the default executor", e.Qualifier)
 		}
 	}
