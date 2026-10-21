@@ -392,10 +392,13 @@ impl OnRampContract {
         // on source and destination with the V1 codec). The `BASE` portion is the
         // fixed MessageV1 framing (79) + the on-wire content of the two SOURCE-side
         // address fields `sender` and `onramp`. `forward_from_router` populates
-        // both with `Address::to_xdr` — a full 40-byte XDR encoding (8 bytes of
-        // ScVal/ScAddress discriminants + the 32-byte key), not a raw key — and the
-        // codec appends those bytes verbatim, so the derived Stellar base is
-        // 79 + 40 + 40 = 159. EVM's `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (139) plays
+        // both with `Address::to_xdr` — a full XDR encoding (ScVal/ScAddress
+        // discriminants + the 32-byte key), not a raw key — and the codec
+        // appends those bytes verbatim. The `sender` is the original sender, an
+        // ACCOUNT address in the standard user flow (its PublicKey union adds a
+        // 4-byte discriminant, 44 bytes), while `onramp` is a contract address
+        // (40 bytes), so the derived Stellar base is 79 + 44 + 40 = 163. EVM's
+        // `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (143) plays
         // the identical role with its own source encoding (32+32 abi-padded
         // 20-byte addresses): parity is structural — each chain's base is its
         // framing plus the bytes its wire format actually carries for those two
@@ -411,8 +414,9 @@ impl OnRampContract {
         // `numberOfTokens ∈ {0, 1}`. Its fixed source-side framing +
         // `src_pool`/`src_token` content is the derived
         // `TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE` (119 = 39 framing +
-        // two 40-byte `Address::to_xdr` fields, same XDR reality as the message
-        // base above); the two dest-side fields (`dest_token`, `token_receiver`)
+        // two 40-byte contract `Address::to_xdr` fields — `src_pool` and
+        // `src_token` are contracts, unlike the account-sized message sender
+        // above); the two dest-side fields (`dest_token`, `token_receiver`)
         // are billed at `address_bytes_length`, matching EVM's
         // `remoteChainAddressLengthBytes * 2` per transfer.
         let remote_address_bytes = dest_config.address_bytes_length;

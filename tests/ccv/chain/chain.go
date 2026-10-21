@@ -1105,8 +1105,11 @@ func (c *Chain) GetMaxDataBytes(ctx context.Context, remoteChainSelector uint64)
 
 // messageV1StellarSourceBaseSize mirrors MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE
 // (contracts/common/message): MessageV1 framing plus the stellar sender and
-// onramp address XDR bytes billed for every stellar-sourced message.
-const messageV1StellarSourceBaseSize uint32 = 159
+// onramp address XDR bytes billed for every stellar-sourced message. The
+// sender is an account address in the standard user flow, whose PublicKey
+// union adds a 4-byte discriminant (44 bytes), while the onramp is a
+// contract address (40 bytes): 79 + 44 + 40 = 163.
+const messageV1StellarSourceBaseSize uint32 = 163
 
 // cvRemoteConfig returns the outbound committee verifier's remote config for
 // remoteChainSelector, or nil when no committee verifier is deployed.
