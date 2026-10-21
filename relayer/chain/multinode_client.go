@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"net/http"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -73,7 +72,7 @@ func NewMultiNodeClient(
 	rpcMetrics frameworkmetrics.RPCClientMetrics,
 ) *MultiNodeClient {
 	c := &MultiNodeClient{
-		SorobanClient: rpcclient.NewClient(url, &http.Client{Timeout: requestTimeout}),
+		SorobanClient: rpcclient.NewClient(url, newLimitedHTTPClient(requestTimeout)),
 		lggr:          logger.Named(lggr, "MultiNodeClient"),
 	}
 	c.RPCClientBase = multinode.NewRPCClientBase[*Head](

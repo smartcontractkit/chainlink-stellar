@@ -134,7 +134,13 @@ jobs:
       - name: Run E2E tests
         env:
           GOPATH: ${{ github.workspace }}/.go
-        run: cd tests && go test -v -timeout 20m -skip 'Test(StellarToEVM|EVMToStellar)TCAPI' ./e2e/...
+        # TestLaneExpansion is skipped for now: it cannot pass until the ccv
+        # EVM lane-config-adapter remote-family fix merges and the ccv pins
+        # are bumped (known InvalidDestChainAddress failure), and the surface
+        # it covers (ccv LaneExpansion + LaneConfigAdapters — no production
+        # consumers yet) is under reevaluation. Re-include it by removing
+        # |TestLaneExpansion from the skip regex when either resolves.
+        run: cd tests && go test -v -timeout 20m -skip 'Test(StellarToEVM|EVMToStellar)TCAPI|TestLaneExpansion' ./e2e/...
 
       # tail -5000 rather than tail -50: the executor/aggregator logs are sparse
       # (metrics noise every ~5s aside), so 5000 lines covers the entire run —

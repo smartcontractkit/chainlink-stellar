@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	sourcereader "github.com/smartcontractkit/chainlink-stellar/ccv/source_reader"
 	"github.com/smartcontractkit/chainlink-stellar/deployment"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/rpclimit"
 )
 
 // destinationConfig holds the resolved per-chain settings the accessor needs to
@@ -345,7 +345,7 @@ func buildSourceReaderWithSigner(
 	signer deployment.TxSigner,
 	zlggr zerolog.Logger,
 ) (chainaccess.SourceReader, error) {
-	rpcClient := rpcclient.NewClient(cfg.SorobanRPCURL, &http.Client{Timeout: 60 * time.Second})
+	rpcClient := rpcclient.NewClient(cfg.SorobanRPCURL, rpclimit.NewClient(60*time.Second))
 	deployer := deployment.NewDeployerWithSigner(rpcClient, cfg.NetworkPassphrase, signer)
 
 	sr, err := sourcereader.NewSourceReaderWithClient(
@@ -383,7 +383,7 @@ func buildDestinationComponents(
 		return nil, nil, fmt.Errorf("network passphrase is required (set reader_configs[%q].network_passphrase)", "selector")
 	}
 
-	rpcClient := rpcclient.NewClient(reader.SorobanRPCURL, &http.Client{Timeout: 60 * time.Second})
+	rpcClient := rpcclient.NewClient(reader.SorobanRPCURL, rpclimit.NewClient(60*time.Second))
 	deployer := deployment.NewDeployerWithSigner(rpcClient, reader.NetworkPassphrase, signer)
 
 	stateChangedTopic := dest.stateChangedTopic

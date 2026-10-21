@@ -62,6 +62,7 @@ import (
 	bnmops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/bnm_token"
 	lrpoolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
 	stellardeps "github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/rpclimit"
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/blockchain"
 	"github.com/smartcontractkit/chainlink-testing-framework/framework/components/simple_node_set"
@@ -762,7 +763,7 @@ func (c *Chain) DeployLocalNetwork(ctx context.Context, input *blockchain.Input)
 	c.friendbotURL = input.Out.NetworkSpecificData.StellarNetwork.FriendbotURL
 
 	// Initialize the Soroban RPC client
-	c.rpcClient = rpcclient.NewClient(sorobanRPCURL, &http.Client{Timeout: 60 * time.Second})
+	c.rpcClient = rpcclient.NewClient(sorobanRPCURL, rpclimit.NewClient(60*time.Second))
 
 	// Generate a deployer keypair for this network
 	// Use the network passphrase as part of the seed for deterministic key generation
