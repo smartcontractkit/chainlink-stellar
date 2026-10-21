@@ -254,8 +254,8 @@ github.com/smartcontractkit/grpc-proxy v0.0.0-20240830132753-a7e17fec5ab7 h1:12i
 github.com/smartcontractkit/grpc-proxy v0.0.0-20240830132753-a7e17fec5ab7/go.mod h1:FX7/bVdoep147QQhsOPkYsPEXhGZjeYx6lBSaSXtZOA=
 github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342 h1:pEcgcjTGA83MzpqbTbyIg9AJrOs62s77SooDdJGIg9w=
 github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342/go.mod h1:5JPtsRwjugpyfsdEALC4RopfvohqK/G+3DHaR8uv+Bc=
-github.com/stellar/go-stellar-sdk v0.7.3 h1:r4kKiiTOuNdJrEjKYs5ykLSLWKpq9fp6HnIXUs4TiuI=
-github.com/stellar/go-stellar-sdk v0.7.3/go.mod h1:YTYl7/zFt7oIX5Y4WRgL+3d2upWQDLywlHunZ4fOxvc=
+github.com/stellar/go-stellar-sdk v0.7.4-0.20261014050248-990270d32ebe h1:LeZAWquMEbuR/yF6n+JRD24zZyfm0apTFSwsHCcuJME=
+github.com/stellar/go-stellar-sdk v0.7.4-0.20261014050248-990270d32ebe/go.mod h1:TE/oIrVngAujvcalNBggneqRLI3wSlUZb2pWYyqU3QA=
 github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a h1:40YIhQusSioBKDW5Tr+YdjoXphcVeu7eXUS2ibMQBTs=
 github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a/go.mod h1:If+U9Z1W5xU97VrOgJandQT+2dN7/iOpkCrxBJEyF80=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
