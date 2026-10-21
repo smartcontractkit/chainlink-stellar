@@ -392,6 +392,7 @@ func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configO
 		FriendbotURL:       friendbotURL,
 		CLDFEnv:            cldfEnv,
 		Lib:                lib,
+		StellarRoot:        FindProjectRoot(t),
 	}
 }
 

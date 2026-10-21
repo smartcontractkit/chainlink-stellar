@@ -73,6 +73,7 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 			Client:            rpcClient,
 			NetworkPassphrase: passphrase,
 		}}),
+		OperationsBundle: newBundle(),
 	}
 
 	// Lean core: the refs the pool deploy sequence resolves.
@@ -191,11 +192,13 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 			TokenPoolRef:  poolRef,
 		})
 		require.NoError(t, err)
-		// The deployer still owns the pool: transfer_ownership ran directly;
+		// The deployer still owns the pool: transfer_ownership ran directly (the
+		// ExecInfo marker op — the changeset-level OutputBuilder drops it), and
 		// accept_ownership (pending owner = timelock) routes to an MCMS proposal.
-		require.Len(t, out.Output.BatchOps, 1)
-		require.Len(t, out.Output.BatchOps[0].Transactions, 1)
-		tx := out.Output.BatchOps[0].Transactions[0]
+		require.Len(t, out.Output.BatchOps, 2, "direct-transfer marker op + accept-ownership proposal")
+		require.Empty(t, out.Output.BatchOps[0].Transactions, "the direct transfer is the marker op")
+		require.Len(t, out.Output.BatchOps[1].Transactions, 1)
+		tx := out.Output.BatchOps[1].Transactions[0]
 		fn, _, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
 		require.NoError(t, err)
 		require.Equal(t, "accept_ownership", fn)
@@ -223,7 +226,8 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 
 	t.Run("configure token for transfers wires the lane idempotently", func(t *testing.T) {
 		// A synthetic EVM-style remote pool/token (20 bytes raw); the sequence
-		// stores both left-padded to 32 on chain.
+		// stores the pool left-padded to 32 and the token in the family-native
+		// form.
 		evmRemotePool := make([]byte, 20)
 		evmRemotePool[0] = 0xaa
 		evmRemoteToken := make([]byte, 20)
@@ -257,14 +261,16 @@ func TestTokenAdapterPoolOps(t *testing.T) {
 		execSalt[31] = 3
 		helpers.MCMSTimelockScheduleAndExecute(t, ctx, e2eEnv, gov, calls, pred, execSalt)
 
-		// The lane is wired on chain: supported, padded remote token and pool.
+		// The lane is wired on chain: supported; the remote pool left-padded to
+		// 32 and the remote token in the family-native form (the OnRamp carries
+		// it verbatim into messages; an EVM OffRamp rejects non-native tokens).
 		sharedPool := tpoolbindings.NewTokenPoolClient(deployer, poolStrkey)
 		supported, err := sharedPool.IsSupportedChain(ctx, dst)
 		require.NoError(t, err)
 		require.True(t, supported, "remote lane should be supported after configure")
 		remoteToken, err := sharedPool.GetRemoteToken(ctx, dst)
 		require.NoError(t, err)
-		require.Equal(t, common.LeftPadBytes(evmRemoteToken, 32), remoteToken)
+		require.Equal(t, evmRemoteToken, remoteToken)
 		remotePools, err := sharedPool.GetRemotePools(ctx, dst)
 		require.NoError(t, err)
 		require.Len(t, remotePools, 1)

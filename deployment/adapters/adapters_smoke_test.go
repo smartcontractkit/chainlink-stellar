@@ -42,6 +42,9 @@ func TestCCIPAdapterRegistrations_stellar(t *testing.T) {
 	_, ok = changesets.GetRegistry().GetMCMSReader(chainsel.FamilyStellar)
 	require.True(t, ok, "MCMSReader")
 
+	_, ok = deploy.GetAddressNormalizerRegistry().GetAddressNormalizer(chainsel.FamilyStellar)
+	require.True(t, ok, "AddressNormalizer")
+
 	_, ok = tokens.GetTokenAdapterRegistry().GetTokenAdapter(chainsel.FamilyStellar, v2)
 	require.True(t, ok, "TokenAdapter 2.0.0")
 }
@@ -66,6 +69,10 @@ func TestCCVDeploymentAdapterRegistrations_stellar(t *testing.T) {
 	require.NoError(t, err, "TokenPoolOnchain")
 	_, err = ccvdeploymentadapters.GetLaneConfigRegistry().Get(sel)
 	require.NoError(t, err, "LaneConfig")
+	_, err = ccvdeploymentadapters.GetCommitteeVerifierDeployRegistry().Get(sel)
+	require.NoError(t, err, "CommitteeVerifierDeploy")
+	_, err = ccvdeploymentadapters.GetProtocolContractsDeployRegistry().Get(sel)
+	require.NoError(t, err, "ProtocolContractsDeploy")
 }
 
 func TestStellarDeployChainContractsAdapter_smoke(t *testing.T) {

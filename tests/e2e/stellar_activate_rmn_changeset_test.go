@@ -21,13 +21,11 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	rmnbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
-	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/changesets"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
-	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
-	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
@@ -44,15 +42,19 @@ func TestStellarActivateRMNChangeset(t *testing.T) {
 	deps := stellardeps.FromDeployer(deployer)
 
 	rmnWasm := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-	rmnSalt := stellardeployment.GenerateDeterministicSalt(deployerKP.Address(), "e2e-activate-rmn-changeset")
-	rmnOut, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, deps, stellarops.DeployInput{WasmPath: rmnWasm, Salt: rmnSalt})
-	require.NoError(t, err)
-	rmnID := rmnOut.Output.ContractID
-	_, err = cldfops.ExecuteOperation(b, rmnremoteops.Initialize, deps, rmnremoteops.InitializeInput{
-		ContractID: rmnID,
-		Owner:      deployer.SignerAddress(),
+	// Deploy the RMN Remote through the component deploy sequence (skip-if-exists,
+	// deterministic singleton salt "rmn-remote"). Owner defaults to the deployer.
+	rmnRep, err := cldfops.ExecuteSequence(b, sequences.DeployRMNRemote, sequences.ComponentDeps{
+		StellarDeps:       deps,
+		NetworkPassphrase: passphrase,
+		DeployerAddress:   deployerKP.Address(),
+		Ledger:            deployer,
+	}, sequences.DeployRMNRemoteInput{
+		ChainSelector: sel,
+		WasmPath:      rmnWasm,
 	})
 	require.NoError(t, err)
+	rmnID := rmnRep.Output.ContractID
 	rmnClient := rmnbindings.NewRmnRemoteClient(deployer, rmnID)
 
 	env := &helpers.E2ETestEnv{

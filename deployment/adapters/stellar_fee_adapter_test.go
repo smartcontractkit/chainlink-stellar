@@ -186,6 +186,20 @@ func TestStellarFeeAdapter_GetOnchainTokenTransferFeeConfig(t *testing.T) {
 		_, err := getOnchainTokenTransferFeeConfig(operationstest.NewBundle(t), stellardeps.StellarDeps{}, fqStrkey, 42, 7, "not-a-strkey")
 		require.ErrorContains(t, err, "invalid token address")
 	})
+
+	t.Run("accepts the datastore hex token form", func(t *testing.T) {
+		t.Parallel()
+		// The shared changeset passes fullTokenRef.Address, the 0x-hex form.
+		tokenHex, err := stellarutil.StrkeyToHex(token)
+		require.NoError(t, err)
+		val, err := (fqbindings.TokenTransferFeeConfig{}).ToScVal()
+		require.NoError(t, err)
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForContract(fqStrkey, "get_token_fee_config", &val)
+		got, err := getOnchainTokenTransferFeeConfig(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, fqStrkey, 42, 7, tokenHex)
+		require.NoError(t, err)
+		require.Equal(t, fees.TokenTransferFeeArgs{}, got)
+	})
 }
 
 func TestStellarFeeAdapter_GetOnchainDestChainConfig(t *testing.T) {

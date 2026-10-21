@@ -40,6 +40,11 @@ func init() {
 	changesets.GetRegistry().RegisterMCMSReader(chainsel.FamilyStellar, &StellarMCMSReader{})
 	deploy.GetTransferOwnershipRegistry().RegisterAdapter(chainsel.FamilyStellar, deploy.MCMSVersion, &StellarTransferOwnershipAdapter{})
 	deploy.GetTransferOwnershipRegistry().RegisterAdapter(chainsel.FamilyStellar, v2, &StellarTransferOwnershipAdapter{})
+	// Without this the ccip token changesets skip ref normalization for stellar
+	// (TryNormalizeAddressRef) or fail outright (RoundTripAddress in
+	// RemoveRemotePools), and alternate encodings of one address silently become
+	// different refs.
+	deploy.GetAddressNormalizerRegistry().RegisterAddressNormalizer(chainsel.FamilyStellar, &StellarAddressNormalizer{})
 
 	// chainlink-ccip v2_0_0 adapters
 	//
@@ -84,13 +89,8 @@ func init() {
 	ccvdeploymentadapters.GetCommitteeVerifierOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVCommitteeVerifierOnchainAdapter{})
 	ccvdeploymentadapters.GetTokenPoolOnchainRegistry().Register(chainsel.FamilyStellar, &StellarCCVTokenPoolOnchainAdapter{})
 	ccvdeploymentadapters.GetLaneConfigRegistry().Register(chainsel.FamilyStellar, &StellarCCVLaneConfigAdapter{})
-
-	// TODO: validate that it's ok to skip registration
-	//   GetCommitteeVerifierDeployRegistry / GetProtocolContractsDeployRegistry — consumed only by
-	//     ccv's DeployProtocolContracts changeset; Stellar deploys through the ccip
-	//     GetDeployChainContractsRegistry entry above.
-	//   (GetLaneConfigRegistry is registered above — LaneExpansion / PromoteLaneRouter.)
-	//   (GetTokenPoolOnchainRegistry is registered above — RemoveRemotePool.)
+	ccvdeploymentadapters.GetCommitteeVerifierDeployRegistry().Register(chainsel.FamilyStellar, &StellarCCVCommitteeVerifierDeployAdapter{})
+	ccvdeploymentadapters.GetProtocolContractsDeployRegistry().Register(chainsel.FamilyStellar, &StellarCCVProtocolContractsDeployAdapter{})
 
 	// --- shared infrastructure ---
 	tokenscore.GetTokenAdapterRegistry().RegisterTokenAdapter(

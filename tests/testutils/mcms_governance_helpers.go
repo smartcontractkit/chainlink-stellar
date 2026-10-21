@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	mcmstypes "github.com/smartcontractkit/mcms/types"
@@ -27,11 +27,8 @@ import (
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
-	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	lrpops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
-	mcmsops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/mcms"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
-	timelockops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -42,8 +39,7 @@ const DefaultMCMSTimelockMinDelaySec uint64 = 3
 
 // MCMSGovernanceStack holds deployed MCMS + timelock contracts wired for MCMS-mediated governance.
 // Deployed via the real DeployStellarMCMS sequence (DeployMCMSStackWithRoles), it also
-// carries the role-specific MCMS instances; the legacy DeployMCMSAndTimelock stack leaves
-// the role fields unset.
+// carries the role-specific MCMS instances.
 type MCMSGovernanceStack struct {
 	MCMSID         string
 	TimelockID     string
@@ -64,6 +60,10 @@ type MCMSGovernanceStack struct {
 	BypasserMCMSID  string
 	// BypasserClient signs bypasser roots for the no-delay execution path.
 	BypasserClient *mcmsbindings.McmsClient
+	// Refs are the DeployStellarMCMS output refs (role multisigs + RBAC
+	// timelock); upsert them into the test datastore so changeset-level MCMS
+	// lookups (FindStellarMCMSAddressRef, FindStellarTimelockAddressRef) resolve.
+	Refs []datastore.AddressRef
 }
 
 // ContractIDToBytes32 decodes a Soroban contract strkey into a 32-byte contract id.
@@ -136,95 +136,6 @@ func MCMSValidUntilSeconds(ctx context.Context, rpc *rpcclient.Client) (uint32, 
 		return ^uint32(0), nil
 	}
 	return uint32(sum), nil
-}
-
-// DeployMCMSAndTimelock deploys and initializes MCMS + RBAC timelock via CLDF operations
-// (mcmsops/timelockops Deploy and Initialize), using mcmsutil WASM paths and deploy salts.
-//
-// MCMS is the timelock PROPOSER so MCMS.execute can drive schedule_batch; execute_batch is
-// permissionless (same wiring as integration TestMcmsMerkleTimelockScheduleAndExecute).
-func DeployMCMSAndTimelock(
-	t *testing.T,
-	ctx context.Context,
-	env *E2ETestEnv,
-	chainSelector uint64,
-	qualifier string,
-) *MCMSGovernanceStack {
-	t.Helper()
-
-	pk, err := crypto.HexToECDSA(Anvil0SKHex)
-	require.NoError(t, err)
-
-	chainNetID := mcmsutil.ChainNetworkID(env.NetworkPassphrase)
-
-	projectRoot := FindProjectRoot(t)
-	mcmsWasm := filepath.Join(projectRoot, mcmsutil.DefaultMCMSWasmRelative)
-	tlWasm := filepath.Join(projectRoot, mcmsutil.DefaultTimelockWasmRelative)
-
-	bundle := cldfops.NewBundle(
-		func() context.Context { return ctx },
-		cldflogger.Test(t),
-		cldfops.NewMemoryReporter(),
-	)
-	deps := stellardeps.FromDeployer(env.Deployer)
-
-	mcmsDep, err := cldfops.ExecuteOperation(bundle, mcmsops.Deploy, deps, stellarops.DeployInput{
-		WasmPath: mcmsWasm,
-		Salt:     mcmsutil.MCMSRoleDeploySalt(chainSelector, qualifier, "", mcmsutil.RoleProposer),
-	})
-	require.NoError(t, err)
-	mcmsID := mcmsDep.Output.ContractID
-
-	var groupQuorums [32]byte
-	groupQuorums[0] = 1
-	var groupParents [32]byte
-	paddedSigner := PaddedEthAddress(&pk.PublicKey)
-	// initialize applies the signer config atomically; no separate set_config needed.
-	_, err = cldfops.ExecuteOperation(bundle, mcmsops.Initialize, deps, mcmsops.InitializeInput{
-		ContractID:      mcmsID,
-		Owner:           env.DeployerKP.Address(),
-		ChainNetworkID:  chainNetID,
-		SignerAddresses: mcmsbindings.SignerAddresses{Inner: [][32]byte{paddedSigner}},
-		SignerGroups:    mcmsbindings.SignerGroups{Inner: []uint32{0}},
-		GroupQuorums:    groupQuorums,
-		GroupParents:    groupParents,
-		InstanceLabel:   "PROPOSER",
-	})
-	require.NoError(t, err)
-
-	tlDep, err := cldfops.ExecuteOperation(bundle, timelockops.Deploy, deps, stellarops.DeployInput{
-		WasmPath: tlWasm,
-		Salt:     mcmsutil.TimelockDeploySalt(chainSelector, qualifier, ""),
-	})
-	require.NoError(t, err)
-	tlID := tlDep.Output.ContractID
-
-	minDelay := DefaultMCMSTimelockMinDelaySec
-	_, err = cldfops.ExecuteOperation(bundle, timelockops.Initialize, deps, timelockops.InitializeInput{
-		ContractID: tlID,
-		MinDelay:   minDelay,
-		Proposers:  []string{mcmsID},
-		Cancellers: []string{},
-		Bypassers:  []string{},
-	})
-	require.NoError(t, err)
-
-	mcmsRaw, err := ContractIDToBytes32(mcmsID)
-	require.NoError(t, err)
-	tlRaw, err := ContractIDToBytes32(tlID)
-	require.NoError(t, err)
-
-	return &MCMSGovernanceStack{
-		MCMSID:         mcmsID,
-		TimelockID:     tlID,
-		MCMSClient:     mcmsbindings.NewMcmsClient(env.Deployer, mcmsID),
-		TimelockClient: timelockbindings.NewTimelockClient(env.Deployer, tlID),
-		MCMSRaw:        mcmsRaw,
-		TimelockRaw:    tlRaw,
-		ChainNetID:     chainNetID,
-		SignerPK:       pk,
-		MinDelaySec:    minDelay,
-	}
 }
 
 // EncodeTimelockCallArgs builds timelock Call.ArgsXdr for a Soroban contract function
@@ -568,13 +479,6 @@ func DeployMCMSStackWithRoles(
 ) *MCMSGovernanceStack {
 	t.Helper()
 
-	// DeployStellarMCMS resolves its WASM via mcmsutil.ResolveMCMSWasmPath, which only
-	// consults STELLAR_*_WASM / CHAINLINK_STELLAR_ROOT / the process cwd — there is no
-	// upward walk from the test binary's package directory. Set the root from the
-	// environment so the sequence finds target/wasm32v1-none/release/*.wasm from any cwd.
-	require.NotEmpty(t, env.StellarRoot, "E2ETestEnv.StellarRoot must be set: DeployStellarMCMS resolves WASM from CHAINLINK_STELLAR_ROOT")
-	t.Setenv("CHAINLINK_STELLAR_ROOT", env.StellarRoot)
-
 	pk, err := crypto.HexToECDSA(Anvil0SKHex)
 	require.NoError(t, err)
 
@@ -645,6 +549,7 @@ func DeployMCMSStackWithRoles(
 		CancellerMCMSID: cancellerID,
 		BypasserMCMSID:  bypasserID,
 		BypasserClient:  mcmsbindings.NewMcmsClient(env.Deployer, bypasserID),
+		Refs:            refs,
 	}
 }
 

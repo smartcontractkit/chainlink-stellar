@@ -29,6 +29,7 @@ import (
 	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
 	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 	poolops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_pool"
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ownership"
 )
 
 var _ tokens.TokenAdapter = (*StellarTokenAdapter)(nil)
@@ -48,19 +49,31 @@ func (a *StellarTokenAdapter) AddressRefToBytes(ref datastore.AddressRef) ([]byt
 }
 
 // DeriveTokenAddress resolves the token a Stellar pool wraps for cross-family
-// config. Shared-pipeline pools — burn-mint AND lock-release — wrap their own
-// qualified BnmToken row (the pipeline deploys one BnM token per pool, keyed
-// by the pool's qualifier); the bespoke lock-release pools wrap the single SAC
-// test token.
+// config. EVM parity: the pool contract itself is authoritative — its wrapped
+// token is read on chain — with the qualified BnmToken row (the pipeline
+// convention: one BnM token per pool, keyed by the pool's qualifier) as the
+// fallback; the bespoke lock-release pools wrap the single SAC test token.
 func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chainSelector uint64, poolRef datastore.AddressRef) (string, error) {
 	switch string(poolRef.Type) {
 	case stellarccip.DevenvCatalogBurnMintTokenPoolType, stellarccip.DevenvCatalogLockReleaseTokenPoolType, bmpops.ContractType:
-		ref, err := stellarccip.LookupAddressRef(e.DataStore, chainSelector,
-			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, poolRef.Qualifier)
-		if err != nil {
-			return "", fmt.Errorf("find BnM token for pool qualifier %q on chain %d: %w", poolRef.Qualifier, chainSelector, err)
+		var tokenHex string
+		var onChainErr error
+		if deps, err := stellarReadDeps(e.BlockChains, chainSelector); err != nil {
+			onChainErr = err
+		} else {
+			tokenHex, onChainErr = poolWrappedTokenHex(e.OperationsBundle, deps, poolRef.Address)
 		}
-		return ref.Address, nil
+		if onChainErr == nil {
+			return tokenHex, nil
+		}
+		ref, dsErr := stellarccip.LookupAddressRef(e.DataStore, chainSelector,
+			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, poolRef.Qualifier)
+		if dsErr == nil {
+			return ref.Address, nil
+		}
+		return "", fmt.Errorf(
+			"read wrapped token of pool on chain %d on chain (%v) and via the BnmToken row for pool qualifier %q: %w",
+			chainSelector, onChainErr, poolRef.Qualifier, dsErr)
 	default:
 		qualifier := poolRef.Qualifier
 		if qualifier == "" {
@@ -81,6 +94,25 @@ func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chain
 }
 
 const stellarTestTokenDecimals = 7
+
+// poolWrappedTokenHex reads the token a pool wraps via pool get_token (EVM
+// GetToken parity) and returns it in the datastore hex form the caller feeds
+// back into ResolveTokenRef.
+func poolWrappedTokenHex(b cldf_ops.Bundle, deps stellardeps.StellarDeps, poolAddress string) (string, error) {
+	poolStrkey, err := ownership.NormalizeContractAddress(poolAddress)
+	if err != nil {
+		return "", fmt.Errorf("normalize pool address: %w", err)
+	}
+	report, err := cldf_ops.ExecuteOperation(b, poolops.GetToken, deps, poolops.GetTokenInput{ContractID: poolStrkey})
+	if err != nil {
+		return "", fmt.Errorf("read wrapped token of pool %s: %w", poolStrkey, err)
+	}
+	tokenHex, err := stellarutil.StrkeyToHex(report.Output)
+	if err != nil {
+		return "", fmt.Errorf("convert wrapped token %s to hex: %w", report.Output, err)
+	}
+	return tokenHex, nil
+}
 
 func (a *StellarTokenAdapter) DeriveTokenDecimals(_ deployment.Environment, _ uint64, _ datastore.AddressRef, _ []byte) (uint8, error) {
 	return stellarTestTokenDecimals, nil

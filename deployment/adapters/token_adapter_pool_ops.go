@@ -251,38 +251,15 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 	if !input.AllowedFinalityConfig.IsZero() {
 		raw := input.AllowedFinalityConfig.Raw()
 		want := binary.BigEndian.Uint32(raw[:])
-		currentReport, err := cldf_ops.ExecuteOperation(b, tpoolops.GetAllowedFinalityConfig, deps, tpoolops.GetAllowedFinalityConfigInput{
-			ContractID: poolStrkey,
-		})
+		exec, proposal, err := applyPoolAllowedFinality(b, deps, owner, deployerAddr, timelockStrkey, hasTimelock, input.ChainSelector, input.TokenPoolRef.Type, poolStrkey, want)
 		if err != nil {
-			return sequences.OnChainOutput{}, fmt.Errorf("read allowed finality config of pool %s: %w", poolStrkey, err)
+			return sequences.OnChainOutput{}, err
 		}
-		if currentReport.Output != want {
-			// set_allowed_finality_config is owner-only (the buckets accept the
-			// rate-limit admin too), so it routes by the owner independently
-			// of the bucket caller.
-			switch {
-			case owner == deployerAddr:
-				if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetAllowedFinalityConfig, deps, tpoolops.SetAllowedFinalityConfigInput{
-					ContractID:      poolStrkey,
-					AllowedFinality: want,
-				}); err != nil {
-					return sequences.OnChainOutput{}, fmt.Errorf("set allowed finality config on pool %s: %w", poolStrkey, err)
-				}
-				executed = true
-			case hasTimelock && owner == timelockStrkey:
-				data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_allowed_finality_config", []xdr.ScVal{
-					scval.Uint32ToScVal(want),
-				})
-				if err != nil {
-					return sequences.OnChainOutput{}, err
-				}
-				writes = append(writes, poolRateLimitProposalWrite(input, poolStrkey, data))
-			default:
-				return sequences.OnChainOutput{}, fmt.Errorf(
-					"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
-					poolStrkey, owner, deployerAddr, timelockStrkey)
-			}
+		if exec {
+			executed = true
+		}
+		if proposal != nil {
+			writes = append(writes, *proposal)
 		}
 	}
 
@@ -360,14 +337,69 @@ func setTokenPoolRateLimits(b cldf_ops.Bundle, deps stellardeps.StellarDeps, dep
 // entrypoint, marked as a Soroban invoke (same encoding the ownership
 // sequences emit).
 func poolRateLimitProposalWrite(input tokens.TPRLRemotes, poolStrkey string, data []byte) evmcontract.WriteOutput {
+	return poolProposalWrite(input.ChainSelector, input.TokenPoolRef.Type, poolStrkey, data)
+}
+
+// poolProposalWrite builds one MCMS proposal write for a pool entrypoint,
+// marked as a Soroban invoke (same encoding the ownership sequences emit).
+func poolProposalWrite(chainSelector uint64, poolType datastore.ContractType, poolStrkey string, data []byte) evmcontract.WriteOutput {
 	return evmcontract.WriteOutput{
-		ChainSelector: input.ChainSelector,
+		ChainSelector: chainSelector,
 		Tx: mcmstypes.Transaction{
-			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(input.TokenPoolRef.Type)},
+			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(poolType)},
 			To:                poolStrkey,
 			Data:              data,
 			AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
 		},
+	}
+}
+
+// applyPoolAllowedFinality applies one pool's allowed-finality write with
+// owner routing: an equal current value skips, the deployer executes
+// directly, and the CLL timelock gets an MCMS proposal (set_allowed_finality_config
+// is owner-only; the rate-limit buckets accept the admin too, so the finality
+// arm routes by the owner alone).
+func applyPoolAllowedFinality(
+	b cldf_ops.Bundle,
+	deps stellardeps.StellarDeps,
+	owner, deployerAddr, timelockStrkey string,
+	hasTimelock bool,
+	chainSelector uint64,
+	poolType datastore.ContractType,
+	poolStrkey string,
+	want uint32,
+) (bool, *evmcontract.WriteOutput, error) {
+	currentReport, err := cldf_ops.ExecuteOperation(b, tpoolops.GetAllowedFinalityConfig, deps, tpoolops.GetAllowedFinalityConfigInput{
+		ContractID: poolStrkey,
+	})
+	if err != nil {
+		return false, nil, fmt.Errorf("read allowed finality config of pool %s: %w", poolStrkey, err)
+	}
+	if currentReport.Output == want {
+		return false, nil, nil
+	}
+	switch {
+	case owner == deployerAddr:
+		if _, err := cldf_ops.ExecuteOperation(b, tpoolops.SetAllowedFinalityConfig, deps, tpoolops.SetAllowedFinalityConfigInput{
+			ContractID:      poolStrkey,
+			AllowedFinality: want,
+		}); err != nil {
+			return false, nil, fmt.Errorf("set allowed finality config on pool %s: %w", poolStrkey, err)
+		}
+		return true, nil, nil
+	case hasTimelock && owner == timelockStrkey:
+		data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("set_allowed_finality_config", []xdr.ScVal{
+			scval.Uint32ToScVal(want),
+		})
+		if err != nil {
+			return false, nil, err
+		}
+		write := poolProposalWrite(chainSelector, poolType, poolStrkey, data)
+		return false, &write, nil
+	default:
+		return false, nil, fmt.Errorf(
+			"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
+			poolStrkey, owner, deployerAddr, timelockStrkey)
 	}
 }
 
@@ -449,4 +481,85 @@ func cllTimelockStrkey(ds datastore.DataStore, chainSelector uint64) (string, bo
 	}
 	tl, ok := mcmsutil.FindExistingStellarTimelock(refs, chainSelector, cciputils.CLLQualifier)
 	return tl, ok, nil
+}
+
+var _ tokens.RateLimitReaderAdapter = (*StellarTokenAdapter)(nil)
+
+// GetOnchainRateLimits implements tokens.RateLimitReaderAdapter: reads the
+// pool's current outbound and inbound rate-limiter buckets for one remote lane
+// and finality bucket. Used by the outbound-only arm of
+// SetTokenPoolRateLimits to pass the current inbound through unchanged (the
+// stellar setter is atomic over both directions), and to validate a
+// counterpart's inbound against a new outbound. TokenRef is ignored: a
+// stellar pool address alone identifies the lane config. An unconfigured lane
+// reads as the contract's default zero-value buckets with no error.
+func (a *StellarTokenAdapter) GetOnchainRateLimits(
+	b cldf_ops.Bundle,
+	chains cldf_chain.BlockChains,
+	_ datastore.DataStore,
+	chainSelector uint64,
+	poolRef datastore.AddressRef,
+	_ datastore.AddressRef,
+	remoteSelector uint64,
+	fastFinality bool,
+) (tokens.OnchainRateLimits, error) {
+	return getOnchainRateLimits(b, chains, chainSelector, poolRef, remoteSelector, fastFinality)
+}
+
+// getOnchainRateLimits resolves the pool and reads its current buckets.
+func getOnchainRateLimits(
+	b cldf_ops.Bundle,
+	chains cldf_chain.BlockChains,
+	chainSelector uint64,
+	poolRef datastore.AddressRef,
+	remoteSelector uint64,
+	fastFinality bool,
+) (tokens.OnchainRateLimits, error) {
+	deps, err := stellarReadDeps(chains, chainSelector)
+	if err != nil {
+		return tokens.OnchainRateLimits{}, err
+	}
+	poolStrkey, err := ownership.NormalizeContractAddress(poolRef.Address)
+	if err != nil {
+		return tokens.OnchainRateLimits{}, fmt.Errorf("normalize pool address: %w", err)
+	}
+	return readOnchainRateLimits(b, deps, poolStrkey, remoteSelector, fastFinality)
+}
+
+// readOnchainRateLimits reads the pool's current rate-limiter state and maps
+// both buckets to the chain-agnostic configs.
+func readOnchainRateLimits(
+	b cldf_ops.Bundle,
+	deps stellardeps.StellarDeps,
+	poolStrkey string,
+	remoteSelector uint64,
+	fastFinality bool,
+) (tokens.OnchainRateLimits, error) {
+	report, err := cldf_ops.ExecuteOperation(b, tpoolops.GetCurrentRateLimiterState, deps, tpoolops.GetCurrentRateLimiterStateInput{
+		ContractID:          poolStrkey,
+		RemoteChainSelector: remoteSelector,
+		FastFinality:        fastFinality,
+	})
+	if err != nil {
+		return tokens.OnchainRateLimits{}, fmt.Errorf(
+			"get current rate limiter state for pool %s remote chain %d (fastFinality %t): %w",
+			poolStrkey, remoteSelector, fastFinality, err)
+	}
+	if report.Output == nil {
+		return tokens.OnchainRateLimits{}, fmt.Errorf("no rate limiter state returned for pool %s remote chain %d", poolStrkey, remoteSelector)
+	}
+	return tokens.OnchainRateLimits{
+		Outbound: tokenBucketToRateLimiterConfig(report.Output.Outbound),
+		Inbound:  tokenBucketToRateLimiterConfig(report.Output.Inbound),
+	}, nil
+}
+
+// tokenBucketToRateLimiterConfig maps one on-chain bucket to the
+// chain-agnostic config (the inverse of rateLimiterConfigToBinding).
+func tokenBucketToRateLimiterConfig(bucket tpoolbindings.TokenBucket) tokens.RateLimiterConfig {
+	return tokens.RateLimiterConfig{
+		IsEnabled: bucket.IsEnabled,
+		Capacity:  u128ToBigInt(bucket.Capacity),
+		Rate:      u128ToBigInt(bucket.Rate),
+	}
 }

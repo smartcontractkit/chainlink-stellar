@@ -163,7 +163,7 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 	})
 
 	t.Run("phase2_deploy_mcms_and_timelock", func(t *testing.T) {
-		gov = helpers.DeployMCMSAndTimelock(t, ctx, env, stellarDetails.ChainSelector, "e2e-rate-limit-mcms")
+		gov = helpers.DeployMCMSStackWithRoles(t, ctx, env, stellarDetails.ChainSelector, "e2e-rate-limit-mcms", helpers.DefaultMCMSTimelockMinDelaySec)
 		l.Info().
 			Str("mcmsID", gov.MCMSID).
 			Str("timelockID", gov.TimelockID).

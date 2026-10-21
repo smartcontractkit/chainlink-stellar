@@ -2,10 +2,11 @@ package mcmsutil
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 )
 
 func TestResolveTimelockWasmPath_STELLAR_TIMELOCK_WASM(t *testing.T) {
@@ -27,11 +28,24 @@ func TestResolveTimelockWasmPath_CHAINLINK_STELLAR_ROOT(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestResolveTimelockWasmPath_fallbackUsesCwdRelative(t *testing.T) {
+func TestResolveTimelockWasmPath_fallbackWalksUpToRepoRoot(t *testing.T) {
 	t.Setenv("STELLAR_TIMELOCK_WASM", "")
 	t.Setenv("CHAINLINK_STELLAR_ROOT", "")
 
 	got, err := ResolveTimelockWasmPath()
 	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(got, DefaultTimelockWasmRelative), "got %q", got)
+	root, err := stellarutil.FindStellarRoot()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, DefaultTimelockWasmRelative), got)
+}
+
+func TestResolveMCMSWasmPath_fallbackWalksUpToRepoRoot(t *testing.T) {
+	t.Setenv("STELLAR_MCMS_WASM", "")
+	t.Setenv("CHAINLINK_STELLAR_ROOT", "")
+
+	got, err := ResolveMCMSWasmPath()
+	require.NoError(t, err)
+	root, err := stellarutil.FindStellarRoot()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, DefaultMCMSWasmRelative), got)
 }

@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Masterminds/semver/v3"
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	ccvadapters "github.com/smartcontractkit/chainlink-ccip/deployment/v2_0_0/adapters"
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	stellarbindings "github.com/smartcontractkit/chainlink-stellar/bindings"
@@ -149,6 +151,35 @@ func TestRunStellarCCIPFullDeploy_ErrorsWhenCCIPDevenvHostNil(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CCIPDevenvHost")
+}
+
+func TestRefsRecordedThisRun(t *testing.T) {
+	t.Parallel()
+	sel := chainsel.STELLAR_LOCALNET.Selector
+	ref := func(typ, qual, addr string) datastore.AddressRef {
+		return datastore.AddressRef{
+			ChainSelector: sel,
+			Type:          datastore.ContractType(typ),
+			Version:       semver.MustParse("2.0.0"),
+			Qualifier:     qual,
+			Address:       addr,
+		}
+	}
+	// Unchanged seeded rows are not re-reported; new rows and rows whose address
+	// was rewritten (hand-recorded strkey → hex) are recorded.
+	baseline := []datastore.AddressRef{
+		ref("Router", "", "0x1"),
+		ref("OffRamp", "", "STRKEY_ROW"),
+	}
+	final := []datastore.AddressRef{
+		ref("Router", "", "0x1"),
+		ref("OffRamp", "", "0x2"),
+		ref("OnRamp", "", "0x3"),
+	}
+	got := refsRecordedThisRun(final, baseline)
+	require.Len(t, got, 2)
+	require.Equal(t, "0x2", got[0].Address, "rewritten row counts as recorded")
+	require.Equal(t, "0x3", got[1].Address, "new row counts as recorded")
 }
 
 func TestDeployStellarCCIPInnerInput_ZeroValuePreservesDefaultBehavior(t *testing.T) {

@@ -65,20 +65,22 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 		cldfops.NewMemoryReporter(),
 	)
 	deps := stellardeps.FromDeployer(deployer)
-	deployerAddr := deployer.SignerAddress()
 
-	// ① Fresh RMN Remote with no curse admins.
+	// ① Fresh RMN Remote with no curse admins, deployed through the component
+	// deploy sequence (skip-if-exists, deterministic singleton salt "rmn-remote").
+	// Owner defaults to the deployer; no curse admins.
 	rmnWasm := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-	rmnSalt := stellardeployment.GenerateDeterministicSalt(deployerKP.Address(), "e2e-fast-curse-rmn")
-	rmnOut, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, deps, stellarops.DeployInput{WasmPath: rmnWasm, Salt: rmnSalt})
-	require.NoError(t, err)
-	rmnID := rmnOut.Output.ContractID
-	_, err = cldfops.ExecuteOperation(b, rmnremoteops.Initialize, deps, rmnremoteops.InitializeInput{
-		ContractID:  rmnID,
-		Owner:       deployerAddr,
-		CurseAdmins: nil,
+	rmnRep, err := cldfops.ExecuteSequence(b, sequences.DeployRMNRemote, sequences.ComponentDeps{
+		StellarDeps:       deps,
+		NetworkPassphrase: passphrase,
+		DeployerAddress:   deployerKP.Address(),
+		Ledger:            deployer,
+	}, sequences.DeployRMNRemoteInput{
+		ChainSelector: sel,
+		WasmPath:      rmnWasm,
 	})
 	require.NoError(t, err)
+	rmnID := rmnRep.Output.ContractID
 	rmnClient := rmnbindings.NewRmnRemoteClient(deployer, rmnID)
 
 	// ② Both MCMS stacks via the real deploy sequence.

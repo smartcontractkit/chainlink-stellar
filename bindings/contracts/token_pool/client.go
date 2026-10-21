@@ -194,6 +194,26 @@ func (c *TokenPoolClient) SetFeeAdmin(ctx context.Context, feeAdmin string) erro
 	return nil
 }
 
+// GetFeeAdmin calls the get_fee_admin function on the contract.
+func (c *TokenPoolClient) GetFeeAdmin(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_fee_admin", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_fee_admin: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_fee_admin")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
 // IsSupportedToken calls the is_supported_token function on the contract.
 func (c *TokenPoolClient) IsSupportedToken(ctx context.Context, token string) (bool, error) {
 	args := []xdr.ScVal{

@@ -63,7 +63,7 @@ func execStellarCCIPOp[IN, OUT any](
 // writer of stellar CV remote configs, so the remote's scale must be honored
 // here — a stellar-scale value for an EVM remote under-budgets the on-wire
 // execution_gas_limit (see the remoteChainConfigs loop above).
-func cvGasForVerificationForRemote(remoteSelector uint64) (uint32, error) {
+func CvGasForVerificationForRemote(remoteSelector uint64) (uint32, error) {
 	family, err := chainsel.GetSelectorFamily(remoteSelector)
 	if err != nil {
 		return 0, fmt.Errorf("get selector family for %d: %w", remoteSelector, err)
@@ -103,10 +103,19 @@ func statReleaseWasm(path, displayName string) error {
 // time, not during the deploy, so the deploy itself needs no NOP/committee data. It is kept as a
 // parameter for callers that hold one (CCV's stash → [StellarDeployChainContracts], or
 // [RunStellarCCIPFullDeployForCCV] which converts CCV topology) and for future deploy-time needs.
+//
+// Output addresses carry only the refs this run recorded (new deploys, adoptions, strkey→hex
+// rewrites); refs seeded from ExistingAddresses are never re-reported, so a re-run where every
+// contract already exists records no refs.
+// Post-deploy configuration (executor dest chains, FeeQuoter configs and prices,
 func RunStellarCCIPFullDeploy(
+	// VVR mappings, CV remote configs, Router/RampRegistry ramp maps, receiver
 	ctx context.Context,
+	// enablement) applies only to components this run deployed or initialized:
 	b cldf_ops.Bundle,
+	// reused contracts keep their live settings, so a rerun never resets
 	deps stellardeps.StellarDeps,
+	// configuration nor needs owner-gated writes.
 	h stellarccip.CCIPDevenvHost,
 	topology *offchain.EnvironmentTopology,
 	in DeployStellarCCIPInnerInput,
@@ -122,6 +131,12 @@ func RunStellarCCIPFullDeploy(
 
 	ds := datastore.NewMemoryDataStore()
 	if err := stellarccip.MergeExistingAddressRefs(ds, in.ExistingAddresses); err != nil {
+		return seq_core.OnChainOutput{}, err
+	}
+	// Baseline of the seeded refs: the final output reports only refs recorded
+	// past this point, never the seeded ExistingAddresses rows.
+	baseline, err := ds.AddressRefStore.Fetch()
+	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
 
@@ -372,11 +387,13 @@ func RunStellarCCIPFullDeploy(
 			},
 		})
 	}
-	if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
-		ContractID: executorContractID,
-		ToAdd:      execDestChainAdds,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor dest chain updates: %w", err)
+	if execOut.Deployed || execOut.Initialized {
+		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
+			ContractID: executorContractID,
+			ToAdd:      execDestChainAdds,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor dest chain updates: %w", err)
+		}
 	}
 	h.Logger().Info().Str("contractID", executorContractID).Msg("Executor initialized and dest chains enabled")
 
@@ -407,40 +424,44 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, poolExecOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
-			ContractID: poolExecOut.ContractID,
-			ToAdd:      execDestChainAdds,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor %q dest chain updates: %w", qualifier, err)
+		if poolExecOut.Deployed || poolExecOut.Initialized {
+			if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
+				ContractID: poolExecOut.ContractID,
+				ToAdd:      execDestChainAdds,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("apply Executor %q dest chain updates: %w", qualifier, err)
+			}
 		}
 		h.Logger().Info().Str("qualifier", qualifier).Str("contractID", poolExecOut.ContractID).Msg("qualified Executor deployed and dest chains enabled")
 	}
 
-	outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
-	for _, remoteSelector := range allSelectors {
-		outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
-			DestChainSelector: remoteSelector,
-			Verifier:          &cvContractID,
-		})
-	}
-	if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
-		ContractID:      vvrContractID,
-		Implementations: outboundImplUpdates,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates: %w", err)
-	}
+	if vvrOut.Deployed || vvrOut.Initialized {
+		outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
+		for _, remoteSelector := range allSelectors {
+			outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
+				DestChainSelector: remoteSelector,
+				Verifier:          &cvContractID,
+			})
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
+			ContractID:      vvrContractID,
+			Implementations: outboundImplUpdates,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates: %w", err)
+		}
 
-	inboundImplUpdates := []vvrbindings.InboundImplementationUpdate{
-		{
-			Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
-			Verifier: &cvContractID,
-		},
-	}
-	if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
-		ContractID:      vvrContractID,
-		Implementations: inboundImplUpdates,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates: %w", err)
+		inboundImplUpdates := []vvrbindings.InboundImplementationUpdate{
+			{
+				Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
+				Verifier: &cvContractID,
+			},
+		}
+		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
+			ContractID:      vvrContractID,
+			Implementations: inboundImplUpdates,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates: %w", err)
+		}
 	}
 
 	// Non-default committees covering this chain (e.g. the tcapi secondary
@@ -448,7 +469,11 @@ func RunStellarCCIPFullDeploy(
 	// per-qualifier CV and VVR refs for every committee covering the chain.
 	// CV contract IDs are collected here and configured after the Router deploy
 	// (CommitteeVerifier RemoteChainConfig.Router requires the Router to exist).
-	committeeCVs := make([]struct{ qualifier, cvID string }, 0)
+	type committeeCVEntry struct {
+		qualifier, cvID string
+		fresh           bool // deployed or initialized this run
+	}
+	committeeCVs := make([]committeeCVEntry, 0)
 	// stellarVvrIDs maps every committee qualifier covering this chain (the
 	// default included) to its stellar-side VVR contract ID — the dest-family
 	// CCV identities the qualified receivers' required/optional lists use.
@@ -495,37 +520,43 @@ func RunStellarCCIPFullDeploy(
 			return seq_core.OnChainOutput{}, fmt.Errorf("deploy Committee Verifier %q: %w", qualifier, err)
 		}
 		committeeCvContractID := committeeCvOut.ContractID
-		committeeCVs = append(committeeCVs, struct{ qualifier, cvID string }{qualifier, committeeCvContractID})
+		committeeCVs = append(committeeCVs, committeeCVEntry{
+			qualifier: qualifier,
+			cvID:      committeeCvContractID,
+			fresh:     committeeCvOut.Deployed || committeeCvOut.Initialized,
+		})
 		if err := upsertComponentRefs(ds, committeeCvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
 		h.Logger().Info().Str("qualifier", qualifier).Str("cvContractID", committeeCvContractID).Msg("Committee Verifier pair deployed and initialized")
 
-		committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
-		for _, remoteSelector := range allSelectors {
-			committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
-				DestChainSelector: remoteSelector,
-				Verifier:          &committeeCvContractID,
-			})
-		}
-		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
-			ContractID:      committeeVvrContractID,
-			Implementations: committeeOutbound,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates for %q: %w", qualifier, err)
-		}
+		if committeeVvrOut.Deployed || committeeVvrOut.Initialized {
+			committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
+			for _, remoteSelector := range allSelectors {
+				committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
+					DestChainSelector: remoteSelector,
+					Verifier:          &committeeCvContractID,
+				})
+			}
+			if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyOutboundImplUpdates, vvrops.ApplyOutboundImplUpdatesInput{
+				ContractID:      committeeVvrContractID,
+				Implementations: committeeOutbound,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("apply outbound implementation updates for %q: %w", qualifier, err)
+			}
 
-		committeeInbound := []vvrbindings.InboundImplementationUpdate{
-			{
-				Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
-				Verifier: &committeeCvContractID,
-			},
-		}
-		if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
-			ContractID:      committeeVvrContractID,
-			Implementations: committeeInbound,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates for %q: %w", qualifier, err)
+			committeeInbound := []vvrbindings.InboundImplementationUpdate{
+				{
+					Version:  stellarutil.DefaultCommitteeVerifierVersionTag(),
+					Verifier: &committeeCvContractID,
+				},
+			}
+			if _, err := execStellarCCIPOp(b, deps, vvrops.ApplyInboundImplUpdates, vvrops.ApplyInboundImplUpdatesInput{
+				ContractID:      committeeVvrContractID,
+				Implementations: committeeInbound,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("apply inbound implementation updates for %q: %w", qualifier, err)
+			}
 		}
 	}
 
@@ -536,106 +567,108 @@ func RunStellarCCIPFullDeploy(
 	// (with topology fallback) and applied during the lane-configuration phase by
 	// StellarConfigureChainForLanes via ConfigureChainsForLanesFromTopology.
 
-	fqDestChainConfigs := []fqbindings.DestChainConfigArgs{}
-	for _, rs := range allSelectors {
-		fqDestChainConfigs = append(fqDestChainConfigs, fqbindings.DestChainConfigArgs{
-			DestChainSelector: rs,
-			Config: fqbindings.DestChainConfig{
-				IsEnabled: true,
-				// The budget must fit the transport on BOTH axes. Tx-size:
-				// a ccip_send tx carries the payload 3× (op args + the
-				// auth tree's root and sub invocations), so
-				// 3×(B−199)+3,761 ≤ 132,096 ⇒ B ≤ 42,977. Instructions: the
-				// same 3× carries into execution cost — calibration
-				// (tests/e2e/maxdata_calibration_test.go, 2026-10-15)
-				// measured 13,613 bytes as the largest payload that
-				// executes under the localnet 100M per-tx instruction cap
-				// (24,801 fails even max-declared): 12,252 payload + 199
-				// overhead + 10% headroom for token/CCV-bearing shapes.
-				MaxDataBytes:          12_451,
-				MaxPerMsgGasLimit:     4_000_000,
-				DestGasOverhead:       350_000,
-				DestGasPerPayloadByte: 16,
-				DefaultTokenFeeUsd:    50,
-				DefaultTokenDestGas:   50_000,
-				DefaultTxGasLimit:     200_000,
-				NetworkFeeUsdCents:    100,
-				LinkPremiumPercent:    90,
-			},
-		})
-	}
-	if _, err := execStellarCCIPOp(b, deps, fqops.ApplyDestChainConfigs, fqops.ApplyDestChainConfigsInput{
-		ContractID: feeQuoterContractID,
-		Configs:    fqDestChainConfigs,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply dest chain configs on FeeQuoter: %w", err)
-	}
-
-	gasPriceUpdates := make([]fqbindings.GasPriceUpdate, 0, len(allSelectors))
-	for _, rs := range allSelectors {
-		gasPriceUpdates = append(gasPriceUpdates, fqbindings.GasPriceUpdate{
-			DestChainSelector: rs,
-			UsdPerUnitGas:     scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 100_000_000_000_000}),
-		})
-	}
-	if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
-		ContractID: feeQuoterContractID,
-		Updater:    h.DeployerKeypair().Address(),
-		PriceUpdates: fqbindings.PriceUpdates{
-			TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
-				{
-					Token: feeTokenContractID,
-					// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
-					// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
-					// 1e18 smallest units", scaled by token decimals:
-					// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
-					// makes a 50¢ fee quote as 5e17 base units (50B tokens) — unpayable.
-					// See contracts/common/helpers/src/fee_math.rs.
-					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-						Hi: 5421010862, Lo: 7886392056514347008,
-					}),
+	if feeQuoterOut.Deployed || feeQuoterOut.Initialized {
+		fqDestChainConfigs := []fqbindings.DestChainConfigArgs{}
+		for _, rs := range allSelectors {
+			fqDestChainConfigs = append(fqDestChainConfigs, fqbindings.DestChainConfigArgs{
+				DestChainSelector: rs,
+				Config: fqbindings.DestChainConfig{
+					IsEnabled: true,
+					// The budget must fit the transport on BOTH axes. Tx-size:
+					// a ccip_send tx carries the payload 3× (op args + the
+					// auth tree's root and sub invocations), so
+					// 3×(B−199)+3,761 ≤ 132,096 ⇒ B ≤ 42,977. Instructions: the
+					// same 3× carries into execution cost — calibration
+					// (tests/e2e/maxdata_calibration_test.go, 2026-10-15)
+					// measured 13,613 bytes as the largest payload that
+					// executes under the localnet 100M per-tx instruction cap
+					// (24,801 fails even max-declared): 12,252 payload + 199
+					// overhead + 10% headroom for token/CCV-bearing shapes.
+					MaxDataBytes:          12_451,
+					MaxPerMsgGasLimit:     4_000_000,
+					DestGasOverhead:       350_000,
+					DestGasPerPayloadByte: 16,
+					DefaultTokenFeeUsd:    50,
+					DefaultTokenDestGas:   50_000,
+					DefaultTxGasLimit:     200_000,
+					NetworkFeeUsdCents:    100,
+					LinkPremiumPercent:    90,
 				},
-			},
-			GasPriceUpdates: gasPriceUpdates,
-		},
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("update prices on FeeQuoter: %w", err)
-	}
+			})
+		}
+		if _, err := execStellarCCIPOp(b, deps, fqops.ApplyDestChainConfigs, fqops.ApplyDestChainConfigsInput{
+			ContractID: feeQuoterContractID,
+			Configs:    fqDestChainConfigs,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply dest chain configs on FeeQuoter: %w", err)
+		}
 
-	if testToken := h.TestTokenContractID(); testToken != "" {
+		gasPriceUpdates := make([]fqbindings.GasPriceUpdate, 0, len(allSelectors))
+		for _, rs := range allSelectors {
+			gasPriceUpdates = append(gasPriceUpdates, fqbindings.GasPriceUpdate{
+				DestChainSelector: rs,
+				UsdPerUnitGas:     scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 100_000_000_000_000}),
+			})
+		}
 		if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
 			ContractID: feeQuoterContractID,
 			Updater:    h.DeployerKeypair().Address(),
 			PriceUpdates: fqbindings.PriceUpdates{
-				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
-					Token: testToken,
-					// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
-					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-						Hi: 5421010862, Lo: 7886392056514347008,
-					}),
-				}},
+				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
+					{
+						Token: feeTokenContractID,
+						// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
+						// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
+						// 1e18 smallest units", scaled by token decimals:
+						// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
+						// makes a 50¢ fee quote as 5e17 base units (50B tokens) — unpayable.
+						// See contracts/common/helpers/src/fee_math.rs.
+						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+							Hi: 5421010862, Lo: 7886392056514347008,
+						}),
+					},
+				},
+				GasPriceUpdates: gasPriceUpdates,
 			},
 		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("set test token price on FeeQuoter: %w", err)
+			return seq_core.OnChainOutput{}, fmt.Errorf("update prices on FeeQuoter: %w", err)
 		}
-		tokenFeeConfigs := make([]fqbindings.TokenFeeConfigArgs, 0, len(allSelectors))
-		for _, rs := range allSelectors {
-			tokenFeeConfigs = append(tokenFeeConfigs, fqbindings.TokenFeeConfigArgs{
-				Token:             testToken,
-				DestChainSelector: rs,
-				Config: fqbindings.TokenTransferFeeConfig{
-					FeeUsdCents:       25,
-					DestGasOverhead:   90_000,
-					DestBytesOverhead: 32,
-					IsEnabled:         true,
+
+		if testToken := h.TestTokenContractID(); testToken != "" {
+			if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
+				ContractID: feeQuoterContractID,
+				Updater:    h.DeployerKeypair().Address(),
+				PriceUpdates: fqbindings.PriceUpdates{
+					TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
+						Token: testToken,
+						// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
+						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+							Hi: 5421010862, Lo: 7886392056514347008,
+						}),
+					}},
 				},
-			})
-		}
-		if _, err := execStellarCCIPOp(b, deps, fqops.ApplyTokenFeeConfigs, fqops.ApplyTokenFeeConfigsInput{
-			ContractID: feeQuoterContractID,
-			AddConfigs: tokenFeeConfigs,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("apply token fee configs on FeeQuoter: %w", err)
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("set test token price on FeeQuoter: %w", err)
+			}
+			tokenFeeConfigs := make([]fqbindings.TokenFeeConfigArgs, 0, len(allSelectors))
+			for _, rs := range allSelectors {
+				tokenFeeConfigs = append(tokenFeeConfigs, fqbindings.TokenFeeConfigArgs{
+					Token:             testToken,
+					DestChainSelector: rs,
+					Config: fqbindings.TokenTransferFeeConfig{
+						FeeUsdCents:       25,
+						DestGasOverhead:   90_000,
+						DestBytesOverhead: 32,
+						IsEnabled:         true,
+					},
+				})
+			}
+			if _, err := execStellarCCIPOp(b, deps, fqops.ApplyTokenFeeConfigs, fqops.ApplyTokenFeeConfigsInput{
+				ContractID: feeQuoterContractID,
+				AddConfigs: tokenFeeConfigs,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("apply token fee configs on FeeQuoter: %w", err)
+			}
 		}
 	}
 
@@ -704,7 +737,7 @@ func RunStellarCCIPFullDeploy(
 	routerRef := routerContractID
 	remoteChainConfigs := make([]cvbindings.RemoteChainConfig, 0, len(allSelectors))
 	for _, rs := range allSelectors {
-		gasForVerification, err := cvGasForVerificationForRemote(rs)
+		gasForVerification, err := CvGasForVerificationForRemote(rs)
 		if err != nil {
 			return seq_core.OnChainOutput{}, fmt.Errorf("gas for verification for remote %d: %w", rs, err)
 		}
@@ -717,16 +750,21 @@ func RunStellarCCIPFullDeploy(
 			Router:              &routerRef,
 		})
 	}
-	if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
-		ContractID: cvContractID,
-		Configs:    remoteChainConfigs,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
+	if cvOut.Deployed || cvOut.Initialized {
+		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
+			ContractID: cvContractID,
+			Configs:    remoteChainConfigs,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply remote chain config updates on committee verifier: %w", err)
+		}
 	}
 	// Same configs on every non-default committee CV: quoting a message that
 	// names one of them (OnRamp get_fee → CV get_fee) errors with
 	// RemoteChainNotSupported unless the dest chain is in remote_chains.
 	for _, committeeCV := range committeeCVs {
+		if !committeeCV.fresh {
+			continue
+		}
 		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
 			ContractID: committeeCV.cvID,
 			Configs:    remoteChainConfigs,
@@ -764,13 +802,15 @@ func RunStellarCCIPFullDeploy(
 			Offramp:             offRampContractID,
 		})
 	}
-	if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
-		ContractID:     routerContractID,
-		OnRampUpdates:  onRampEntries,
-		OffRampRemoves: []routerbindings.OffRampEntry{},
-		OffRampAdds:    offRampEntries,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply ramp updates on Router: %w", err)
+	if routerOut.Deployed || routerOut.Initialized {
+		if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
+			ContractID:     routerContractID,
+			OnRampUpdates:  onRampEntries,
+			OffRampRemoves: []routerbindings.OffRampEntry{},
+			OffRampAdds:    offRampEntries,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply ramp updates on Router: %w", err)
+		}
 	}
 
 	rampRegistryWasmPath := filepath.Join(stellarRoot, "target", "wasm32v1-none", "release", "ccip_ramp_registry.wasm")
@@ -790,33 +830,35 @@ func RunStellarCCIPFullDeploy(
 	if err := upsertComponentRefs(ds, rrOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	rrOnRamp := make([]rampregistrybindings.OnRampUpdate, len(onRampEntries))
-	for i, e := range onRampEntries {
-		onramp := e.Onramp
-		rrOnRamp[i] = rampregistrybindings.OnRampUpdate{
-			DestChainSelector: e.DestChainSelector,
-			Onramp:            &onramp,
+	if rrOut.Deployed || rrOut.Initialized {
+		rrOnRamp := make([]rampregistrybindings.OnRampUpdate, len(onRampEntries))
+		for i, e := range onRampEntries {
+			onramp := e.Onramp
+			rrOnRamp[i] = rampregistrybindings.OnRampUpdate{
+				DestChainSelector: e.DestChainSelector,
+				Onramp:            &onramp,
+			}
 		}
-	}
-	if _, err := execStellarCCIPOp(b, deps, rrops.ApplyOnrampUpdates, rrops.ApplyOnrampUpdatesInput{
-		ContractID: rampRegistryContractID,
-		Updates:    rrOnRamp,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply onramp updates on RampRegistry: %w", err)
-	}
-	rrOffRamp := make([]rampregistrybindings.OffRampUpdate, len(offRampEntries))
-	for i, e := range offRampEntries {
-		rrOffRamp[i] = rampregistrybindings.OffRampUpdate{
-			SourceChainSelector: e.SourceChainSelector,
-			Offramp:             e.Offramp,
-			Enabled:             true,
+		if _, err := execStellarCCIPOp(b, deps, rrops.ApplyOnrampUpdates, rrops.ApplyOnrampUpdatesInput{
+			ContractID: rampRegistryContractID,
+			Updates:    rrOnRamp,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply onramp updates on RampRegistry: %w", err)
 		}
-	}
-	if _, err := execStellarCCIPOp(b, deps, rrops.ApplyOfframpUpdates, rrops.ApplyOfframpUpdatesInput{
-		ContractID: rampRegistryContractID,
-		Updates:    rrOffRamp,
-	}); err != nil {
-		return seq_core.OnChainOutput{}, fmt.Errorf("apply offramp updates on RampRegistry: %w", err)
+		rrOffRamp := make([]rampregistrybindings.OffRampUpdate, len(offRampEntries))
+		for i, e := range offRampEntries {
+			rrOffRamp[i] = rampregistrybindings.OffRampUpdate{
+				SourceChainSelector: e.SourceChainSelector,
+				Offramp:             e.Offramp,
+				Enabled:             true,
+			}
+		}
+		if _, err := execStellarCCIPOp(b, deps, rrops.ApplyOfframpUpdates, rrops.ApplyOfframpUpdatesInput{
+			ContractID: rampRegistryContractID,
+			Updates:    rrOffRamp,
+		}); err != nil {
+			return seq_core.OnChainOutput{}, fmt.Errorf("apply offramp updates on RampRegistry: %w", err)
+		}
 	}
 	h.SetRampRegistry(rampRegistryContractID)
 	h.Logger().Info().Str("contractID", rampRegistryContractID).Msg("RampRegistry deployed and ramp maps synced with Router")
@@ -843,15 +885,17 @@ func RunStellarCCIPFullDeploy(
 
 	ownerAddr := h.DeployerKeypair().Address()
 	placeholderExtra := []byte{0x01}
-	for _, rs := range remoteSelectors {
-		if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
-			ContractID:            receiverContractID,
-			Caller:                ownerAddr,
-			RemoteChainSelector:   rs,
-			ExtraArgs:             placeholderExtra,
-			AllowedFinalityConfig: 0,
-		}); err != nil {
-			return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example EnableRemoteChain for source chain %d: %w", rs, err)
+	if recvOut.Deployed || recvOut.Initialized {
+		for _, rs := range remoteSelectors {
+			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
+				ContractID:            receiverContractID,
+				Caller:                ownerAddr,
+				RemoteChainSelector:   rs,
+				ExtraArgs:             placeholderExtra,
+				AllowedFinalityConfig: 0,
+			}); err != nil {
+				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example EnableRemoteChain for source chain %d: %w", rs, err)
+			}
 		}
 	}
 
@@ -917,27 +961,29 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, qRecvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		for _, rs := range remoteSelectors {
-			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
-				ContractID:            qRecvOut.ContractID,
-				Caller:                ownerAddr,
-				RemoteChainSelector:   rs,
-				ExtraArgs:             placeholderExtra,
-				AllowedFinalityConfig: qualifiedFinality,
-			}); err != nil {
-				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q EnableRemoteChain for source chain %d: %w", qr.qualifier, rs, err)
-			}
-			if _, err := execStellarCCIPOp(b, deps, recvops.ApplyCcvConfigUpdates, recvops.ApplyCcvConfigUpdatesInput{
-				ContractID: qRecvOut.ContractID,
-				Caller:     ownerAddr,
-				Updates: []recvbindings.CcvConfigUpdate{{
-					SourceChainSelector: rs,
-					RequiredCcvs:        qr.requiredCcvs,
-					OptionalCcvs:        qr.optionalCcvs,
-					OptionalThreshold:   qr.optionalThreshold,
-				}},
-			}); err != nil {
-				return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q ApplyCcvConfigUpdates for source chain %d: %w", qr.qualifier, rs, err)
+		if qRecvOut.Deployed || qRecvOut.Initialized {
+			for _, rs := range remoteSelectors {
+				if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
+					ContractID:            qRecvOut.ContractID,
+					Caller:                ownerAddr,
+					RemoteChainSelector:   rs,
+					ExtraArgs:             placeholderExtra,
+					AllowedFinalityConfig: qualifiedFinality,
+				}); err != nil {
+					return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q EnableRemoteChain for source chain %d: %w", qr.qualifier, rs, err)
+				}
+				if _, err := execStellarCCIPOp(b, deps, recvops.ApplyCcvConfigUpdates, recvops.ApplyCcvConfigUpdatesInput{
+					ContractID: qRecvOut.ContractID,
+					Caller:     ownerAddr,
+					Updates: []recvbindings.CcvConfigUpdate{{
+						SourceChainSelector: rs,
+						RequiredCcvs:        qr.requiredCcvs,
+						OptionalCcvs:        qr.optionalCcvs,
+						OptionalThreshold:   qr.optionalThreshold,
+					}},
+				}); err != nil {
+					return seq_core.OnChainOutput{}, fmt.Errorf("ccip_receiver_example %q ApplyCcvConfigUpdates for source chain %d: %w", qr.qualifier, rs, err)
+				}
 			}
 		}
 		h.Logger().Info().Str("qualifier", qr.qualifier).Str("receiverContractID", qRecvOut.ContractID).Msg("Qualified CCIP receiver deployed and configured")
@@ -949,7 +995,47 @@ func RunStellarCCIPFullDeploy(
 	if err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	return seq_core.OnChainOutput{Addresses: addrs}, nil
+	return seq_core.OnChainOutput{Addresses: refsRecordedThisRun(addrs, baseline)}, nil
+}
+
+// addressRefIdentity is the datastore row identity of an address ref.
+type addressRefIdentity struct {
+	chain   uint64
+	typ     datastore.ContractType
+	qual    string
+	version string
+}
+
+func refIdentity(r datastore.AddressRef) addressRefIdentity {
+	version := ""
+	if r.Version != nil {
+		version = r.Version.String()
+	}
+	return addressRefIdentity{
+		chain:   r.ChainSelector,
+		typ:     r.Type,
+		qual:    r.Qualifier,
+		version: version,
+	}
+}
+
+// refsRecordedThisRun filters final down to the refs recorded this run: rows whose
+// identity is absent from the baseline, or whose address changed against it (the
+// hand-recorded strkey → hex rewrite). Unchanged baseline rows are not re-reported.
+func refsRecordedThisRun(final, baseline []datastore.AddressRef) []datastore.AddressRef {
+	base := make(map[addressRefIdentity]string, len(baseline))
+	for _, r := range baseline {
+		base[refIdentity(r)] = r.Address
+	}
+	recorded := make([]datastore.AddressRef, 0, len(final))
+	for _, r := range final {
+		id := refIdentity(r)
+		if addr, ok := base[id]; ok && addr == r.Address {
+			continue
+		}
+		recorded = append(recorded, r)
+	}
+	return recorded
 }
 
 // qualifiedReceiverPlan mirrors one row of ccv's EVM buildMockReceivers matrix

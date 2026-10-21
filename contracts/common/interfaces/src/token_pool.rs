@@ -91,6 +91,8 @@ pub trait TokenPoolInterface {
         fee_admin: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
 
+    fn get_fee_admin(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
+
     fn is_supported_token(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,
