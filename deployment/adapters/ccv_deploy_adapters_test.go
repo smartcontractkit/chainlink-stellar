@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -292,7 +291,8 @@ func TestFillCommitteeVerifierRemoteConfigs(t *testing.T) {
 	t.Run("fills missing remote configs", func(t *testing.T) {
 		t.Parallel()
 		inv := operationstest.NewRecordingInvoker().
-			WithSimulateErrorForContract(cvStrkey, "get_remote_chain_config", errors.New("failed to call get_remote_chain_config: RemoteChainNotSupported"))
+			WithSimulateErrorForContract(cvStrkey, "get_remote_chain_config",
+				operationstest.ContractErrorCode(cvbindings.CCIPErrorRemoteChainNotSupported))
 
 		require.NoError(t, fillCommitteeVerifierRemoteConfigs(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, cvStrkey, routerStrkey, []uint64{sel}))
 

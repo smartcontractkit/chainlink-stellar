@@ -3,7 +3,6 @@ package adapters
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	cldf_chain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	cldf_stellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
@@ -17,8 +16,8 @@ import (
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
-	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	vvrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
@@ -280,7 +279,7 @@ func fillCommitteeVerifierRemoteConfigs(b cldf_ops.Bundle, deps stellardeps.Stel
 	for _, sel := range selectors {
 		if _, err := client.GetRemoteChainConfig(b.GetContext(), sel); err == nil {
 			continue // existing entry: preserve it
-		} else if !strings.Contains(err.Error(), "RemoteChainNotSupported") {
+		} else if !stellarops.IsContractErrorCode(err, cvbindings.CCIPErrorRemoteChainNotSupported) {
 			return fmt.Errorf("read remote chain config for %d: %w", sel, err)
 		}
 		gas, err := sequences.CvGasForVerificationForRemote(sel)
