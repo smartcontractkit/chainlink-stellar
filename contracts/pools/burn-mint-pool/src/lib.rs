@@ -578,7 +578,7 @@ impl BurnMintTokenPoolContract {
         requested_finality: u32,
         extra_data: Bytes,
         direction: MessageDirection,
-    ) -> PoolRequiredCCVs {
+    ) -> Result<PoolRequiredCCVs, CCIPError> {
         <Self as BaseTokenPool>::get_required_ccvs(
             &env,
             &local_token,

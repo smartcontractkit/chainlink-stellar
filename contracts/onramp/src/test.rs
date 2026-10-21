@@ -1319,6 +1319,10 @@ mod mock_pool {
         }
 
         /// No pool-mandated CCVs → the OnRamp uses lane defaults.
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1327,11 +1331,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
         }
     }
 
@@ -1385,6 +1389,10 @@ mod mock_pool {
         /// discriminator for H-1. With a token-only message (user-fallback
         /// defaults skipped) and no lane-mandated CCVs, the merged CCV list is
         /// empty, which the OnRamp must reject rather than emit unverified.
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1393,11 +1401,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1453,6 +1461,10 @@ mod mock_pool {
 
         /// The pool mandates its OWN single CCV and does NOT fold in lane defaults — the
         /// M-13 over-trigger discriminator (a non-empty list must not fall back to defaults).
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1461,7 +1473,7 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
             let ccv: Address = env
                 .storage()
                 .instance()
@@ -1469,10 +1481,10 @@ mod mock_pool {
                 .expect("pool_ccv not set");
             let mut ccvs = Vec::new(&env);
             ccvs.push_back(ccv);
-            PoolRequiredCCVs {
+            Ok(PoolRequiredCCVs {
                 ccvs,
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1535,6 +1547,10 @@ mod mock_pool {
             })
         }
 
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1543,11 +1559,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
         }
     }
 }

@@ -3092,6 +3092,234 @@ fn test_get_required_ccvs_inbound_through_pool() {
 }
 
 #[test]
+fn test_get_required_ccvs_inbound_downscales_source_amount() {
+    // EVM `TokenPool.getRequiredCCVs` converts the inbound source-denominated
+    // amount to local units before the hooks compare it against the threshold,
+    // using the remote decimals encoded in the source pool data. The local
+    // token is 7 decimals, so an 18-decimals source amount is 10^11x its local
+    // value; a raw comparison would over-trigger the threshold CCVs.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    // Threshold in local units: 1_000_000_000 = 100 tokens at 7 decimals.
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &1_000_000_000i128,
+        &Vec::new(&env),
+        &None,
+    );
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let base = Address::generate(&env);
+    let extra = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: vec![&env, base.clone()],
+        threshold_outbound_ccvs: vec![&env, extra.clone()],
+        inbound_ccvs: vec![&env, base.clone()],
+        threshold_inbound_ccvs: vec![&env, extra.clone()],
+        outbound_include_defaults: false,
+        inbound_include_defaults: false,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    let source_pool_data = encode_local_decimals(&env, 18).unwrap();
+
+    // 50 tokens at 18 decimals converts to 500_000_000 local units, below the
+    // threshold; the raw source amount 5 * 10^19 is far above it, so only the
+    // converted comparison excludes the threshold CCVs.
+    let below = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &50_000_000_000_000_000_000i128,
+        &0u32,
+        &source_pool_data,
+        &MessageDirection::Inbound,
+    );
+    assert_eq!(below.ccvs.len(), 1);
+    assert_eq!(below.ccvs.get(0).unwrap(), base);
+
+    // 200 tokens at 18 decimals converts to 2_000_000_000 local units, at the
+    // threshold.
+    let at = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &200_000_000_000_000_000_000i128,
+        &0u32,
+        &source_pool_data,
+        &MessageDirection::Inbound,
+    );
+    assert_eq!(at.ccvs.len(), 2);
+    assert_eq!(at.ccvs.get(0).unwrap(), base);
+    assert_eq!(at.ccvs.get(1).unwrap(), extra);
+}
+
+#[test]
+fn test_get_required_ccvs_inbound_upscales_source_amount() {
+    // Remote decimals below local: a 6-decimals source against the 7-decimals
+    // local token. Raw source amounts sit below the threshold while the
+    // converted local amounts cross it, so a raw comparison would skip the
+    // threshold CCVs that the local value warrants.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    // Threshold in local units: 10_000_000 = 1 token at 7 decimals.
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &10_000_000i128,
+        &Vec::new(&env),
+        &None,
+    );
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let base = Address::generate(&env);
+    let extra = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: vec![&env, base.clone()],
+        threshold_outbound_ccvs: vec![&env, extra.clone()],
+        inbound_ccvs: vec![&env, base.clone()],
+        threshold_inbound_ccvs: vec![&env, extra.clone()],
+        outbound_include_defaults: false,
+        inbound_include_defaults: false,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    let source_pool_data = encode_local_decimals(&env, 6).unwrap();
+
+    // 0.5 token at 6 decimals converts to 50_000_000 local units, above the
+    // threshold; the raw source amount 5_000_000 is below it, so only the
+    // converted comparison includes the threshold CCVs.
+    let above = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &5_000_000i128,
+        &0u32,
+        &source_pool_data,
+        &MessageDirection::Inbound,
+    );
+    assert_eq!(above.ccvs.len(), 2);
+    assert_eq!(above.ccvs.get(0).unwrap(), base);
+    assert_eq!(above.ccvs.get(1).unwrap(), extra);
+
+    // 0.09 token at 6 decimals converts to 9_000_000 local units, below the
+    // threshold.
+    let below = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &900_000i128,
+        &0u32,
+        &source_pool_data,
+        &MessageDirection::Inbound,
+    );
+    assert_eq!(below.ccvs.len(), 1);
+    assert_eq!(below.ccvs.get(0).unwrap(), base);
+}
+
+#[test]
+fn test_get_required_ccvs_outbound_subtracts_pool_fee() {
+    // EVM `TokenPool.getRequiredCCVs` subtracts the source fee before the
+    // hooks see the amount: the fee is not transferred value. With a 10% fee
+    // and threshold 91, gross 100 nets to 90 and must NOT trigger the
+    // threshold CCVs, while gross 102 nets to 92 and must.
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        _token_client,
+        _token_admin_client,
+        _registry_client,
+        _stub_client,
+        _auth_onramp,
+    ) = setup_env();
+
+    // The fee config add requires the chain to be supported.
+    pool_client.apply_chain_updates(
+        &Vec::from_array(&env, [chain_update(&env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
+        &Vec::new(&env),
+    );
+    apply_fee_config(&env, &pool_client, DEFAULT_REMOTE_CHAIN, 1_000, 0);
+
+    let hooks_id = env.register(AdvancedPoolHooksContract, ());
+    let hooks_client = AdvancedPoolHooksContractClient::new(&env, &hooks_id);
+    let hooks_owner = Address::generate(&env);
+    hooks_client.initialize(
+        &hooks_owner,
+        &Vec::new(&env),
+        &91i128,
+        &Vec::new(&env),
+        &None,
+    );
+    pool_client.set_advanced_pool_hooks(&hooks_id);
+
+    let base = Address::generate(&env);
+    let extra = Address::generate(&env);
+    let config = CCVConfigArg {
+        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
+        outbound_ccvs: vec![&env, base.clone()],
+        threshold_outbound_ccvs: vec![&env, extra.clone()],
+        inbound_ccvs: Vec::new(&env),
+        threshold_inbound_ccvs: Vec::new(&env),
+        outbound_include_defaults: false,
+        inbound_include_defaults: false,
+    };
+    hooks_client.apply_ccv_config_updates(&vec![&env, config]);
+
+    // Gross 100, fee 10 -> net 90, below the 91 threshold; the gross amount
+    // is above it, so only the net comparison excludes the threshold CCVs.
+    let net_below = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &100i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(net_below.ccvs.len(), 1);
+    assert_eq!(net_below.ccvs.get(0).unwrap(), base);
+
+    // Gross 102, fee 10 (rounded down) -> net 92, above the threshold.
+    let net_above = pool_client.get_required_ccvs(
+        &token_address,
+        &DEFAULT_REMOTE_CHAIN,
+        &102i128,
+        &0u32,
+        &Bytes::new(&env),
+        &MessageDirection::Outbound,
+    );
+    assert_eq!(net_above.ccvs.len(), 2);
+    assert_eq!(net_above.ccvs.get(0).unwrap(), base);
+    assert_eq!(net_above.ccvs.get(1).unwrap(), extra);
+}
+
+#[test]
 fn test_lock_or_burn_gated_by_real_hooks_allowlist() {
     // Integration (end-to-end behavior): a real AdvancedPoolHooks sender
     // allowlist wired to the pool gates `lock_or_burn`. The hooks
