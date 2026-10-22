@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -111,10 +111,14 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            // Read branch names from the event payload, not from workflow-expression
+            // expansion: the head branch name is the PR author's and must never be
+            // interpolated into this script (it would execute as JS with this token).
+            const pr = context.payload.pull_request;
             const coverage_report = process.env.coverage_report;
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `Code coverage report:\n| Top package | \`${{ github.base_ref }}\` | \`${{ github.head_ref }}\` | diff |\n${coverage_report}`
+              body: `Code coverage report:\n| Top package | \`${pr.base.ref}\` | \`${pr.head.ref}\` | diff |\n${coverage_report}`
             });
