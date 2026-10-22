@@ -51,7 +51,9 @@ jobs:
             chainlink-stellar-go-${{ runner.os }}-
 
       - name: Install just
-        uses: extractions/setup-just@69d82fb0233557aec017ef13706851d0694e0f1d # v2.0.0
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
 
       - name: Run tests (current ref)
         run: |

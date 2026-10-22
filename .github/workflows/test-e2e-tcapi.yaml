@@ -109,7 +109,9 @@ jobs:
       # (gen_interfaces.sh runs stellar contract build), so make build below is a
       # warm rebuild. .dockerignore excludes target/ from the image builds' context.
       - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
 
       # Image-cache strategy mirrors test-e2e.yaml (shared cache keys): the CCV
       # key rotates only when the ccv pin moves; the Stellar key hashes the Go
