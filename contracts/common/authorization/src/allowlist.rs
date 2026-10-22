@@ -131,6 +131,9 @@ pub trait AllowListable: Ownable {
                 allowlist_enabled: update.allowlist_enabled,
                 allowlist: Vec::new(env),
             });
+            // Persist the enabled flag for existing entries too; without this
+            // only the first write would ever record it.
+            allowlist_entry.allowlist_enabled = update.allowlist_enabled;
 
             for address in to_add.iter() {
                 if !allowlist_entry.allowlist.contains(address.clone()) {

@@ -4,9 +4,44 @@ use soroban_sdk::{testutils::Address as _, vec, xdr::ToXdr, Address, Bytes, Byte
 
 use crate::{
     CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, MessageIdCompute,
-    StellarToAnyMessage, ToBytes, TokenAmount, MESSAGE_V1_VERSION,
+    StellarToAnyMessage, ToBytes, TokenAmount, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE,
+    MESSAGE_V1_VERSION, SOROBAN_ACCOUNT_ADDRESS_XDR_SIZE, SOROBAN_CONTRACT_ADDRESS_XDR_SIZE,
+    TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE,
 };
 use common_error::CCIPError;
+
+// ============================================================
+// Source Base Size Constants
+// ============================================================
+
+#[test]
+fn test_soroban_address_xdr_sizes() {
+    // The billing constants must equal what `Address::to_xdr` actually
+    // produces — a full ScVal XDR encoding. An account body is a PublicKey
+    // union, so it carries one more 4-byte discriminant before the 32-byte
+    // key than a contract address. `Address::generate` produces a
+    // contract-form address, so the account is built from the zero-account
+    // strkey fixture used across the suite (EVM `address(0)` parity).
+    let env = Env::default();
+
+    let account = Address::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
+    assert_eq!(account.to_xdr(&env).len(), SOROBAN_ACCOUNT_ADDRESS_XDR_SIZE);
+
+    let contract = Address::generate(&env);
+    assert_eq!(
+        contract.to_xdr(&env).len(),
+        SOROBAN_CONTRACT_ADDRESS_XDR_SIZE
+    );
+
+    // Message base: framing + account-sized sender + contract-sized onramp.
+    assert_eq!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, 163);
+    // Token-transfer base: both source fields (`src_pool`, `src_token`) are
+    // contracts.
+    assert_eq!(TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE, 119);
+}
 
 // ============================================================
 // TokenAmount Tests

@@ -748,7 +748,7 @@ impl MockTokenPool {
         _requested_finality: u32,
         _extra_data: Bytes,
         _direction: MessageDirection,
-    ) -> PoolRequiredCCVs {
+    ) -> Result<PoolRequiredCCVs, CCIPError> {
         let ccvs: Vec<Address> = env
             .storage()
             .instance()
@@ -759,10 +759,10 @@ impl MockTokenPool {
             .instance()
             .get(&Symbol::new(&env, "incldef"))
             .unwrap_or(true);
-        PoolRequiredCCVs {
+        Ok(PoolRequiredCCVs {
             ccvs,
             include_defaults,
-        }
+        })
     }
 
     /// Make `release_or_mint` TRAP (L-10 pool path: the offramp calls the pool without a
