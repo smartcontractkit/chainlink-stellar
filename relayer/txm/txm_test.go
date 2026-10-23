@@ -1024,6 +1024,161 @@ func TestStellarTxm_EnqueueAndWait_ContextCancel(t *testing.T) {
 	assert.Contains(t, err.Error(), "context")
 }
 
+func TestStellarTx_abandoned(t *testing.T) {
+	t.Parallel()
+
+	tx := &StellarTx{}
+	assert.False(t, tx.abandoned(), "a tx without EnqueueAndWait callers is never abandoned")
+
+	tx.waiters.Add(1)
+	tx.waited.Store(true)
+	tx.waiters.Add(1)
+	tx.waiters.Add(-1)
+	assert.False(t, tx.abandoned(), "one caller is still waiting")
+
+	tx.waiters.Add(-1)
+	assert.True(t, tx.abandoned())
+}
+
+func TestStellarTxm_EnqueueAndWait_AbandonedTxIsNotRebroadcast(t *testing.T) {
+	t.Parallel()
+
+	var latestLedger atomic.Uint32
+	latestLedger.Store(1000)
+	var sends atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedger.Load()}, nil
+		},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			sends.Add(1)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+		getTransactionHook: func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+			return protocolrpc.GetTransactionResponse{
+				LatestLedger:       latestLedger.Load(),
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+			}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{ConfirmPollInterval: clconfig.MustNewDuration(50 * time.Millisecond)}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	const txID = "abandoned-tx"
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := txm.EnqueueAndWait(ctx, TxRequest{
+			ID:          txID,
+			FromAddress: testAddress,
+			Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+		})
+		errCh <- err
+	}()
+
+	require.Eventually(t, func() bool {
+		status, _ := txm.GetStatus(txID)
+		return status == commontypes.Unconfirmed
+	}, 5*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.Error(t, <-errCh)
+	latestLedger.Store(2000) // past MaxLedger: the envelope expires and would normally be retried
+
+	require.Eventually(t, func() bool {
+		status, _ := txm.GetStatus(txID)
+		return status == commontypes.Failed
+	}, 5*time.Second, 20*time.Millisecond)
+
+	result, err := txm.GetTransactionResult(txID)
+	require.NoError(t, err)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedRebroadcast))
+	assert.Equal(t, int32(1), sends.Load(), "expired tx without a waiting caller must not be rebroadcast")
+	store := txm.accountStore.GetTxStore(testAddress)
+	assert.Equal(t, int64(101), store.GetNextSequence(), "the expired sequence is free for the next tx")
+}
+
+func TestStellarTxm_EnqueueAndWait_AbandonedTxReleasesSequenceDuringSubmitRetries(t *testing.T) {
+	t.Parallel()
+
+	var sends atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			sends.Add(1)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusTryAgainLater}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(1000)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(20 * time.Millisecond),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	const txID = "abandoned-while-retrying"
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := txm.EnqueueAndWait(ctx, TxRequest{
+			ID:          txID,
+			FromAddress: testAddress,
+			Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+		})
+		errCh <- err
+	}()
+
+	require.Eventually(t, func() bool { return sends.Load() >= 2 }, 5*time.Second, 10*time.Millisecond)
+	cancel()
+	require.Error(t, <-errCh)
+
+	require.Eventually(t, func() bool {
+		status, _ := txm.GetStatus(txID)
+		return status == commontypes.Failed
+	}, 5*time.Second, 20*time.Millisecond)
+
+	result, err := txm.GetTransactionResult(txID)
+	require.NoError(t, err)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedSubmitRetry))
+	store := txm.accountStore.GetTxStore(testAddress)
+	assert.Equal(t, int64(101), store.GetNextSequence(), "the reserved sequence is released")
+	assert.Equal(t, 0, store.InflightCount())
+}
+
+func TestStellarTxm_MaybeRetry_DropsAbandonedTxWithoutRequeue(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.TxManagerConfig{MaxTxRetryAttempts: ptr(uint64(5))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	_, tx := seedUnconfirmed(t, txm, 101, 1050, 0, time.Now())
+	tx.waited.Store(true) // its only EnqueueAndWait caller has returned
+
+	assert.True(t, txm.maybeRetry(t.Context(), &UnconfirmedTx{Sequence: 101, Hash: "seeded-hash", Tx: tx}, RetryReasonTimedOut))
+
+	assert.Empty(t, txm.broadcastChan)
+	result, err := txm.GetTransactionResult(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Failed, result.Status)
+	require.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), string(DropReasonCallerAbandonedRebroadcast))
+}
+
 // --- getSequenceNumber tests ---
 
 func TestStellarTxm_GetSequenceNumber(t *testing.T) {
