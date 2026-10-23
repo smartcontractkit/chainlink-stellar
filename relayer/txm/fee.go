@@ -99,14 +99,37 @@ func (f *FeeStrategy) SeedInclusionFee(attempt uint64, networkPercentile uint64)
 
 // BumpInclusionFee returns the next inclusion fee after a submit rejection that
 // requires a higher bid (e.g. tx_insufficient_fee): multiply the current fee,
-// take max with networkPercentile, and clamp to MaxInclusionFee.
-func (f *FeeStrategy) BumpInclusionFee(currentInclusionFee int64, networkPercentile uint64) (fee int64, clampedToMax bool) {
+// take max with minFee (a live GetFeeStats percentile, or the fee stellar-core
+// asked for), and clamp to MaxInclusionFee.
+func (f *FeeStrategy) BumpInclusionFee(currentInclusionFee int64, minFee uint64) (fee int64, clampedToMax bool) {
 	bumped := int64(math.Ceil(float64(currentInclusionFee) * f.BumpMultiplier))
-	if networkFee := int64(networkPercentile); networkFee > bumped { //nolint:gosec // same as SeedInclusionFee
-		bumped = networkFee
+	if floor := int64(minFee); floor > bumped { //nolint:gosec // same as SeedInclusionFee
+		bumped = floor
 	}
 	if bumped > f.MaxInclusionFee {
 		return f.MaxInclusionFee, true
 	}
 	return bumped, false
+}
+
+// RebroadcastInclusionFee returns the inclusion fee for lifecycle attempt `attempt` (> 0) of a tx
+// whose previous envelope bid previousInclusionFee and was not included: SeedInclusionFee, raised
+// to at least the previous bid and, while that is under one bump above networkPercentile, to
+// previousInclusionFee * BumpMultiplier. The percentile is the highest price the network has shown,
+// so bidding more than one bump above it buys nothing; when core wants more it says so with
+// tx_insufficient_fee, which BumpInclusionFee handles.
+func (f *FeeStrategy) RebroadcastInclusionFee(attempt uint64, previousInclusionFee int64, networkPercentile uint64) (fee int64, clampedToMax bool) {
+	fee, clampedToMax = f.SeedInclusionFee(attempt, networkPercentile)
+	outbid := int64(math.Ceil(float64(previousInclusionFee) * f.BumpMultiplier))
+	if networkPercentile > 0 {
+		ceiling := int64(math.Ceil(float64(networkPercentile) * f.BumpMultiplier)) //nolint:gosec // same as SeedInclusionFee
+		outbid = max(previousInclusionFee, min(outbid, ceiling))
+	}
+	if outbid <= fee {
+		return fee, clampedToMax
+	}
+	if outbid > f.MaxInclusionFee {
+		return f.MaxInclusionFee, true
+	}
+	return outbid, false
 }
