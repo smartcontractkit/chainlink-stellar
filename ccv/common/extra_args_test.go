@@ -1,19 +1,33 @@
 package common
 
 import (
+	"fmt"
 	"testing"
 
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
+	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// mustMockContractID replicates stellarutil.MustGenerateMockContractID without
+// importing the stellarutil package, which transitively pulls in the CCV/CCIP
+// deployment stacks (mcms -> chainlink-sui -> cosmos/go-bip39).
+func mustMockContractID(deployerAddress, contractName string) string {
+	salt := stellardeployment.GenerateDeterministicSalt(deployerAddress, contractName)
+	encoded, err := strkey.Encode(strkey.VersionByteContract, salt[:])
+	if err != nil {
+		panic(fmt.Errorf("failed to encode mock contract ID: %w", err))
+	}
+	return encoded
+}
+
 func TestEncodeExtraArgsV3_nonEmpty(t *testing.T) {
 	t.Parallel()
-	vvr := stellarutil.MustGenerateMockContractID("deployer", "vvr-extra")
-	ex := stellarutil.MustGenerateMockContractID("deployer", "ex-extra")
+	vvr := mustMockContractID("deployer", "vvr-extra")
+	ex := mustMockContractID("deployer", "ex-extra")
 	v3 := onrampbindings.GenericExtraArgsV3{
 		BlockConfirmations: 2,
 		Ccvs:               []string{vvr},
@@ -30,8 +44,8 @@ func TestEncodeExtraArgsV3_nonEmpty(t *testing.T) {
 
 func TestEncodeExtraArgsV3_roundTripGenericExtraArgsV3FromScVal(t *testing.T) {
 	t.Parallel()
-	vvr := stellarutil.MustGenerateMockContractID("deployer", "vvr-rt")
-	ex := stellarutil.MustGenerateMockContractID("deployer", "ex-rt")
+	vvr := mustMockContractID("deployer", "vvr-rt")
+	ex := mustMockContractID("deployer", "ex-rt")
 	v3 := onrampbindings.GenericExtraArgsV3{
 		BlockConfirmations: 3,
 		Ccvs:               []string{vvr},

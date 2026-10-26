@@ -16,9 +16,17 @@ import (
 
 	"github.com/smartcontractkit/chainlink-ccv/executor"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 )
+
+// defaultCommitteeVerifierVersionTag replicates
+// stellarutil.DefaultCommitteeVerifierVersionTag
+// (bytes4(keccak256("CommitteeVerifier 2.0.0"))) without importing the
+// stellarutil package, which transitively pulls in the CCV/CCIP deployment
+// stacks (mcms -> chainlink-sui -> cosmos/go-bip39).
+func defaultCommitteeVerifierVersionTag() [4]byte {
+	return [4]byte{0xe9, 0xa0, 0x5a, 0x20}
+}
 
 func testLogger() *zerolog.Logger {
 	lggr := zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.DebugLevel)
@@ -241,7 +249,7 @@ func buildV27Blob(versionTag [4]byte, sigs [][64]byte) []byte {
 }
 
 func TestConvertVerifierBlobToEIP2098(t *testing.T) {
-	versionTag := stellarutil.DefaultCommitteeVerifierVersionTag()
+	versionTag := defaultCommitteeVerifierVersionTag()
 
 	t.Run("recovery_id=0: low-S signature unchanged", func(t *testing.T) {
 		// Construct a synthetic v=27-normalized R||S where S <= n/2 (recovery_id=0)
@@ -328,7 +336,7 @@ func TestConvertVerifierBlobToEIP2098(t *testing.T) {
 	})
 
 	t.Run("empty blob is passed through", func(t *testing.T) {
-		vt := stellarutil.DefaultCommitteeVerifierVersionTag()
+		vt := defaultCommitteeVerifierVersionTag()
 		blob := append(append([]byte(nil), vt[:]...), 0x00, 0x00)
 		result, err := ConvertVerifierBlobToEIP2098(blob)
 		require.NoError(t, err)

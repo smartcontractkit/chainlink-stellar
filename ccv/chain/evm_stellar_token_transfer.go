@@ -10,10 +10,16 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
-	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 )
 
 const evmBurnMintTokenPoolType = "BurnMintTokenPool"
+
+// devenvTestTokenPoolQualifier mirrors
+// deployment/ccip.DevenvTestTokenPoolQualifier ("TEST"). It is duplicated here
+// so this package does not import the deployment/ccip package root, which
+// transitively pulls in the EVM deployment operations
+// (rmn_proxy -> deployments-framework OCR -> cosmos/go-bip39).
+const devenvTestTokenPoolQualifier = "TEST"
 
 // RemoteTokenContractTypes lists token contract types used by EVM devenv
 // deployments. Order mirrors deployment likelihood. It is shared with the
@@ -82,7 +88,7 @@ func evmStellarPoolPreference(ref datastore.AddressRef) int {
 	switch {
 	case strings.Contains(q, "BurnMintTokenPool") && strings.Contains(q, "to LockReleaseTokenPool"):
 		return 0
-	case strings.HasPrefix(q, stellarccip.DevenvTestTokenPoolQualifier):
+	case strings.HasPrefix(q, devenvTestTokenPoolQualifier):
 		return 1
 	default:
 		return 2
