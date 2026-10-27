@@ -1,12 +1,37 @@
 #![cfg(test)]
 
 use super::*;
+use common_error::CCIPError;
 use soroban_sdk::{
-    symbol_short,
+    contract, contractimpl, symbol_short,
     testutils::{Address as _, Events as _},
     vec, Address, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::TokenConfig;
+
+// ============================================================
+// Mock Pools (set_pool validates via is_supported_token)
+// ============================================================
+
+#[contract]
+pub struct MockPoolSupportsToken;
+
+#[contractimpl]
+impl MockPoolSupportsToken {
+    pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+        Ok(true)
+    }
+}
+
+#[contract]
+pub struct MockPoolRejectsToken;
+
+#[contractimpl]
+impl MockPoolRejectsToken {
+    pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+        Ok(false)
+    }
+}
 
 fn setup(env: &Env) -> (TokenAdminRegistryContractClient<'_>, Address) {
     let contract_id = env.register(TokenAdminRegistryContract, ());
@@ -60,6 +85,28 @@ fn test_propose_administrator_by_owner() {
     assert_eq!(config.administrator, None);
     assert_eq!(config.pending_administrator, Some(admin));
     assert_eq!(config.token_pool, None);
+}
+
+#[test]
+fn test_repeated_propose_leaves_single_index_entry() {
+    // A token whose proposed admin never accepts can be proposed again —
+    // `administrator` stays None, so the already-registered check passes —
+    // which makes `add_token_to_index` re-run for an indexed token. The
+    // reverse lookup must keep that idempotent in O(1), like EVM's
+    // EnumerableSet.add, instead of scanning every historical index entry.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    client.propose_administrator(&owner, &token, &admin);
+    client.propose_administrator(&owner, &token, &admin);
+
+    let tokens = client.get_all_configured_tokens(&0, &100);
+    assert_eq!(tokens.len(), 1, "re-propose must not duplicate the index");
+    assert_eq!(tokens.get(0).unwrap(), token);
 }
 
 #[test]
@@ -163,7 +210,7 @@ fn test_set_pool() {
 
     let (client, owner) = setup(&env);
     let token = Address::generate(&env);
-    let pool = Address::generate(&env);
+    let pool = env.register(MockPoolSupportsToken, ());
     let admin = Address::generate(&env);
 
     // Register admin
@@ -183,7 +230,7 @@ fn test_set_pool_to_none_delists() {
 
     let (client, owner) = setup(&env);
     let token = Address::generate(&env);
-    let pool = Address::generate(&env);
+    let pool = env.register(MockPoolSupportsToken, ());
 
     client.propose_administrator(&owner, &token, &Address::generate(&env));
     client.accept_admin_role(&token);
@@ -194,6 +241,40 @@ fn test_set_pool_to_none_delists() {
     // Delist by setting pool to None
     client.set_pool(&token, &None);
     assert_eq!(client.get_pool(&token), None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #205)")] // InvalidTokenPoolToken
+fn test_set_pool_rejects_pool_that_does_not_support_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    let pool = env.register(MockPoolRejectsToken, ());
+
+    client.propose_administrator(&owner, &token, &Address::generate(&env));
+    client.accept_admin_role(&token);
+
+    client.set_pool(&token, &Some(pool));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #205)")] // InvalidTokenPoolToken
+fn test_set_pool_rejects_non_contract_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    // A non-contract address answers `is_supported_token` with a failed
+    // invoke, which set_pool rejects the same as an unsupported pool.
+    let pool = Address::generate(&env);
+
+    client.propose_administrator(&owner, &token, &Address::generate(&env));
+    client.accept_admin_role(&token);
+
+    client.set_pool(&token, &Some(pool));
 }
 
 #[test]
@@ -380,6 +461,13 @@ fn test_get_all_configured_tokens_pagination() {
     assert_eq!(last.len(), 1);
     assert_eq!(last.get(0).unwrap(), token3);
 
+    // A huge max_count must clamp to the remaining entries, not overflow the
+    // `max_count + start_index` sum before the comparison.
+    let from_one = client.get_all_configured_tokens(&1, &u32::MAX);
+    assert_eq!(from_one.len(), 2);
+    assert_eq!(from_one.get(0).unwrap(), token2);
+    assert_eq!(from_one.get(1).unwrap(), token3);
+
     // Start index beyond total
     let empty = client.get_all_configured_tokens(&10, &100);
     assert_eq!(empty.len(), 0);
@@ -399,8 +487,8 @@ fn test_get_pools_batch() {
     let token1 = Address::generate(&env);
     let token2 = Address::generate(&env);
     let token3 = Address::generate(&env);
-    let pool1 = Address::generate(&env);
-    let pool2 = Address::generate(&env);
+    let pool1 = env.register(MockPoolSupportsToken, ());
+    let pool2 = env.register(MockPoolSupportsToken, ());
 
     // Register and set pools for token1 and token2
     client.propose_administrator(&owner, &token1, &Address::generate(&env));
@@ -434,8 +522,8 @@ fn test_full_lifecycle() {
     let module = Address::generate(&env);
     let token = Address::generate(&env);
     let admin = Address::generate(&env);
-    let pool_v1 = Address::generate(&env);
-    let pool_v2 = Address::generate(&env);
+    let pool_v1 = env.register(MockPoolSupportsToken, ());
+    let pool_v2 = env.register(MockPoolSupportsToken, ());
     let new_admin = Address::generate(&env);
 
     // 1. Add registry module

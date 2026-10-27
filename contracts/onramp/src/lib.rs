@@ -392,10 +392,13 @@ impl OnRampContract {
         // on source and destination with the V1 codec). The `BASE` portion is the
         // fixed MessageV1 framing (79) + the on-wire content of the two SOURCE-side
         // address fields `sender` and `onramp`. `forward_from_router` populates
-        // both with `Address::to_xdr` — a full 40-byte XDR encoding (8 bytes of
-        // ScVal/ScAddress discriminants + the 32-byte key), not a raw key — and the
-        // codec appends those bytes verbatim, so the derived Stellar base is
-        // 79 + 40 + 40 = 159. EVM's `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (139) plays
+        // both with `Address::to_xdr` — a full XDR encoding (ScVal/ScAddress
+        // discriminants + the 32-byte key), not a raw key — and the codec
+        // appends those bytes verbatim. The `sender` is the original sender, an
+        // ACCOUNT address in the standard user flow (its PublicKey union adds a
+        // 4-byte discriminant, 44 bytes), while `onramp` is a contract address
+        // (40 bytes), so the derived Stellar base is 79 + 44 + 40 = 163. EVM's
+        // `MESSAGE_V1_EVM_SOURCE_BASE_SIZE` (143) plays
         // the identical role with its own source encoding (32+32 abi-padded
         // 20-byte addresses): parity is structural — each chain's base is its
         // framing plus the bytes its wire format actually carries for those two
@@ -411,8 +414,9 @@ impl OnRampContract {
         // `numberOfTokens ∈ {0, 1}`. Its fixed source-side framing +
         // `src_pool`/`src_token` content is the derived
         // `TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE` (119 = 39 framing +
-        // two 40-byte `Address::to_xdr` fields, same XDR reality as the message
-        // base above); the two dest-side fields (`dest_token`, `token_receiver`)
+        // two 40-byte contract `Address::to_xdr` fields — `src_pool` and
+        // `src_token` are contracts, unlike the account-sized message sender
+        // above); the two dest-side fields (`dest_token`, `token_receiver`)
         // are billed at `address_bytes_length`, matching EVM's
         // `remoteChainAddressLengthBytes * 2` per transfer.
         let remote_address_bytes = dest_config.address_bytes_length;
@@ -937,10 +941,28 @@ impl OnRampContract {
             // intentionally retained so a non-zero / FTF request is admitted and
             // priced rather than rejected — preserving INV-FIN-POOL-3 and the spec's
             // FTF opt-in matrix (M-17: keep source-side finality for EVM parity).
+
+            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
+            // message receiver, so the destination pool releases/mints to the same account
+            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
+            // accept this — the empty case is the default, gated only by
+            // `validate_token_receiver_allowed` above (INV-TR-3).
+            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
+                extra_args.token_receiver.clone()
+            } else {
+                message.receiver.clone()
+            };
+
+            // The pool — and its preflight hooks — must see the account that
+            // will actually receive the tokens on the destination. EVM passes
+            // the message receiver here too, but on EVM the token receiver IS
+            // the message receiver (OnRamp.sol:779-780), so the two coincide; on
+            // Stellar they can differ, and a hooks policy keyed on the receiver
+            // would otherwise be evaluated against the wrong account.
             let lock_result = pool_client.lock_or_burn(
                 &env.current_contract_address(),
                 &LockOrBurnIn {
-                    receiver: message.receiver.clone(),
+                    receiver: effective_token_receiver.clone(),
                     remote_chain_selector: dest_chain_selector,
                     original_sender: original_sender.clone(),
                     amount: token_amount.amount,
@@ -980,17 +1002,6 @@ impl OnRampContract {
                 fee_token_amount: pool_fee_tokens,
                 extra_args: extra_args.token_args.clone(),
             });
-
-            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
-            // message receiver, so the destination pool releases/mints to the same account
-            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
-            // accept this — the empty case is the default, gated only by
-            // `validate_token_receiver_allowed` above (INV-TR-3).
-            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
-                extra_args.token_receiver.clone()
-            } else {
-                message.receiver.clone()
-            };
 
             // M-2 / INV-MSG-8 / INV-LCFG-3: validate the effective `token_receiver` length
             // against the destination's `address_bytes_length` on send. EVM validates the

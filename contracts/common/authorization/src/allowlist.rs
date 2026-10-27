@@ -152,6 +152,9 @@ pub trait AllowListable: Ownable {
                 allowlist_enabled: update.allowlist_enabled,
                 allowlist: Vec::new(env),
             });
+            // Persist the enabled flag for existing entries too; without this
+            // only the first write would ever record it.
+            allowlist_entry.allowlist_enabled = update.allowlist_enabled;
 
             // Removals before adds, matching EVM's event ordering. Events report only
             // actual set changes (EVM emits per-sender events iff add/remove returned true).

@@ -72,7 +72,7 @@ pub trait BurnMintPoolInterface {
         requested_finality: u32,
         extra_data: soroban_sdk::Bytes,
         direction: MessageDirection,
-    ) -> PoolRequiredCCVs;
+    ) -> Result<PoolRequiredCCVs, CCIPError>;
     fn set_ramp_registry(
         env: soroban_sdk::Env,
         ramp_registry: soroban_sdk::Address,

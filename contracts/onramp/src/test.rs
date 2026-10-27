@@ -1319,6 +1319,10 @@ mod mock_pool {
         }
 
         /// No pool-mandated CCVs → the OnRamp uses lane defaults.
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1327,11 +1331,85 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
+        }
+    }
+
+    const CAPTURED_LOCK_OR_BURN_RECEIVER_KEY: Symbol = symbol_short!("LBR");
+
+    /// A minimal `TokenPoolInterface` mock whose `lock_or_burn` captures the
+    /// input `receiver` into instance storage, so a test can assert the OnRamp
+    /// passes the *effective token receiver* — the wire `token_receiver` when
+    /// specified, else the message receiver — into the pool, where preflight
+    /// hooks evaluate it. On EVM the token receiver IS the message receiver
+    /// (`OnRamp.sol:779-780`), so the pool trivially sees the true recipient;
+    /// on Stellar the two can differ.
+    #[contract]
+    pub struct MockPoolCapturesLockOrBurnReceiver;
+
+    #[contractimpl]
+    impl MockPoolCapturesLockOrBurnReceiver {
+        pub fn get_captured_receiver(env: Env) -> Bytes {
+            env.storage()
+                .instance()
+                .get(&CAPTURED_LOCK_OR_BURN_RECEIVER_KEY)
+                .unwrap_or_else(|| Bytes::new(&env))
+        }
+
+        pub fn get_fee(
+            _env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            env.storage()
+                .instance()
+                .set(&CAPTURED_LOCK_OR_BURN_RECEIVER_KEY, &input.receiver);
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: Bytes::new(&env),
+            })
+        }
+
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
+            })
         }
     }
 
@@ -1385,6 +1463,10 @@ mod mock_pool {
         /// discriminator for H-1. With a token-only message (user-fallback
         /// defaults skipped) and no lane-mandated CCVs, the merged CCV list is
         /// empty, which the OnRamp must reject rather than emit unverified.
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1393,11 +1475,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1453,6 +1535,10 @@ mod mock_pool {
 
         /// The pool mandates its OWN single CCV and does NOT fold in lane defaults — the
         /// M-13 over-trigger discriminator (a non-empty list must not fall back to defaults).
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1461,7 +1547,7 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
             let ccv: Address = env
                 .storage()
                 .instance()
@@ -1469,10 +1555,10 @@ mod mock_pool {
                 .expect("pool_ccv not set");
             let mut ccvs = Vec::new(&env);
             ccvs.push_back(ccv);
-            PoolRequiredCCVs {
+            Ok(PoolRequiredCCVs {
                 ccvs,
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1535,6 +1621,10 @@ mod mock_pool {
             })
         }
 
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
         pub fn get_required_ccvs(
             env: Env,
             _local_token: Address,
@@ -1543,11 +1633,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
         }
     }
 }
@@ -1928,7 +2018,7 @@ fn test_pool_dest_gas_overhead_is_priced_into_executor_fee() {
 /// raises the executor receipt's `fee_token_amount` over the empty-`executor_args`
 /// baseline — i.e. `executor_args.len()` is priced into the execution-gas cost.
 /// (The `BASE` portion of the executor `destBytesOverhead` is now ALSO added —
-/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 159; see
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` = 163; see
 /// `test_message_base_priced_into_calldata_size`. The delta here isolates only the
 /// `executor_args.len()` term because BASE is constant across both sends.) The
 /// executor's own `get_fee` returns a constant flat fee independent of
@@ -1981,8 +2071,9 @@ fn test_executor_args_len_priced_into_calldata_size() {
 
 /// INV-FEE-14 BASE (EVM `OnRamp.sol` L1134-1138 executor `destBytesOverhead`):
 /// EVM's `bytesOverheadSum` includes the fixed `MESSAGE_V1_EVM_SOURCE_BASE_SIZE`
-/// = 139 (75 framing + 32-byte abi-padded sender + 32-byte onRamp). Stellar
-/// derives its own base, 159 (79 framing + two full 40-byte `Address::to_xdr`
+/// = 143 (79 framing + 32-byte abi-padded sender + 32-byte onRamp). Stellar
+/// derives its own base, 163 (79 framing + the account-sized 44-byte sender
+/// and the 40-byte contract onramp `Address::to_xdr` fields
 /// sender/onRamp fields — the bytes its wire format actually carries), from
 /// `common_message::MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` and bills it into
 /// `calldata_size`. This test proves the wiring in isolation.
@@ -1994,8 +2085,8 @@ fn test_executor_args_len_priced_into_calldata_size() {
 /// Instead we isolate it with a fee-quoter oracle: with executor flat fee 0,
 /// `gas_limit` 0, the zero-overhead mock CCV, no pool, and empty `data` and
 /// `executor_args`, the OnRamp's `calldata_size` is exactly
-/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (159), so its executor receipt exec
-/// cost must EQUAL the quoter's quote for `calldata_size = 159` and STRICTLY
+/// `MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE` (163), so its executor receipt exec
+/// cost must EQUAL the quoter's quote for `calldata_size = 163` and STRICTLY
 /// EXCEED the quote for `calldata_size = 0` (the no-BASE counterfactual, only
 /// reachable via a direct quoter call since the OnRamp always adds BASE). A
 /// second send adding 100 bytes of `data` raises the receipt by the 100-byte
@@ -2026,7 +2117,7 @@ fn test_message_base_priced_into_calldata_size() {
 
     // Fee-quoter oracle: exec cost (USD cents) + fee-token price for the SAME
     // gas budget the OnRamp will pass (`execution_gas_limit = base_gas`), at
-    // calldata_size = 0 (BASE not priced) vs. 199 (BASE priced in: 159 +
+    // calldata_size = 0 (BASE not priced) vs. 203 (BASE priced in: 163 +
     // 2×`address_bytes_length` for the receiver/offRamp dest-address term).
     // Both use one `quote_gas_for_exec` call so the price is identical to the
     // OnRamp's.
@@ -2042,18 +2133,18 @@ fn test_message_base_priced_into_calldata_size() {
     );
     assert!(
         oracle_base.gas_cost_usd_cents > oracle_zero.gas_cost_usd_cents,
-        "data-only executor overhead (BASE 159 + 2×20 = 199) must add exec-gas \
+        "data-only executor overhead (BASE 163 + 2×20 = 203) must add exec-gas \
          cost at dest_gas_per_payload_byte=16: base={} zero={}",
         oracle_base.gas_cost_usd_cents,
         oracle_zero.gas_cost_usd_cents,
     );
 
     // Empty data + empty executor_args + zero CCV/pool overhead ⇒ the OnRamp's
-    // calldata_size == BASE (159) + 2×20 (receiver/offRamp dest-address term)
-    // = 199. With executor flat fee 0 the executor receipt is exactly the priced
+    // calldata_size == BASE (163) + 2×20 (receiver/offRamp dest-address term)
+    // = 203. With executor flat fee 0 the executor receipt is exactly the priced
     // execution-gas cost, converted BARE (no premium slice; OnRamp.sol:1094-1097
     // parity, report L-7). So it must EQUAL the quoter's quote for
-    // calldata_size = 199 — converted with the same fee_math helper and the
+    // calldata_size = 203 — converted with the same fee_math helper and the
     // oracle's own price — and STRICTLY EXCEED the converted quote for
     // calldata_size = 0 (the no-BASE counterfactual) — proving the OnRamp bills
     // BASE + the dest-address term into calldata_size.
@@ -2069,7 +2160,7 @@ fn test_message_base_priced_into_calldata_size() {
         oracle_base.gas_cost_usd_cents,
         oracle_base.fee_token_price,
     )
-    .expect("convert oracle(159) exec cost to fee token");
+    .expect("convert oracle(163) exec cost to fee token");
     let expected_zero = fee_math::usd_cents_to_fee_token(
         oracle_zero.gas_cost_usd_cents,
         oracle_zero.fee_token_price,
@@ -2078,9 +2169,9 @@ fn test_message_base_priced_into_calldata_size() {
     let exec_fee_base = receipts_base.get(1).unwrap().fee_token_amount;
     assert_eq!(
         exec_fee_base, expected_base,
-        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (159) + the \
+        "OnRamp must bill MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE (163) + the \
          2×20 dest-address term into calldata_size: executor receipt (fee-token \
-         units, flat fee 0)={} must equal oracle(199)={}, and exceed oracle(0)={}",
+         units, flat fee 0)={} must equal oracle(203)={}, and exceed oracle(0)={}",
         exec_fee_base, expected_base, expected_zero,
     );
     assert!(
@@ -2107,7 +2198,7 @@ fn test_message_base_priced_into_calldata_size() {
 /// INV-FEE-14 full-formula parity (EVM `OnRamp._getExecutionFee`,
 /// `OnRamp.sol:1134-1139` + `MessageV1Codec.sol:19-36`): the executor receipt's
 /// `dest_bytes_overhead` must equal the EVM formula
-///   source BASE (Stellar: 159, EVM: 139)
+///   source BASE (Stellar: 163, EVM: 143)
 ///   + dataLength + executorArgs.length
 ///   + MESSAGE_V1_REMOTE_CHAIN_ADDRESSES (2) × addressBytesLength
 ///   + numberOfTokens × (source TOKEN_TRANSFER base (Stellar: 119, EVM: 103)
@@ -2125,7 +2216,7 @@ fn test_message_base_priced_into_calldata_size() {
 #[test]
 fn test_executor_dest_bytes_overhead_matches_evm_formula() {
     // EVM OnRamp.sol:1134-1139, transcribed with the EVM source-size constants
-    // replaced by their Stellar counterparts (159/119 — the actual Stellar
+    // replaced by their Stellar counterparts (163/119 — the actual Stellar
     // wire encoding, see the doc comment above).
     let evm_formula = |data_len: u32,
                        executor_args_len: u32,
@@ -2148,7 +2239,7 @@ fn test_executor_dest_bytes_overhead_matches_evm_formula() {
     assert_eq!(
         exec.dest_bytes_overhead,
         evm_formula(data_len, 0, 1, EVM_DEST_ADDRESS_BYTES),
-        "1-token send, empty executor_args: 159 + 21 + 0 + 2×20 + (119 + 2×20) = 379"
+        "1-token send, empty executor_args: 163 + 21 + 0 + 2×20 + (119 + 2×20) = 383"
     );
 
     // Same send with 128 bytes of executor_args ⇒ +128.
@@ -2168,7 +2259,7 @@ fn test_executor_dest_bytes_overhead_matches_evm_formula() {
     assert_eq!(
         exec_with_args.dest_bytes_overhead,
         evm_formula(data_len, 128, 1, EVM_DEST_ADDRESS_BYTES),
-        "1-token send, 128-byte executor_args: 379 + 128 = 507"
+        "1-token send, 128-byte executor_args: 383 + 128 = 511"
     );
 
     // Data-only send (numberOfTokens = 0), 100 bytes of data, empty
@@ -2193,7 +2284,7 @@ fn test_executor_dest_bytes_overhead_matches_evm_formula() {
     assert_eq!(
         exec_data_only.dest_bytes_overhead,
         evm_formula(100, 0, 0, EVM_DEST_ADDRESS_BYTES),
-        "data-only send, 100 bytes of data: 159 + 100 + 0 + 2×20 = 299"
+        "data-only send, 100 bytes of data: 163 + 100 + 0 + 2×20 = 303"
     );
 }
 
@@ -3940,10 +4031,10 @@ fn test_link_lane_no_overdraw_conservation() {
 }
 
 /// INV-FEE-14: the executor receipt's `dest_bytes_overhead` is the full EVM
-/// `_getExecutionFee` formula (`OnRamp.sol:1134-1139`): BASE (159) + dataLength +
+/// `_getExecutionFee` formula (`OnRamp.sol:1134-1139`): BASE (163) + dataLength +
 /// executorArgs.length + 2×`address_bytes_length` + the token-transfer framing
 /// term — for a data-only send with empty executor_args on this EVM-dest lane
-/// (`address_bytes_length` = 20), that is `data.len() + 159 + 40`. The payload
+/// (`address_bytes_length` = 20), that is `data.len() + 163 + 40`. The payload
 /// bytes are priced — non-premium — into the executor exec-cost: two data-only
 /// sends that differ ONLY in `data.len()` must produce executor receipts whose
 /// USD-cent value (flat + exec_cost) is strictly higher for the larger payload.
@@ -5409,5 +5500,76 @@ fn test_ccip_send_accepts_correct_length_token_receiver() {
         receipts.len(),
         want,
         "correct-length token_receiver must be accepted and emit a full token-send receipt set"
+    );
+}
+
+/// The pool's `lock_or_burn` must receive the *effective token receiver* — the
+/// wire `token_receiver` when specified, else the message receiver — so the
+/// pool's preflight hooks evaluate the account that will actually receive the
+/// tokens on the destination. On EVM the token receiver IS the message
+/// receiver (`OnRamp.sol:779-780`), so passing the message receiver suffices
+/// there; on Stellar the two can differ, and the pre-fix code always passed
+/// the message receiver, letting a receiver-keyed hooks policy be bypassed by
+/// setting `token_receiver` to a different account.
+#[test]
+fn test_lock_or_burn_receives_effective_token_receiver() {
+    // Lane with the real pool, then rebound to a capture mock registered on
+    // the lane's own Env (the harness creates its Env internally).
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    let mock_pool_id = env.register(mock_pool::MockPoolCapturesLockOrBurnReceiver, ());
+    let mock_client = mock_pool::MockPoolCapturesLockOrBurnReceiverClient::new(env, &mock_pool_id);
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    let message_receiver = Bytes::from_array(env, &[0x33u8; 20]);
+    let token_receiver = Bytes::from_array(env, &[0x55u8; 20]);
+
+    let send_with_token_receiver = |token_receiver: Bytes| {
+        let extra_args = GenericExtraArgsV3 {
+            gas_limit: 0,
+            block_confirmations: 0,
+            ccvs: Vec::new(env),
+            ccv_args: Vec::new(env),
+            executor: GenericExtraArgsV3::use_default_executor_address(env),
+            executor_args: Bytes::new(env),
+            token_receiver,
+            token_args: Bytes::new(env),
+        };
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: lane.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: message_receiver.clone(),
+            data: Bytes::from_slice(env, b"preflight receiver capture"),
+            token_amounts,
+            fee_token: lane.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = lane
+            .router_client
+            .get_fee(&lane.evm_chain_selector, &message);
+        lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+        lane.router_client
+            .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
+    };
+
+    // Sender-specified token_receiver: the pool must see IT, not the message
+    // receiver.
+    send_with_token_receiver(token_receiver.clone());
+    assert_eq!(
+        mock_client.get_captured_receiver(),
+        token_receiver,
+        "lock_or_burn must receive the effective token receiver when specified"
+    );
+
+    // Default (empty token_receiver): the pool must see the message receiver.
+    send_with_token_receiver(Bytes::new(&env));
+    assert_eq!(
+        mock_client.get_captured_receiver(),
+        message_receiver,
+        "lock_or_burn must receive the message receiver when token_receiver is unset"
     );
 }
