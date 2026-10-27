@@ -40,6 +40,7 @@ import (
 const STELLAR_LOCALNET_PASSPHRASE = "Standalone Network ; February 2017"
 
 // StellarQuickstartImage pins the local-network image by manifest-list digest
+// (core v28.0.1, protocol 28)
 
 const StellarQuickstartImage = "stellar/quickstart@sha256:21a149eef1e6636b1447ce826596071bf1fc435db9d0c03169d6e2094610c443"
 
@@ -99,6 +100,15 @@ func SetupTestEnv(ctx context.Context, t *testing.T) (string, *keypair.Full, *st
 
 	// Create RPC client
 	rpcClient := rpcclient.NewClient(rpcURL, &http.Client{Timeout: 60 * time.Second})
+
+	// Wait for the Soroban RPC simulation endpoint to be ready. The P30 image
+	// takes longer to initialize and friendbot readiness does not guarantee the
+	// RPC is serving simulations yet.
+	t.Log("Waiting for RPC to be ready...")
+	if err := WaitForRPC(ctx, rpcClient, 3*time.Minute); err != nil {
+		t.Fatalf("RPC not ready: %v", err)
+	}
+	t.Log("RPC is ready")
 
 	// Wait for Friendbot to be ready - it takes longer than the RPC endpoint
 	// The quickstart container starts multiple services and friendbot initializes last
@@ -193,6 +203,10 @@ func SetupTestEnvShared(ctx context.Context, containerName string) (*SharedTestE
 	networkPassphrase := chain.NetworkPassphrase()
 
 	rpcClient := rpcclient.NewClient(rpcURL, &http.Client{Timeout: 60 * time.Second})
+
+	if err := WaitForRPC(ctx, rpcClient, 3*time.Minute); err != nil {
+		return nil, fmt.Errorf("RPC not ready: %w", err)
+	}
 
 	if err := WaitForFriendbot(
 		ctx,
@@ -365,6 +379,8 @@ func NewE2ETestEnv(t *testing.T, ctx context.Context, l *zerolog.Logger, configO
 	// Create Soroban RPC client
 	rpc := rpcclient.NewClient(stellarRPCURL, &http.Client{Timeout: 60 * time.Second})
 	t.Cleanup(func() { rpc.Close() })
+
+	require.NoError(t, WaitForRPC(ctx, rpc, 3*time.Minute))
 
 	// Create the Deployer (implements bindings.Invoker) for contract interactions.
 	// The deployer was funded during ccv.NewEnvironment().
