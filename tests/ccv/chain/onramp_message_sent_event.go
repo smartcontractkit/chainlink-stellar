@@ -204,7 +204,9 @@ func (c *Chain) waitForExecutionStateChangedEvent(ctx context.Context, startLedg
 }
 
 // getContractEvents fetches contract events for a single topic from startLedger
-// to the latest closed ledger.
+// to the latest closed ledger, following GetEvents continuation cursors until
+// the scan window is exhausted so high-volume ranges are not truncated to the
+// RPC page limit.
 func getContractEvents(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
@@ -214,23 +216,47 @@ func getContractEvents(
 	topicScVal := scval.SymbolToScValPtr(topic)
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 
-	resp, err := rpcClient.GetEvents(ctx, protocolrpc.GetEventsRequest{
-		StartLedger: startLedger,
-		Filters: []protocolrpc.EventFilter{
-			{
-				EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-				ContractIDs: []string{contractID},
-				Topics: []protocolrpc.TopicFilter{
-					{
-						{ScVal: topicScVal},
-						{Wildcard: &zeroOrMore},
-					},
+	filters := []protocolrpc.EventFilter{
+		{
+			EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
+			ContractIDs: []string{contractID},
+			Topics: []protocolrpc.TopicFilter{
+				{
+					{ScVal: topicScVal},
+					{Wildcard: &zeroOrMore},
 				},
 			},
 		},
-	})
-	if err != nil {
-		return nil, err
 	}
-	return resp.Events, nil
+
+	req := protocolrpc.GetEventsRequest{
+		StartLedger: startLedger,
+		Filters:     filters,
+	}
+
+	var events []protocolrpc.EventInfo
+	prevCursor := ""
+	for {
+		resp, err := rpcClient.GetEvents(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, resp.Events...)
+
+		if resp.Cursor == "" || len(resp.Events) == 0 || resp.Cursor == prevCursor {
+			return events, nil
+		}
+
+		// Continuation requests must carry only the cursor — a cursor and a
+		// ledger range are mutually exclusive in GetEventsRequest.
+		cursor, err := protocolrpc.ParseCursor(resp.Cursor)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse events continuation cursor %q: %w", resp.Cursor, err)
+		}
+		prevCursor = resp.Cursor
+		req = protocolrpc.GetEventsRequest{
+			Filters:    filters,
+			Pagination: &protocolrpc.PaginationOptions{Cursor: &cursor},
+		}
+	}
 }

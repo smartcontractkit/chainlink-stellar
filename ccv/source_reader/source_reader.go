@@ -123,30 +123,13 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 	// Build topic filter for CCIPMessageSent event
 	topicScVal := scval.SymbolToScValPtr(s.ccipMessageSentTopic)
 
-	// Use wildcard to match events with additional topics
-	zeroOrMore := protocolrpc.WildCardZeroOrMore
-	events, err := s.client.GetEvents(ctx, protocolrpc.GetEventsRequest{
-		StartLedger: fromLedger,
-		EndLedger:   toLedger,
-		Filters: []protocolrpc.EventFilter{
-			{
-				EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-				ContractIDs: []string{s.ccipOnrampAddress},
-				Topics: []protocolrpc.TopicFilter{
-					{
-						{ScVal: topicScVal},
-						{Wildcard: &zeroOrMore},
-					},
-				},
-			},
-		},
-	})
+	events, err := s.fetchAllEvents(ctx, fromLedger, toLedger, topicScVal)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get events: %w", err)
+		return nil, err
 	}
 
-	results := make([]protocol.MessageSentEvent, 0, len(events.Events))
-	for _, e := range events.Events {
+	results := make([]protocol.MessageSentEvent, 0, len(events))
+	for _, e := range events {
 		// Parse the CCIPMessageSent event
 		msgEvent, err := s.decodeCCIPMessageSentEvent(e)
 		if err != nil {
@@ -169,8 +152,81 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 	return results, nil
 }
 
-// decodeCCIPMessageSentEvent decodes a CCIPMessageSent event from Stellar.
-//
+// fetchAllEvents returns every CCIPMessageSent event in the fixed ledger range
+// [fromLedger, toLedger], following GetEvents continuation cursors until the
+// range is fully consumed. Any failure mid-pagination returns an error rather
+// than a partial result, so callers never advance past silently dropped
+// MessageSent events.
+func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal *xdr.ScVal) ([]protocolrpc.EventInfo, error) {
+	// Use wildcard to match events with additional topics
+	zeroOrMore := protocolrpc.WildCardZeroOrMore
+	filters := []protocolrpc.EventFilter{
+		{
+			EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
+			ContractIDs: []string{s.ccipOnrampAddress},
+			Topics: []protocolrpc.TopicFilter{
+				{
+					{ScVal: topicScVal},
+					{Wildcard: &zeroOrMore},
+				},
+			},
+		},
+	}
+
+	req := protocolrpc.GetEventsRequest{
+		StartLedger: fromLedger,
+		EndLedger:   toLedger,
+		Filters:     filters,
+	}
+
+	var events []protocolrpc.EventInfo
+	prevCursor := ""
+	pages := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("fetching events (range %d-%d): %w", fromLedger, toLedger, err)
+		}
+
+		resp, err := s.client.GetEvents(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get events (range %d-%d, page %d): %w", fromLedger, toLedger, pages+1, err)
+		}
+		pages++
+
+		// Continuation requests cannot carry EndLedger (a cursor and a ledger
+		// range are mutually exclusive in GetEventsRequest), so the fixed range
+		// is enforced client-side: events arrive in ascending (ledger, tx, op,
+		// event) order, so the first event past toLedger terminates the scan.
+		outOfRange := false
+		for _, e := range resp.Events {
+			if uint32(e.Ledger) > toLedger {
+				outOfRange = true
+				break
+			}
+			events = append(events, e)
+		}
+
+		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 || resp.Cursor == prevCursor {
+			break
+		}
+
+		cursor, err := protocolrpc.ParseCursor(resp.Cursor)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse events continuation cursor %q: %w", resp.Cursor, err)
+		}
+		if cursor.Ledger > toLedger {
+			break
+		}
+		prevCursor = resp.Cursor
+		req = protocolrpc.GetEventsRequest{
+			Filters:    filters,
+			Pagination: &protocolrpc.PaginationOptions{Cursor: &cursor},
+		}
+	}
+
+	return events, nil
+}
+
 // Rust event struct (contracts/onramp/src/events.rs):
 //
 //	CCIPMessageSentEvent {
@@ -361,151 +417,6 @@ func parseReceipt(val xdr.ScVal) (*protocol.ReceiptWithBlob, error) {
 	}
 	return r, nil
 }
-
-// // RawEvent represents a raw contract event.
-// type RawEvent struct {
-// 	ContractID      string
-// 	Ledger          uint32
-// 	TransactionHash string
-// 	EventType       string
-// 	TopicXDR        []string
-// 	ValueXDR        string
-// }
-
-// // FetchAllEvents fetches contract events in a ledger range.
-// // Filters by contract ID and the configured ccipMessageSentTopic.
-// func (s *SourceReader) FetchAllEvents(ctx context.Context, fromBlock, toBlock *big.Int, contractID string) ([]RawEvent, error) {
-// 	fromSeq := fromBlock.Uint64()
-// 	if fromSeq > math.MaxUint32 {
-// 		return nil, fmt.Errorf("block number exceeds uint32 range: %d", fromSeq)
-// 	}
-// 	fromLedger := uint32(fromSeq)
-
-// 	var toLedger uint32
-// 	if toBlock != nil {
-// 		toSeq := toBlock.Uint64()
-// 		if toSeq > math.MaxUint32 {
-// 			return nil, fmt.Errorf("block number exceeds uint32 range: %d", toSeq)
-// 		}
-// 		toLedger = uint32(toSeq)
-// 	} else {
-// 		latestLedger, err := s.client.GetLatestLedger(ctx)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("failed to get latest ledger: %w", err)
-// 		}
-// 		toLedger = latestLedger.Sequence
-// 	}
-
-// 	// Build topic filter for ccipMessageSentTopic
-// 	topicScVal, err := symbolScVal(s.ccipMessageSentTopic)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("invalid topic symbol: %w", err)
-// 	}
-
-// 	// Use "**" wildcard to match events with more topics than we're filtering on
-// 	zeroOrMore := protocolrpc.WildCardZeroOrMore
-
-// 	// Build filter with contract ID and topic
-// 	filter := protocolrpc.EventFilter{
-// 		EventType: protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-// 		Topics: []protocolrpc.TopicFilter{
-// 			{
-// 				{ScVal: topicScVal},     // Match first topic (event name)
-// 				{Wildcard: &zeroOrMore}, // Match any remaining topics
-// 			},
-// 		},
-// 	}
-// 	if contractID != "" {
-// 		filter.ContractIDs = []string{contractID}
-// 	}
-
-// 	events, err := s.client.GetEvents(ctx, protocolrpc.GetEventsRequest{
-// 		StartLedger: fromLedger,
-// 		EndLedger:   toLedger,
-// 		Filters:     []protocolrpc.EventFilter{filter},
-// 	})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get events: %w", err)
-// 	}
-
-// 	results := make([]RawEvent, 0, len(events.Events))
-// 	for _, e := range events.Events {
-// 		results = append(results, RawEvent{
-// 			ContractID:      e.ContractID,
-// 			Ledger:          uint32(e.Ledger),
-// 			TransactionHash: e.TransactionHash,
-// 			EventType:       e.EventType,
-// 			TopicXDR:        e.TopicXDR,
-// 			ValueXDR:        e.ValueXDR,
-// 		})
-// 	}
-// 	return results, nil
-// }
-
-// // DecodeScVal decodes a base64 XDR ScVal and returns a human-readable string.
-// func DecodeScVal(b64 string) (string, error) {
-// 	var scVal xdr.ScVal
-// 	if err := xdr.SafeUnmarshalBase64(b64, &scVal); err != nil {
-// 		return "", fmt.Errorf("unmarshal: %w", err)
-// 	}
-// 	return formatScVal(scVal), nil
-// }
-
-// func formatScVal(val xdr.ScVal) string {
-// 	switch val.Type {
-// 	case xdr.ScValTypeScvBool:
-// 		return fmt.Sprintf("bool(%v)", *val.B)
-// 	case xdr.ScValTypeScvVoid:
-// 		return "void"
-// 	case xdr.ScValTypeScvU32:
-// 		return fmt.Sprintf("u32(%d)", *val.U32)
-// 	case xdr.ScValTypeScvI32:
-// 		return fmt.Sprintf("i32(%d)", *val.I32)
-// 	case xdr.ScValTypeScvU64:
-// 		return fmt.Sprintf("u64(%d)", *val.U64)
-// 	case xdr.ScValTypeScvI64:
-// 		return fmt.Sprintf("i64(%d)", *val.I64)
-// 	case xdr.ScValTypeScvU128:
-// 		hi := big.NewInt(0).SetUint64(uint64(val.U128.Hi))
-// 		hi.Lsh(hi, 64)
-// 		lo := new(big.Int).SetUint64(uint64(val.U128.Lo))
-// 		return fmt.Sprintf("u128(%s)", hi.Add(hi, lo).String())
-// 	case xdr.ScValTypeScvI128:
-// 		hi := big.NewInt(int64(val.I128.Hi))
-// 		hi.Lsh(hi, 64)
-// 		lo := new(big.Int).SetUint64(uint64(val.I128.Lo))
-// 		return fmt.Sprintf("i128(%s)", hi.Add(hi, lo).String())
-// 	case xdr.ScValTypeScvBytes:
-// 		return fmt.Sprintf("bytes(%x)", *val.Bytes)
-// 	case xdr.ScValTypeScvString:
-// 		return fmt.Sprintf("string(%q)", string(*val.Str))
-// 	case xdr.ScValTypeScvSymbol:
-// 		return fmt.Sprintf("symbol(%s)", string(*val.Sym))
-// 	case xdr.ScValTypeScvAddress:
-// 		addr, _ := scAddressToStrkey(*val.Address)
-// 		return fmt.Sprintf("address(%s)", addr)
-// 	case xdr.ScValTypeScvVec:
-// 		if val.Vec == nil || *val.Vec == nil {
-// 			return "vec([])"
-// 		}
-// 		items := make([]string, len(**val.Vec))
-// 		for i, item := range **val.Vec {
-// 			items[i] = formatScVal(item)
-// 		}
-// 		return fmt.Sprintf("vec([%s])", strings.Join(items, ", "))
-// 	case xdr.ScValTypeScvMap:
-// 		if val.Map == nil || *val.Map == nil {
-// 			return "map({})"
-// 		}
-// 		items := make([]string, len(**val.Map))
-// 		for i, entry := range **val.Map {
-// 			items[i] = fmt.Sprintf("%s: %s", formatScVal(entry.Key), formatScVal(entry.Val))
-// 		}
-// 		return fmt.Sprintf("map({%s})", strings.Join(items, ", "))
-// 	default:
-// 		return fmt.Sprintf("%s(?)", val.Type)
-// 	}
-// }
 
 // GetBlocksHeaders returns the block headers for the requested ledger sequence numbers.
 // Per the chainaccess.SourceReader contract, a ledger that is out of range, not

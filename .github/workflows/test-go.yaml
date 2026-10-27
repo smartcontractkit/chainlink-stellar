@@ -57,3 +57,10 @@ jobs:
       - name: Run unit tests (capabilities module)
         working-directory: capabilities
         run: go test -v -race -fullpath -shuffle on ./...
+
+      # The /relayer directory is also a separate Go module (relayer/go.mod):
+      # the Stellar relayer (txm, monitor, chain/client adapters). Its deps
+      # resolve from the Go proxy, so no local replaces are needed here.
+      - name: Run unit tests (relayer module)
+        working-directory: relayer
+        run: go test -v -race -fullpath -shuffle on ./...

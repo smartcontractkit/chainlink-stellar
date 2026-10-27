@@ -253,6 +253,50 @@ func TestDestinationReader_GetCCVSForMessage(t *testing.T) {
 		assert.Equal(t, uint8(0), info.OptionalThreshold)
 	})
 
+	t.Run("rejects account address in required CCVs without panicking", func(t *testing.T) {
+		inv := mocks.NewMockInvoker(t)
+		tupleScVal := ccvsTupleScVal(
+			[]string{keypair.MustRandom().Address()}, // G... account address, not a contract
+			nil,
+			0,
+		)
+		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
+			Return(&tupleScVal, nil).Once()
+
+		d, err := New(inv, testRPCClient(t), testStellarContractID, testStellarContractID2, testLogger(t), time.Minute)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = d.Close() })
+
+		var info protocol.CCVAddressInfo
+		require.NotPanics(t, func() { info, err = d.GetCCVSForMessage(ctx, msg) })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid required CCV address at index 0")
+		assert.Contains(t, err.Error(), "account (G...) address")
+		assert.Empty(t, info.RequiredCCVs)
+	})
+
+	t.Run("rejects account address in optional CCVs with threshold 0 without panicking", func(t *testing.T) {
+		inv := mocks.NewMockInvoker(t)
+		tupleScVal := ccvsTupleScVal(
+			[]string{testStellarContractID2},         // valid required contract CCV
+			[]string{keypair.MustRandom().Address()}, // unused optional G... account address
+			0,                                        // threshold 0: optional never counted, still must not panic
+		)
+		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
+			Return(&tupleScVal, nil).Once()
+
+		d, err := New(inv, testRPCClient(t), testStellarContractID, testStellarContractID2, testLogger(t), time.Minute)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = d.Close() })
+
+		var info protocol.CCVAddressInfo
+		require.NotPanics(t, func() { info, err = d.GetCCVSForMessage(ctx, msg) })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid optional CCV address at index 0")
+		assert.Contains(t, err.Error(), "account (G...) address")
+		assert.Empty(t, info.OptionalCCVs)
+	})
+
 	t.Run("wraps error when get_ccvs_for_message fails", func(t *testing.T) {
 		inv := mocks.NewMockInvoker(t)
 		inv.On("SimulateContract", mock.Anything, testStellarContractID, "get_ccvs_for_message", mock.Anything).
