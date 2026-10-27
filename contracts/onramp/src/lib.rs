@@ -937,10 +937,28 @@ impl OnRampContract {
             // intentionally retained so a non-zero / FTF request is admitted and
             // priced rather than rejected — preserving INV-FIN-POOL-3 and the spec's
             // FTF opt-in matrix (M-17: keep source-side finality for EVM parity).
+
+            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
+            // message receiver, so the destination pool releases/mints to the same account
+            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
+            // accept this — the empty case is the default, gated only by
+            // `validate_token_receiver_allowed` above (INV-TR-3).
+            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
+                extra_args.token_receiver.clone()
+            } else {
+                message.receiver.clone()
+            };
+
+            // The pool — and its preflight hooks — must see the account that
+            // will actually receive the tokens on the destination. EVM passes
+            // the message receiver here too, but on EVM the token receiver IS
+            // the message receiver (OnRamp.sol:779-780), so the two coincide; on
+            // Stellar they can differ, and a hooks policy keyed on the receiver
+            // would otherwise be evaluated against the wrong account.
             let lock_result = pool_client.lock_or_burn(
                 &env.current_contract_address(),
                 &LockOrBurnIn {
-                    receiver: message.receiver.clone(),
+                    receiver: effective_token_receiver.clone(),
                     remote_chain_selector: dest_chain_selector,
                     original_sender: original_sender.clone(),
                     amount: token_amount.amount,
@@ -980,17 +998,6 @@ impl OnRampContract {
                 fee_token_amount: pool_fee_tokens,
                 extra_args: extra_args.token_args.clone(),
             });
-
-            // EVM parity (OnRamp.sol:311): an unspecified tokenReceiver defaults to the
-            // message receiver, so the destination pool releases/mints to the same account
-            // that receives `ccipReceive`. Lanes that disallow a *non-default* receiver still
-            // accept this — the empty case is the default, gated only by
-            // `validate_token_receiver_allowed` above (INV-TR-3).
-            let effective_token_receiver = if extra_args.token_receiver.len() != 0 {
-                extra_args.token_receiver.clone()
-            } else {
-                message.receiver.clone()
-            };
 
             // M-2 / INV-MSG-8 / INV-LCFG-3: validate the effective `token_receiver` length
             // against the destination's `address_bytes_length` on send. EVM validates the

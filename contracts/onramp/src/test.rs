@@ -1335,6 +1335,80 @@ mod mock_pool {
         }
     }
 
+    const CAPTURED_LOCK_OR_BURN_RECEIVER_KEY: Symbol = symbol_short!("LBR");
+
+    /// A minimal `TokenPoolInterface` mock whose `lock_or_burn` captures the
+    /// input `receiver` into instance storage, so a test can assert the OnRamp
+    /// passes the *effective token receiver* — the wire `token_receiver` when
+    /// specified, else the message receiver — into the pool, where preflight
+    /// hooks evaluate it. On EVM the token receiver IS the message receiver
+    /// (`OnRamp.sol:779-780`), so the pool trivially sees the true recipient;
+    /// on Stellar the two can differ.
+    #[contract]
+    pub struct MockPoolCapturesLockOrBurnReceiver;
+
+    #[contractimpl]
+    impl MockPoolCapturesLockOrBurnReceiver {
+        pub fn get_captured_receiver(env: Env) -> Bytes {
+            env.storage()
+                .instance()
+                .get(&CAPTURED_LOCK_OR_BURN_RECEIVER_KEY)
+                .unwrap_or_else(|| Bytes::new(&env))
+        }
+
+        pub fn get_fee(
+            _env: Env,
+            _dest_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<PoolFeeResult, CCIPError> {
+            Ok(PoolFeeResult {
+                fee_usd_cents: 0,
+                dest_gas_overhead: 0,
+                dest_bytes_overhead: 0,
+                token_fee_bps: 0,
+                is_enabled: false,
+            })
+        }
+
+        pub fn lock_or_burn(
+            env: Env,
+            _caller: Address,
+            input: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+        ) -> Result<LockOrBurnOut, CCIPError> {
+            env.storage()
+                .instance()
+                .set(&CAPTURED_LOCK_OR_BURN_RECEIVER_KEY, &input.receiver);
+            Ok(LockOrBurnOut {
+                dest_token_address: Bytes::new(&env),
+                dest_token_amount: input.amount,
+                dest_pool_data: Bytes::new(&env),
+            })
+        }
+
+        pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+            Ok(true)
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
+            })
+        }
+    }
+
     /// A minimal `TokenPoolInterface` mock whose `get_required_ccvs` returns an
     /// EMPTY CCV list with `include_defaults = false`. Combined with a token-only
     /// message (which skips the user-fallback defaults path in
@@ -1548,6 +1622,73 @@ mod mock_pool {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
             })
+        }
+    }
+}
+
+mod mock_hooks {
+    use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
+
+    use common_error::CCIPError;
+    use common_interfaces::token_pool::{
+        LockOrBurnIn, MessageDirection, PoolRequiredCCVs, ReleaseOrMintIn,
+    };
+
+    /// A pool-hooks mock with one recipient-sensitive policy: a configured
+    /// blocked token receiver. `preflight_check` rejects with
+    /// `TokenReceiverNotAllowed` iff `lock_or_burn_in.receiver` equals it — the
+    /// policy shape the effective-token-receiver fix must feed B (not the
+    /// message receiver A) into.
+    #[contract]
+    pub struct MockHooksRejectsTokenReceiver;
+
+    #[contractimpl]
+    impl MockHooksRejectsTokenReceiver {
+        pub fn set_blocked_receiver(env: Env, blocked: Bytes) {
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "blocked"), &blocked);
+        }
+
+        pub fn preflight_check(
+            env: Env,
+            _caller: Address,
+            lock_or_burn_in: LockOrBurnIn,
+            _requested_finality: u32,
+            _token_args: Bytes,
+            _amount: i128,
+        ) -> Result<(), CCIPError> {
+            let blocked: Option<Bytes> =
+                env.storage().instance().get(&Symbol::new(&env, "blocked"));
+            if blocked == Some(lock_or_burn_in.receiver) {
+                return Err(CCIPError::TokenReceiverNotAllowed);
+            }
+            Ok(())
+        }
+
+        pub fn postflight_check(
+            _env: Env,
+            _caller: Address,
+            _release_or_mint_in: ReleaseOrMintIn,
+            _local_amount: i128,
+            _requested_finality: u32,
+        ) -> Result<(), CCIPError> {
+            Ok(())
+        }
+
+        pub fn get_required_ccvs(
+            env: Env,
+            _local_token: Address,
+            _remote_chain_selector: u64,
+            _amount: i128,
+            _requested_finality: u32,
+            _extra_data: Bytes,
+            _direction: MessageDirection,
+        ) -> PoolRequiredCCVs {
+            PoolRequiredCCVs {
+                ccvs: Vec::new(&env),
+                include_defaults: true,
+            }
         }
     }
 }
@@ -5409,5 +5550,146 @@ fn test_ccip_send_accepts_correct_length_token_receiver() {
         receipts.len(),
         want,
         "correct-length token_receiver must be accepted and emit a full token-send receipt set"
+    );
+}
+
+/// The pool's `lock_or_burn` must receive the *effective token receiver* — the
+/// wire `token_receiver` when specified, else the message receiver — so the
+/// pool's preflight hooks evaluate the account that will actually receive the
+/// tokens on the destination. On EVM the token receiver IS the message
+/// receiver (`OnRamp.sol:779-780`), so passing the message receiver suffices
+/// there; on Stellar the two can differ, and the pre-fix code always passed
+/// the message receiver, letting a receiver-keyed hooks policy be bypassed by
+/// setting `token_receiver` to a different account.
+#[test]
+fn test_lock_or_burn_receives_effective_token_receiver() {
+    // Lane with the real pool, then rebound to a capture mock registered on
+    // the lane's own Env (the harness creates its Env internally).
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    let mock_pool_id = env.register(mock_pool::MockPoolCapturesLockOrBurnReceiver, ());
+    let mock_client = mock_pool::MockPoolCapturesLockOrBurnReceiverClient::new(env, &mock_pool_id);
+    rebind_pool_to_mock(&lane, &mock_pool_id);
+
+    let message_receiver = Bytes::from_array(env, &[0x33u8; 20]);
+    let token_receiver = Bytes::from_array(env, &[0x55u8; 20]);
+
+    let send_with_token_receiver = |token_receiver: Bytes| {
+        let extra_args = GenericExtraArgsV3 {
+            gas_limit: 0,
+            block_confirmations: 0,
+            ccvs: Vec::new(env),
+            ccv_args: Vec::new(env),
+            executor: GenericExtraArgsV3::use_default_executor_address(env),
+            executor_args: Bytes::new(env),
+            token_receiver,
+            token_args: Bytes::new(env),
+        };
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: lane.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: message_receiver.clone(),
+            data: Bytes::from_slice(env, b"preflight receiver capture"),
+            token_amounts,
+            fee_token: lane.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = lane
+            .router_client
+            .get_fee(&lane.evm_chain_selector, &message);
+        lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+        lane.router_client
+            .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
+    };
+
+    // Sender-specified token_receiver: the pool must see IT, not the message
+    // receiver.
+    send_with_token_receiver(token_receiver.clone());
+    assert_eq!(
+        mock_client.get_captured_receiver(),
+        token_receiver,
+        "lock_or_burn must receive the effective token receiver when specified"
+    );
+
+    // Default (empty token_receiver): the pool must see the message receiver.
+    send_with_token_receiver(Bytes::new(&env));
+    assert_eq!(
+        mock_client.get_captured_receiver(),
+        message_receiver,
+        "lock_or_burn must receive the message receiver when token_receiver is unset"
+    );
+}
+
+/// Policy-level regression for the audit finding: a recipient-sensitive source
+/// hook that prohibits B must reject a send whose message receiver A is allowed
+/// but whose `extra_args.token_receiver` is B — BEFORE any tokens are locked.
+/// Pre-fix the hooks saw A and the send went through naming B on the wire.
+#[test]
+fn test_preflight_policy_rejects_prohibited_token_receiver() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    // Real lane pool + mock hooks holding the recipient policy.
+    let hooks_id = env.register(mock_hooks::MockHooksRejectsTokenReceiver, ());
+    let hooks_client = mock_hooks::MockHooksRejectsTokenReceiverClient::new(env, &hooks_id);
+    lane.pool_client().set_advanced_pool_hooks(&hooks_id);
+
+    let message_receiver = Bytes::from_array(env, &[0x33u8; 20]);
+    let blocked_receiver = Bytes::from_array(env, &[0x55u8; 20]);
+    let allowed_receiver = Bytes::from_array(env, &[0x77u8; 20]);
+    hooks_client.set_blocked_receiver(&blocked_receiver);
+
+    let send_with_token_receiver = |token_receiver: Bytes| {
+        let extra_args = GenericExtraArgsV3 {
+            gas_limit: 0,
+            block_confirmations: 0,
+            ccvs: Vec::new(env),
+            ccv_args: Vec::new(env),
+            executor: GenericExtraArgsV3::use_default_executor_address(env),
+            executor_args: Bytes::new(env),
+            token_receiver,
+            token_args: Bytes::new(env),
+        };
+        let mut token_amounts: Vec<TokenAmount> = Vec::new(env);
+        token_amounts.push_back(TokenAmount {
+            token: lane.transfer_token.clone(),
+            amount: 1_000_000,
+        });
+        let message = StellarToAnyMessage {
+            receiver: message_receiver.clone(),
+            data: Bytes::from_slice(env, b"preflight policy"),
+            token_amounts,
+            fee_token: lane.fee_token.clone(),
+            extra_args: extra_args.to_xdr(env),
+        };
+        let required_fee = lane
+            .router_client
+            .get_fee(&lane.evm_chain_selector, &message);
+        lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+        lane.transfer_token_sac.mint(&lane.sender, &1_000_000);
+        lane.router_client
+            .try_ccip_send(&lane.sender, &lane.evm_chain_selector, &message)
+    };
+
+    // message.receiver = A (allowed), token_receiver = B (blocked): the hook
+    // must evaluate B and reject the send.
+    assert!(
+        send_with_token_receiver(blocked_receiver).is_err(),
+        "hooks must see the effective token receiver B, not message receiver A"
+    );
+
+    // Controls: an unblocked token receiver succeeds, and the default (empty ⇒
+    // message receiver A) succeeds.
+    assert!(
+        send_with_token_receiver(allowed_receiver).is_ok(),
+        "an unblocked token receiver must pass the hook"
+    );
+    assert!(
+        send_with_token_receiver(Bytes::new(env)).is_ok(),
+        "the default path (message receiver A) must pass the hook"
     );
 }
