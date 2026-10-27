@@ -836,6 +836,13 @@ pub trait BaseTokenPool {
 
     /// Returns required CCV resolver addresses + `include_defaults` flag from advanced hooks.
     ///
+    /// `source_denominated_amount` is normalized before the hooks see it, mirroring
+    /// EVM `TokenPool.getRequiredCCVs`: outbound subtracts the pool fee from the
+    /// source amount, inbound converts the source amount to local units via the
+    /// remote decimals encoded in `extra_data`. Hooks thresholds are local-unit,
+    /// so an unnormalized amount would mis-fire whenever source and local
+    /// decimals differ.
+    ///
     /// When no advanced hooks contract is configured, returns
     /// `{ ccvs: [], include_defaults: true }`, i.e. "no pool-specific CCVs, fall back to
     /// lane defaults" — matching the pre-hooks behavior and EVM's `_getCCVsForPool` default.
@@ -843,16 +850,38 @@ pub trait BaseTokenPool {
         env: &Env,
         local_token: &Address,
         remote_chain_selector: u64,
-        amount: i128,
+        source_denominated_amount: i128,
         requested_finality: u32,
         extra_data: &Bytes,
         direction: &MessageDirection,
-    ) -> PoolRequiredCCVs {
+    ) -> Result<PoolRequiredCCVs, CCIPError> {
         if let Some(hooks_addr) = env
             .storage()
             .instance()
             .get::<PoolDataKey, Address>(&PoolDataKey::AdvancedPoolHooks)
         {
+            // The source fee is not transferred value, so the hooks see the amount
+            // net of it. Inbound wire amounts are already post-fee.
+            let amount = match direction {
+                MessageDirection::Outbound => {
+                    let config = Self::get_token_transfer_fee_config(env, remote_chain_selector)?;
+                    let fee =
+                        _get_fee(env, source_denominated_amount, requested_finality, &config)?;
+                    source_denominated_amount - fee
+                }
+                MessageDirection::Inbound => {
+                    // `extra_data` is the source pool data; its leading bytes
+                    // carry the remote decimals. Convert so the threshold
+                    // compares local units.
+                    let local_decimals = Self::get_token_decimals(env)?;
+                    let remote_decimals = parse_remote_decimals(extra_data, local_decimals)?;
+                    calculate_local_amount(
+                        source_denominated_amount,
+                        remote_decimals,
+                        local_decimals,
+                    )?
+                }
+            };
             let client = PoolHooksClient::new(env, &hooks_addr);
             let direction_iface = message_direction_to_iface(direction);
             let iface_result: IfacePoolRequiredCCVs = client.get_required_ccvs(
@@ -863,15 +892,15 @@ pub trait BaseTokenPool {
                 extra_data,
                 &direction_iface,
             );
-            return PoolRequiredCCVs {
+            return Ok(PoolRequiredCCVs {
                 ccvs: iface_result.ccvs,
                 include_defaults: iface_result.include_defaults,
-            };
+            });
         }
-        PoolRequiredCCVs {
+        Ok(PoolRequiredCCVs {
             ccvs: Vec::new(env),
             include_defaults: true,
-        }
+        })
     }
 }
 

@@ -1327,11 +1327,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
         }
     }
 
@@ -1393,11 +1393,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1461,7 +1461,7 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
             let ccv: Address = env
                 .storage()
                 .instance()
@@ -1469,10 +1469,10 @@ mod mock_pool {
                 .expect("pool_ccv not set");
             let mut ccvs = Vec::new(&env);
             ccvs.push_back(ccv);
-            PoolRequiredCCVs {
+            Ok(PoolRequiredCCVs {
                 ccvs,
                 include_defaults: false,
-            }
+            })
         }
     }
 
@@ -1543,11 +1543,11 @@ mod mock_pool {
             _requested_finality: u32,
             _extra_data: Bytes,
             _direction: MessageDirection,
-        ) -> PoolRequiredCCVs {
-            PoolRequiredCCVs {
+        ) -> Result<PoolRequiredCCVs, CCIPError> {
+            Ok(PoolRequiredCCVs {
                 ccvs: Vec::new(&env),
                 include_defaults: true,
-            }
+            })
         }
     }
 }
