@@ -123,6 +123,7 @@ const (
 	CCIPErrorDuplicateCCVNotAllowed              = 320
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
+	CCIPErrorInvalidAllowListRequest             = 323
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -255,6 +256,7 @@ var CCIPErrorMessage = map[int]string{
 	320: "duplicate c c v not allowed",
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
+	323: "invalid allow list request",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
