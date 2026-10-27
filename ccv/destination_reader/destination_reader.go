@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/smartcontractkit/chainlink-ccv/pkg/chainaccess"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
@@ -150,20 +151,20 @@ func (d *DestinationReader) GetCCVSForMessage(ctx context.Context, message proto
 
 	requiredCCVs := make([]protocol.UnknownAddress, len(requiredStr))
 	for i, addr := range requiredStr {
-		parsedAddr := scval.ParseAddress(addr)
-		if parsedAddr == nil {
-			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse required CCV address: %s", addr)
+		contractID, err := contractIDFromCCVAddress(addr)
+		if err != nil {
+			return protocol.CCVAddressInfo{}, fmt.Errorf("invalid required CCV address at index %d: %w", i, err)
 		}
-		requiredCCVs[i] = protocol.UnknownAddress((*parsedAddr.ContractId)[:])
+		requiredCCVs[i] = protocol.UnknownAddress(contractID)
 	}
 
 	optionalCCVs := make([]protocol.UnknownAddress, len(optionalStr))
 	for i, addr := range optionalStr {
-		parsedAddr := scval.ParseAddress(addr)
-		if parsedAddr == nil {
-			return protocol.CCVAddressInfo{}, fmt.Errorf("failed to parse optional CCV address: %s", addr)
+		contractID, err := contractIDFromCCVAddress(addr)
+		if err != nil {
+			return protocol.CCVAddressInfo{}, fmt.Errorf("invalid optional CCV address at index %d: %w", i, err)
 		}
-		optionalCCVs[i] = protocol.UnknownAddress((*parsedAddr.ContractId)[:])
+		optionalCCVs[i] = protocol.UnknownAddress(contractID)
 	}
 
 	ccvInfo := protocol.CCVAddressInfo{
@@ -219,4 +220,21 @@ func (d *DestinationReader) HasHonestAttempt(ctx context.Context, message protoc
 // TODO: Implement this.
 func (d *DestinationReader) IsReady(chain protocol.ChainSelector) bool {
 	return true
+}
+
+// contractIDFromCCVAddress parses a Stellar strkey CCV address and returns its
+// raw 32-byte contract ID. Only contract (C...) addresses are valid CCVs: an
+// account (G...) address parses to a non-nil ScAddress whose ContractId is nil,
+// so the discriminant must be checked before dereferencing — otherwise an
+// untrusted receiver configuration (e.g. a Wasm receiver whose
+// get_ccvs_and_finality_config returns an account CCV) would panic the reader.
+func contractIDFromCCVAddress(addr string) ([]byte, error) {
+	parsedAddr := scval.ParseAddress(addr)
+	if parsedAddr == nil {
+		return nil, fmt.Errorf("failed to parse CCV address: %s", addr)
+	}
+	if parsedAddr.Type != xdr.ScAddressTypeScAddressTypeContract || parsedAddr.ContractId == nil {
+		return nil, fmt.Errorf("CCV address %s is an account (G...) address; only contract (C...) addresses are supported", addr)
+	}
+	return (*parsedAddr.ContractId)[:], nil
 }
