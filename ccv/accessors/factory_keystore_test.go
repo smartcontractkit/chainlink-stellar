@@ -119,6 +119,80 @@ func TestAccessor_SetKeystore_BuildsDestinationComponents(t *testing.T) {
 	require.NotNil(t, sr)
 }
 
+func TestAccessor_SetKeystore_RecoversSourceReaderAfterTransientFailure(t *testing.T) {
+	ctx := context.Background()
+	f, _ := newDestFactoryUnderTest(t)
+	accIface, err := f.GetAccessor(ctx, protocol.ChainSelector(stellarSelector))
+	require.NoError(t, err)
+	acc := accIface.(*accessor)
+
+	// First injection with the key absent: every keystore-backed getter fails.
+	ks := newTestKeystore(t)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
+
+	_, err = acc.SourceReader()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load stellar keystore signer")
+	_, err = acc.DestinationReader()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load stellar keystore signer")
+
+	// Make the key available and inject the keystore again on the same
+	// accessor. The transient construction error must not stick.
+	createKey(t, ks, "stellar/tx/dest-test", keystore.Ed25519)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
+
+	dr, err := acc.DestinationReader()
+	require.NoError(t, err)
+	require.NotNil(t, dr)
+
+	ct, err := acc.ContractTransmitter()
+	require.NoError(t, err)
+	require.NotNil(t, ct)
+
+	// The source reader must recover too; previously it kept returning the
+	// stale keystore error because construction was gated on the persisted
+	// error being nil.
+	sr, err := acc.SourceReader()
+	require.NoError(t, err)
+	require.NotNil(t, sr)
+}
+
+func TestAccessor_SetKeystore_DoesNotRetryImmutableConfigErrors(t *testing.T) {
+	ctx := context.Background()
+	stellarKey := strconv.FormatUint(stellarSelector, 10)
+
+	// Reader config missing the Soroban RPC URL: an immutable validation
+	// error that a successful keystore injection must not clear or retry.
+	f := &factory{
+		lggr: logger.Test(t),
+		readerConfig: map[string]sourcereader.ReaderConfig{
+			stellarKey: {
+				NetworkPassphrase:   testNetworkPassphrase,
+				OnRampContractID:    "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+				RMNRemoteContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+			},
+		},
+	}
+	accIface, err := f.GetAccessor(ctx, protocol.ChainSelector(stellarSelector))
+	require.NoError(t, err)
+	acc := accIface.(*accessor)
+
+	// The config error is visible before the keystore arrives.
+	_, err = acc.SourceReader()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "soroban rpc url is required")
+
+	// Even with a valid key, SourceReader keeps reporting the config error.
+	ks := newTestKeystore(t)
+	createKey(t, ks, "stellar/tx/stellar_transmitter_ed25519_key", keystore.Ed25519)
+	require.NoError(t, acc.SetKeystore(ctx, ks))
+
+	_, err = acc.SourceReader()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "soroban rpc url is required")
+}
+
 func TestAccessor_SetKeystore_FallsBackToDefaultKeyName(t *testing.T) {
 	ctx := context.Background()
 	stellarKey := strconv.FormatUint(stellarSelector, 10)
