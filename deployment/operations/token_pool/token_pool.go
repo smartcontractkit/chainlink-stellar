@@ -282,6 +282,29 @@ var AddRemotePool = cldfops.NewOperation(
 	},
 )
 
+// RemoveRemotePoolInput removes one remote pool entry on a pool. Owner-gated
+// via the invoking identity (no explicit caller arg); the entry is matched by
+// its exact stored bytes.
+type RemoveRemotePoolInput struct {
+	ContractID          string `json:"contract_id"`
+	RemoteChainSelector uint64 `json:"remote_chain_selector"`
+	RemotePoolAddress   []byte `json:"remote_pool_address"`
+}
+
+// RemoveRemotePool calls pool `remove_remote_pool` for one remote chain.
+var RemoveRemotePool = cldfops.NewOperation(
+	"token-pool:remove-remote-pool",
+	stellarops.ContractDeploymentVersion,
+	"Removes a remote pool entry for one remote chain on a token pool",
+	func(b cldfops.Bundle, d stellardeps.StellarDeps, in RemoveRemotePoolInput) (stellarops.Void, error) {
+		c := tpoolbindings.NewTokenPoolClient(d.Invoker, in.ContractID)
+		if err := c.RemoveRemotePool(b.GetContext(), in.RemoteChainSelector, in.RemotePoolAddress); err != nil {
+			return stellarops.Void{}, err
+		}
+		return stellarops.Void{}, nil
+	},
+)
+
 // ApplyChainUpdatesInput adds or removes remote chain configs on a pool.
 // Owner-gated via the invoking identity (no explicit caller arg).
 type ApplyChainUpdatesInput struct {

@@ -47,6 +47,10 @@ func TestCCIPAdapterRegistrations_stellar(t *testing.T) {
 
 	_, ok = tokens.GetTokenAdapterRegistry().GetTokenAdapter(chainsel.FamilyStellar, v2)
 	require.True(t, ok, "TokenAdapter 2.0.0")
+	_, ok = tokens.GetTokenAdapterRegistry().GetTokenAdminRegistryManager(chainsel.FamilyStellar)
+	require.True(t, ok, "TokenAdminRegistryManager")
+	_, ok = tokens.GetTokenAdapterRegistry().GetTokenAdminRegistryReader(chainsel.FamilyStellar)
+	require.True(t, ok, "TokenAdminRegistryReader via the manager registration")
 }
 
 func TestCCVDeploymentAdapterRegistrations_stellar(t *testing.T) {

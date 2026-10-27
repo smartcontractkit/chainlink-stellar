@@ -96,6 +96,12 @@ func init() {
 	tokenscore.GetTokenAdapterRegistry().RegisterTokenAdapter(
 		chainsel.FamilyStellar, v2, &StellarTokenAdapter{},
 	)
+	// Reader + writer for the TokenAdminRegistry: reads back the pool a
+	// token's registry entry points at (the auto-migrate and RemoveRemotePools
+	// planner paths) and unregisters a token by clearing the entry.
+	tokenscore.GetTokenAdapterRegistry().RegisterTokenAdminRegistryManager(
+		chainsel.FamilyStellar, &StellarTokenAdminRegistryManager{},
+	)
 
 	fees.GetRegistry().RegisterFeeAdapter(chainsel.FamilyStellar, v2, &StellarFeeAdapter{})
 	fees.GetRegistry().RegisterFeeResolver(chainsel.FamilyStellar, &StellarFeeAdapter{})

@@ -186,16 +186,17 @@ func setTokenPoolDynamicConfig(
 		}
 	}
 
-	return dynamicConfigOutput(input.Selector, poolRef.Type, poolStrkey, executed, proposals)
+	return dynamicConfigOutput(input.Selector, poolRef.Type, poolStrkey, "stellar-set-token-pool-dynamic-config-direct-exec", executed, proposals)
 }
 
 // dynamicConfigOutput assembles the sequence output: the direct-exec marker
 // when any pool executed directly (labeled with the last executed pool's
-// identity), plus the proposal batch.
+// identity and execHash), plus the proposal batch.
 func dynamicConfigOutput(
 	chainSelector uint64,
 	markerType datastore.ContractType,
 	markerTo string,
+	execHash string,
 	executed bool,
 	proposals []evmcontract.WriteOutput,
 ) (sequences.OnChainOutput, error) {
@@ -210,7 +211,7 @@ func dynamicConfigOutput(
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(markerType)},
 				To:                markerTo,
 			},
-			ExecInfo: &evmcontract.ExecInfo{Hash: "stellar-set-token-pool-dynamic-config-direct-exec"},
+			ExecInfo: &evmcontract.ExecInfo{Hash: execHash},
 		}})
 		if err != nil {
 			return sequences.OnChainOutput{}, fmt.Errorf("build batch operation for chain %d: %w", chainSelector, err)
@@ -305,7 +306,7 @@ func setAllowedFinalityConfigForPools(
 			writes = append(writes, *proposal)
 		}
 	}
-	return dynamicConfigOutput(input.Selector, execPoolType, execPoolStrkey, executed, writes)
+	return dynamicConfigOutput(input.Selector, execPoolType, execPoolStrkey, "stellar-set-token-pool-dynamic-config-direct-exec", executed, writes)
 }
 
 // SetTokenTransferFee implements tokens.TokenFeeAdapter: sets per-remote token
@@ -409,7 +410,7 @@ func setTokenTransferFeeForPools(
 				poolStrkey, owner, deployerAddr, timelockStrkey)
 		}
 	}
-	return dynamicConfigOutput(input.Selector, execPoolType, execPoolStrkey, executed, writes)
+	return dynamicConfigOutput(input.Selector, execPoolType, execPoolStrkey, "stellar-set-token-pool-dynamic-config-direct-exec", executed, writes)
 }
 
 // GetOnchainTokenTransferFeeConfig implements tokens.TokenFeeAdapter: reads
