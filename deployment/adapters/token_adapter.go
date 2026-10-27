@@ -414,12 +414,13 @@ var stellarDeployTokenPool = cldf_ops.NewSequence(
 	},
 )
 
-// DeployTokenVerify checks the BnM token for a shared-pipeline pair exists.
-func (a *StellarTokenAdapter) DeployTokenVerify(e deployment.Environment, in tokens.DeployTokenInput) error {
-	tokenRef := stellarccip.BnmTokenDatastoreRef()
-	tokenRef.Qualifier = in.Symbol
-	if _, err := tokenRef.LookupAddressRef(e.DataStore, in.ChainSelector); err != nil {
-		return fmt.Errorf("BnM token %q not deployed on chain %d: %w", in.Symbol, in.ChainSelector, err)
+// DeployTokenVerify validates a shared-pipeline BnM token deploy (EVM parity):
+// only the inputs are checked — the framework runs verify before the deploy
+// that creates the BnmToken row, so a missing row must not fail. The deploy
+// sequence is idempotent on the row (qualifier = symbol).
+func (a *StellarTokenAdapter) DeployTokenVerify(_ deployment.Environment, in tokens.DeployTokenInput) error {
+	if in.Symbol == "" {
+		return fmt.Errorf("symbol is required to deploy a BnM token on chain %d", in.ChainSelector)
 	}
 	return nil
 }
