@@ -740,6 +740,15 @@ impl MockTokenPool {
             .set(&Symbol::new(&env, "incldef"), &include_defaults);
     }
 
+    /// Make `get_required_ccvs` return a typed `Err(InvalidTokenAmount)` — the
+    /// try_* conversion regression lever: the offramp must catch it per-message
+    /// (`Failure` + event) instead of host-aborting the whole execute tx.
+    pub fn set_fail_required_ccvs(env: Env, fail: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "failccv"), &fail);
+    }
+
     pub fn get_required_ccvs(
         env: Env,
         _local_token: Address,
@@ -749,6 +758,14 @@ impl MockTokenPool {
         _extra_data: Bytes,
         _direction: MessageDirection,
     ) -> Result<PoolRequiredCCVs, CCIPError> {
+        let fail: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "failccv"))
+            .unwrap_or(false);
+        if fail {
+            return Err(CCIPError::InvalidTokenAmount);
+        }
         let ccvs: Vec<Address> = env
             .storage()
             .instance()
@@ -834,10 +851,28 @@ impl MockVvr {
             .instance()
             .set(&Symbol::new(&env, "verifier"), &verifier);
     }
+    /// Make `get_inbound_implementation` return a typed
+    /// `Err(InboundImplementationNotFound)` — the try_* conversion regression
+    /// lever: the offramp must record a per-message `Failure` instead of
+    /// host-aborting the whole execute tx.
+    pub fn set_fail_inbound(env: Env, fail: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "failin"), &fail);
+    }
+
     pub fn get_inbound_implementation(
         env: Env,
         _verifier_results: Bytes,
     ) -> Result<Address, CCIPError> {
+        let fail: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "failin"))
+            .unwrap_or(false);
+        if fail {
+            return Err(CCIPError::InboundImplementationNotFound);
+        }
         Ok(env
             .storage()
             .instance()
@@ -1495,6 +1530,151 @@ fn test_execute_pool_release_trap_reverts_whole_tx() {
     );
     assert_eq!(pool_client.release_count(), 1);
     assert_eq!(receiver_client.receive_count(), 1);
+}
+
+// ============================================================
+// try_* conversion: typed callee errors record per-message Failure
+// (EVM `OffRamp.execute`'s `_callWithGasBuffer` catch-all parity)
+// ============================================================
+
+/// A pool whose `get_required_ccvs` returns a typed `Err` must be caught at the
+/// per-message boundary: the execute tx SUCCEEDS, the message records `Failure`
+/// with the typed code in the event's `return_data`, and nothing is released.
+/// Pre-conversion the non-try call host-aborted the whole tx — no `Failure`
+/// record, and every other message in the report aborted with it.
+#[test]
+fn test_execute_pool_required_ccvs_typed_error_records_failure() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_fail_required_ccvs(&true);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    // The view surfaces the typed error instead of host-panicking (EVM's view
+    // reverting with the reason).
+    assert!(matches!(
+        client.try_get_ccvs_for_message(&encoded),
+        Err(Ok(CCIPError::InvalidTokenAmount))
+    ));
+
+    // Typed pool error during execute ⇒ tx succeeds, message records `Failure`
+    // with the typed code, zero releases/receives. The event must be read
+    // BEFORE any further client call: `env.events()` reflects only the most
+    // recent top-level invocation.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a typed pool error must be caught per-message: {:?}",
+        res
+    );
+    let code = last_execution_error_code(&env, &client.address);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+    assert_eq!(code, CCIPError::InvalidTokenAmount as u32);
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+
+    // A failing retry of the already-Failed message makes no progress ⇒ revert
+    // (EVM `NoStateProgressMade`); the rollback keeps the state at `Failure`.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        matches!(res, Err(Ok(CCIPError::NoStateProgressMade))),
+        "a failed retry of an already-FAILED message must revert NoStateProgressMade: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+
+    // Clear the failure (separate committed tx) and resubmit: exactly once.
+    pool_client.set_fail_required_ccvs(&false);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "resubmission after the pool error clears must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+}
+
+/// A resolver whose `get_inbound_implementation` returns a typed `Err` must
+/// likewise record `Failure` with the resolver's code (not abort the tx).
+#[test]
+fn test_execute_resolver_typed_error_records_failure() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    MockVvrClient::new(&env, &vvr_id).set_fail_inbound(&true);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a typed resolver error must be caught per-message: {:?}",
+        res
+    );
+    let code = last_execution_error_code(&env, &client.address);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+    assert_eq!(code, CCIPError::InboundImplementationNotFound as u32);
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
 }
 
 // ============================================================
@@ -2727,6 +2907,40 @@ fn test_real_verifier_tampered_signature_is_rejected() {
 // place. Reused instead of adding a new fixture crate (no `stellar` CLI here).
 const UPGRADE_TARGET_WASM: &[u8] =
     include_bytes!("../../data-feeds/data-feeds-common/test_fixtures/upgrade_target.wasm");
+
+/// Decode the `return_data` field of the last `ExecutionStateChanged` event from
+/// `contract` as the recorded error code (4-byte big-endian u32). Only call in
+/// `Failure` cases — the success path publishes empty `return_data`.
+fn last_execution_error_code(env: &Env, contract: &Address) -> u32 {
+    let evs = env.events().all().filter_by_contract(contract);
+    for e in evs.events().iter().rev() {
+        let soroban_sdk::xdr::ContractEventBody::V0(ref v0) = e.body;
+        let val: Val = v0
+            .data
+            .clone()
+            .try_into_val(env)
+            .expect("event data ScVal to Val");
+        let Ok(map) = Map::<Symbol, Val>::try_from_val(env, &val) else {
+            continue;
+        };
+        let Some(dval) = map.get(Symbol::new(env, "return_data")) else {
+            continue;
+        };
+        if let Ok(data) = Bytes::try_from_val(env, &dval) {
+            assert_eq!(
+                data.len(),
+                4,
+                "failure return_data is the 4-byte error code"
+            );
+            let mut b = [0u8; 4];
+            for i in 0..4 {
+                b[i as usize] = data.get(i).unwrap();
+            }
+            return u32::from_be_bytes(b);
+        }
+    }
+    panic!("expected ExecutionStateChanged event with return_data from contract");
+}
 
 /// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
 /// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
