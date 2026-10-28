@@ -8,6 +8,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Sy
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
+use common_interfaces::token_pool::TokenPoolClient;
 use events::{
     AdminTransferRequestedEvent, AdministratorTransferredEvent, PoolSetEvent,
     RegistryModuleAddedEvent, RegistryModuleRemovedEvent,
@@ -175,8 +176,17 @@ impl TokenAdminRegistryContract {
         // Ensure that the caller is the administrator of the token.
         admin.require_auth();
 
-        // TODO: When pool contracts are implemented, validate that the pool
-        // supports this token via pool.is_supported_token(local_token).
+        // The pool has to support the token, but removing the pool must stay
+        // possible, so the check runs only when a pool is set. Any failed or
+        // negative `is_supported_token` result is rejected the same way (EVM
+        // `TokenAdminRegistry.setPool` reverts `InvalidTokenPoolToken`).
+        if let Some(pool_addr) = pool.as_ref() {
+            let pool_client = TokenPoolClient::new(&env, pool_addr);
+            match pool_client.try_is_supported_token(&local_token) {
+                Ok(Ok(true)) => {}
+                _ => return Err(CCIPError::InvalidTokenPoolToken),
+            }
+        }
 
         let previous_pool = config.token_pool.clone();
         config.token_pool = pool.clone();
