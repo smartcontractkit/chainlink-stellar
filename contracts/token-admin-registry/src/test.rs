@@ -1,12 +1,37 @@
 #![cfg(test)]
 
 use super::*;
+use common_error::CCIPError;
 use soroban_sdk::{
-    symbol_short,
+    contract, contractimpl, symbol_short,
     testutils::{Address as _, Events as _},
     vec, Address, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::TokenConfig;
+
+// ============================================================
+// Mock Pools (set_pool validates via is_supported_token)
+// ============================================================
+
+#[contract]
+pub struct MockPoolSupportsToken;
+
+#[contractimpl]
+impl MockPoolSupportsToken {
+    pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+        Ok(true)
+    }
+}
+
+#[contract]
+pub struct MockPoolRejectsToken;
+
+#[contractimpl]
+impl MockPoolRejectsToken {
+    pub fn is_supported_token(_env: Env, _token: Address) -> Result<bool, CCIPError> {
+        Ok(false)
+    }
+}
 
 fn setup(env: &Env) -> (TokenAdminRegistryContractClient<'_>, Address) {
     let contract_id = env.register(TokenAdminRegistryContract, ());
@@ -163,7 +188,7 @@ fn test_set_pool() {
 
     let (client, owner) = setup(&env);
     let token = Address::generate(&env);
-    let pool = Address::generate(&env);
+    let pool = env.register(MockPoolSupportsToken, ());
     let admin = Address::generate(&env);
 
     // Register admin
@@ -183,7 +208,7 @@ fn test_set_pool_to_none_delists() {
 
     let (client, owner) = setup(&env);
     let token = Address::generate(&env);
-    let pool = Address::generate(&env);
+    let pool = env.register(MockPoolSupportsToken, ());
 
     client.propose_administrator(&owner, &token, &Address::generate(&env));
     client.accept_admin_role(&token);
@@ -194,6 +219,40 @@ fn test_set_pool_to_none_delists() {
     // Delist by setting pool to None
     client.set_pool(&token, &None);
     assert_eq!(client.get_pool(&token), None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #205)")] // InvalidTokenPoolToken
+fn test_set_pool_rejects_pool_that_does_not_support_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    let pool = env.register(MockPoolRejectsToken, ());
+
+    client.propose_administrator(&owner, &token, &Address::generate(&env));
+    client.accept_admin_role(&token);
+
+    client.set_pool(&token, &Some(pool));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #205)")] // InvalidTokenPoolToken
+fn test_set_pool_rejects_non_contract_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    // A non-contract address answers `is_supported_token` with a failed
+    // invoke, which set_pool rejects the same as an unsupported pool.
+    let pool = Address::generate(&env);
+
+    client.propose_administrator(&owner, &token, &Address::generate(&env));
+    client.accept_admin_role(&token);
+
+    client.set_pool(&token, &Some(pool));
 }
 
 #[test]
@@ -406,8 +465,8 @@ fn test_get_pools_batch() {
     let token1 = Address::generate(&env);
     let token2 = Address::generate(&env);
     let token3 = Address::generate(&env);
-    let pool1 = Address::generate(&env);
-    let pool2 = Address::generate(&env);
+    let pool1 = env.register(MockPoolSupportsToken, ());
+    let pool2 = env.register(MockPoolSupportsToken, ());
 
     // Register and set pools for token1 and token2
     client.propose_administrator(&owner, &token1, &Address::generate(&env));
@@ -441,8 +500,8 @@ fn test_full_lifecycle() {
     let module = Address::generate(&env);
     let token = Address::generate(&env);
     let admin = Address::generate(&env);
-    let pool_v1 = Address::generate(&env);
-    let pool_v2 = Address::generate(&env);
+    let pool_v1 = env.register(MockPoolSupportsToken, ());
+    let pool_v2 = env.register(MockPoolSupportsToken, ());
     let new_admin = Address::generate(&env);
 
     // 1. Add registry module
