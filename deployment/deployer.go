@@ -500,7 +500,7 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 	}
 
 	if simResult.Error != "" {
-		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
+		return nil, fmt.Errorf("simulation error: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
@@ -546,7 +546,7 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 		}
 
 		if simResult.Error != "" {
-			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
+			return nil, fmt.Errorf("simulation error after restore: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 		}
 		if simResult.RestorePreamble != nil {
 			return nil, fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
@@ -737,7 +737,7 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 	}
 
 	if simResult.Error != "" {
-		return nil, "", fmt.Errorf("simulation error: %s", simResult.Error)
+		return nil, "", fmt.Errorf("simulation error: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
@@ -782,7 +782,7 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 		}
 
 		if simResult.Error != "" {
-			return nil, "", fmt.Errorf("simulation error after restore: %s", simResult.Error)
+			return nil, "", fmt.Errorf("simulation error after restore: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 		}
 		if simResult.RestorePreamble != nil {
 			// The RPC should capture all archived entries in one
