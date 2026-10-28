@@ -182,12 +182,9 @@ impl TokenAdminRegistryContract {
         // `TokenAdminRegistry.setPool` reverts `InvalidTokenPoolToken`).
         if let Some(pool_addr) = pool.as_ref() {
             let pool_client = TokenPoolClient::new(&env, pool_addr);
-            let supported = matches!(
-                pool_client.try_is_supported_token(&local_token),
-                Ok(Ok(true))
-            );
-            if !supported {
-                return Err(CCIPError::InvalidTokenPoolToken);
+            match pool_client.try_is_supported_token(&local_token) {
+                Ok(Ok(true)) => {}
+                _ => return Err(CCIPError::InvalidTokenPoolToken),
             }
         }
 
