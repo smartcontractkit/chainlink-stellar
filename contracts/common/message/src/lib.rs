@@ -340,32 +340,43 @@ pub const MESSAGE_V1_VERSION: u8 = 1;
 /// user-specified, tokenTransfer is optional) and are billed separately.
 pub const MESSAGE_V1_BASE_SIZE: u32 = 1 + 8 + 8 + 8 + 4 + 4 + 4 + 32 + 1 + 1 + 1 + 1 + 2 + 2 + 2;
 
-/// Wire size of a Soroban `Address` serialized with `Address::to_xdr` (both
-/// contract and account addresses): 4-byte `ScVal` type discriminant +
-/// 4-byte `ScAddress` discriminant + 32-byte key = 40 bytes. The onramp's
-/// `forward_from_router` populates the SOURCE-side message address fields with
-/// `Address::to_xdr` and the encoders append those bytes verbatim, so 40 — not
-/// the raw 32-byte key — is what a Stellar source actually puts on the wire.
-const SOROBAN_ADDRESS_XDR_SIZE: u32 = 4 + 4 + 32;
+/// Wire size of a Soroban CONTRACT `Address` serialized with `Address::to_xdr`:
+/// 4-byte `ScVal` type discriminant + 4-byte `ScAddress` discriminant + 32-byte
+/// contract hash = 40 bytes. The onramp's `forward_from_router` populates the
+/// SOURCE-side message address fields with `Address::to_xdr` and the encoders
+/// append those bytes verbatim, so these sizes — not the raw 32-byte key — are
+/// what a Stellar source actually puts on the wire.
+const SOROBAN_CONTRACT_ADDRESS_XDR_SIZE: u32 = 4 + 4 + 32;
+
+/// Wire size of a Soroban ACCOUNT `Address`: the account body is a `PublicKey`
+/// union, so it carries one more 4-byte discriminant before the 32-byte key —
+/// 4 + 4 + 4 + 32 = 44. The message `sender` is the original sender, an
+/// account in the standard user flow, so its slot is billed at the account
+/// size; a contract original sender serializes to 40, and the fixed base
+/// bills the larger encoding — EVM bills a fixed 32 for both EOA and contract
+/// senders for the same reason.
+const SOROBAN_ACCOUNT_ADDRESS_XDR_SIZE: u32 = 4 + 4 + 4 + 32;
 
 /// Fixed on-wire byte overhead a Stellar-source `CcipMessageV1` always carries,
 /// mirroring EVM `MessageV1Codec.MESSAGE_V1_EVM_SOURCE_BASE_SIZE`. It is the
-/// framing above plus the fixed content of the two SOURCE-side address fields
-/// `sender` and `onramp`: each is a full 40-byte `Address::to_xdr` encoding
-/// (`SOROBAN_ADDRESS_XDR_SIZE`). So 79 + 40 + 40 = 159. EVM's constant uses
-/// its own source encoding (abi-encoded 20-byte addresses padded to 32, i.e.
-/// 139 = 75 + 32 + 32): the constants are structurally equal — each chain's
-/// source base is its framing plus the on-wire size of its two source
-/// addresses — but not numerically, because the Stellar wire format carries
-/// the XDR discriminants. The OnRamp bills this once into the executor
-/// receipt's `calldata_size` (EVM `OnRamp._getReceipts` executor
+/// framing above plus the fixed content of the two SOURCE-side address fields:
+/// `sender` at the account size (`SOROBAN_ACCOUNT_ADDRESS_XDR_SIZE`, 44) and
+/// `onramp` at the contract size (`SOROBAN_CONTRACT_ADDRESS_XDR_SIZE`, 40).
+/// So 79 + 44 + 40 = 163. EVM's constant uses its own source encoding
+/// (abi-encoded 20-byte addresses padded to 32, i.e. 143 = 79 + 32 + 32, both
+/// source addresses the same width there): the constants are structurally
+/// equal — each chain's source base is its framing plus the on-wire size of
+/// its two source addresses — but not numerically, because the Stellar wire
+/// format carries the XDR discriminants. The OnRamp bills this once into the
+/// executor receipt's `calldata_size` (EVM `OnRamp._getReceipts` executor
 /// `destBytesOverhead` parity).
 pub const MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE: u32 =
-    MESSAGE_V1_BASE_SIZE + SOROBAN_ADDRESS_XDR_SIZE + SOROBAN_ADDRESS_XDR_SIZE;
+    MESSAGE_V1_BASE_SIZE + SOROBAN_ACCOUNT_ADDRESS_XDR_SIZE + SOROBAN_CONTRACT_ADDRESS_XDR_SIZE;
 
 // Compile-time guarantee that the derived Stellar source base reflects the
-// actual wire encoding: framing + two full 40-byte `Address::to_xdr` fields.
-const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 159);
+// actual wire encoding: framing + the account-sized sender and the
+// contract-sized onramp.
+const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 163);
 
 /// Fixed on-wire byte overhead a Stellar-source `CcipTokenTransferV1` carries,
 /// mirroring EVM `MessageV1Codec.TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE`. The
@@ -373,8 +384,9 @@ const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 159);
 /// (src_pool, src_token, dest_token, token_receiver) + extra_data's 2-byte
 /// length prefix = 39 (equal to EVM's `TOKEN_TRANSFER_V1_BASE_SIZE`), plus the
 /// fixed content of the two SOURCE-side address fields `src_pool` and
-/// `src_token`: each is a full 40-byte `Address::to_xdr` encoding
-/// (`SOROBAN_ADDRESS_XDR_SIZE`). So 39 + 40 + 40 = 119. EVM's constant uses
+/// `src_token`: both are contract addresses, so each is a full 40-byte
+/// `Address::to_xdr` encoding (`SOROBAN_CONTRACT_ADDRESS_XDR_SIZE`). So
+/// 39 + 40 + 40 = 119. EVM's constant uses
 /// its own source encoding (32+32 abi-padded addresses, i.e. 103): structurally
 /// equal by derivation, numerically different because the Stellar wire format
 /// carries the XDR discriminants. The two destination-side fields
@@ -384,7 +396,7 @@ const _: () = assert!(MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE == 159);
 /// (TOKEN_TRANSFER_V1_EVM_SOURCE_BASE_SIZE +
 /// remoteChainAddressLengthBytes * 2)` term).
 pub const TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE: u32 =
-    39 + SOROBAN_ADDRESS_XDR_SIZE + SOROBAN_ADDRESS_XDR_SIZE;
+    39 + SOROBAN_CONTRACT_ADDRESS_XDR_SIZE + SOROBAN_CONTRACT_ADDRESS_XDR_SIZE;
 
 // Compile-time guarantee that the derived Stellar source token-transfer base
 // reflects the actual wire encoding: framing + two full 40-byte
