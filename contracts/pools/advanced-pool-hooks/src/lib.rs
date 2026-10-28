@@ -564,15 +564,17 @@ impl AdvancedPoolHooksContract {
             // `try_detach` returns `Result<Result<(), CCIPEngine>, InvokeError>`:
             // `Ok(Ok(()))` is the only success path; a returned `Err` or a host
             // revert both count as "detach failed" (EVM `try/catch`).
-            let detached = matches!(old_client.try_detach(&self_addr), Ok(Ok(())));
-            if !detached {
-                if !allow_failed_detach {
-                    return Err(CCIPError::PolicyEngineDetachReverted);
+            match old_client.try_detach(&self_addr) {
+                Ok(Ok(())) => {}
+                _ => {
+                    if !allow_failed_detach {
+                        return Err(CCIPError::PolicyEngineDetachReverted);
+                    }
+                    events::PolicyEngineDetachFailedEvent {
+                        policy_engine: old_addr,
+                    }
+                    .publish(env);
                 }
-                events::PolicyEngineDetachFailedEvent {
-                    policy_engine: old_addr,
-                }
-                .publish(env);
             }
         }
 
