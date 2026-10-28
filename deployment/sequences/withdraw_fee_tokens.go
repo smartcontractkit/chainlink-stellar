@@ -215,7 +215,7 @@ func withdrawFeeTokensWrite(sel uint64, typ datastore.ContractType, contractID s
 			},
 			To:               contractID,
 			Data:             data,
-			AdditionalFields: stellarMCMSTxAdditionalFields(),
+			AdditionalFields: mcmsutil.StellarMCMSTxAdditionalFields(),
 		},
 	}, nil
 }

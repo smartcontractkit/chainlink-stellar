@@ -70,7 +70,7 @@ var StellarSetCommitteeVerifierFinality = cldfops.NewSequence(
 			if err != nil {
 				return output, fmt.Errorf("encode set_allowed_finality_config payload: %w", err)
 			}
-			output.BatchOps = []mcmstypes.BatchOperation{mcmsTxForRef(in.CommitteeVerifier, data)}
+			output.BatchOps = []mcmstypes.BatchOperation{mcmsutil.MCMSInvokeTx(in.CommitteeVerifier, data)}
 			return output, nil
 		default:
 			return output, fmt.Errorf("committee verifier %s owner %q is neither the deployer %q nor the timelock %q",
