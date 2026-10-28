@@ -40,9 +40,9 @@ import (
 const STELLAR_LOCALNET_PASSPHRASE = "Standalone Network ; February 2017"
 
 // StellarQuickstartImage pins the local-network image by manifest-list digest
-// (stellar-core v30.x / Protocol 30, v687-b1580.1-latest)
+// (stellar-core v30.x / Protocol 30, v689-b1585.1-latest)
 
-const StellarQuickstartImage = "stellar/quickstart@sha256:7711899e9942c60316ebacf8ab901be15bed7a5a31705d847b55375ff3bc8356"
+const StellarQuickstartImage = "stellar/quickstart@sha256:e05d68bb3b2629a829310dc3434fc0ee3f801854bdfa1a7c8c362d2f1c9060f8"
 
 // getFreePort asks the OS for an available TCP port.
 func getFreePort(t *testing.T) string {
@@ -85,6 +85,7 @@ func SetupTestEnv(ctx context.Context, t *testing.T) (string, *keypair.Full, *st
 		DockerCmdParamsOverrides: []string{
 			"--enable-soroban-rpc",
 			"--local",
+			"--protocol-version", "30",
 		},
 		Image: StellarQuickstartImage,
 	}
@@ -178,6 +179,7 @@ func SetupTestEnvShared(ctx context.Context, containerName string) (*SharedTestE
 		DockerCmdParamsOverrides: []string{
 			"--enable-soroban-rpc",
 			"--local",
+			"--protocol-version", "30",
 		},
 		Image: StellarQuickstartImage,
 	}

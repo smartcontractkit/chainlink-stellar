@@ -240,9 +240,9 @@ execution_interval = 15_000_000_000
 [[blockchains]]
   container_name = "blockchain-stellar"
   chain_id = "baefd734b8d3e48472cff83912375fedbc7573701912fe308af730180f97d74a"
-  # Pinned by digest (stellar-core v30.x, protocol 30, v687-b1580.1-latest): protocol-26 WASMs from soroban-sdk 26
+  # Pinned by digest (stellar-core v30.x, protocol 30, v689-b1585.1-latest): protocol-26 WASMs from soroban-sdk 26
   # fail on older images with "contract protocol number is newer than host".
-  image = "stellar/quickstart@sha256:7711899e9942c60316ebacf8ab901be15bed7a5a31705d847b55375ff3bc8356"
+  image = "stellar/quickstart@sha256:e05d68bb3b2629a829310dc3434fc0ee3f801854bdfa1a7c8c362d2f1c9060f8"
   port = "8010"
   type = "stellar"
 
