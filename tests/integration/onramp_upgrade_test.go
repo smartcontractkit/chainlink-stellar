@@ -111,17 +111,17 @@ func decodeE2EUpgradeMarker(t *testing.T, e protocolrpc.EventInfo) uint32 {
 }
 
 // requireUpgradedEvent asserts the OnRamp emitted an Upgraded event carrying
-// newWasmHash, confirming the `upgrade` call ran and published.
+// newWasmHash, confirming the `upgrade` call ran and published. startLedger
+// must be captured BEFORE the upgrade call: the tx commits at some ledger N,
+// and a post-hoc GetLatestLedger can return N+1, making that start miss the
+// event entirely.
 func requireUpgradedEvent(
 	t *testing.T, ctx context.Context,
-	deployer *deployment.Deployer, rpcClient *rpcclient.Client,
-	onrampID string, newWasmHash [32]byte,
+	deployer *deployment.Deployer,
+	onrampID string, startLedger uint32, newWasmHash [32]byte,
 ) {
 	t.Helper()
-	latest, err := rpcClient.GetLatestLedger(ctx)
-	require.NoError(t, err)
-
-	upgraded, err := deployer.GetEvents(ctx, onrampID, latest.Sequence, []string{e2eUpgradedEventTopic})
+	upgraded, err := deployer.GetEvents(ctx, onrampID, startLedger, []string{e2eUpgradedEventTopic})
 	require.NoError(t, err)
 	require.NotEmpty(t, upgraded, "expected an Upgraded event from the upgrade call")
 
@@ -226,8 +226,12 @@ func TestOnRampUpgradeSwapsExecutableObservedViaSend(t *testing.T) {
 	// ② Install the feature-enabled Wasm and upgrade (owner = deployer EOA).
 	newHash, err := deployer.UploadContractWASM(ctx, featureWasmPath)
 	require.NoError(t, err)
+	// Capture the event-scan start ledger BEFORE the upgrade call (see
+	// requireUpgradedEvent).
+	upgradeStartLedger, err := rpcClient.GetLatestLedger(ctx)
+	require.NoError(t, err)
 	require.NoError(t, wire.OnRampClient.Upgrade(ctx, newHash), "EOA-owner upgrade call")
-	requireUpgradedEvent(t, ctx, deployer, rpcClient, wire.OnRampID, newHash)
+	requireUpgradedEvent(t, ctx, deployer, wire.OnRampID, upgradeStartLedger.Sequence, newHash)
 
 	// ③ Same send on the upgraded OnRamp: the marker event now appears, and the
 	//    contract still sends (storage/layout preserved across the swap).
