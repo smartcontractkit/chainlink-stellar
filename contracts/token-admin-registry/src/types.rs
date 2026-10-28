@@ -26,4 +26,8 @@ pub enum DataKey {
     TokenConfig(Address),
     /// Maps an index (u32) to a token address, enabling paginated enumeration.
     TokenIndex(u32),
+    /// Maps a token address to its `TokenIndex` position, giving idempotent
+    /// registration an O(1) membership check (EVM `EnumerableSet` keeps the
+    /// same reverse mapping alongside its values array).
+    TokenIndexLookup(Address),
 }
