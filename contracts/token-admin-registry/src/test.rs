@@ -380,6 +380,13 @@ fn test_get_all_configured_tokens_pagination() {
     assert_eq!(last.len(), 1);
     assert_eq!(last.get(0).unwrap(), token3);
 
+    // A huge max_count must clamp to the remaining entries, not overflow the
+    // `max_count + start_index` sum before the comparison.
+    let from_one = client.get_all_configured_tokens(&1, &u32::MAX);
+    assert_eq!(from_one.len(), 2);
+    assert_eq!(from_one.get(0).unwrap(), token2);
+    assert_eq!(from_one.get(1).unwrap(), token3);
+
     // Start index beyond total
     let empty = client.get_all_configured_tokens(&10, &100);
     assert_eq!(empty.len(), 0);
