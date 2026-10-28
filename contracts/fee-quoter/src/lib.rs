@@ -657,16 +657,17 @@ impl FeeQuoterContract {
         // network receipt (a flat USD receipt); gas is exempt from the premium
         // (INV-FEE-14). `dest_config.dest_gas_overhead` and payload bytes are no
         // longer read here — they are priced in the OnRamp's executor receipt.
-        let mut total_usd_cents: u128 = dest_config.network_fee_usd_cents as u128;
-        total_usd_cents = total_usd_cents * pricing.premium_multiplier as u128 / 100;
-
-        // Convert USD cents to fee-token smallest units. Mirrors EVM
-        // `usdCents * 1e34 / feeTokenPrice` (USDPriceWith18Decimals convention:
-        // price = USD × 1e18 per 1e18 smallest units, e.g. LINK @ $15 → 15e18).
-        // The helper splits the 1e34 scaling to avoid u128 overflow for large
-        // fees and returns FeeTokenNotSupported when the price is zero.
-        let fee_amount = common_helpers::fee_math::usd_cents_to_fee_token(
-            total_usd_cents,
+        // The `fee_usd_cents` view is the premium rounded to whole cents; the
+        // fee-token amount applies the premium at the fee-token stage in a
+        // single floor — EVM `feeMultiplier = percentMultiplier * 1e32 /
+        // feeTokenPrice` (OnRamp.sol:1086-1101) — so a fractional-cent premium
+        // is not lost before the conversion, matching the OnRamp's own receipt
+        // math.
+        let total_usd_cents =
+            dest_config.network_fee_usd_cents as u128 * pricing.premium_multiplier as u128 / 100;
+        let fee_amount = common_helpers::fee_math::usd_cents_to_fee_token_with_premium(
+            dest_config.network_fee_usd_cents as u128,
+            pricing.premium_multiplier,
             pricing.fee_token_price,
         )?;
 
