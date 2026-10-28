@@ -112,10 +112,15 @@ impl TokenAdminRegistryContract {
             return Ok(Vec::new(&env));
         }
 
-        let mut count = max_count;
-        if count + start_index > total {
-            count = total - start_index;
-        }
+        // Clamp without overflow: `total - start_index` is safe because
+        // `start_index < total` was established above, while `max_count +
+        // start_index` can overflow u32 before the comparison ever runs.
+        let remaining = total - start_index;
+        let count = if max_count > remaining {
+            remaining
+        } else {
+            max_count
+        };
 
         let mut tokens = Vec::new(&env);
         for i in 0..count {
