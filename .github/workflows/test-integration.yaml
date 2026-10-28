@@ -1,10 +1,8 @@
 name: Integration Tests
 
-# Runs all integration tests under tests/integration except TestTokenPool* (token_pool_test.go,
-# token_pool_rate_limit_reader_test.go and siloed_pool_migration_test.go). Those run in
-# test-integration-token-pool.yaml.
+# Runs all integration tests under tests/integration.
 #
-# The tests are split across four matrix shards (each on its own runner with its own
+# The tests are split across five matrix shards (each on its own runner with its own
 # Stellar container) because they are Soroban-tx-latency bound and used to run strictly
 # serially in one job (~32 min). Rebalance the -run regexes below from live per-shard
 # timings when a shard grows lopsided. Within a shard, tests that call t.Parallel run
@@ -37,9 +35,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The four -run regexes partition all tests except TestTokenPool* (own
-        # workflow) and TestMain: ramps = 9, router-rmn-cv = 7,
-        # governance-changesets = 7, pools-hooks = 10.
+        # The five -run regexes partition all tests except TestMain:
+        # ramps = 9, router-rmn-cv = 7, governance-changesets = 7,
+        # pools-hooks = 10, token-pool = 3.
         include:
           - shard: ramps
             run: '^Test(OnRamp|OffRamp)'
@@ -49,6 +47,8 @@ jobs:
             run: '^Test(GovernanceTimelock|Mcms|Component|Peripheral|CCVDeployAdapters|ConfigureTokenPool)'
           - shard: pools-hooks
             run: '^Test(BnmTokenPool|LinkToken|AdvancedPoolHooks|FeeAdapterReadback|TokenAdapterPoolOps)'
+          - shard: token-pool
+            run: '^TestTokenPool'
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -111,7 +111,7 @@ jobs:
 
       - name: Write full coverage to job summary
         run: |
-          echo '## Integration Test Coverage (excl. Token Pool)' >> $GITHUB_STEP_SUMMARY
+          echo '## Integration Test Coverage' >> $GITHUB_STEP_SUMMARY
           echo '' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           go tool cover -func=coverage-integration.out >> $GITHUB_STEP_SUMMARY
@@ -123,7 +123,7 @@ jobs:
         run: |
           TOTAL_LINE=$(go tool cover -func=coverage-integration.out | grep -i 'total' | tail -1 || echo 'No coverage summary found')
           cat > coverage-summary.md <<EOF
-          ## Integration Test Coverage (excl. Token Pool)
+          ## Integration Test Coverage
 
           \`\`\`
           ${TOTAL_LINE}
