@@ -648,6 +648,66 @@ fn test_get_message_fee() {
     assert_eq!(fee.fee_token_price, 15_000_000_000_000_000_000);
 }
 
+#[test]
+fn test_get_message_fee_premium_applied_without_cents_truncation() {
+    // EVM applies the premium at the fee-token stage (OnRamp.sol:1086-1101),
+    // never as a whole-cents multiply. With a network fee of 105 cents and
+    // the 90% LINK premium, the premium-adjusted fee is 94.5 cents: applying
+    // the premium in cents first (floor to 94) under-converts by the
+    // fractional half cent. The fee-token amount must be floor(105 * 90 *
+    // 1e32 / 15e18) = 63_000_000_000_000_000 — not the conversion of the
+    // truncated 94 cents (62_666_666_666_666_666).
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let mut config = create_dest_chain_config();
+    config.network_fee_usd_cents = 105;
+    let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
+    config_args.push_back(DestChainConfigArgs {
+        dest_chain_selector: 1,
+        config,
+    });
+    client.apply_dest_chain_configs(&config_args);
+
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_slice(
+            &env,
+            &[
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            ],
+        ),
+        data: Bytes::new(&env),
+        token_amounts: Vec::new(&env),
+        fee_token: link_token.clone(),
+        extra_args: Bytes::new(&env),
+    };
+
+    let fee = client.get_message_fee(&1, &message);
+    // The cents view is the premium rounded to whole cents.
+    assert_eq!(fee.fee_usd_cents, 94);
+    // The fee-token amount floors once at the conversion, preserving the
+    // fractional half cent the cents stage would drop.
+    assert_eq!(fee.fee_token_amount, 63_000_000_000_000_000);
+}
+
 // ---- Parity tests for quote_gas_for_exec / get_message_fee ----
 //
 // EVM `FeeQuoter.quoteGasForExec` enforces `calldataSize > maxDataBytes`, where
