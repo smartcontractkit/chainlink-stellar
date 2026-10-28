@@ -399,11 +399,12 @@ impl TokenAdminRegistryContract {
         // O(1) too — a values-set mapping — so scanning every historical index
         // entry per registration is not parity.
         let storage = env.storage().persistent();
-        if storage.has(&DataKey::TokenIndexLookup(token.clone())) {
+        let lookup_key = DataKey::TokenIndexLookup(token.clone());
+        if storage.has(&lookup_key) {
             return;
         }
 
-        storage.set(&DataKey::TokenIndexLookup(token.clone()), &count);
+        storage.set(&lookup_key, &count);
         storage.set(&DataKey::TokenIndex(count), token);
         env.storage().instance().set(&TOKEN_COUNT, &(count + 1));
     }
