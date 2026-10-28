@@ -19,12 +19,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Experiment: half-size runner (was cpu=32+48/ram=64+96). The devenv is
-    # ~30 containers but mostly idle during bring-up, which is tx-latency
-    # bound, not CPU/RAM bound. The "Capture resource headroom" step after
-    # `make up` records actual usage; revert if the live run OOMs or bring-up
-    # balloons. test-e2e.yaml keeps the big box.
-    runs-on: runs-on=${{ github.run_id }}/family=c6i/cpu=16/ram=32/spot=false/image=ubuntu24-full-x64/extras=s3-cache+tmpfs
+    runs-on: runs-on=${{ github.run_id }}/family=c6i/cpu=32+48/ram=64+96/spot=false/image=ubuntu24-full-x64/extras=s3-cache+tmpfs
     strategy:
       # Two parallel legs: a failure in one must not cancel the other.
       fail-fast: false
