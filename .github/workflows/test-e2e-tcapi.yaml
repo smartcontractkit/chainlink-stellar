@@ -23,57 +23,23 @@ jobs:
     strategy:
       # Two parallel legs: a failure in one must not cancel the other.
       fail-fast: false
+      # One leg per direction, each running its 8 tcapi tests sequentially in
+      # a single process against one environment bring-up (previously 15 legs
+      # paid ~20.5 min of `make up` each for ~70s of tests — ~6 runner-hours
+      # per run). The only hard constraint is that no two sends ever overlap
+      # (the EVM send path races same-nonce approve/send txs; the stellar RPC
+      # rejects bursts with TRY_AGAIN_LATER); sequential execution inside a
+      # leg keeps that guarantee, as the old `basic` leg already proved by
+      # running both direction suites in one process. State-mutating tests
+      # (rate-limit, remove-remote-pool) restore via t.Cleanup.
       matrix:
         include:
-          - suite: basic
-            pattern: 'Test(StellarToEVM|EVMToStellar)TCAPI$'
-            timeout: 25m
-          # One case type x one direction per leg; cases run sequentially
-          # inside each leg, so no two sends ever overlap (the EVM send
-          # path races same-nonce approve/send txs; the stellar RPC rejects
-          # bursts with TRY_AGAIN_LATER).
-          - suite: token-transfer-eoa-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferEOA$'
-            timeout: 20m
-          - suite: token-transfer-eoa-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferEOA$'
-            timeout: 20m
-          - suite: token-transfer-mock-receiver-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferMockReceiver$'
-            timeout: 20m
-          - suite: token-transfer-mock-receiver-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferMockReceiver$'
-            timeout: 20m
-          - suite: token-transfer-mock-receiver-ff-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferMockReceiverFastFinality$'
-            timeout: 20m
-          - suite: token-transfer-mock-receiver-ff-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferMockReceiverFastFinality$'
-            timeout: 20m
-          - suite: token-transfer-rate-limit-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferRateLimit$'
-            timeout: 20m
-          - suite: token-transfer-rate-limit-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferRateLimit$'
-            timeout: 20m
-          - suite: token-transfer-inbound-rate-limit-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferInboundRateLimit$'
-            timeout: 20m
-          - suite: token-transfer-inbound-rate-limit-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferInboundRateLimit$'
-            timeout: 20m
-          - suite: token-transfer-separate-token-receiver-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferSeparateTokenReceiver$'
-            timeout: 20m
-          - suite: token-transfer-separate-token-receiver-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferSeparateTokenReceiver$'
-            timeout: 20m
-          - suite: token-transfer-remove-remote-pool-evm-to-stellar
-            pattern: 'TestEVMToStellarTCAPIBnmTokenTransferRemoveRemotePool$'
-            timeout: 20m
-          - suite: token-transfer-remove-remote-pool-stellar-to-evm
-            pattern: 'TestStellarToEVMTCAPIBnmTokenTransferRemoveRemotePool$'
-            timeout: 20m
+          - suite: evm-to-stellar
+            pattern: 'TestEVMToStellarTCAPI'
+            timeout: 35m
+          - suite: stellar-to-evm
+            pattern: 'TestStellarToEVMTCAPI'
+            timeout: 35m
     steps:
       - name: Enable S3 Cache for Self-Hosted Runners
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -134,8 +100,10 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
 
+      # Only one leg saves (evm-to-stellar): both legs racing the same cache
+      # key would make the loser's save fail with a reserve conflict.
       - name: Save CCV dev images
-        if: steps.ccv-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'basic'
+        if: steps.ccv-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'evm-to-stellar'
         run: docker save verifier:dev token-verifier:dev executor:dev indexer:dev aggregator:dev pricer:dev ccv-fakes:dev | gzip > /tmp/ccv-dev-images.tar.gz
 
       - name: Restore Stellar dev images
@@ -156,7 +124,7 @@ jobs:
           make docker-executor
 
       - name: Save Stellar dev images
-        if: steps.stellar-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'basic'
+        if: steps.stellar-images.outputs.cache-hit != 'true' && github.event_name == 'push' && matrix.suite == 'evm-to-stellar'
         run: docker save stellarcommittee-verifier:dev stellarexecutor:dev | gzip > /tmp/stellar-dev-images.tar.gz
 
       - name: Authenticate to AWS ECR (JD)
@@ -178,6 +146,12 @@ jobs:
         env:
           JD_IMAGE: ${{ secrets.JD_IMAGE }}
         run: make up
+
+      # Feeds the runner-size decision (see the runs-on comment above): peak
+      # host memory and per-container CPU/RAM right after the most expensive
+      # step. Also useful when triaging slow bring-ups.
+      - name: Capture resource headroom
+        run: free -g && docker stats --no-stream
 
       - name: Run TCAPI ${{ matrix.suite }} e2e tests
         env:
