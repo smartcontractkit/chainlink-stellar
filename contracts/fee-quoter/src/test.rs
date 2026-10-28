@@ -400,6 +400,119 @@ fn test_convert_token_amount() {
 }
 
 #[test]
+fn test_convert_token_amount_floors_once_at_final_division() {
+    // EVM `FeeQuoter.convertTokenAmount` converts with a single mul-then-div,
+    // so the floor applies once at the final division. $8 -> $3 with amount
+    // 5e18 yields 40e18 / 3 = 13_333_333_333_333_333_333.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let from_token = Address::generate(&env);
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: from_token.clone(),
+        usd_per_token: 8_000_000_000_000_000_000, // $8
+    });
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 3_000_000_000_000_000_000, // $3
+    });
+
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let result = client.convert_token_amount(&from_token, &5_000_000_000_000_000_000, &link_token);
+    assert_eq!(result, 13_333_333_333_333_333_333);
+}
+
+#[test]
+fn test_convert_token_amount_negative_rejected() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let from_token = Address::generate(&env);
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: from_token.clone(),
+        usd_per_token: 8_000_000_000_000_000_000, // $8
+    });
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 3_000_000_000_000_000_000, // $3
+    });
+
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let err = client
+        .try_convert_token_amount(&from_token, &-1, &link_token)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::InvalidTokenAmount);
+}
+
+#[test]
+fn test_convert_token_amount_overflow_rejected() {
+    // A $3000 -> $15 conversion amplifies ~200x, so an i128-max amount
+    // converts beyond the i128 return width instead of wrapping negative.
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let from_token = Address::generate(&env);
+    let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
+    token_updates.push_back(TokenPriceUpdate {
+        token: from_token.clone(),
+        usd_per_token: 3_000_000_000_000_000_000_000, // $3000
+    });
+    token_updates.push_back(TokenPriceUpdate {
+        token: link_token.clone(),
+        usd_per_token: 15_000_000_000_000_000_000, // $15
+    });
+
+    client.update_prices(
+        &price_updater,
+        &PriceUpdates {
+            token_price_updates: token_updates,
+            gas_price_updates: Vec::new(&env),
+        },
+    );
+
+    let err = client
+        .try_convert_token_amount(&from_token, &i128::MAX, &link_token)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::InvalidFeeCalculation);
+}
+
+#[test]
 fn test_remove_fee_tokens() {
     let (env, contract_id, owner, link_token, price_updater) = setup_env();
     let client = FeeQuoterContractClient::new(&env, &contract_id);
