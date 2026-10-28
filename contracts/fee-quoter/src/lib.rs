@@ -3,7 +3,9 @@
 mod events;
 pub mod types;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec, U256,
+};
 
 use common_authorization::{AuthorizedCallers, Ownable, Upgradeable};
 use common_error::CCIPError;
@@ -695,6 +697,10 @@ impl FeeQuoterContract {
     ///
     /// # Returns
     /// Amount in target token
+    ///
+    /// # Errors
+    /// * `InvalidTokenAmount` - `from_token_amount` is negative
+    /// * `InvalidFeeCalculation` - Converted amount exceeds the i128 return width
     pub fn convert_token_amount(
         env: Env,
         from_token: Address,
@@ -703,25 +709,28 @@ impl FeeQuoterContract {
     ) -> Result<i128, CCIPError> {
         Self::require_initialized(&env)?;
 
-        let from_price = Self::get_validated_token_price(env.clone(), from_token)?;
-        let to_price = Self::get_validated_token_price(env, to_token)?;
-
-        // (fromTokenAmount * fromTokenPrice) / toTokenPrice
-        let amount = from_token_amount as u128;
-
-        if from_price >= to_price {
-            let price_ratio = from_price / to_price;
-            let remainder = from_price % to_price;
-            let base = amount.saturating_mul(price_ratio);
-            let extra = (amount / to_price).saturating_mul(remainder);
-            Ok((base.saturating_add(extra)) as i128)
-        } else {
-            let quotient = amount / to_price;
-            let remainder = amount % to_price;
-            let base = quotient.saturating_mul(from_price);
-            let extra = (remainder.saturating_mul(from_price)) / to_price;
-            Ok((base.saturating_add(extra)) as i128)
+        if from_token_amount < 0 {
+            return Err(CCIPError::InvalidTokenAmount);
         }
+
+        let from_price = Self::get_validated_token_price(env.clone(), from_token)?;
+        let to_price = Self::get_validated_token_price(env.clone(), to_token)?;
+
+        // EVM `FeeQuoter.convertTokenAmount`: fromTokenAmount * fromPrice /
+        // toPrice, as one mul-then-div so the floor applies once at the end.
+        // Computed in U256 to mirror EVM uint256 checked arithmetic; the result
+        // must fit i128, the return width here.
+        let converted = U256::from_u128(&env, from_token_amount as u128)
+            .checked_mul(&U256::from_u128(&env, from_price))
+            .and_then(|v| v.checked_div(&U256::from_u128(&env, to_price)))
+            .ok_or(CCIPError::InvalidFeeCalculation)?;
+        let out: u128 = converted
+            .to_u128()
+            .ok_or(CCIPError::InvalidFeeCalculation)?;
+        if out > i128::MAX as u128 {
+            return Err(CCIPError::InvalidFeeCalculation);
+        }
+        Ok(out as i128)
     }
 
     // ========================================
