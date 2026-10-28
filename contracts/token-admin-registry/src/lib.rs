@@ -398,21 +398,13 @@ impl TokenAdminRegistryContract {
         // O(1) idempotency via the reverse lookup. EVM's EnumerableSet.add is
         // O(1) too — a values-set mapping — so scanning every historical index
         // entry per registration is not parity.
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::TokenIndexLookup(token.clone()))
-        {
+        let storage = env.storage().persistent();
+        if storage.has(&DataKey::TokenIndexLookup(token.clone())) {
             return;
         }
 
-        // TODO: should we introduce an extension for the TTL here?
-        env.storage()
-            .persistent()
-            .set(&DataKey::TokenIndexLookup(token.clone()), &count);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TokenIndex(count), token);
+        storage.set(&DataKey::TokenIndexLookup(token.clone()), &count);
+        storage.set(&DataKey::TokenIndex(count), token);
         env.storage().instance().set(&TOKEN_COUNT, &(count + 1));
     }
 }
