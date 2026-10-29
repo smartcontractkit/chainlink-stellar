@@ -116,21 +116,27 @@ pub trait AllowListable: Ownable {
             let to_add = update.added_allowlisted_senders;
             let to_remove = update.removed_allowlisted_senders;
 
-            // The call to `is_allowlist_enabled` will return false if the allowlist has never been set.
-            if !Self::is_allowlist_enabled(env, key) && !update.allowlist_enabled {
-                return Err(CCIPError::FeatureNotEnabled);
-            }
-
             let mut data: Map<u64, AllowListEntry> = env
                 .storage()
                 .instance()
                 .get(&Self::ALLOW_LIST)
                 .unwrap_or(Map::new(env));
 
+            // Fail fast only for a never-configured chain (changeset selector-typo protection).
+            // A configured-but-disabled chain must still accept updates that keep it disabled:
+            // EVM applies removals regardless of the enabled flag (BaseVerifier.sol:264-270).
+            if !data.contains_key(key) && !update.allowlist_enabled {
+                return Err(CCIPError::FeatureNotEnabled);
+            }
+
             let mut allowlist_entry = data.get(key).unwrap_or(AllowListEntry {
                 allowlist_enabled: update.allowlist_enabled,
                 allowlist: Vec::new(env),
             });
+
+            // EVM parity (BaseVerifier.sol:258-259): rewrite the enabled flag from the
+            // payload on every update, not only when the entry is first created.
+            allowlist_entry.allowlist_enabled = update.allowlist_enabled;
 
             for address in to_add.iter() {
                 if !allowlist_entry.allowlist.contains(address.clone()) {
