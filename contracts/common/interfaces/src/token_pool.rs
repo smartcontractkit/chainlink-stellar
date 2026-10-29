@@ -191,6 +191,12 @@ pub trait TokenPoolInterface {
     ///
     /// Pools without hooks SHOULD return `{ ccvs: [], include_defaults: true }` to preserve
     /// the existing "no pool requirements, use lane defaults" behavior.
+    ///
+    /// The pool normalizes `amount` before delegating to its hooks (EVM
+    /// `TokenPool.getRequiredCCVs`): outbound the source amount net of the pool
+    /// fee, inbound the source amount converted to local units via the remote
+    /// decimals in `extra_data`. Errors on unparsable remote decimals or
+    /// conversion overflow.
     fn get_required_ccvs(
         env: soroban_sdk::Env,
         local_token: soroban_sdk::Address,
@@ -199,7 +205,7 @@ pub trait TokenPoolInterface {
         requested_finality: u32,
         extra_data: soroban_sdk::Bytes,
         direction: MessageDirection,
-    ) -> PoolRequiredCCVs;
+    ) -> Result<PoolRequiredCCVs, CCIPError>;
 
     /// Update CCIP Router address (EVM `setDynamicConfig` / `s_router`). Owner-only.
     fn set_router(env: soroban_sdk::Env, router: soroban_sdk::Address) -> Result<(), CCIPError>;

@@ -19,18 +19,24 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Clone chainlink-ccv
-        uses: ./.github/actions/setup-chainlink-ccv
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: false
+          # Five separate Go modules compile below; the default key (root
+          # go.sum only) would miss most of them.
+          cache-dependency-path: |
+            go.sum
+            ccv/go.sum
+            tests/go.sum
+            deployment/go.sum
+            capabilities/go.sum
+            relayer/go.sum
 
       - name: Run unit tests (ccv packages)
         working-directory: ccv

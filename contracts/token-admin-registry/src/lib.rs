@@ -8,6 +8,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Sy
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
+use common_interfaces::token_pool::TokenPoolClient;
 use events::{
     AdminTransferRequestedEvent, AdministratorTransferredEvent, PoolSetEvent,
     RegistryModuleAddedEvent, RegistryModuleRemovedEvent,
@@ -112,10 +113,15 @@ impl TokenAdminRegistryContract {
             return Ok(Vec::new(&env));
         }
 
-        let mut count = max_count;
-        if count + start_index > total {
-            count = total - start_index;
-        }
+        // Clamp without overflow: `total - start_index` is safe because
+        // `start_index < total` was established above, while `max_count +
+        // start_index` can overflow u32 before the comparison ever runs.
+        let remaining = total - start_index;
+        let count = if max_count > remaining {
+            remaining
+        } else {
+            max_count
+        };
 
         let mut tokens = Vec::new(&env);
         for i in 0..count {
@@ -170,8 +176,17 @@ impl TokenAdminRegistryContract {
         // Ensure that the caller is the administrator of the token.
         admin.require_auth();
 
-        // TODO: When pool contracts are implemented, validate that the pool
-        // supports this token via pool.is_supported_token(local_token).
+        // The pool has to support the token, but removing the pool must stay
+        // possible, so the check runs only when a pool is set. Any failed or
+        // negative `is_supported_token` result is rejected the same way (EVM
+        // `TokenAdminRegistry.setPool` reverts `InvalidTokenPoolToken`).
+        if let Some(pool_addr) = pool.as_ref() {
+            let pool_client = TokenPoolClient::new(&env, pool_addr);
+            match pool_client.try_is_supported_token(&local_token) {
+                Ok(Ok(true)) => {}
+                _ => return Err(CCIPError::InvalidTokenPoolToken),
+            }
+        }
 
         let previous_pool = config.token_pool.clone();
         config.token_pool = pool.clone();
@@ -395,22 +410,17 @@ impl TokenAdminRegistryContract {
     fn add_token_to_index(env: &Env, token: &Address) {
         let count: u32 = env.storage().instance().get(&TOKEN_COUNT).unwrap_or(0u32);
 
-        // Only add if not already indexed (idempotent, same as EVM's EnumerableSet.add)
-        for i in 0..count {
-            let existing: Address = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TokenIndex(i))
-                .unwrap();
-            if existing == *token {
-                return;
-            }
+        // O(1) idempotency via the reverse lookup. EVM's EnumerableSet.add is
+        // O(1) too — a values-set mapping — so scanning every historical index
+        // entry per registration is not parity.
+        let storage = env.storage().persistent();
+        let lookup_key = DataKey::TokenIndexLookup(token.clone());
+        if storage.has(&lookup_key) {
+            return;
         }
 
-        // TODO: should we introduce an extension for the TTL here?
-        env.storage()
-            .persistent()
-            .set(&DataKey::TokenIndex(count), token);
+        storage.set(&lookup_key, &count);
+        storage.set(&DataKey::TokenIndex(count), token);
         env.storage().instance().set(&TOKEN_COUNT, &(count + 1));
     }
 }

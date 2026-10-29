@@ -29,6 +29,10 @@ runs:
     - name: Install Stellar CLI
       uses: ./.github/actions/setup-stellar-cli
 
+    # Without this every shard paid a cold full-workspace release WASM build.
+    - name: Cache Cargo artifacts
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+
     - name: Build contracts
       shell: bash
       run: make ${{ inputs.build-targets }}
@@ -37,3 +41,9 @@ runs:
       uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version-file: go.mod
+        # The tests module (heavy CTF/ccv deps) is what actually compiles; the
+        # default root-go.sum key misses it.
+        cache-dependency-path: |
+          go.sum
+          tests/go.sum
+          deployment/go.sum
