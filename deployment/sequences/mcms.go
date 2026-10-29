@@ -257,7 +257,7 @@ func setStellarMCMSConfigForRef(
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(ref.Type)},
 				To:                cid,
 				Data:              data,
-				AdditionalFields:  stellarMCMSTxAdditionalFields(),
+				AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 			},
 		}, nil
 	default:

@@ -144,7 +144,7 @@ var StellarActivateRMN = cldfops.NewSequence(
 				if err != nil {
 					return output, err
 				}
-				batchOps = append(batchOps, mcmsTxForRef(opsRef, data))
+				batchOps = append(batchOps, mcmsutil.MCMSInvokeTx(opsRef, data))
 			}
 		}
 
@@ -271,19 +271,5 @@ func routeCurseAdminGrant(owner, deployerAddr, govTL string) (curseAdminGrantRou
 			"cannot grant curse admins: RMN Remote owner %q is neither deployer %q nor governance timelock %q",
 			owner, deployerAddr, govTL,
 		)
-	}
-}
-
-func mcmsTxForRef(ref datastore.AddressRef, data []byte) mcmstypes.BatchOperation {
-	return mcmstypes.BatchOperation{
-		ChainSelector: mcmstypes.ChainSelector(ref.ChainSelector),
-		Transactions: []mcmstypes.Transaction{{
-			OperationMetadata: mcmstypes.OperationMetadata{
-				ContractType: string(ref.Type),
-			},
-			To:               ref.Address,
-			Data:             data,
-			AdditionalFields: stellarMCMSTxAdditionalFields(),
-		}},
 	}
 }
