@@ -423,6 +423,27 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		require.Empty(t, out.BatchOps)
 	})
 
+	t.Run("raw stored remote pool form is treated as configured", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
+		admin := f.deployer
+		pool := f.pool
+		inv = stubTarConfig(t, inv, f, tarbindings.TokenConfig{Administrator: &admin, TokenPool: &pool})
+		supported := scval.BoolToScVal(true)
+		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
+		remotePools := scval.VecToScVal([]xdr.ScVal{scval.BytesToScVal(f.evmRemote)})
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &remotePools)
+		out, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, newInput(nil))
+		require.NoError(t, err)
+		for _, r := range inv.Records() {
+			require.NotContains(t, []string{"apply_chain_updates", "add_remote_pool", "set_pool", "propose_administrator"}, r.Fn,
+				"a raw-stored remote pool must be recognized as configured, not re-added in padded form")
+		}
+		require.Empty(t, out.BatchOps)
+	})
+
 	t.Run("missing remote pool is added", func(t *testing.T) {
 		t.Parallel()
 		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
@@ -439,6 +460,64 @@ func TestStellarTokenAdapter_ConfigureTokenForTransfers(t *testing.T) {
 		got, ok := adds[0].Args[1].GetBytes()
 		require.True(t, ok)
 		require.Equal(t, xdr.ScBytes(common.LeftPadBytes(f.evmRemote, 32)), got)
+	})
+
+	t.Run("malformed remote pool length errors instead of padding", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
+		supported := scval.BoolToScVal(true)
+		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
+		empty := scval.VecToScVal(nil)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &empty)
+		_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
+			rc := in.RemoteChains[testRemoteSel]
+			rc.RemotePool = append([]byte{0xbb}, f.evmRemote...)
+			in.RemoteChains[testRemoteSel] = rc
+		}))
+		require.ErrorContains(t, err, "remote pool address is 21 bytes, want the family-native 20")
+		require.Empty(t, recordsFor(inv, "add_remote_pool"))
+	})
+
+	t.Run("padded remote pool form is stored unchanged", func(t *testing.T) {
+		t.Parallel()
+		inv := stubPoolReads(t, operationstest.NewRecordingInvoker(), f)
+		supported := scval.BoolToScVal(true)
+		inv = inv.WithSimulateResultForContract(f.pool, "is_supported_chain", &supported)
+		remoteToken := scval.BytesToScVal(f.evmRemoteToken)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_token", &remoteToken)
+		empty := scval.VecToScVal(nil)
+		inv = inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &empty)
+		padded := common.LeftPadBytes(f.evmRemote, 32)
+		_, err := configureTokenForTransfers(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, newInput(func(in *tokens.ConfigureTokenForTransfersInput) {
+			rc := in.RemoteChains[testRemoteSel]
+			rc.RemotePool = padded
+			in.RemoteChains[testRemoteSel] = rc
+		}))
+		require.NoError(t, err)
+		adds := recordsFor(inv, "add_remote_pool")
+		require.Len(t, adds, 1)
+		got, ok := adds[0].Args[1].GetBytes()
+		require.True(t, ok)
+		require.Equal(t, xdr.ScBytes(padded), got)
+	})
+
+	t.Run("poolChainUpdate rejects an empty or malformed remote pool", func(t *testing.T) {
+		t.Parallel()
+		rc := newInput(nil).RemoteChains[testRemoteSel]
+		_, err := poolChainUpdate(testRemoteSel, rc, tokens.TPRLRateLimitBucket{})
+		require.NoError(t, err, "sanity: the well-formed fixture passes")
+
+		noPool := rc
+		noPool.RemotePool = nil
+		_, err = poolChainUpdate(testRemoteSel, noPool, tokens.TPRLRateLimitBucket{})
+		require.ErrorContains(t, err, "empty remote pool address")
+
+		bad := rc
+		bad.RemotePool = append([]byte{0xbb}, f.evmRemote...)
+		_, err = poolChainUpdate(testRemoteSel, bad, tokens.TPRLRateLimitBucket{})
+		require.ErrorContains(t, err, "remote pool address is 21 bytes, want the family-native 20")
 	})
 
 	t.Run("changed remote token replaces the lane atomically and preserves limits", func(t *testing.T) {

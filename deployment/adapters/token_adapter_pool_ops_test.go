@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
@@ -627,6 +628,46 @@ func TestStellarTokenAdapter_RemoveRemotePools(t *testing.T) {
 		require.Equal(t, rawRemote, []byte(stored))
 		require.Len(t, out.BatchOps, 1)
 		require.Empty(t, out.BatchOps[0].Transactions)
+	})
+
+	t.Run("padded request removes a raw stored form by its exact bytes", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: hexutil.Encode(evmPadded)},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), []byte(evmPool.Bytes()))
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 1)
+		stored, ok := recs[0].Args[1].GetBytes()
+		require.True(t, ok)
+		require.Equal(t, []byte(evmPool.Bytes()), []byte(stored))
+		require.Len(t, out.BatchOps, 1)
+		require.Empty(t, out.BatchOps[0].Transactions)
+	})
+
+	t.Run("raw and padded stored forms are both removed by their exact bytes", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""),
+			[]byte(evmPool.Bytes()), evmPadded)
+		_, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 2)
+		removedForms := make(map[string]bool)
+		for _, r := range recs {
+			stored, ok := r.Args[1].GetBytes()
+			require.True(t, ok)
+			removedForms[string(stored)] = true
+		}
+		require.True(t, removedForms[string(evmPool.Bytes())])
+		require.True(t, removedForms[string(evmPadded)])
 	})
 
 	t.Run("absent pairing is skipped with no write", func(t *testing.T) {

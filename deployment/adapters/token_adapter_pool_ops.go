@@ -718,14 +718,14 @@ func removeRemotePools(
 }
 
 // matchingRemotePoolEntries returns the stored remote-pool entries equal to the
-// requested address in either wire form — the raw bytes, or the 32-byte
-// left-padded form counterpart pools are conventionally wired with. Matching
-// the raw form first keeps a configured unpadded entry removable; each match
-// is removed by its exact stored bytes.
+// requested address in either wire form: raw family-native bytes (EVM 20, stellar
+// 32) or the 32-byte left-padded form the wiring writes. Both sides are normalized
+// to the padded form; each match is removed by its exact stored bytes.
 func matchingRemotePoolEntries(stored [][]byte, want []byte) [][]byte {
+	wantPadded := common.LeftPadBytes(want, 32)
 	var matches [][]byte
 	for _, entry := range stored {
-		if bytes.Equal(entry, want) || bytes.Equal(entry, common.LeftPadBytes(want, 32)) {
+		if bytes.Equal(common.LeftPadBytes(entry, 32), wantPadded) {
 			matches = append(matches, entry)
 		}
 	}
