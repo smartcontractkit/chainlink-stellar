@@ -3,6 +3,7 @@ package destinationreader
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -306,6 +307,42 @@ func TestStellarExecutionAttemptPoller_ProcessRetriesOncePerInterval(t *testing.
 
 	p.processRetries(context.Background())
 	assert.Equal(t, 2, fake.transactionCalls(), "exactly one retry per interval")
+}
+
+// TestStellarExecutionAttemptPoller_ConcurrentAttemptsSameMessage is a
+// regression test for the lost-update race on attemptCache: the polling and
+// retry loops can process different events for the same message concurrently,
+// and the cache read-modify-write must retain every attempt.
+func TestStellarExecutionAttemptPoller_ConcurrentAttemptsSameMessage(t *testing.T) {
+	msg := mustTestMessage(t)
+	fake := newFakeStellarRPC(t, msg)
+
+	server := httptest.NewServer(http.HandlerFunc(fake.handler))
+	t.Cleanup(server.Close)
+
+	p, err := NewStellarExecutionAttemptPoller(rpcclient.NewClient(server.URL, nil), testStellarContractID, testLogger(t), time.Minute)
+	require.NoError(t, err)
+
+	const eventCount = 32
+	msgID := mustMessageID(t, msg)
+
+	var wg sync.WaitGroup
+	for i := 0; i < eventCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			event := &ExecutionStateChangedEvent{
+				TxHash:    fmt.Sprintf("tx-%d", i),
+				MessageId: [32]byte(msgID),
+			}
+			assert.NoError(t, p.processExecutionStateChanged(context.Background(), event))
+		}(i)
+	}
+	wg.Wait()
+
+	attempts, err := p.GetExecutionAttempts(context.Background(), msg)
+	require.NoError(t, err)
+	assert.Len(t, attempts, eventCount, "no attempt may be lost to a concurrent cache update")
 }
 
 func mustMessageID(t *testing.T, msg protocol.Message) protocol.Bytes32 {

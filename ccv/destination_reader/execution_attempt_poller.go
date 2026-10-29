@@ -45,15 +45,18 @@ type StellarExecutionAttemptPoller struct {
 	lggr              *zerolog.Logger
 	rpcClient         *rpcclient.Client
 	offrampContractID string
-	attemptCache      *expirable.LRU[protocol.Bytes32, []protocol.ExecutionAttempt]
-	cancelFunc        context.CancelFunc
-	wg                sync.WaitGroup
-	pollInterval      time.Duration
-	retryInterval     time.Duration
-	retryQueue        *expirable.LRU[string, retryTask]
-	lastPolledLedger  uint32
-	startLedger       uint32
-	lookbackWindow    time.Duration
+	// attemptCacheMu is needed to avoid data races between the retry logic
+	// and the regular polling loop when accessing `attemptCache`
+	attemptCacheMu   sync.Mutex
+	attemptCache     *expirable.LRU[protocol.Bytes32, []protocol.ExecutionAttempt]
+	cancelFunc       context.CancelFunc
+	wg               sync.WaitGroup
+	pollInterval     time.Duration
+	retryInterval    time.Duration
+	retryQueue       *expirable.LRU[string, retryTask]
+	lastPolledLedger uint32
+	startLedger      uint32
+	lookbackWindow   time.Duration
 }
 
 // NewStellarExecutionAttemptPoller creates a new execution attempt poller for the Stellar offramp.
@@ -150,6 +153,9 @@ func (p *StellarExecutionAttemptPoller) GetExecutionAttempts(_ context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get message ID: %w", err)
 	}
+
+	p.attemptCacheMu.Lock()
+	defer p.attemptCacheMu.Unlock()
 
 	attempts, exists := p.attemptCache.Get(msgID)
 	if !exists {
@@ -395,9 +401,11 @@ func (p *StellarExecutionAttemptPoller) processExecutionStateChanged(ctx context
 	}
 
 	msgID := protocol.Bytes32(event.MessageId)
+	p.attemptCacheMu.Lock()
 	attempts, _ := p.attemptCache.Get(msgID)
 	attempts = append(attempts, *attempt)
 	p.attemptCache.Add(msgID, attempts)
+	p.attemptCacheMu.Unlock()
 
 	p.lggr.Debug().
 		Str("messageID", fmt.Sprintf("%x", msgID)).
