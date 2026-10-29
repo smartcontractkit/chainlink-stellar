@@ -791,12 +791,12 @@ fn test_allowlist_removal_only_update_applies_on_disabled_chain() {
 }
 
 #[test]
-fn test_allowlist_disable_never_set_chain_rejected() {
-    // Kept strictness over EVM (which silently no-ops): disabling a chain with no
-    // prior entry fails fast, catching changeset selector typos.
+fn test_allowlist_disable_never_set_chain_is_noop() {
+    // EVM parity: disabling a chain with no prior entry is a silent no-op — no
+    // state change, nothing persisted.
     let (env, client, _owner, ..) = setup();
 
-    let r = client.try_apply_allowlist_updates(&vec![
+    client.apply_allowlist_updates(&vec![
         &env,
         AllowListUpdate {
             dest_chain_selector: 12345,
@@ -805,7 +805,8 @@ fn test_allowlist_disable_never_set_chain_rejected() {
             removed_allowlisted_senders: vec![&env],
         },
     ]);
-    assert_eq!(r.unwrap_err().unwrap(), CCIPError::FeatureNotEnabled);
+
+    assert!(client.get_allowlist_entry(&12345).is_none());
 }
 
 // ============================================================

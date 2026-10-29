@@ -99,7 +99,6 @@ pub trait AllowListable: Ownable {
     /// * `callers` - Addresses to add
     ///
     /// # Errors
-    /// * `FeatureNotEnabled` - Allow list not initialized for an update that disables a chain with no prior entry
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
     ///
@@ -122,11 +121,12 @@ pub trait AllowListable: Ownable {
                 .get(&Self::ALLOW_LIST)
                 .unwrap_or(Map::new(env));
 
-            // Fail fast only for a never-configured chain (changeset selector-typo protection).
-            // A configured-but-disabled chain must still accept updates that keep it disabled:
-            // EVM applies removals regardless of the enabled flag (BaseVerifier.sol:264-270).
-            if !data.contains_key(key) && !update.allowlist_enabled {
-                return Err(CCIPError::FeatureNotEnabled);
+            // EVM parity: disabling a never-configured chain is a no-op (zero-value slot — no
+            // state change, no event). Only when nothing is being added: additions are still
+            // applied rather than silently dropped (EVM rejects them via
+            // InvalidAllowListRequest — not yet enforced here).
+            if !data.contains_key(key) && !update.allowlist_enabled && to_add.is_empty() {
+                continue;
             }
 
             let mut allowlist_entry = data.get(key).unwrap_or(AllowListEntry {
