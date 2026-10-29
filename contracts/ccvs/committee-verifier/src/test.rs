@@ -656,6 +656,160 @@ fn test_forward_to_verifier_fails_when_sender_not_in_allowlist() {
 }
 
 // ============================================================
+// Allowlist Update Tests
+// ============================================================
+
+#[test]
+fn test_allowlist_disable_existing_entry_updates_flag() {
+    // The enabled flag must be rewritten from the payload on every update (EVM
+    // `_applyAllowlistUpdates`), not only when the entry is first created.
+    let (env, client, _owner, ..) = setup();
+
+    let dest_chain: u64 = 12345;
+    let sender = Address::generate(&env);
+    let message_id = BytesN::from_array(&env, &[0u8; 32]);
+    let fee_token = Address::generate(&env);
+    let verifier_args = Bytes::new(&env);
+
+    let update = |enabled: bool| {
+        vec![
+            &env,
+            AllowListUpdate {
+                dest_chain_selector: dest_chain,
+                allowlist_enabled: enabled,
+                added_allowlisted_senders: vec![&env],
+                removed_allowlisted_senders: vec![&env],
+            },
+        ]
+    };
+
+    // Enable with an empty list: flag set, all senders blocked.
+    client.apply_allowlist_updates(&update(true));
+    assert!(
+        client
+            .get_allowlist_entry(&dest_chain)
+            .unwrap()
+            .allowlist_enabled
+    );
+    assert_eq!(
+        client
+            .try_forward_to_verifier(
+                &dest_chain,
+                &sender,
+                &message_id,
+                &fee_token,
+                &0,
+                &verifier_args,
+            )
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::CallerNotAuthorized
+    );
+
+    // Disable with empty adds/removes: the stored flag must flip and access reopen.
+    client.apply_allowlist_updates(&update(false));
+    assert!(
+        !client
+            .get_allowlist_entry(&dest_chain)
+            .unwrap()
+            .allowlist_enabled
+    );
+    client.forward_to_verifier(
+        &dest_chain,
+        &sender,
+        &message_id,
+        &fee_token,
+        &0,
+        &verifier_args,
+    );
+
+    // Re-enabling gates the chain again for the same non-member sender.
+    client.apply_allowlist_updates(&update(true));
+    assert!(
+        client
+            .get_allowlist_entry(&dest_chain)
+            .unwrap()
+            .allowlist_enabled
+    );
+    assert_eq!(
+        client
+            .try_forward_to_verifier(
+                &dest_chain,
+                &sender,
+                &message_id,
+                &fee_token,
+                &0,
+                &verifier_args,
+            )
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::CallerNotAuthorized
+    );
+}
+
+#[test]
+fn test_allowlist_removal_only_update_applies_on_disabled_chain() {
+    // EVM applies removals regardless of the enabled flag (BaseVerifier.sol:264-270),
+    // so a removal-only update on a disabled chain must not error.
+    let (env, client, _owner, ..) = setup();
+
+    let dest_chain: u64 = 12345;
+    let sender = Address::generate(&env);
+
+    client.apply_allowlist_updates(&vec![
+        &env,
+        AllowListUpdate {
+            dest_chain_selector: dest_chain,
+            allowlist_enabled: true,
+            added_allowlisted_senders: vec![&env, sender.clone()],
+            removed_allowlisted_senders: vec![&env],
+        },
+    ]);
+    client.apply_allowlist_updates(&vec![
+        &env,
+        AllowListUpdate {
+            dest_chain_selector: dest_chain,
+            allowlist_enabled: false,
+            added_allowlisted_senders: vec![&env],
+            removed_allowlisted_senders: vec![&env],
+        },
+    ]);
+
+    client.apply_allowlist_updates(&vec![
+        &env,
+        AllowListUpdate {
+            dest_chain_selector: dest_chain,
+            allowlist_enabled: false,
+            added_allowlisted_senders: vec![&env],
+            removed_allowlisted_senders: vec![&env, sender.clone()],
+        },
+    ]);
+
+    let entry = client.get_allowlist_entry(&dest_chain).unwrap();
+    assert!(!entry.allowlist_enabled);
+    assert!(!entry.allowlist.contains(&sender));
+}
+
+#[test]
+fn test_allowlist_disable_never_set_chain_is_noop() {
+    // EVM parity: disabling a chain with no prior entry is a silent no-op — no
+    // state change, nothing persisted.
+    let (env, client, _owner, ..) = setup();
+
+    client.apply_allowlist_updates(&vec![
+        &env,
+        AllowListUpdate {
+            dest_chain_selector: 12345,
+            allowlist_enabled: false,
+            added_allowlisted_senders: vec![&env],
+            removed_allowlisted_senders: vec![&env],
+        },
+    ]);
+
+    assert!(client.get_allowlist_entry(&12345).is_none());
+}
+
+// ============================================================
 // Verify Message Tests
 // ============================================================
 

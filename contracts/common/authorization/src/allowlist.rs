@@ -99,7 +99,6 @@ pub trait AllowListable: Ownable {
     /// * `callers` - Addresses to add
     ///
     /// # Errors
-    /// * `FeatureNotEnabled` - Allow list not initialized for an update that disables a chain with no prior entry
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
     ///
@@ -116,21 +115,28 @@ pub trait AllowListable: Ownable {
             let to_add = update.added_allowlisted_senders;
             let to_remove = update.removed_allowlisted_senders;
 
-            // The call to `is_allowlist_enabled` will return false if the allowlist has never been set.
-            if !Self::is_allowlist_enabled(env, key) && !update.allowlist_enabled {
-                return Err(CCIPError::FeatureNotEnabled);
-            }
-
             let mut data: Map<u64, AllowListEntry> = env
                 .storage()
                 .instance()
                 .get(&Self::ALLOW_LIST)
                 .unwrap_or(Map::new(env));
 
+            // EVM parity: disabling a never-configured chain is a no-op (zero-value slot — no
+            // state change, no event). Only when nothing is being added: additions are still
+            // applied rather than silently dropped (EVM rejects them via
+            // InvalidAllowListRequest — not yet enforced here).
+            if !data.contains_key(key) && !update.allowlist_enabled && to_add.is_empty() {
+                continue;
+            }
+
             let mut allowlist_entry = data.get(key).unwrap_or(AllowListEntry {
                 allowlist_enabled: update.allowlist_enabled,
                 allowlist: Vec::new(env),
             });
+
+            // EVM parity (BaseVerifier.sol:258-259): rewrite the enabled flag from the
+            // payload on every update, not only when the entry is first created.
+            allowlist_entry.allowlist_enabled = update.allowlist_enabled;
 
             for address in to_add.iter() {
                 if !allowlist_entry.allowlist.contains(address.clone()) {
