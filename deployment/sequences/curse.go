@@ -165,7 +165,7 @@ var StellarCurse = cldfops.NewSequence(
 					OperationMetadata: mcmstypes.OperationMetadata{ContractType: rmnremoteops.ContractType},
 					To:                in.RMNContractID,
 					Data:              data,
-					AdditionalFields:  stellarMCMSTxAdditionalFields(),
+					AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 				}},
 			}},
 		}, nil
@@ -245,7 +245,7 @@ var StellarUncurse = cldfops.NewSequence(
 					OperationMetadata: mcmstypes.OperationMetadata{ContractType: rmnremoteops.ContractType},
 					To:                in.RMNContractID,
 					Data:              data,
-					AdditionalFields:  stellarMCMSTxAdditionalFields(),
+					AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 				}},
 			}},
 		}, nil

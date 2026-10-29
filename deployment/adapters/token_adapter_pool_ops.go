@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -25,7 +24,6 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	mcmstypes "github.com/smartcontractkit/mcms/types"
 
-	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	tpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -354,7 +352,7 @@ func poolProposalWrite(chainSelector uint64, poolType datastore.ContractType, po
 			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(poolType)},
 			To:                poolStrkey,
 			Data:              data,
-			AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
+			AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 		},
 	}
 }
@@ -406,12 +404,6 @@ func applyPoolAllowedFinality(
 			"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
 			poolStrkey, owner, deployerAddr, timelockStrkey)
 	}
-}
-
-// stellarPoolMCMSTxAdditionalFields marks proposal transactions as Soroban
-// invokes (same encoding the ownership sequences emit).
-func stellarPoolMCMSTxAdditionalFields() json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"family":"stellar","encodingVersion":%d}`, bindings.SorobanInvokeEncodingVersion))
 }
 
 // isRateLimitPoolType reports whether the pool type is served by the shared

@@ -69,7 +69,7 @@ func (r *sorobanWriteRouter) route(authorizer string, directExec func() error, f
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: r.contractType},
 				To:                r.contractID,
 				Data:              data,
-				AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
+				AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 			},
 		})
 		return false, nil
