@@ -44,6 +44,10 @@ pub trait AllowListable: Ownable {
     /// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
     /// state-changed event only then), and `added_addresses`/`removed_addresses` carry
     /// only the addresses that actually changed set membership.
+    ///
+    /// `#[contractimpl(contracttrait)]` exports this as a public entrypoint with a
+    /// caller-controlled payload — implementers MUST owner-gate it (see the
+    /// committee-verifier impl), otherwise any account can forge allowlist events.
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,

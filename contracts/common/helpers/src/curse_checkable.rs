@@ -35,6 +35,12 @@ pub trait CurseCheckable: Initializable {
     const RMN_PROXY: Symbol = symbol_short!("RMN_PROXY");
 
     fn init(env: &Env, rmn_proxy: &Address) -> Result<(), CCIPError> {
+        // Exported unguarded via `#[contractimpl(contracttrait)]` on the ramps: without
+        // this check any account could re-point the RMN proxy post-initialize and
+        // defeat every curse check.
+        if env.storage().instance().has(&Self::RMN_PROXY) {
+            return Err(CCIPError::AlreadyInitialized);
+        }
         env.storage().instance().set(&Self::RMN_PROXY, rmn_proxy);
         Ok(())
     }

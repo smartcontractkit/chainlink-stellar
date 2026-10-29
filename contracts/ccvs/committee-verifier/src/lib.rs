@@ -94,6 +94,11 @@ impl AllowListable for CommitteeVerifierContract {
         added_addresses: &Vec<Address>,
         removed_addresses: &Vec<Address>,
     ) {
+        // Exported via `#[contractimpl(contracttrait)]`: without this gate any account
+        // could publish forged allowlist events. Owner auth is already attached when
+        // `apply_allowlist_updates` calls this hook.
+        <Self as Ownable>::require_owner(env).expect("owner set at initialize");
+
         // EVM parity (`BaseVerifier._applyAllowlistUpdates`): state-changed only on an
         // actual flag flip; per-sender events only for actual set changes.
         if let Some(allowlist_enabled) = new_enabled_state {
