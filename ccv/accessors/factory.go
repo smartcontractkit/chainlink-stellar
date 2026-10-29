@@ -114,12 +114,12 @@ func (f *factory) GetAccessor(ctx context.Context, chainSelector protocol.ChainS
 	// the same Ed25519 key that signs writes.
 	if hasReader {
 		if stellarReaderConfig.SorobanRPCURL == "" {
-			a.sourceReaderErr = fmt.Errorf("soroban rpc url is required for chain %d", chainSelector)
+			a.sourceReaderConfigErr = fmt.Errorf("soroban rpc url is required for chain %d", chainSelector)
 		} else if stellarReaderConfig.NetworkPassphrase == "" {
-			a.sourceReaderErr = fmt.Errorf("network passphrase is required for chain %d", chainSelector)
+			a.sourceReaderConfigErr = fmt.Errorf("network passphrase is required for chain %d", chainSelector)
 		}
 	} else {
-		a.sourceReaderErr = errReaderConfigMissing
+		a.sourceReaderConfigErr = errReaderConfigMissing
 	}
 
 	if !hasDest {
@@ -173,7 +173,9 @@ type accessor struct {
 	// concurrently with reader / transmitter accessors in pathological cases.
 	mu sync.Mutex
 
-	sourceReader           chainaccess.SourceReader
+	sourceReader chainaccess.SourceReader
+	// sourceReaderConfigErr is used to avoid overlapping with reading errors
+	sourceReaderConfigErr  error
 	sourceReaderErr        error
 	destinationReader      chainaccess.DestinationReader
 	destReaderErr          error
@@ -232,7 +234,8 @@ func (a *accessor) SetKeystore(ctx context.Context, ks keystore.Keystore) error 
 			Msg("stellar accessor: failed to load keystore signer")
 		// Surface the keystore error on every keystore-backed getter so callers
 		// see the same root cause regardless of which component they request.
-		if a.sourceReaderErr == nil && a.hasReader {
+
+		if a.hasReader {
 			a.sourceReaderErr = fmt.Errorf("load stellar keystore signer: %w", err)
 		}
 		if a.hasDest {
@@ -246,12 +249,14 @@ func (a *accessor) SetKeystore(ctx context.Context, ks keystore.Keystore) error 
 		Str("address", signer.Address()).
 		Msg("stellar accessor: keystore signer ready")
 
-	if a.hasReader && a.sourceReaderErr == nil {
+	// Retry to handle RCP transient disconnections
+	if a.hasReader && a.sourceReaderConfigErr == nil {
 		sr, err := buildSourceReaderWithSigner(a.readerCfg, signer, a.zlggr)
 		if err != nil {
 			a.sourceReaderErr = err
 		} else {
 			a.sourceReader = sr
+			a.sourceReaderErr = nil
 		}
 	}
 
@@ -276,6 +281,9 @@ func (a *accessor) SetKeystore(ctx context.Context, ks keystore.Keystore) error 
 func (a *accessor) SourceReader() (chainaccess.SourceReader, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.sourceReaderConfigErr != nil {
+		return nil, a.sourceReaderConfigErr
+	}
 	if a.sourceReaderErr != nil {
 		return nil, a.sourceReaderErr
 	}
