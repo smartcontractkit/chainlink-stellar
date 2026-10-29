@@ -10,15 +10,12 @@ on:
         description: 'Image tag (defaults to git SHA or tag)'
         required: false
         default: ''
-      push_latest:
-        description: 'Also push as latest'
-        type: boolean
-        required: false
-        default: true
 
 concurrency:
   group: build-push-ecr-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a publish mid-flight: a superseding push could leave one
+  # matrix image pushed and the other half-tagged.
+  cancel-in-progress: false
 
 permissions:
   id-token: write
@@ -28,6 +25,7 @@ jobs:
   build-push:
     name: Build and Push ${{ matrix.image_name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
