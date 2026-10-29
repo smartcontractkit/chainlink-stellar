@@ -179,7 +179,7 @@ require (
 	github.com/smartcontractkit/chainlink-ccip/chains/evm v0.0.0-20261001213322-a2d686f610ca // indirect
 	github.com/smartcontractkit/chainlink-ccip/chains/solana v0.0.0-20260129103204-4c8453dd8139 // indirect
 	github.com/smartcontractkit/chainlink-ccip/chains/solana/gobindings v0.0.0-20260129103204-4c8453dd8139 // indirect
-	github.com/smartcontractkit/chainlink-ccip/deployment v0.0.0-20261001213322-a2d686f610ca // indirect
+	github.com/smartcontractkit/chainlink-ccip/deployment v0.0.0-20261015095702-055a7e78d705 // indirect
 	github.com/smartcontractkit/chainlink-ccv/deployment v0.1.1-0.20261027233205-2f3eddd7569c // indirect
 	github.com/smartcontractkit/chainlink-common/pkg/chipingress v0.0.11-0.20260915184316-2730f1867c92 // indirect
 	github.com/smartcontractkit/chainlink-common/x/config v0.0.0-20260928140953-a9b0d3a04daa // indirect
