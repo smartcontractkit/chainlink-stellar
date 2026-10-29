@@ -69,7 +69,7 @@ func (r *sorobanWriteRouter) route(authorizer string, directExec func() error, f
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: r.contractType},
 				To:                r.contractID,
 				Data:              data,
-				AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
+				AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 			},
 		})
 		return false, nil
@@ -416,17 +416,22 @@ func configureTokenForTransfers(b cldf_ops.Bundle, deps stellardeps.StellarDeps,
 			if err != nil {
 				return sequences.OnChainOutput{}, fmt.Errorf("read remote pools of pool %s for %d: %w", poolStrkey, remoteSel, err)
 			}
-			padded := common.LeftPadBytes(rc.RemotePool, 32)
-			if len(rc.RemotePool) > 0 && !containsBytes(remotePoolsReport.Output, padded) {
-				if _, err := poolRouter.route(poolRouter.owner, func() error {
-					_, err := cldf_ops.ExecuteOperation(b, tpoolops.AddRemotePool, deps, tpoolops.AddRemotePoolInput{
-						ContractID: poolStrkey, RemoteChainSelector: remoteSel, RemotePoolAddress: padded,
-					})
-					return err
-				}, "add_remote_pool", []xdr.ScVal{
-					scval.Uint64ToScVal(remoteSel), scval.BytesToScVal(padded),
-				}); err != nil {
-					return sequences.OnChainOutput{}, fmt.Errorf("add remote pool for %d on pool %s: %w", remoteSel, poolStrkey, err)
+			if len(rc.RemotePool) > 0 {
+				padded, err := remotePoolWireBytes(remoteSel, rc.RemotePool)
+				if err != nil {
+					return sequences.OnChainOutput{}, fmt.Errorf("remote pool (remote %d): %w", remoteSel, err)
+				}
+				if len(matchingRemotePoolEntries(remotePoolsReport.Output, rc.RemotePool)) == 0 {
+					if _, err := poolRouter.route(poolRouter.owner, func() error {
+						_, err := cldf_ops.ExecuteOperation(b, tpoolops.AddRemotePool, deps, tpoolops.AddRemotePoolInput{
+							ContractID: poolStrkey, RemoteChainSelector: remoteSel, RemotePoolAddress: padded,
+						})
+						return err
+					}, "add_remote_pool", []xdr.ScVal{
+						scval.Uint64ToScVal(remoteSel), scval.BytesToScVal(padded),
+					}); err != nil {
+						return sequences.OnChainOutput{}, fmt.Errorf("add remote pool for %d on pool %s: %w", remoteSel, poolStrkey, err)
+					}
 				}
 			}
 		}
@@ -536,9 +541,13 @@ func poolChainUpdate(remoteSel uint64, rc tokens.RemoteChainConfig[[]byte, strin
 	if err != nil {
 		return tpoolbindings.ChainUpdate{}, fmt.Errorf("remote token (remote %d): %w", remoteSel, err)
 	}
+	remotePool, err := remotePoolWireBytes(remoteSel, rc.RemotePool)
+	if err != nil {
+		return tpoolbindings.ChainUpdate{}, fmt.Errorf("remote pool (remote %d): %w", remoteSel, err)
+	}
 	return tpoolbindings.ChainUpdate{
 		RemoteChainSelector:       remoteSel,
-		RemotePoolAddresses:       [][]byte{common.LeftPadBytes(rc.RemotePool, 32)},
+		RemotePoolAddresses:       [][]byte{remotePool},
 		RemoteTokenAddress:        remoteToken,
 		OutboundRateLimiterConfig: outbound,
 		InboundRateLimiterConfig:  inbound,
@@ -565,6 +574,27 @@ func remoteTokenWireBytes(remoteSel uint64, token []byte) ([]byte, error) {
 		return token[32-int(native):], nil
 	}
 	return nil, fmt.Errorf("remote token address is %d bytes, want the family-native %d", len(token), native)
+}
+
+// remotePoolWireBytes validates a remote pool address as the remote family's
+// native length or the 32-byte left-padded wire form, and returns the padded
+// form the pool stores. Any other length (including empty) is an error, never
+// a silent pad — a malformed stored entry matches no counterpart pool.
+func remotePoolWireBytes(remoteSel uint64, pool []byte) ([]byte, error) {
+	if len(pool) == 0 {
+		return nil, fmt.Errorf("empty remote pool address")
+	}
+	native, err := remoteFamilyAddressBytesLength(remoteSel)
+	if err != nil {
+		return nil, fmt.Errorf("get chain family for remote chain %d: %w", remoteSel, err)
+	}
+	if len(pool) == int(native) {
+		return common.LeftPadBytes(pool, 32), nil
+	}
+	if len(pool) == 32 && int(native) < 32 && bytes.Trim(pool[:32-int(native)], "\x00") == nil {
+		return pool, nil
+	}
+	return nil, fmt.Errorf("remote pool address is %d bytes, want the family-native %d", len(pool), native)
 }
 
 // remoteFamilyAddressBytesLength resolves the remote family's native address
@@ -809,16 +839,6 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-// containsBytes reports whether the list contains an equal byte slice.
-func containsBytes(list [][]byte, want []byte) bool {
-	for _, b := range list {
-		if bytes.Equal(b, want) {
-			return true
-		}
-	}
-	return false
 }
 
 // applyPoolCCVConfig mirrors EVM's makeCCVUpdates with a stored-config

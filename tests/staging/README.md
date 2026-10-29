@@ -34,6 +34,16 @@ trailing `fee_token_amount` and the generated binding fails with
 quoted fee as that argument. Check the Router with
 `stellar contract info interface --id <router> --network testnet`.
 
+Before sending anything, each test extends the TTL of every contract it touches
+(Router, OnRamp, fee token, CCVs, executor; OffRamp and receiver on the EVM →
+Stellar side) to the network maximum in a single `ExtendFootprintTtl`
+transaction paid by the sender. Without this, an expired WASM code entry makes
+the RPC node re-upload it into every simulation footprint, the assembled send
+transaction blows the transaction resource limit, and the call fails with
+`Error(WasmVm, UnexpectedSize)` (often alongside `MismatchingParameterLen`
+diagnostic events). Extending is permissionless, restores archived entries
+first, and is a no-op once everything is at the maximum TTL.
+
 ### EVM → Stellar
 
 These tests need `STAGING_EVM_RPC_URL`, `STAGING_EVM_SENDER_PRIVATE_KEY`,

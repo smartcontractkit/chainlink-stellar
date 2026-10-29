@@ -76,6 +76,13 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 		require.NoError(t, err, "Router.get_onramp(%d)", cfg.DestChainSelector)
 	}
 
+	contractIDs := []string{cfg.RouterID, onRampID}
+	contractIDs = append(contractIDs, cfg.CCVs...)
+	if cfg.Executor != "" {
+		contractIDs = append(contractIDs, cfg.Executor)
+	}
+	extendContractTTLs(t, ctx, deployer, &l, contractIDs...)
+
 	l.Info().
 		Str("rpc", cfg.StellarRPCURL).
 		Str("router", cfg.RouterID).
@@ -212,16 +219,26 @@ func (e *stagingEnv) waitForSentEvent(t *testing.T, ctx context.Context, startLe
 	defer ticker.Stop()
 
 	var lastErr error
+	fromLedger := startLedger
 	for {
-		events, err := e.deployer.GetEvents(ctx, e.onRampID, startLedger, []string{ccvchain.CCIPMessageSentEventTopic})
+		// Bounded, advancing window: an unpaginated query from a fixed
+		// startLedger only ever returns the server's first page of matches, so
+		// an event beyond it would never be seen (see waitForStellarExecution).
+		latest, err := e.rpc.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
-		}
-		for _, raw := range events {
-			ev, err := ccvchain.ParseCCIPMessageSentEvent(raw)
-			if err == nil && ev.MessageId == messageID {
-				return ev
+		} else if uint32(latest.Sequence) >= fromLedger {
+			events, err := destinationreader.GetEventsInRange(ctx, e.rpc, e.onRampID, fromLedger, uint32(latest.Sequence), []string{ccvchain.CCIPMessageSentEventTopic})
+			if err != nil {
+				lastErr = err
 			}
+			for _, raw := range events {
+				ev, err := ccvchain.ParseCCIPMessageSentEvent(raw)
+				if err == nil && ev.MessageId == messageID {
+					return ev
+				}
+			}
+			fromLedger = uint32(latest.Sequence) + 1
 		}
 		select {
 		case <-ctx.Done():
@@ -338,6 +355,42 @@ func hexID(id [32]byte) string {
 	return "0x" + hex.EncodeToString(id[:])
 }
 
+// extendContractTTLs extends the instance and WASM code entries of every given
+// contract to the network's maximum TTL in one ExtendFootprintTtl transaction
+// paid by the deployer. Without it, an expired (or about-to-expire) WASM code
+// entry makes the RPC node upload a fresh copy into every simulation footprint
+// as it replays the contract, and a send transaction assembled on top of that
+// footprint blows the transaction resource/size limit — simulations then fail
+// opaquely inside the VM with Error(WasmVm, UnexpectedSize). Extending first
+// restores archived entries (auto-restore) and keeps footprints compact.
+// Duplicate contract ids are extended once. Extending is permissionless and a
+// no-op for entries already at the maximum TTL.
+func extendContractTTLs(t *testing.T, ctx context.Context, deployer *stellardeployment.Deployer, l *zerolog.Logger, contractIDs ...string) {
+	t.Helper()
+
+	seen := make(map[string]bool, len(contractIDs))
+	var keys []xdr.LedgerKey
+	for _, id := range contractIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+
+		wasmHash, err := deployer.ContractWasmHash(ctx, id)
+		require.NoError(t, err, "fetch WASM hash of %s", id)
+		instanceKey, err := stellardeployment.ContractInstanceLedgerKey(id)
+		require.NoError(t, err)
+		keys = append(keys, instanceKey, stellardeployment.ContractCodeLedgerKey(wasmHash))
+	}
+
+	liveUntil, err := deployer.ExtendTTLToMax(ctx, keys)
+	require.NoError(t, err, "extend contract TTLs")
+	l.Info().
+		Int("entries", len(keys)).
+		Uints32("liveUntilLedger", liveUntil).
+		Msg("Contract instance and WASM TTLs extended to the network maximum")
+}
+
 // ============================================================
 // EVM → Stellar
 // ============================================================
@@ -398,6 +451,11 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 	require.NoError(t, err)
 	receiverBytes, err := strkey.Decode(strkey.VersionByteContract, cfg.ReceiverID)
 	require.NoError(t, err)
+
+	// These tests submit only EVM transactions, but they simulate Stellar calls
+	// (Router.get_offramps, receiver views) and the OffRamp/executor read the
+	// receiver's WASM on execution — keep those entries live.
+	extendContractTTLs(t, ctx, deployer, &l, cfg.StellarRouterID, offRampID, cfg.ReceiverID)
 
 	// The example receiver rejects messages from source chains it hasn't enabled
 	// (ccip_receive → InvalidChainForClient), which would surface as an execution
@@ -565,19 +623,32 @@ func (e *evmToStellarEnv) waitForStellarExecution(t *testing.T, ctx context.Cont
 		Msg("Waiting for ExecutionStateChanged on Stellar")
 
 	var lastErr error
+	fromLedger := startLedger
 	for {
-		events, err := e.deployer.GetEvents(ctx, e.offRampID, startLedger, []string{destinationreader.ExecutionStateChangedEventTopic})
+		// Scan a bounded [fromLedger, latest] window that advances every poll.
+		// An unbounded unpaginated query (fixed startLedger, no end) always
+		// returns the server's first page of matching events; on this shared
+		// OffRamp other lanes' executions fill that page and an event beyond it
+		// would never be reached — the wait hangs even though the state
+		// transition already landed on chain.
+		latest, err := e.stellarRPC.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
-		}
-		for _, raw := range events {
-			ev, err := destinationreader.ParseExecutionStateChangedEvent(raw)
-			if err != nil || ev.MessageId != messageID {
-				continue
+		} else if uint32(latest.Sequence) >= fromLedger {
+			events, err := destinationreader.GetEventsInRange(ctx, e.stellarRPC, e.offRampID, fromLedger, uint32(latest.Sequence), []string{destinationreader.ExecutionStateChangedEventTopic})
+			if err != nil {
+				lastErr = err
 			}
-			if ev.State == offrampbindings.MessageExecutionStateSuccess || ev.State == offrampbindings.MessageExecutionStateFailure {
-				return ev
+			for _, raw := range events {
+				ev, err := destinationreader.ParseExecutionStateChangedEvent(raw)
+				if err != nil || ev.MessageId != messageID {
+					continue
+				}
+				if ev.State == offrampbindings.MessageExecutionStateSuccess || ev.State == offrampbindings.MessageExecutionStateFailure {
+					return ev
+				}
 			}
+			fromLedger = uint32(latest.Sequence) + 1
 		}
 		select {
 		case <-ctx.Done():

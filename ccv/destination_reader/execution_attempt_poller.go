@@ -19,7 +19,12 @@ import (
 )
 
 const (
-	defaultStellarPollInterval = 5 * time.Second
+	defaultStellarPollInterval  = 5 * time.Second
+	defaultStellarRetryInterval = 7 * time.Second
+	// defaultRetryQueueLimit for the max number of retriable fetches held in the queue
+	defaultRetryQueueLimit = 64
+	// maxEventProcessRetries for the limit of event details fetch retry
+	maxEventProcessRetries = 3
 	// Stellar ledgers close approximately every 5-6 seconds.
 	estimatedLedgerCloseTime = 6 * time.Second
 	minStellarLedger         = uint32(7)
@@ -27,19 +32,31 @@ const (
 	stellarPollerServiceName = "stellar.executionattemptpoller.Service"
 )
 
+// retryTask is a queue entry used for refetching an event's transaction
+// details necessary for handling intermittent RPC failures
+type retryTask struct {
+	event   *ExecutionStateChangedEvent
+	retries int
+}
+
 // StellarExecutionAttemptPoller polls for ExecutionStateChanged events on the Stellar
 // offramp contract and caches the decoded execution attempts by message ID.
 type StellarExecutionAttemptPoller struct {
 	lggr              *zerolog.Logger
 	rpcClient         *rpcclient.Client
 	offrampContractID string
-	attemptCache      *expirable.LRU[protocol.Bytes32, []protocol.ExecutionAttempt]
-	cancelFunc        context.CancelFunc
-	wg                sync.WaitGroup
-	pollInterval      time.Duration
-	lastPolledLedger  uint32
-	startLedger       uint32
-	lookbackWindow    time.Duration
+	// attemptCacheMu is needed to avoid data races between the retry logic
+	// and the regular polling loop when accessing `attemptCache`
+	attemptCacheMu   sync.Mutex
+	attemptCache     *expirable.LRU[protocol.Bytes32, []protocol.ExecutionAttempt]
+	cancelFunc       context.CancelFunc
+	wg               sync.WaitGroup
+	pollInterval     time.Duration
+	retryInterval    time.Duration
+	retryQueue       *expirable.LRU[string, retryTask]
+	lastPolledLedger uint32
+	startLedger      uint32
+	lookbackWindow   time.Duration
 }
 
 // NewStellarExecutionAttemptPoller creates a new execution attempt poller for the Stellar offramp.
@@ -69,7 +86,11 @@ func NewStellarExecutionAttemptPoller(
 		offrampContractID: offrampContractID,
 		attemptCache:      attemptCache,
 		pollInterval:      defaultStellarPollInterval,
-		lookbackWindow:    attemptCacheExpiration,
+		retryInterval:     defaultStellarRetryInterval,
+		// Keyed by transaction hash (no TTL): doubles as a dedupe guard if the
+		// same event fails twice, and bounds pending retries at the queue limit.
+		retryQueue:     expirable.NewLRU[string, retryTask](defaultRetryQueueLimit, nil, 0),
+		lookbackWindow: attemptCacheExpiration,
 	}, nil
 }
 
@@ -102,6 +123,12 @@ func (p *StellarExecutionAttemptPoller) Start(ctx context.Context) error {
 		p.runPolling(runCtx)
 	}()
 
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.runRetryLoop(runCtx)
+	}()
+
 	p.lggr.Info().
 		Uint32("startLedger", p.startLedger).
 		Uint32("lastPolledLedger", p.lastPolledLedger).
@@ -126,6 +153,9 @@ func (p *StellarExecutionAttemptPoller) GetExecutionAttempts(_ context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get message ID: %w", err)
 	}
+
+	p.attemptCacheMu.Lock()
+	defer p.attemptCacheMu.Unlock()
 
 	attempts, exists := p.attemptCache.Get(msgID)
 	if !exists {
@@ -206,31 +236,13 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 		return nil
 	}
 
-	topicScVal := scval.SymbolToScValPtr(ExecutionStateChangedEventTopic)
-	zeroOrMore := protocolrpc.WildCardZeroOrMore
-
-	resp, err := p.rpcClient.GetEvents(ctx, protocolrpc.GetEventsRequest{
-		StartLedger: p.lastPolledLedger,
-		EndLedger:   toLedger,
-		Filters: []protocolrpc.EventFilter{
-			{
-				EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-				ContractIDs: []string{p.offrampContractID},
-				Topics: []protocolrpc.TopicFilter{
-					{
-						{ScVal: topicScVal},
-						{Wildcard: &zeroOrMore},
-					},
-				},
-			},
-		},
-	})
+	events, err := GetEventsInRange(ctx, p.rpcClient, p.offrampContractID, p.lastPolledLedger, toLedger, []string{ExecutionStateChangedEventTopic})
 	if err != nil {
-		return fmt.Errorf("failed to get events: %w", err)
+		return err
 	}
 
 	eventCount := 0
-	for _, e := range resp.Events {
+	for _, e := range events {
 		parsed, err := ParseExecutionStateChangedEvent(e)
 		if err != nil {
 			p.lggr.Warn().
@@ -245,7 +257,8 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 			p.lggr.Warn().
 				Str("txHash", parsed.TxHash).
 				Err(err).
-				Msg("Failed to process ExecutionStateChanged event")
+				Msg("Failed to process ExecutionStateChanged event, enqueueing for retry")
+			p.enqueueRetry(retryTask{event: parsed})
 			continue
 		}
 		eventCount++
@@ -262,6 +275,77 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 	}
 
 	return nil
+}
+
+// enqueueRetry adds a task to the retry queue. When the queue is full the
+// oldest task is evicted; the failed fetch is then unrecoverable until
+// process restart.
+func (p *StellarExecutionAttemptPoller) enqueueRetry(task retryTask) {
+	if evicted := p.retryQueue.Add(task.event.TxHash, task); evicted {
+		p.lggr.Error().
+			Str("txHash", task.event.TxHash).
+			Int("queueLimit", defaultRetryQueueLimit).
+			Msg("Retry queue full, evicted oldest ExecutionStateChanged event")
+	}
+}
+
+// runRetryLoop runs the ticker-based retry loop. It is separate from the
+// polling loop so that re-fetching failed transactions never blocks polling.
+func (p *StellarExecutionAttemptPoller) runRetryLoop(ctx context.Context) {
+	ticker := time.NewTicker(p.retryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.lggr.Debug().Msg("Context cancelled, exiting retry loop")
+			return
+		case <-ticker.C:
+			p.processRetries(ctx)
+		}
+	}
+}
+
+// processRetries drains the tasks that were pending at the start of the tick,
+// re-enqueueing the ones that still fail until they exhaust their retries.
+// Tasks enqueued during the drain (by this loop or the polling loop) are left
+// for the next tick, so a persistently failing task is retried at most once
+// per interval.
+func (p *StellarExecutionAttemptPoller) processRetries(ctx context.Context) {
+	// Keys() snapshots the pending tasks (oldest first): tasks enqueued during
+	// this drain are left for the next tick, so a persistently failing task is
+	// retried at most once per interval.
+	for _, txHash := range p.retryQueue.Keys() {
+		task, ok := p.retryQueue.Peek(txHash)
+		if !ok {
+			continue
+		}
+		p.retryQueue.Remove(txHash)
+
+		if err := p.processExecutionStateChanged(ctx, task.event); err != nil {
+			task.retries++
+			if task.retries >= maxEventProcessRetries {
+				p.lggr.Error().
+					Str("txHash", task.event.TxHash).
+					Int("retries", task.retries).
+					Err(err).
+					Msg("Exhausted retries for ExecutionStateChanged event, dropping")
+				continue
+			}
+			p.lggr.Debug().
+				Str("txHash", task.event.TxHash).
+				Int("retries", task.retries).
+				Err(err).
+				Msg("Retry of ExecutionStateChanged event failed, re-enqueueing")
+			p.enqueueRetry(task)
+			continue
+		}
+
+		p.lggr.Debug().
+			Str("txHash", task.event.TxHash).
+			Int("retries", task.retries).
+			Msg("ExecutionStateChanged event processed successfully on retry")
+	}
 }
 
 // processExecutionStateChanged fetches the transaction that triggered the event,
@@ -299,9 +383,11 @@ func (p *StellarExecutionAttemptPoller) processExecutionStateChanged(ctx context
 	}
 
 	msgID := protocol.Bytes32(event.MessageId)
+	p.attemptCacheMu.Lock()
 	attempts, _ := p.attemptCache.Get(msgID)
 	attempts = append(attempts, *attempt)
 	p.attemptCache.Add(msgID, attempts)
+	p.attemptCacheMu.Unlock()
 
 	p.lggr.Debug().
 		Str("messageID", fmt.Sprintf("%x", msgID)).

@@ -1,12 +1,16 @@
 package adapters
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
@@ -20,7 +24,6 @@ import (
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 	mcmstypes "github.com/smartcontractkit/mcms/types"
 
-	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	tpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -349,7 +352,7 @@ func poolProposalWrite(chainSelector uint64, poolType datastore.ContractType, po
 			OperationMetadata: mcmstypes.OperationMetadata{ContractType: string(poolType)},
 			To:                poolStrkey,
 			Data:              data,
-			AdditionalFields:  stellarPoolMCMSTxAdditionalFields(),
+			AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 		},
 	}
 }
@@ -401,12 +404,6 @@ func applyPoolAllowedFinality(
 			"cannot set allowed finality on pool %s: owner %q is neither deployer %q nor timelock %q",
 			poolStrkey, owner, deployerAddr, timelockStrkey)
 	}
-}
-
-// stellarPoolMCMSTxAdditionalFields marks proposal transactions as Soroban
-// invokes (same encoding the ownership sequences emit).
-func stellarPoolMCMSTxAdditionalFields() json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"family":"stellar","encodingVersion":%d}`, bindings.SorobanInvokeEncodingVersion))
 }
 
 // isRateLimitPoolType reports whether the pool type is served by the shared
@@ -562,4 +559,188 @@ func tokenBucketToRateLimiterConfig(bucket tpoolbindings.TokenBucket) tokens.Rat
 		Capacity:  u128ToBigInt(bucket.Capacity),
 		Rate:      u128ToBigInt(bucket.Rate),
 	}
+}
+
+var _ tokens.TokenPoolOwnershipChecker = (*StellarTokenAdapter)(nil)
+
+// IsPoolExternallyOwned implements tokens.TokenPoolOwnershipChecker: the pool
+// is externally owned when its on-chain owner is neither the chain's CLL
+// timelock (EOA lanes deploy none) nor the chain deployer. tokenRef is ignored
+// — a stellar pool contract alone identifies the pool (EVM parity). A failed
+// owner read is an error and must be treated as fatal by the caller, never a
+// skip.
+func (a *StellarTokenAdapter) IsPoolExternallyOwned(e cldf.Environment, chainSelector uint64, poolRef datastore.AddressRef, _ datastore.AddressRef) (bool, error) {
+	ch, ok := e.BlockChains.StellarChains()[chainSelector]
+	if !ok {
+		return false, fmt.Errorf("stellar chain %d not found", chainSelector)
+	}
+	dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(e.Logger))
+	if err != nil {
+		return false, fmt.Errorf("stellar deployer from chain %d: %w", chainSelector, err)
+	}
+	return isPoolExternallyOwned(context.Background(), stellardeps.FromDeployer(dep), dep.SignerAddress(), e.DataStore, chainSelector, poolRef)
+}
+
+// isPoolExternallyOwned is the ownership-check core (unit-tested with a
+// recording invoker).
+func isPoolExternallyOwned(ctx context.Context, deps stellardeps.StellarDeps, deployerAddr string, ds datastore.DataStore, chainSelector uint64, poolRef datastore.AddressRef) (bool, error) {
+	poolStrkey, err := resolvePoolStrkey(ds, chainSelector, poolRef)
+	if err != nil {
+		return false, err
+	}
+	owner, err := ownership.ContractOwner(ctx, deps, normalizePoolRefType(datastore.AddressRef{
+		ChainSelector: chainSelector,
+		Type:          poolRef.Type,
+		Address:       poolStrkey,
+	}))
+	if err != nil {
+		return false, fmt.Errorf("read owner of pool %s on chain %d: %w", poolStrkey, chainSelector, err)
+	}
+	if owner == deployerAddr {
+		return false, nil
+	}
+	timelock, hasTimelock, err := cllTimelockStrkey(ds, chainSelector)
+	if err != nil {
+		return false, err
+	}
+	if hasTimelock && owner == timelock {
+		return false, nil
+	}
+	return true, nil
+}
+
+var _ tokens.RemotePoolRemover = (*StellarTokenAdapter)(nil)
+
+// RemoveRemotePools implements tokens.RemotePoolRemover: each requested remote
+// pool is matched against the pool's current on-chain list and removed by its
+// exact stored bytes; a remote pool that is not currently configured is skipped
+// with a warning so re-runs are idempotent. The input carries no datastore, so
+// routing follows setTokenPoolDynamicConfig: a deployer-owned pool executes the
+// removals directly, any other owner gets one MCMS proposal transaction per
+// removal, which the owning timelock must execute.
+func (a *StellarTokenAdapter) RemoveRemotePools() *cldf_ops.Sequence[tokens.RemoveRemotePoolsSequenceInput, sequences.OnChainOutput, cldf_chain.BlockChains] {
+	return cldf_ops.NewSequence(
+		"stellar-token-adapter:remove-remote-pools",
+		stellarops.ContractDeploymentVersion,
+		"Removes remote pool entries from a token pool on a Stellar chain",
+		func(b cldf_ops.Bundle, chains cldf_chain.BlockChains, input tokens.RemoveRemotePoolsSequenceInput) (sequences.OnChainOutput, error) {
+			ch, ok := chains.StellarChains()[input.Selector]
+			if !ok {
+				return sequences.OnChainOutput{}, fmt.Errorf("stellar chain %d not found", input.Selector)
+			}
+			dep, err := stellardeployment.NewDeployerFromChain(ch, stellardeployment.WithLogger(b.Logger))
+			if err != nil {
+				return sequences.OnChainOutput{}, fmt.Errorf("stellar deployer from chain %d: %w", input.Selector, err)
+			}
+			return removeRemotePools(b, stellardeps.FromDeployer(dep), dep.SignerAddress(), input)
+		},
+	)
+}
+
+// removeRemotePools is the removal core (unit-tested with a recording
+// invoker). Removals are per-entry exact-equality writes, never whole-list
+// rewrites, so several can share one proposal without ordering hazards.
+func removeRemotePools(
+	b cldf_ops.Bundle,
+	deps stellardeps.StellarDeps,
+	deployerAddr string,
+	input tokens.RemoveRemotePoolsSequenceInput,
+) (sequences.OnChainOutput, error) {
+	poolRef := normalizePoolRefType(input.TokenPoolRef)
+	poolStrkey, err := ownership.NormalizeContractAddress(poolRef.Address)
+	if err != nil {
+		return sequences.OnChainOutput{}, fmt.Errorf("normalize pool address: %w", err)
+	}
+	if !isRateLimitPoolType(poolRef.Type) {
+		return sequences.OnChainOutput{}, fmt.Errorf(
+			"unsupported pool type %q for remote pool removal on chain %d (supported: %s, %s, %s)",
+			poolRef.Type, input.Selector, bmpops.ContractType, lrops.ContractType, slrrops.ContractType)
+	}
+	owner, err := ownership.ContractOwner(b.GetContext(), deps, poolRef)
+	if err != nil {
+		return sequences.OnChainOutput{}, fmt.Errorf("read owner of pool %s: %w", poolStrkey, err)
+	}
+
+	var proposals []evmcontract.WriteOutput
+	executed := false
+	removed := make(map[string]struct{})
+	for _, toRemove := range input.RemotePoolsToRemove {
+		want, err := remotePoolAddressBytes(toRemove.Remote.Address)
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("remote pool address for remote chain %d: %w", toRemove.Selector, err)
+		}
+		report, err := cldf_ops.ExecuteOperation(b, tpoolops.GetRemotePools, deps, tpoolops.GetRemotePoolsInput{
+			ContractID: poolStrkey, RemoteChainSelector: toRemove.Selector,
+		}, cldf_ops.WithForceExecute[tpoolops.GetRemotePoolsInput, stellardeps.StellarDeps]())
+		if err != nil {
+			return sequences.OnChainOutput{}, fmt.Errorf("read remote pools of pool %s for remote chain %d: %w", poolStrkey, toRemove.Selector, err)
+		}
+		matches := matchingRemotePoolEntries(report.Output, want)
+		if len(matches) == 0 {
+			b.Logger.Warnf(
+				"skipping removal of remote pool %s for remote chain %d on pool %s (chain %d): pairing already absent",
+				toRemove.Remote.Address, toRemove.Selector, poolStrkey, input.Selector)
+			continue
+		}
+		for _, stored := range matches {
+			key := fmt.Sprintf("%d:%x", toRemove.Selector, stored)
+			if _, dup := removed[key]; dup {
+				continue
+			}
+			removed[key] = struct{}{}
+			if owner == deployerAddr {
+				if _, err := cldf_ops.ExecuteOperation(b, tpoolops.RemoveRemotePool, deps, tpoolops.RemoveRemotePoolInput{
+					ContractID: poolStrkey, RemoteChainSelector: toRemove.Selector, RemotePoolAddress: stored,
+				}); err != nil {
+					return sequences.OnChainOutput{}, fmt.Errorf("remove remote pool %x for remote chain %d on pool %s: %w", stored, toRemove.Selector, poolStrkey, err)
+				}
+				executed = true
+				continue
+			}
+			data, err := mcmsutil.EncodeSorobanMCMSInvokePayload("remove_remote_pool", []xdr.ScVal{
+				scval.Uint64ToScVal(toRemove.Selector), scval.BytesToScVal(stored),
+			})
+			if err != nil {
+				return sequences.OnChainOutput{}, err
+			}
+			proposals = append(proposals, poolProposalWrite(input.Selector, poolRef.Type, poolStrkey, data))
+		}
+	}
+	return dynamicConfigOutput(input.Selector, poolRef.Type, poolStrkey, "stellar-remove-remote-pools-direct-exec", executed, proposals)
+}
+
+// matchingRemotePoolEntries returns the stored remote-pool entries equal to the
+// requested address in either wire form: raw family-native bytes (EVM 20, stellar
+// 32) or the 32-byte left-padded form the wiring writes. Both sides are normalized
+// to the padded form; each match is removed by its exact stored bytes.
+func matchingRemotePoolEntries(stored [][]byte, want []byte) [][]byte {
+	wantPadded := common.LeftPadBytes(want, 32)
+	var matches [][]byte
+	for _, entry := range stored {
+		if bytes.Equal(common.LeftPadBytes(entry, 32), wantPadded) {
+			matches = append(matches, entry)
+		}
+	}
+	return matches
+}
+
+// remotePoolAddressBytes decodes a remote pool address in the remote family's
+// recorded form: 0x-hex at the family's native length (EVM 20, stellar 32) or
+// a stellar strkey.
+func remotePoolAddressBytes(addr string) ([]byte, error) {
+	if strings.HasPrefix(addr, "0x") {
+		raw, err := hexutil.Decode(addr)
+		if err != nil {
+			return nil, fmt.Errorf("remote pool address %q is not valid hex: %w", addr, err)
+		}
+		if len(raw) != 20 && len(raw) != 32 {
+			return nil, fmt.Errorf("remote pool address %q decodes to %d bytes, want the family-native 20 or 32", addr, len(raw))
+		}
+		return raw, nil
+	}
+	raw, err := decodeTokenStrkey(addr)
+	if err != nil {
+		return nil, fmt.Errorf("remote pool address %q: %w", addr, err)
+	}
+	return raw, nil
 }

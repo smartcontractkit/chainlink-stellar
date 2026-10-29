@@ -19,7 +19,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    runs-on: runs-on=${{ github.run_id }}/family=c6i/cpu=32+48/ram=64+96/spot=false/image=ubuntu24-full-x64/extras=s3-cache+tmpfs
+    # spot=true: runs-on tries spot first (much cheaper) and falls back to
+    # on-demand automatically; a mid-job reclaim auto-reruns (up to 2x) and is
+    # free inside AWS's first-hour window. Jobs here are ~30 min.
+    runs-on: runs-on=${{ github.run_id }}/family=c6i/cpu=32+48/ram=64+96/spot=true/image=ubuntu24-full-x64/extras=s3-cache+tmpfs
     strategy:
       # Two parallel legs: a failure in one must not cancel the other.
       fail-fast: false

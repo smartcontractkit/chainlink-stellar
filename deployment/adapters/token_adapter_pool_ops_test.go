@@ -1,10 +1,14 @@
 package adapters
 
 import (
+	"context"
 	"math"
 	"math/big"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
@@ -478,4 +482,280 @@ func TestCllTimelockStrkey(t *testing.T) {
 	tl, ok, err = cllTimelockStrkey(ds.Seal(), 42)
 	require.NoError(t, err)
 	require.False(t, ok)
+}
+
+func TestStellarTokenAdapter_IsPoolExternallyOwned(t *testing.T) {
+	t.Parallel()
+	f := newPoolOpsFixtures(t)
+	poolRef := datastore.AddressRef{
+		ChainSelector: 42,
+		Type:          datastore.ContractType(bmpops.ContractType),
+		Address:       f.poolHex,
+	}
+	ownerStub := func(owner string) *operationstest.RecordingInvoker {
+		v := scval.AddressToScVal(owner)
+		return operationstest.NewRecordingInvoker().WithSimulateResultForContract(f.pool, "owner", &v)
+	}
+
+	t.Run("deployer-owned pool", func(t *testing.T) {
+		t.Parallel()
+		externallyOwned, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.deployer)}, f.deployer, timelockDS(t, f), 42, poolRef)
+		require.NoError(t, err)
+		require.False(t, externallyOwned)
+	})
+
+	t.Run("timelock-owned pool", func(t *testing.T) {
+		t.Parallel()
+		externallyOwned, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.timelock)}, f.deployer, timelockDS(t, f), 42, poolRef)
+		require.NoError(t, err)
+		require.False(t, externallyOwned)
+	})
+
+	t.Run("third-party pool", func(t *testing.T) {
+		t.Parallel()
+		externallyOwned, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.third)}, f.deployer, timelockDS(t, f), 42, poolRef)
+		require.NoError(t, err)
+		require.True(t, externallyOwned)
+	})
+
+	t.Run("third-party pool with no timelock on the chain", func(t *testing.T) {
+		t.Parallel()
+		externallyOwned, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.third)}, f.deployer, newSealedDatastore(), 42, poolRef)
+		require.NoError(t, err)
+		require.True(t, externallyOwned)
+	})
+
+	t.Run("deployer-owned pool with no timelock on the chain", func(t *testing.T) {
+		t.Parallel()
+		externallyOwned, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.deployer)}, f.deployer, newSealedDatastore(), 42, poolRef)
+		require.NoError(t, err)
+		require.False(t, externallyOwned)
+	})
+
+	t.Run("unset owner is fatal", func(t *testing.T) {
+		t.Parallel()
+		void := scval.VoidScVal()
+		inv := operationstest.NewRecordingInvoker().WithSimulateResultForContract(f.pool, "owner", &void)
+		_, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: inv}, f.deployer, timelockDS(t, f), 42, poolRef)
+		require.ErrorContains(t, err, "no owner")
+	})
+
+	t.Run("unsupported pool type is fatal", func(t *testing.T) {
+		t.Parallel()
+		badType := poolRef
+		badType.Type = "SomeOtherPool"
+		_, err := isPoolExternallyOwned(context.Background(), stellardeps.StellarDeps{Invoker: ownerStub(f.deployer)}, f.deployer, timelockDS(t, f), 42, badType)
+		require.ErrorContains(t, err, "unsupported contract type")
+	})
+}
+
+func TestStellarTokenAdapter_RemoveRemotePools(t *testing.T) {
+	t.Parallel()
+	f := newPoolOpsFixtures(t)
+	evmPool := common.HexToAddress("0x1234567890AbCdEf1234567890aBcDeF12345678")
+	evmPadded := common.LeftPadBytes(evmPool.Bytes(), 32)
+	stellarRemote := stellarutil.MustGenerateMockContractID("deployer", "remove-remote-pools-stellar-remote")
+	stellarRemoteHex, err := stellarutil.StrkeyToHex(stellarRemote)
+	require.NoError(t, err)
+
+	newInput := func(removes ...tokens.RemotePoolToRemove) tokens.RemoveRemotePoolsSequenceInput {
+		return tokens.RemoveRemotePoolsSequenceInput{
+			Selector: 42,
+			TokenPoolRef: datastore.AddressRef{
+				ChainSelector: 42,
+				Type:          datastore.ContractType(bmpops.ContractType),
+				Address:       f.poolHex,
+			},
+			RemotePoolsToRemove: removes,
+		}
+	}
+	remotePoolsStub := func(inv *operationstest.RecordingInvoker, stored ...[]byte) *operationstest.RecordingInvoker {
+		vals := make([]xdr.ScVal, 0, len(stored))
+		for _, b := range stored {
+			vals = append(vals, scval.BytesToScVal(b))
+		}
+		vec := scval.VecToScVal(vals)
+		return inv.WithSimulateResultForContract(f.pool, "get_remote_pools", &vec)
+	}
+	removeRecords := func(inv *operationstest.RecordingInvoker) []operationstest.InvokeRecord {
+		var out []operationstest.InvokeRecord
+		for _, r := range inv.Records() {
+			if r.Fn == "remove_remote_pool" {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+
+	t.Run("deployer-owned pool removes the stored padded form directly", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), evmPadded)
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 1)
+		require.Equal(t, f.pool, recs[0].ContractID)
+		remote, ok := recs[0].Args[0].GetU64()
+		require.True(t, ok)
+		require.Equal(t, uint64(7), uint64(remote))
+		stored, ok := recs[0].Args[1].GetBytes()
+		require.True(t, ok)
+		require.Equal(t, evmPadded, []byte(stored))
+		// Direct-exec marker: one ExecInfo-marked empty batch op.
+		require.Len(t, out.BatchOps, 1)
+		require.Empty(t, out.BatchOps[0].Transactions)
+	})
+
+	t.Run("raw stellar remote form is removed by its exact bytes", func(t *testing.T) {
+		t.Parallel()
+		rawRemote, err := strkey.Decode(strkey.VersionByteContract, stellarRemote)
+		require.NoError(t, err)
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: stellarRemoteHex},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), rawRemote)
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 1)
+		stored, ok := recs[0].Args[1].GetBytes()
+		require.True(t, ok)
+		require.Equal(t, rawRemote, []byte(stored))
+		require.Len(t, out.BatchOps, 1)
+		require.Empty(t, out.BatchOps[0].Transactions)
+	})
+
+	t.Run("padded request removes a raw stored form by its exact bytes", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: hexutil.Encode(evmPadded)},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), []byte(evmPool.Bytes()))
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 1)
+		stored, ok := recs[0].Args[1].GetBytes()
+		require.True(t, ok)
+		require.Equal(t, []byte(evmPool.Bytes()), []byte(stored))
+		require.Len(t, out.BatchOps, 1)
+		require.Empty(t, out.BatchOps[0].Transactions)
+	})
+
+	t.Run("raw and padded stored forms are both removed by their exact bytes", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""),
+			[]byte(evmPool.Bytes()), evmPadded)
+		_, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		recs := removeRecords(inv)
+		require.Len(t, recs, 2)
+		removedForms := make(map[string]bool)
+		for _, r := range recs {
+			stored, ok := r.Args[1].GetBytes()
+			require.True(t, ok)
+			removedForms[string(stored)] = true
+		}
+		require.True(t, removedForms[string(evmPool.Bytes())])
+		require.True(t, removedForms[string(evmPadded)])
+	})
+
+	t.Run("absent pairing is skipped with no write", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{
+			Selector: 7,
+			Remote:   datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()},
+		})
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), []byte{1, 2, 3})
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		require.Empty(t, removeRecords(inv))
+		require.Empty(t, out.BatchOps)
+	})
+
+	t.Run("timelock-owned pool gets one proposal transaction per removal", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(
+			tokens.RemotePoolToRemove{Selector: 7, Remote: datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()}},
+			tokens.RemotePoolToRemove{Selector: 8, Remote: datastore.AddressRef{ChainSelector: 8, Address: stellarRemoteHex}},
+		)
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.timelock, ""),
+			evmPadded,
+			common.LeftPadBytes(mustDecodeContractStrkey(t, stellarRemote), 32))
+		out, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		require.Empty(t, removeRecords(inv), "no direct invokes on a timelock-owned pool")
+		require.Len(t, out.BatchOps, 1)
+		require.Len(t, out.BatchOps[0].Transactions, 2)
+		want := map[uint64][]byte{
+			7: evmPadded,
+			8: common.LeftPadBytes(mustDecodeContractStrkey(t, stellarRemote), 32),
+		}
+		for _, tx := range out.BatchOps[0].Transactions {
+			require.Equal(t, f.pool, tx.To)
+			require.Contains(t, string(tx.AdditionalFields), `"family":"stellar"`)
+			fn, args, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
+			require.NoError(t, err)
+			require.Equal(t, "remove_remote_pool", fn)
+			remote, ok := args[0].GetU64()
+			require.True(t, ok)
+			stored, ok := args[1].GetBytes()
+			require.True(t, ok)
+			require.Equal(t, want[uint64(remote)], []byte(stored))
+		}
+	})
+
+	t.Run("duplicate requests remove the pairing once", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(
+			tokens.RemotePoolToRemove{Selector: 7, Remote: datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()}},
+			tokens.RemotePoolToRemove{Selector: 7, Remote: datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()}},
+		)
+		inv := remotePoolsStub(ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, ""), evmPadded)
+		_, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.NoError(t, err)
+		require.Len(t, removeRecords(inv), 1)
+	})
+
+	t.Run("unsupported pool type errors", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{Selector: 7, Remote: datastore.AddressRef{ChainSelector: 7, Address: evmPool.Hex()}})
+		input.TokenPoolRef.Type = "SomeOtherPool"
+		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, "")
+		_, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.ErrorContains(t, err, "unsupported pool type")
+	})
+
+	t.Run("invalid remote address errors", func(t *testing.T) {
+		t.Parallel()
+		input := newInput(tokens.RemotePoolToRemove{Selector: 7, Remote: datastore.AddressRef{ChainSelector: 7, Address: "not-an-address"}})
+		inv := ownerAndAdmin(operationstest.NewRecordingInvoker(), f, f.deployer, "")
+		_, err := removeRemotePools(operationstest.NewBundle(t), stellardeps.StellarDeps{Invoker: inv}, f.deployer, input)
+		require.ErrorContains(t, err, "remote pool address")
+	})
+
+	t.Run("sequence errors on missing chain", func(t *testing.T) {
+		t.Parallel()
+		a := &StellarTokenAdapter{}
+		_, err := cldf_ops.ExecuteSequence(operationstest.NewBundle(t), a.RemoveRemotePools(), cldf_chain.NewBlockChains(nil), newInput())
+		require.ErrorContains(t, err, "stellar chain 42 not found")
+	})
+}
+
+// mustDecodeContractStrkey decodes a contract strkey to its raw 32 bytes.
+func mustDecodeContractStrkey(t *testing.T, cid string) []byte {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteContract, cid)
+	require.NoError(t, err)
+	return raw
 }

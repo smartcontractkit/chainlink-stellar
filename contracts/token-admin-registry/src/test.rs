@@ -88,6 +88,28 @@ fn test_propose_administrator_by_owner() {
 }
 
 #[test]
+fn test_repeated_propose_leaves_single_index_entry() {
+    // A token whose proposed admin never accepts can be proposed again —
+    // `administrator` stays None, so the already-registered check passes —
+    // which makes `add_token_to_index` re-run for an indexed token. The
+    // reverse lookup must keep that idempotent in O(1), like EVM's
+    // EnumerableSet.add, instead of scanning every historical index entry.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner) = setup(&env);
+    let token = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    client.propose_administrator(&owner, &token, &admin);
+    client.propose_administrator(&owner, &token, &admin);
+
+    let tokens = client.get_all_configured_tokens(&0, &100);
+    assert_eq!(tokens.len(), 1, "re-propose must not duplicate the index");
+    assert_eq!(tokens.get(0).unwrap(), token);
+}
+
+#[test]
 fn test_propose_administrator_by_registry_module() {
     let env = Env::default();
     env.mock_all_auths();

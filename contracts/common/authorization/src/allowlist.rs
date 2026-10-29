@@ -104,7 +104,6 @@ pub trait AllowListable: Ownable {
     /// * `callers` - Addresses to add
     ///
     /// # Errors
-    /// * `FeatureNotEnabled` - Allow list not initialized for an update that disables a chain with no prior entry
     /// * `InvalidAllowListRequest` - Update adds senders while setting `allowlist_enabled = false`
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
@@ -122,15 +121,9 @@ pub trait AllowListable: Ownable {
             let to_add = update.added_allowlisted_senders;
             let to_remove = update.removed_allowlisted_senders;
 
-            // The call to `is_allowlist_enabled` will return false if the allowlist has never been set.
-            if !Self::is_allowlist_enabled(env, key) && !update.allowlist_enabled {
-                return Err(CCIPError::FeatureNotEnabled);
-            }
-
-            // EVM parity (`BaseVerifier._applyAllowlistUpdates`): an update that keeps
-            // or sets the allowlist disabled must not add senders — the additions would
-            // be ineffective. Only reachable when the chain is currently enabled;
-            // otherwise `FeatureNotEnabled` above fires first.
+            // EVM parity (`BaseVerifier._applyAllowlistUpdates`, BaseVerifier.sol:272-287):
+            // an update that keeps or sets the allowlist disabled must not add senders —
+            // the additions would be ineffective.
             if !update.allowlist_enabled && !to_add.is_empty() {
                 return Err(CCIPError::InvalidAllowListRequest);
             }
@@ -140,6 +133,13 @@ pub trait AllowListable: Ownable {
                 .instance()
                 .get(&Self::ALLOW_LIST)
                 .unwrap_or(Map::new(env));
+
+            // EVM parity: disabling a never-configured chain is a no-op (zero-value slot — no
+            // state change, no event). Only reachable with empty additions — the additions
+            // case is rejected above via InvalidAllowListRequest, as on EVM.
+            if !data.contains_key(key) && !update.allowlist_enabled && to_add.is_empty() {
+                continue;
+            }
 
             // An absent entry reads as disabled, so a first-time enable counts as a flip.
             let old_enabled = data

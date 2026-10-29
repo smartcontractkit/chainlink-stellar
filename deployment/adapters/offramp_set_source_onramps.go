@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -19,7 +18,6 @@ import (
 	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
-	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -214,7 +212,7 @@ func setOffRampSourceOnRamps(
 				OperationMetadata: mcmstypes.OperationMetadata{ContractType: offrampops.ContractType},
 				To:                offRampID,
 				Data:              data,
-				AdditionalFields:  stellarOffRampMCMSTxAdditionalFields(),
+				AdditionalFields:  mcmsutil.StellarMCMSTxAdditionalFields(),
 			},
 		}})
 		if err != nil {
@@ -325,10 +323,4 @@ func unorderedOnRampBytesEqual(a, b [][]byte) bool {
 		}
 	}
 	return true
-}
-
-// stellarOffRampMCMSTxAdditionalFields marks proposal transactions as Soroban
-// invokes (same encoding the ownership sequences emit).
-func stellarOffRampMCMSTxAdditionalFields() json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"family":"stellar","encodingVersion":%d}`, bindings.SorobanInvokeEncodingVersion))
 }

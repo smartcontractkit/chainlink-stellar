@@ -410,22 +410,17 @@ impl TokenAdminRegistryContract {
     fn add_token_to_index(env: &Env, token: &Address) {
         let count: u32 = env.storage().instance().get(&TOKEN_COUNT).unwrap_or(0u32);
 
-        // Only add if not already indexed (idempotent, same as EVM's EnumerableSet.add)
-        for i in 0..count {
-            let existing: Address = env
-                .storage()
-                .persistent()
-                .get(&DataKey::TokenIndex(i))
-                .unwrap();
-            if existing == *token {
-                return;
-            }
+        // O(1) idempotency via the reverse lookup. EVM's EnumerableSet.add is
+        // O(1) too — a values-set mapping — so scanning every historical index
+        // entry per registration is not parity.
+        let storage = env.storage().persistent();
+        let lookup_key = DataKey::TokenIndexLookup(token.clone());
+        if storage.has(&lookup_key) {
+            return;
         }
 
-        // TODO: should we introduce an extension for the TTL here?
-        env.storage()
-            .persistent()
-            .set(&DataKey::TokenIndex(count), token);
+        storage.set(&lookup_key, &count);
+        storage.set(&DataKey::TokenIndex(count), token);
         env.storage().instance().set(&TOKEN_COUNT, &(count + 1));
     }
 }

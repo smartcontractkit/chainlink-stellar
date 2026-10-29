@@ -1,7 +1,6 @@
 package sequences
 
 import (
-	"encoding/json"
 	"fmt"
 
 	cldfchain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
@@ -12,7 +11,6 @@ import (
 	"github.com/smartcontractkit/chainlink-ccip/deployment/deploy"
 	seqcore "github.com/smartcontractkit/chainlink-ccip/deployment/utils/sequences"
 
-	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
@@ -26,10 +24,6 @@ import (
 type StellarTransferOwnershipInput struct {
 	deploy.TransferOwnershipPerChainInput
 	GovernanceAddr string
-}
-
-func stellarMCMSTxAdditionalFields() json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"family":"stellar","encodingVersion":%d}`, bindings.SorobanInvokeEncodingVersion))
 }
 
 // StellarTransferOwnershipViaMCMS mirrors EVM chains/evm/.../operations/mcms OpTransferOwnership:
@@ -90,7 +84,7 @@ var StellarTransferOwnershipViaMCMS = cldfops.NewSequence(
 						},
 						To:               ref.Address,
 						Data:             data,
-						AdditionalFields: stellarMCMSTxAdditionalFields(),
+						AdditionalFields: mcmsutil.StellarMCMSTxAdditionalFields(),
 					},
 				}
 			default:
@@ -166,7 +160,7 @@ var StellarAcceptOwnership = cldfops.NewSequence(
 						},
 						To:               ref.Address,
 						Data:             data,
-						AdditionalFields: stellarMCMSTxAdditionalFields(),
+						AdditionalFields: mcmsutil.StellarMCMSTxAdditionalFields(),
 					},
 				}
 			default:

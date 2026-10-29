@@ -101,7 +101,7 @@ func upgradeContractRef(
 				},
 				To:               ref.Address,
 				Data:             data,
-				AdditionalFields: stellarMCMSTxAdditionalFields(),
+				AdditionalFields: mcmsutil.StellarMCMSTxAdditionalFields(),
 			},
 		}, nil
 	default:
