@@ -236,31 +236,13 @@ func (p *StellarExecutionAttemptPoller) pollForEvents(ctx context.Context) error
 		return nil
 	}
 
-	topicScVal := scval.SymbolToScValPtr(ExecutionStateChangedEventTopic)
-	zeroOrMore := protocolrpc.WildCardZeroOrMore
-
-	resp, err := p.rpcClient.GetEvents(ctx, protocolrpc.GetEventsRequest{
-		StartLedger: p.lastPolledLedger,
-		EndLedger:   toLedger,
-		Filters: []protocolrpc.EventFilter{
-			{
-				EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-				ContractIDs: []string{p.offrampContractID},
-				Topics: []protocolrpc.TopicFilter{
-					{
-						{ScVal: topicScVal},
-						{Wildcard: &zeroOrMore},
-					},
-				},
-			},
-		},
-	})
+	events, err := GetEventsInRange(ctx, p.rpcClient, p.offrampContractID, p.lastPolledLedger, toLedger, []string{ExecutionStateChangedEventTopic})
 	if err != nil {
-		return fmt.Errorf("failed to get events: %w", err)
+		return err
 	}
 
 	eventCount := 0
-	for _, e := range resp.Events {
+	for _, e := range events {
 		parsed, err := ParseExecutionStateChangedEvent(e)
 		if err != nil {
 			p.lggr.Warn().
