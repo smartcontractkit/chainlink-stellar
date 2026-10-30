@@ -1801,13 +1801,11 @@ impl OnRampContract {
         )
     }
 
-    /// Cross-contract call to `Executor::get_fee` (H-8 / INV-FEE-8). Uses a raw
-    /// `invoke_contract` (not `ExecutorClient`) so the `Result<u32, CCIPError>`
-    /// return propagates through `?` — the interface crate redeclares `CCIPError`
-    /// as a separate type, so a typed client would raise a type mismatch. Mirrors
-    /// [`Self::get_ccv_fee_internal`]. The executor view enforces the executor
-    /// layer of the 5-layer FTF opt-in matrix (reverting on disallowed finality),
-    /// so the OnRamp needs no separate executor-layer finality check.
+    /// Cross-contract call to `Executor::get_fee` (H-8 / INV-FEE-8). Raw `invoke_contract`
+    /// because the interface crate redeclares `CCIPError` (typed-client mismatch). A typed
+    /// `Err` never reaches `?`: it host-traps the whole `ccip_send` — source-side parity
+    /// with EVM, whose `getFee` revert also reverts the send. The executor view enforces
+    /// the executor layer of the FTF opt-in matrix, so no separate OnRamp check is needed.
     fn get_executor_fee_internal(
         env: &Env,
         executor_address: &Address,

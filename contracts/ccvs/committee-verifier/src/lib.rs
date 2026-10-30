@@ -87,21 +87,43 @@ impl CurseCheckable for CommitteeVerifierContract {
 impl AllowListable for CommitteeVerifierContract {
     const ALLOW_LIST: Symbol = ALLOWLIST;
 
-    fn emit_allowlist_updated_event(
+    fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
-        _added_addresses: &Vec<Address>,
-        _removed_addresses: &Vec<Address>,
+        new_enabled_state: Option<bool>,
+        added_addresses: &Vec<Address>,
+        removed_addresses: &Vec<Address>,
     ) {
-        let allowlist_enabled = Self::get_allowlist_entry(env, key)
-            .map(|e| e.allowlist_enabled)
-            .unwrap_or(false);
+        // Exported via `#[contractimpl(contracttrait)]`: without this gate any account
+        // could publish forged allowlist events. Owner auth is already attached when
+        // `apply_allowlist_updates` calls this hook.
+        <Self as Ownable>::require_owner(env).expect("owner set at initialize");
 
-        events::AllowListStateChangedEvent {
-            dest_chain_selector: key,
-            allowlist_enabled,
+        // EVM parity (`BaseVerifier._applyAllowlistUpdates`): state-changed only on an
+        // actual flag flip; per-sender events only for actual set changes.
+        if let Some(allowlist_enabled) = new_enabled_state {
+            events::AllowListStateChangedEvent {
+                dest_chain_selector: key,
+                allowlist_enabled,
+            }
+            .publish(env);
         }
-        .publish(env);
+
+        for sender in removed_addresses.iter() {
+            events::AllowListSendersRemovedEvent {
+                dest_chain_selector: key,
+                sender,
+            }
+            .publish(env);
+        }
+
+        for sender in added_addresses.iter() {
+            events::AllowListSendersAddedEvent {
+                dest_chain_selector: key,
+                sender,
+            }
+            .publish(env);
+        }
     }
 }
 

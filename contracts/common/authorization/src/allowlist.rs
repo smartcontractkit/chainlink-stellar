@@ -40,9 +40,18 @@ pub struct AllowListEntry {
 pub trait AllowListable: Ownable {
     const ALLOW_LIST: Symbol; // Storage key for the allow list data
 
-    fn emit_allowlist_updated_event(
+    /// Emit the update's events (EVM `BaseVerifier._applyAllowlistUpdates` parity):
+    /// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
+    /// state-changed event only then), and `added_addresses`/`removed_addresses` carry
+    /// only the addresses that actually changed set membership.
+    ///
+    /// `#[contractimpl(contracttrait)]` exports this as a public entrypoint with a
+    /// caller-controlled payload — implementers MUST owner-gate it (see the
+    /// committee-verifier impl), otherwise any account can forge allowlist events.
+    fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
+        new_enabled_state: Option<bool>,
         added_addresses: &Vec<Address>,
         removed_addresses: &Vec<Address>,
     );
@@ -99,6 +108,7 @@ pub trait AllowListable: Ownable {
     /// * `callers` - Addresses to add
     ///
     /// # Errors
+    /// * `InvalidAllowListRequest` - Update adds senders while setting `allowlist_enabled = false`
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
     ///
@@ -115,6 +125,13 @@ pub trait AllowListable: Ownable {
             let to_add = update.added_allowlisted_senders;
             let to_remove = update.removed_allowlisted_senders;
 
+            // EVM parity (`BaseVerifier._applyAllowlistUpdates`, BaseVerifier.sol:272-287):
+            // an update that keeps or sets the allowlist disabled must not add senders —
+            // the additions would be ineffective.
+            if !update.allowlist_enabled && !to_add.is_empty() {
+                return Err(CCIPError::InvalidAllowListRequest);
+            }
+
             let mut data: Map<u64, AllowListEntry> = env
                 .storage()
                 .instance()
@@ -122,43 +139,57 @@ pub trait AllowListable: Ownable {
                 .unwrap_or(Map::new(env));
 
             // EVM parity: disabling a never-configured chain is a no-op (zero-value slot — no
-            // state change, no event). Only when nothing is being added: additions are still
-            // applied rather than silently dropped (EVM rejects them via
-            // InvalidAllowListRequest — not yet enforced here).
+            // state change, no event). Only reachable with empty additions — the additions
+            // case is rejected above via InvalidAllowListRequest, as on EVM.
             if !data.contains_key(key) && !update.allowlist_enabled && to_add.is_empty() {
                 continue;
             }
+
+            // An absent entry reads as disabled, so a first-time enable counts as a flip.
+            let old_enabled = data
+                .get(key)
+                .map(|entry| entry.allowlist_enabled)
+                .unwrap_or(false);
+            let flipped =
+                (old_enabled != update.allowlist_enabled).then_some(update.allowlist_enabled);
 
             let mut allowlist_entry = data.get(key).unwrap_or(AllowListEntry {
                 allowlist_enabled: update.allowlist_enabled,
                 allowlist: Vec::new(env),
             });
 
-            // EVM parity (BaseVerifier.sol:258-259): rewrite the enabled flag from the
-            // payload on every update, not only when the entry is first created.
+            // EVM parity: the enabled flag is rewritten from the payload on every update,
+            // not only when the entry is first created.
             allowlist_entry.allowlist_enabled = update.allowlist_enabled;
 
-            for address in to_add.iter() {
-                if !allowlist_entry.allowlist.contains(address.clone()) {
-                    allowlist_entry.allowlist.push_back(address.clone());
+            // Removals before adds, matching EVM's event ordering. Events report only
+            // actual set changes (EVM emits per-sender events iff add/remove returned true).
+            let mut actually_removed: Vec<Address> = Vec::new(env);
+            for address in to_remove.iter() {
+                if let Some(idx) = allowlist_entry.allowlist.first_index_of(address.clone()) {
+                    allowlist_entry.allowlist.remove(idx);
+                    actually_removed.push_back(address.clone());
                 }
             }
 
-            for address in to_remove.iter() {
-                if allowlist_entry.allowlist.contains(address.clone()) {
-                    allowlist_entry.allowlist.remove(
-                        allowlist_entry
-                            .allowlist
-                            .first_index_of(address.clone())
-                            .unwrap(),
-                    );
+            let mut actually_added: Vec<Address> = Vec::new(env);
+            for address in to_add.iter() {
+                if !allowlist_entry.allowlist.contains(address.clone()) {
+                    allowlist_entry.allowlist.push_back(address.clone());
+                    actually_added.push_back(address.clone());
                 }
             }
 
             data.set(key, allowlist_entry);
             env.storage().instance().set(&Self::ALLOW_LIST, &data);
 
-            Self::emit_allowlist_updated_event(env, key, &to_add, &to_remove);
+            Self::emit_allowlist_updated_events(
+                env,
+                key,
+                flipped,
+                &actually_added,
+                &actually_removed,
+            );
         }
 
         Ok(())
