@@ -19,8 +19,9 @@ use common_error::CCIPError;
 use common_helpers::fee_math;
 use common_interfaces::committee_verifier::FeeResponse;
 use common_message::{
-    CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, StellarToAnyMessage,
-    TokenAmount, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE, TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE,
+    CcipMessageV1, CcipTokenTransferV1, FromBytes, GenericExtraArgsV3, MessageIdCompute,
+    StellarToAnyMessage, TokenAmount, MESSAGE_V1_STELLAR_SOURCE_BASE_SIZE,
+    TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE,
 };
 
 /// `address_bytes_length` used by every EVM-dest lane in this suite (all
@@ -2729,6 +2730,70 @@ fn test_forward_from_router_nonempty_pool_does_not_fold_defaults() {
         "non-empty pool list with include_defaults=false must NOT fold lane defaults — \
          the committed ccv_and_executor_hash must equal hash([pool_ccv], default_executor), \
          not hash(default_ccvs, default_executor)"
+    );
+}
+
+/// Regression: `executor_args` carry security-critical dest-side execution params
+/// (Solana account lists, Sui object IDs), so they must be committed into the signed
+/// message via `dest_blob` — EVM `OnRamp.forwardFromRouter` parity (OnRamp.sol:253).
+/// Previously `dest_blob` was hard-coded empty and executor_args lived only in the
+/// unhashed executor receipt. This test proves commitment: the emitted message's
+/// `dest_blob` equals the sender's executor_args, and recomputing the message ID
+/// with an empty `dest_blob` yields a DIFFERENT hash than the committed message ID.
+#[test]
+fn test_forward_from_router_commits_executor_args_in_dest_blob() {
+    let lane = setup_token_transfer_lane();
+    let env = &lane.env;
+
+    let executor_args = Bytes::from_slice(env, b"solana-accounts-v1");
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: executor_args.clone(),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let message = StellarToAnyMessage {
+        receiver: Bytes::from_array(env, &[0x33u8; 20]),
+        data: Bytes::from_slice(env, b"data-only message"),
+        token_amounts: Vec::new(env),
+        fee_token: lane.fee_token.clone(),
+        extra_args: extra_args.to_xdr(env),
+    };
+
+    let required_fee = lane
+        .router_client
+        .get_fee(&lane.evm_chain_selector, &message);
+    lane.fee_token_sac.mint(&lane.sender, &(required_fee * 2));
+    let message_id = lane
+        .router_client
+        .ccip_send(&lane.sender, &lane.evm_chain_selector, &message);
+
+    let encoded = encoded_message_from_last_onramp_event(env, &lane.onramp_id);
+    let mut decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+
+    assert_eq!(
+        decoded.dest_blob, executor_args,
+        "executor_args must be committed into the signed message via dest_blob"
+    );
+    assert_eq!(
+        decoded
+            .compute_message_id(env)
+            .expect("recompute message id"),
+        message_id,
+        "the emitted encoded message must hash to the committed message id"
+    );
+
+    decoded.dest_blob = Bytes::new(env);
+    assert_ne!(
+        decoded
+            .compute_message_id(env)
+            .expect("recompute message id with empty dest_blob"),
+        message_id,
+        "emptying dest_blob must change the message id — executor_args are part of the hash"
     );
 }
 
