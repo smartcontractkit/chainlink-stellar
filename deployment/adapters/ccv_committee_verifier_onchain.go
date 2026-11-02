@@ -216,6 +216,43 @@ func setAllowedFinalityConfigCore(
 	return w.proposalOp("set_allowed_finality_config", []xdr.ScVal{scval.Uint32ToScVal(allowedFinality)})
 }
 
+// allowlistWriteAuth routes allowlist updates the way the contract (and the EVM
+// adapter) authorizes them: the owner OR the configured allowlist admin may execute
+// directly; anything else goes to the owner timelock as an MCMS proposal. Returns the
+// caller identity the contract will authorize (deployer for direct exec, the timelock
+// for proposals — its invoker-contract auth satisfies require_auth at execution).
+func (w committeeVerifierWrite) allowlistWriteAuth(ctx context.Context) (propose bool, caller string, err error) {
+	owner, err := w.readOwner(ctx, w.deps, w.ref)
+	if err != nil {
+		return false, "", fmt.Errorf("read owner of committee verifier %s: %w", w.ref.Address, err)
+	}
+	if owner == w.deployer {
+		return false, w.deployer, nil
+	}
+	cfg, err := w.directClient().GetDynamicConfig(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("read dynamic config of committee verifier %s: %w", w.ref.Address, err)
+	}
+	if cfg.AllowlistAdmin != nil && *cfg.AllowlistAdmin == w.deployer {
+		return false, w.deployer, nil
+	}
+	for _, ref := range w.chainRefs {
+		if ref.Type != datastore.ContractType(cciputils.RBACTimelock) || !ref.Version.Equal(deploy.MCMSVersion) {
+			continue
+		}
+		addr, err := ownership.NormalizeContractAddress(ref.Address)
+		if err != nil {
+			return false, "", fmt.Errorf("normalize RBACTimelock %s on chain %d: %w", ref.Address, ref.ChainSelector, err)
+		}
+		if addr == owner {
+			return true, addr, nil
+		}
+	}
+	return false, "", fmt.Errorf(
+		"committee verifier %s (chain %d) owner %q is neither the deployer %q nor a deployed RBACTimelock, and the deployer is not the allowlist admin; no operation emitted",
+		w.ref.Address, w.ref.ChainSelector, owner, w.deployer)
+}
+
 func applyAllowlistUpdatesCore(
 	ctx context.Context,
 	w committeeVerifierWrite,
@@ -231,18 +268,18 @@ func applyAllowlistUpdatesCore(
 		RemovedAllowlistedSenders: removedSenders,
 	}}
 
-	propose, err := w.mustPropose(ctx)
+	propose, caller, err := w.allowlistWriteAuth(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !propose {
-		if err := w.directClient().ApplyAllowlistUpdates(ctx, updates); err != nil {
+		if err := w.directClient().ApplyAllowlistUpdates(ctx, caller, updates); err != nil {
 			return nil, fmt.Errorf("apply_allowlist_updates on chain %d: %w", w.ref.ChainSelector, err)
 		}
 		return nil, nil
 	}
 
-	return w.proposalOp("apply_allowlist_updates", []xdr.ScVal{scval.StructSliceToScVal(updates)})
+	return w.proposalOp("apply_allowlist_updates", []xdr.ScVal{scval.AddressToScVal(caller), scval.StructSliceToScVal(updates)})
 }
 
 // committeeVerifierWriteTarget resolves the single CommitteeVerifier for

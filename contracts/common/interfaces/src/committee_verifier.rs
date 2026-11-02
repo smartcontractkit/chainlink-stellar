@@ -78,6 +78,7 @@ pub trait CommitteeVerifierInterface {
     ) -> Result<soroban_sdk::Vec<soroban_sdk::Bytes>, CCIPError>;
     fn apply_allowlist_updates(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         updates: soroban_sdk::Vec<AllowListUpdate>,
     ) -> Result<(), CCIPError>;
     fn apply_signature_configs(

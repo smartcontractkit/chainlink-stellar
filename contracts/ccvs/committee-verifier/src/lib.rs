@@ -4,7 +4,7 @@ mod events;
 pub mod types;
 
 use common_authorization::allowlist::{
-    AllowListEntry, AllowListEvents, AllowListUpdate, AllowListable,
+    AllowListEntry, AllowListHooks, AllowListUpdate, AllowListable,
 };
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
@@ -90,9 +90,18 @@ impl AllowListable for CommitteeVerifierContract {
     const ALLOW_LIST: Symbol = ALLOWLIST;
 }
 
-// Plain impl, NOT `#[contractimpl]`: keeps the event hook out of the exported
-// entrypoints, so no account can call it directly to forge allowlist events.
-impl AllowListEvents for CommitteeVerifierContract {
+// Plain impl, NOT `#[contractimpl]`: keeps the hooks out of the exported
+// entrypoints, so no account can call them directly to forge allowlist events.
+impl AllowListHooks for CommitteeVerifierContract {
+    // EVM `CommitteeVerifier`: `allowlistAdmin` from the dynamic config may manage
+    // the allowlist alongside the owner.
+    fn allowlist_admin(env: &Env) -> Option<Address> {
+        env.storage()
+            .instance()
+            .get(&DYNAMIC_CONFIG)
+            .and_then(|config: DynamicConfig| config.allowlist_admin)
+    }
+
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,

@@ -30,25 +30,17 @@ pub struct AllowListEntry {
     pub allowlist: Vec<Address>,
 }
 
-/// A trait to maintain a set of allowed addresses for a any purpose.
-/// It can be used for authorization as well as guarding access to certain functions.
-///
-/// For example: The Committee Verifier contract can use this trait to maintain a set of allowed addresses for a given destination chain.
-///
-/// The allow list is a map of u64 to vector of addresses.
-/// Event hook for [`AllowListable::apply_allowlist_updates`]. Deliberately a PLAIN
-/// trait, not part of the `#[contracttrait]`: contracttrait methods are exported as
-/// public entrypoints, and this payload is caller-controlled — an exported hook would
-/// let any account forge allowlist events. (Gating an exported hook with
-/// `require_owner` is NOT an option: `apply_allowlist_updates` already requires owner
-/// auth, and a second `require_auth` for the same address traps the frame with
-/// `Error(Auth, ExistingValue)`.)
-///
-/// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
-/// state-changed event only then — EVM `BaseVerifier._applyAllowlistUpdates` parity),
-/// and `added_addresses`/`removed_addresses` carry only the addresses that actually
-/// changed set membership.
-pub trait AllowListEvents {
+/// Hooks for [`AllowListable`]. Deliberately a PLAIN trait, not part of the
+/// `#[contracttrait]`: contracttrait methods are exported as public entrypoints, and
+/// the event hook's payload is caller-controlled — an exported hook would let any
+/// account forge allowlist events. (Gating an exported hook with `require_owner` is
+/// NOT an option: `apply_allowlist_updates` already requires auth, and a second
+/// `require_auth` for the same address traps the frame with `Error(Auth, ExistingValue)`.)
+pub trait AllowListHooks {
+    /// Emit the update's events (EVM `BaseVerifier._applyAllowlistUpdates` parity):
+    /// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
+    /// state-changed event only then), and `added_addresses`/`removed_addresses` carry
+    /// only the addresses that actually changed set membership.
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
@@ -56,10 +48,23 @@ pub trait AllowListEvents {
         added_addresses: &Vec<Address>,
         removed_addresses: &Vec<Address>,
     );
+
+    /// EVM `CommitteeVerifier`: allowlist updates are owner-or-allowlistAdmin.
+    /// Default `None` = owner-only.
+    fn allowlist_admin(env: &Env) -> Option<Address> {
+        let _ = env;
+        None
+    }
 }
 
+/// A trait to maintain a set of allowed addresses for a any purpose.
+/// It can be used for authorization as well as guarding access to certain functions.
+///
+/// For example: The Committee Verifier contract can use this trait to maintain a set of allowed addresses for a given destination chain.
+///
+/// The allow list is a map of u64 to vector of addresses.
 #[contracttrait]
-pub trait AllowListable: Ownable + AllowListEvents {
+pub trait AllowListable: Ownable + AllowListHooks {
     const ALLOW_LIST: Symbol; // Storage key for the allow list data
 
     /// Initialize the authorized callers list.
@@ -106,23 +111,39 @@ pub trait AllowListable: Ownable + AllowListEvents {
             .unwrap_or(false)
     }
 
-    /// Add addresses to the allow list.
-    /// Requires owner authorization.
+    /// Apply allowlist updates per destination chain.
+    ///
+    /// EVM parity (`CommitteeVerifier.applyAllowlistUpdates`): authorized callers are the
+    /// owner OR the configured [`AllowListHooks::allowlist_admin`]. Bind-then-auth (same
+    /// pattern as `AccessControl::require_admin_or_owner`): the identity check runs first,
+    /// then a single `require_auth` on the caller.
     ///
     /// # Arguments
     /// * `env` - The environment
-    /// * `callers` - Addresses to add
+    /// * `caller` - The identity to authorize (must be the owner or the allowlist admin)
+    /// * `updates` - Per-chain allowlist updates
     ///
     /// # Errors
+    /// * `NotOwner` - Owner not set in storage
+    /// * `CallerNotAuthorized` - Caller is neither the owner nor the allowlist admin
     /// * `InvalidAllowListRequest` - Update adds senders while setting `allowlist_enabled = false`
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
-    /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
     ///
     /// # Panics
     ///
-    /// If the owner did not authorize this invocation (`require_auth`).
-    fn apply_allowlist_updates(env: &Env, updates: &Vec<AllowListUpdate>) -> Result<(), CCIPError> {
-        <Self as Ownable>::require_owner(env)?;
+    /// If `caller` did not authorize this invocation (`require_auth`).
+    fn apply_allowlist_updates(
+        env: &Env,
+        caller: &Address,
+        updates: &Vec<AllowListUpdate>,
+    ) -> Result<(), CCIPError> {
+        let owner = <Self as Ownable>::owner(env).ok_or(CCIPError::NotOwner)?;
+        let is_owner = *caller == owner;
+        let is_admin = <Self as AllowListHooks>::allowlist_admin(env).as_ref() == Some(caller);
+        if !is_owner && !is_admin {
+            return Err(CCIPError::CallerNotAuthorized);
+        }
+        caller.require_auth();
 
         for update in updates.iter() {
             update.validate()?;
@@ -192,7 +213,7 @@ pub trait AllowListable: Ownable + AllowListEvents {
             data.set(key, allowlist_entry);
             env.storage().instance().set(&Self::ALLOW_LIST, &data);
 
-            <Self as AllowListEvents>::emit_allowlist_updated_events(
+            <Self as AllowListHooks>::emit_allowlist_updated_events(
                 env,
                 key,
                 flipped,

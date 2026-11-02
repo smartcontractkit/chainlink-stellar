@@ -472,8 +472,9 @@ func (c *CommitteeVerifierClient) GetStorageLocations(ctx context.Context) ([][]
 }
 
 // ApplyAllowlistUpdates calls the apply_allowlist_updates function on the contract.
-func (c *CommitteeVerifierClient) ApplyAllowlistUpdates(ctx context.Context, updates []AllowListUpdate) error {
+func (c *CommitteeVerifierClient) ApplyAllowlistUpdates(ctx context.Context, caller string, updates []AllowListUpdate) error {
 	args := []xdr.ScVal{
+		scval.AddressToScVal(caller),
 		scval.StructSliceToScVal(updates),
 	}
 
