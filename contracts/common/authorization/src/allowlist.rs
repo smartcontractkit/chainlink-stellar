@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttrait, contracttype, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttrait, contracttype, vec, Address, Env, IntoVal, Map, Symbol, Vec};
 
 use common_error::CCIPError;
 use common_helpers::validation::Validatable;
@@ -118,8 +118,9 @@ pub trait AllowListable: Ownable + AllowListHooks {
     ///
     /// Authorized: the owner OR the configured [`AllowListHooks::allowlist_admin`].
     /// Bind-then-auth (same pattern as `AccessControl::require_admin_or_owner`):
-    /// check `caller`'s identity first, then one `caller.require_auth()` — Soroban has
-    /// no caller introspection, and stacking `require_auth` in one frame traps.
+    /// check `caller`'s identity first, then one `require_auth_for_args` binding the
+    /// exact updates payload — Soroban has no caller introspection, and stacking
+    /// `require_auth` in one frame traps.
     ///
     /// # Arguments
     /// * `env` - The environment
@@ -127,25 +128,40 @@ pub trait AllowListable: Ownable + AllowListHooks {
     /// * `updates` - Per-chain allowlist updates
     ///
     /// # Errors
-    /// * `NotOwner` - Owner not set in storage
     /// * `CallerNotAuthorized` - Caller is neither the owner nor the allowlist admin
     /// * `InvalidAllowListRequest` - Update adds senders while setting `allowlist_enabled = false`
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     ///
     /// # Panics
-    /// If `caller` did not authorize this invocation (`require_auth`).
+    /// If `caller` did not authorize this exact invocation (`require_auth_for_args`).
     fn apply_allowlist_updates(
         env: &Env,
         caller: &Address,
         updates: &Vec<AllowListUpdate>,
     ) -> Result<(), CCIPError> {
-        let owner = <Self as Ownable>::owner(env).ok_or(CCIPError::NotOwner)?;
-        let is_owner = *caller == owner;
+        let is_owner = <Self as Ownable>::is_owner(env, caller);
         let is_admin = <Self as AllowListHooks>::allowlist_admin(env).as_ref() == Some(caller);
         if !is_owner && !is_admin {
             return Err(CCIPError::CallerNotAuthorized);
         }
-        caller.require_auth();
+        // Bind the auth to this exact payload, so a signed authorization cannot be
+        // replayed against a different set of updates.
+        caller.require_auth_for_args(vec![
+            &env,
+            caller.clone().into_val(env),
+            updates.clone().into_val(env),
+        ]);
+
+        // The same instance-storage map backs every update: load once, mutate in memory
+        // per iteration, persist once at the end. Error paths return `Err`, which fails
+        // the whole invocation and rolls back its writes, so partial application is
+        // impossible either way.
+        let mut data: Map<u64, AllowListEntry> = env
+            .storage()
+            .instance()
+            .get(&Self::ALLOW_LIST)
+            .unwrap_or(Map::new(env));
+        let mut touched = false;
 
         for update in updates.iter() {
             update.validate()?;
@@ -161,12 +177,6 @@ pub trait AllowListable: Ownable + AllowListHooks {
                 return Err(CCIPError::InvalidAllowListRequest);
             }
 
-            let mut data: Map<u64, AllowListEntry> = env
-                .storage()
-                .instance()
-                .get(&Self::ALLOW_LIST)
-                .unwrap_or(Map::new(env));
-
             // EVM parity: disabling a never-configured chain is a no-op (zero-value slot — no
             // state change, no event). Only reachable with empty additions — the additions
             // case is rejected above via InvalidAllowListRequest, as on EVM.
@@ -179,8 +189,10 @@ pub trait AllowListable: Ownable + AllowListHooks {
                 .get(key)
                 .map(|entry| entry.allowlist_enabled)
                 .unwrap_or(false);
-            let flipped =
-                (old_enabled != update.allowlist_enabled).then_some(update.allowlist_enabled);
+            let flipped = match old_enabled != update.allowlist_enabled {
+                true => Some(update.allowlist_enabled),
+                false => None,
+            };
 
             let mut allowlist_entry = data.get(key).unwrap_or(AllowListEntry {
                 allowlist_enabled: update.allowlist_enabled,
@@ -213,7 +225,7 @@ pub trait AllowListable: Ownable + AllowListHooks {
             }
 
             data.set(key, allowlist_entry);
-            env.storage().instance().set(&Self::ALLOW_LIST, &data);
+            touched = true;
 
             <Self as AllowListHooks>::emit_allowlist_updated_events(
                 env,
@@ -222,6 +234,10 @@ pub trait AllowListable: Ownable + AllowListHooks {
                 &actually_added,
                 &actually_removed,
             );
+        }
+
+        if touched {
+            env.storage().instance().set(&Self::ALLOW_LIST, &data);
         }
 
         Ok(())
