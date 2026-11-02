@@ -18,6 +18,7 @@ import (
 	mcmstypes "github.com/smartcontractkit/mcms/types"
 
 	ccvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
@@ -98,8 +99,16 @@ func requireCommitteeVerifierProposal(
 	gotFn, args, err := mcmsutil.DecodeSorobanMCMSInvokePayload(tx.Data)
 	require.NoError(t, err)
 	require.Equal(t, fn, gotFn)
-	require.Empty(t, inv.Records(), "the proposal arm must not invoke the contract directly")
+	require.Empty(t, inv.Invocations(), "the proposal arm must not invoke the contract directly")
 	return args
+}
+
+// dynamicConfigScVal stubs the get_dynamic_config view with the given allowlist admin.
+func dynamicConfigScVal(t *testing.T, allowlistAdmin *string) *xdr.ScVal {
+	t.Helper()
+	v, err := ccvbindings.DynamicConfig{AllowlistAdmin: allowlistAdmin}.ToScVal()
+	require.NoError(t, err)
+	return &v
 }
 
 func requireU64Vec(t *testing.T, v xdr.ScVal) []uint64 {
@@ -276,7 +285,8 @@ func TestApplyAllowlistUpdatesProposesUnderTimelock(t *testing.T) {
 
 	t.Run("timelock owner proposes", func(t *testing.T) {
 		t.Parallel()
-		inv := operationstest.NewRecordingInvoker()
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForFn("get_dynamic_config", dynamicConfigScVal(t, nil))
 		ops, err := applyAllowlistUpdatesCore(
 			context.Background(),
 			f.write(inv, f.timelock, f.timelockRefs(cciputils.CLLQualifier, f.timelock)),
@@ -287,8 +297,9 @@ func TestApplyAllowlistUpdatesProposesUnderTimelock(t *testing.T) {
 		)
 		require.NoError(t, err)
 		args := requireCommitteeVerifierProposal(t, f, inv, ops, "apply_allowlist_updates")
-		require.Len(t, args, 1)
-		updates := requireAllowListUpdatesVec(t, args[0])
+		require.Len(t, args, 2)
+		require.Equal(t, scval.AddressToScVal(f.timelock), args[0], "proposal caller is the timelock")
+		updates := requireAllowListUpdatesVec(t, args[1])
 		require.Len(t, updates, 1)
 		require.Equal(t, f.destSel, updates[0].DestChainSelector)
 		require.True(t, updates[0].AllowlistEnabled)
@@ -305,12 +316,36 @@ func TestApplyAllowlistUpdatesProposesUnderTimelock(t *testing.T) {
 		records := inv.Records()
 		require.Len(t, records, 1)
 		require.Equal(t, "apply_allowlist_updates", records[0].Fn)
-		require.Len(t, records[0].Args, 1)
-		updates := requireAllowListUpdatesVec(t, records[0].Args[0])
+		require.Len(t, records[0].Args, 2)
+		require.Equal(t, scval.AddressToScVal(f.deployer), records[0].Args[0], "direct caller is the deployer")
+		updates := requireAllowListUpdatesVec(t, records[0].Args[1])
 		require.Len(t, updates, 1)
 		require.False(t, updates[0].AllowlistEnabled)
 		require.Equal(t, removed, updates[0].AddedAllowlistedSenders)
 		require.Equal(t, added, updates[0].RemovedAllowlistedSenders)
+	})
+
+	t.Run("allowlist admin executes directly", func(t *testing.T) {
+		// Mirrors the EVM adapter's AllowlistAdminExecutesDirectly: the deployer is not
+		// the owner, but is the configured allowlist admin, so no timelock proposal.
+		t.Parallel()
+		inv := operationstest.NewRecordingInvoker().
+			WithSimulateResultForFn("get_dynamic_config", dynamicConfigScVal(t, &f.deployer))
+		ops, err := applyAllowlistUpdatesCore(
+			context.Background(),
+			f.write(inv, f.timelock, f.timelockRefs(cciputils.CLLQualifier, f.timelock)),
+			f.destSel,
+			true,
+			added,
+			removed,
+		)
+		require.NoError(t, err)
+		require.Empty(t, ops)
+		invocations := inv.Invocations()
+		require.Len(t, invocations, 1)
+		require.Equal(t, "apply_allowlist_updates", invocations[0].Fn)
+		require.Len(t, invocations[0].Args, 2)
+		require.Equal(t, scval.AddressToScVal(f.deployer), invocations[0].Args[0], "direct caller is the allowlist admin")
 	})
 }
 
@@ -334,13 +369,16 @@ func TestWritesRejectForeignOwner(t *testing.T) {
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			inv := operationstest.NewRecordingInvoker()
+			inv := operationstest.NewRecordingInvoker().
+				WithSimulateResultForFn("get_dynamic_config", dynamicConfigScVal(t, nil))
 			ops, err := run(f.write(inv, foreign, refs))
 			require.ErrorContains(t, err, f.verifier)
 			require.ErrorContains(t, err, foreign)
 			require.ErrorContains(t, err, f.deployer)
 			require.Empty(t, ops)
-			require.Empty(t, inv.Records())
+			// No writes: the allowlist path may still read the dynamic config
+			// (allowlist admin check) via a read-only simulate before rejecting.
+			require.Empty(t, inv.Invocations())
 		})
 	}
 }

@@ -35,6 +35,8 @@ type InvokeRecord struct {
 	ContractID string
 	Fn         string
 	Args       []xdr.ScVal
+	// Simulated is true for SimulateContract (read-only) calls.
+	Simulated bool
 }
 
 // invokeKey keys per-contract stubs by (contract ID, fn): the router, for
@@ -144,7 +146,7 @@ func (r *RecordingInvoker) InvokeContract(_ context.Context, contractID, functio
 // error, per-fn error, per-(contract, fn) result, per-fn result, global result.
 func (r *RecordingInvoker) SimulateContract(_ context.Context, contractID, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {
 	r.mu.Lock()
-	r.records = append(r.records, InvokeRecord{ContractID: contractID, Fn: functionName, Args: args})
+	r.records = append(r.records, InvokeRecord{ContractID: contractID, Fn: functionName, Args: args, Simulated: true})
 	defer r.mu.Unlock()
 	pair := invokeKey{contractID, functionName}
 	if err, ok := r.errByPair[pair]; ok {
@@ -172,6 +174,20 @@ func (r *RecordingInvoker) Records() []InvokeRecord {
 	defer r.mu.Unlock()
 	out := make([]InvokeRecord, len(r.records))
 	copy(out, r.records)
+	return out
+}
+
+// Invocations returns only the InvokeContract records, excluding read-only
+// SimulateContract calls.
+func (r *RecordingInvoker) Invocations() []InvokeRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]InvokeRecord, 0, len(r.records))
+	for _, rec := range r.records {
+		if !rec.Simulated {
+			out = append(out, rec)
+		}
+	}
 	return out
 }
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters" // registers the adapter under test
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
@@ -272,8 +273,11 @@ func TestCommitteeVerifierBatchOps(t *testing.T) {
 		ops, err := adapter.ApplyAllowlistUpdates(ctx, cldfEnv, sel, qual, allowKey, true, added, nil)
 		require.NoError(t, err)
 		tx, args := requireProposal(t, ops, "apply_allowlist_updates")
-		require.Len(t, args, 1)
-		updates := requireAllowListUpdatesVec(t, args[0])
+		require.Len(t, args, 2)
+		caller, err := scval.AddressFromScVal(args[0])
+		require.NoError(t, err)
+		require.Equal(t, gov.TimelockID, caller, "proposal caller is the timelock")
+		updates := requireAllowListUpdatesVec(t, args[1])
 		require.Len(t, updates, 1)
 		require.Equal(t, allowKey, updates[0].DestChainSelector)
 		require.True(t, updates[0].AllowlistEnabled)
