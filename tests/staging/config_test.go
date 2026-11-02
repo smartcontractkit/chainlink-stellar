@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 )
 
@@ -58,6 +60,13 @@ const (
 	envStellarGasLimit     = "STAGING_STELLAR_GAS_LIMIT"      // default: 200000 (gasLimit in the EVM extra args)
 	envStellarExecTimeout  = "STAGING_STELLAR_EXEC_TIMEOUT"   // default: 30m
 	envEVMSentEventTimeout = "STAGING_EVM_SENT_TIMEOUT"       // default: 5m (ccipSend inclusion on the EVM chain)
+
+	// Token transfers (both directions) over a burn-mint pool pair.
+	envStellarToken        = "STAGING_STELLAR_TOKEN"         // required: C... (or 0x 32-byte hex) BnM token on Stellar
+	envStellarTokenPool    = "STAGING_STELLAR_TOKEN_POOL"    // required: C... (or 0x 32-byte hex) BurnMintTokenPool for it
+	envEVMToken            = "STAGING_EVM_TOKEN"             // required: 0x... BurnMintERC20WithDrip token on the EVM chain
+	envEVMTokenPool        = "STAGING_EVM_TOKEN_POOL"        // required: 0x... BurnMintTokenPool for it
+	envTokenTransferAmount = "STAGING_TOKEN_TRANSFER_AMOUNT" // default: 1000, in the Stellar token's base units
 )
 
 // defaultStellarGasLimit is the gasLimit sent in the EVM-side extra args when
@@ -260,11 +269,64 @@ func loadEVMToStellarConfig(t *testing.T) *evmToStellarConfig {
 	return cfg
 }
 
+// defaultTokenTransferAmount is the transfer size, in Stellar token base units,
+// when STAGING_TOKEN_TRANSFER_AMOUNT is unset: 0.0001 BnM at 7 decimals, so one
+// Stellar drip (10^6) covers a thousand runs.
+const defaultTokenTransferAmount = 1000
+
+// tokenTransferConfig names the token and pool on each end of the lane. The
+// amount is always in the Stellar token's base units; the EVM-side amount is
+// derived from the two tokens' decimals so it converts exactly.
+type tokenTransferConfig struct {
+	StellarToken string
+	StellarPool  string
+	EVMToken     common.Address
+	EVMPool      common.Address
+	Amount       *big.Int
+}
+
+// loadTokenTransferConfig reads the token-transfer configuration from the
+// environment. Missing required variables skip the test; malformed values fail it.
+func loadTokenTransferConfig(t *testing.T) *tokenTransferConfig {
+	t.Helper()
+
+	var missing []string
+	required := func(name string) string {
+		v := strings.TrimSpace(os.Getenv(name))
+		if v == "" {
+			missing = append(missing, name)
+		}
+		return v
+	}
+
+	stellarToken := required(envStellarToken)
+	stellarPool := required(envStellarTokenPool)
+	evmToken := required(envEVMToken)
+	evmPool := required(envEVMTokenPool)
+	if len(missing) > 0 {
+		t.Skipf("token transfer staging env not configured, missing: %s (see tests/staging/README.md)", strings.Join(missing, ", "))
+	}
+
+	cfg := &tokenTransferConfig{
+		StellarToken: mustStellarContract(t, envStellarToken, stellarToken),
+		StellarPool:  mustStellarContract(t, envStellarTokenPool, stellarPool),
+		EVMToken:     mustEVMAddress(t, envEVMToken, evmToken),
+		EVMPool:      mustEVMAddress(t, envEVMTokenPool, evmPool),
+		Amount:       new(big.Int).SetUint64(mustUint(t, envTokenTransferAmount, defaultTokenTransferAmount)),
+	}
+	if cfg.Amount.Sign() == 0 {
+		t.Fatalf("%s must be > 0", envTokenTransferAmount)
+	}
+	return cfg
+}
+
 // newStellarClients builds the Soroban RPC client and a Deployer (bindings.Invoker)
-// that signs with kp.
-func newStellarClients(rpcURL, passphrase string, kp *keypair.Full) (*rpcclient.Client, *stellardeployment.Deployer) {
+// that signs with kp. The Deployer logs the hash of every transaction it
+// submits ("submitted stellar transaction", with contract and fn) to the test
+// output, so failures can be looked up in the explorer.
+func newStellarClients(t *testing.T, rpcURL, passphrase string, kp *keypair.Full) (*rpcclient.Client, *stellardeployment.Deployer) {
 	rpc := rpcclient.NewClient(rpcURL, &http.Client{Timeout: 60 * time.Second})
-	return rpc, stellardeployment.NewDeployer(rpc, passphrase, kp)
+	return rpc, stellardeployment.NewDeployer(rpc, passphrase, kp, stellardeployment.WithLogger(cldflogger.Test(t)))
 }
 
 // isNativeFeeToken reports whether the fee token is the native XLM SAC, in which

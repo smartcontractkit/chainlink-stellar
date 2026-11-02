@@ -10,9 +10,11 @@ tests skip, so `go test ./...` stays green elsewhere.
 | --- | --- |
 | `TestStagingStellarToEVMMessage` | One data-only message Stellar → EVM: `CCIPMessageSent` on the OnRamp (dest, sender, fee token, receipt count), Router pulls exactly the quoted fee, and optionally `ExecutionStateChanged == Success` on the EVM OffRamp |
 | `TestStagingStellarToEVMSequentialMessages` | `STAGING_SEND_BATCH_SIZE` back-to-back sends: unique message IDs, strictly increasing sequence numbers, optional execution of every message |
+| `TestStagingStellarToEVMTokenTransfer` | Both pools are linked to each other, then one BnM token transfer (with data) Stellar → EVM: the pool burns exactly the amount from the sender, the Router pulls exactly the quoted fee, and optionally `ExecutionStateChanged == Success` with the EVM receiver minted the decimal-scaled amount |
 | `TestStagingStellarToEVMUnsupportedDestination` | `get_fee` / `ccip_send` to an unknown selector fail and move no fee tokens (spends nothing) |
 | `TestStagingEVMToStellarMessage` | One data-only message EVM → Stellar: `CCIPMessageSent` on the EVM OnRamp (dest, sender, offRamp field = the Stellar OffRamp's raw id), exact fee paid, `ExecutionStateChanged == Success` on the Stellar OffRamp, and the receiver's `last_message_id` |
 | `TestStagingEVMToStellarSequentialMessages` | `STAGING_SEND_BATCH_SIZE` back-to-back EVM sends: unique message IDs, increasing message numbers, every message executes on Stellar |
+| `TestStagingEVMToStellarTokenTransfer` | Both pools are linked to each other, then one BnM token transfer (with data) EVM → Stellar: the pool burns exactly the amount from the sender, `ExecutionStateChanged == Success` on the Stellar OffRamp, the receiver's `last_message_id`, and the Stellar receiver minted exactly the amount |
 | `TestStagingEVMToStellarUnsupportedDestination` | EVM `getFee` reverts with `UnsupportedDestinationChain` and `ccipSend` fails gas estimation for an unknown selector (nothing broadcast) |
 
 ## Setup
@@ -62,6 +64,28 @@ stellar contract invoke --id <receiver> --source-account <owner> --network testn
   enable_remote_chain --caller <owner> --dest_chain_selector 16015286601757825753 \
   --extra_args 01 --allowed_finality_config 0
 ```
+
+### Token transfers
+
+The two `*TokenTransfer` tests also need `STAGING_STELLAR_TOKEN`,
+`STAGING_STELLAR_TOKEN_POOL`, `STAGING_EVM_TOKEN` and `STAGING_EVM_TOKEN_POOL`:
+a burn-mint pool pair on each side, each pool registered as the other's remote
+pool. Before sending, the tests check each pool serves its token, supports the
+other chain and names the other side's token and pool as its remote token and pool.
+
+`STAGING_TOKEN_TRANSFER_AMOUNT` (default 1000) is in the Stellar token's base
+units. The EVM-side amount is scaled up by the difference in decimals read from
+the pools: 10^11 for a 7-decimal BnM token and an 18-decimal ERC-20. This way
+the pools' conversion is exact in both directions. If the sender holds less than
+the amount, the test tops it up from the token's permissionless `drip` faucet.
+Each drip gives 0.1 BnM on Stellar and 1 token on EVM. The current Sepolia
+`stgBnM` token has no `drip`, despite its datastore type. Only its pool holds
+`MINTER_ROLE`, so fund the EVM sender out of band. One option is to run the
+Stellar → EVM test with `STAGING_EVM_RECEIVER` set to the EVM sender's address. On EVM, the test approves
+the Router for the transfer amount plus the fee, if the fee is paid in an ERC-20.
+
+The receiver balance checks are exact. They assume nothing else sends this token
+to the same receiver while the test runs.
 
 ## Run
 

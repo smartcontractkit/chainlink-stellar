@@ -6,9 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/stretchr/testify/require"
 
+	erc20 "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v1_5_1/factory_burn_mint_erc20"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
+	bnmtokenbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/bnm_token"
+	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 )
 
 // Staging tests that send CCIP messages from Stellar testnet to an EVM chain
@@ -125,6 +129,100 @@ func TestStagingStellarToEVMSequentialMessages(t *testing.T) {
 		require.Equalf(t, cciptestinterfaces.ExecutionStateSuccess, cciptestinterfaces.MessageExecutionState(exec.State),
 			"message %s executed with state %d, return data 0x%x", hexID(s.MessageID), exec.State, exec.ReturnData)
 	}
+}
+
+// TestStagingStellarToEVMTokenTransfer sends STAGING_TOKEN_TRANSFER_AMOUNT of the
+// Stellar BnM token, with a short payload, via Router.ccip_send. It first checks
+// the Stellar pool (and, with execution checks enabled, the EVM pool) is linked
+// to its counterpart, then that the pool burns exactly the amount from the
+// sender and the fee is pulled exactly. With STAGING_EVM_RPC_URL/STAGING_EVM_OFFRAMP
+// set it waits for successful execution and checks the EVM receiver was minted
+// the amount scaled to the EVM token's decimals.
+func TestStagingStellarToEVMTokenTransfer(t *testing.T) {
+	ctx := t.Context()
+	env := newStagingEnv(t, ctx)
+	cfg := env.cfg
+	tt := loadTokenTransferConfig(t)
+
+	// The send invokes the token and pool; keep their entries live like the lane's.
+	extendContractTTLs(t, ctx, env.deployer, env.l, tt.StellarToken, tt.StellarPool)
+	stellarDecimals := checkStellarTokenPool(t, ctx, env.deployer, tt, cfg.DestChainSelector, env.onRampID, "")
+
+	sender := cfg.Sender.Address()
+	token := bnmtokenbindings.NewBnmTokenClient(env.deployer, tt.StellarToken)
+	ensureStellarTokenBalance(t, ctx, token, sender, tt.Amount, env.l)
+
+	var (
+		watcher        *evmExecWatcher
+		evmToken       *erc20.FactoryBurnMintERC20
+		wantMinted     *big.Int
+		receiverBefore *big.Int
+	)
+	if cfg.ExecCheckEnabled() {
+		watcher = env.newEVMExecWatcher(t, ctx)
+		evmDecimals := checkEVMTokenPool(t, ctx, watcher.client, tt, cfg.SourceChainSelector)
+		wantMinted = scaleAmount(t, tt.Amount, stellarDecimals, evmDecimals)
+
+		var err error
+		evmToken, err = erc20.NewFactoryBurnMintERC20(tt.EVMToken, watcher.client)
+		require.NoError(t, err)
+		receiverBefore, err = evmToken.BalanceOf(&bind.CallOpts{Context: ctx}, cfg.EVMReceiver)
+		require.NoError(t, err, "EVM receiver token balance")
+	}
+
+	nativeFee, err := cfg.isNativeFeeToken()
+	require.NoError(t, err)
+	feeBefore := env.feeTokenBalance(t, ctx)
+	tokenBefore, err := token.Balance(ctx, sender)
+	require.NoError(t, err)
+
+	data := []byte(fmt.Sprintf("staging stellar->evm token transfer %s", time.Now().UTC().Format(time.RFC3339Nano)))
+	msg := env.buildMessage(t, data)
+	msg.TokenAmounts = []routerbindings.TokenAmount{{Token: tt.StellarToken, Amount: tt.Amount}}
+	sent := env.sendAndConfirm(t, ctx, msg)
+
+	ev := sent.Event
+	require.Equal(t, cfg.DestChainSelector, ev.DestChainSelector)
+	require.Equal(t, sender, ev.Sender)
+	require.Equal(t, cfg.FeeTokenID, ev.FeeToken)
+	// One receipt per CCV, plus the pool, executor and network-fee receipts. The
+	// pool may require extra CCVs on top of the configured ones.
+	require.GreaterOrEqual(t, len(ev.Receipts), len(cfg.CCVs)+3, "unexpected receipt count")
+
+	tokenAfter, err := token.Balance(ctx, sender)
+	require.NoError(t, err)
+	burned := new(big.Int).Sub(tokenBefore, tokenAfter)
+	require.Zerof(t, burned.Cmp(tt.Amount), "sender token balance dropped by %s, want %s", burned, tt.Amount)
+
+	spent := new(big.Int).Sub(feeBefore, env.feeTokenBalance(t, ctx))
+	if nativeFee {
+		require.GreaterOrEqual(t, spent.Cmp(sent.Fee), 0, "spent %s < quoted fee %s", spent, sent.Fee)
+	} else {
+		require.Zero(t, spent.Cmp(sent.Fee), "spent %s != quoted fee %s", spent, sent.Fee)
+	}
+
+	if watcher == nil {
+		t.Logf("token transfer %s sent; set %s and %s to also verify execution and the mint on the destination",
+			hexID(sent.MessageID), envEVMRPCURL, envEVMOffRamp)
+		return
+	}
+
+	exec := env.waitForExecution(t, ctx, watcher, sent.MessageID)
+	env.l.Info().
+		Str("messageID", hexID(sent.MessageID)).
+		Uint64("messageNumber", exec.MessageNumber).
+		Str("txHash", exec.Raw.TxHash.Hex()).
+		Uint64("block", exec.Raw.BlockNumber).
+		Msg("ExecutionStateChanged observed on destination")
+	require.Equalf(t, cciptestinterfaces.ExecutionStateSuccess, cciptestinterfaces.MessageExecutionState(exec.State),
+		"message executed with state %d, return data 0x%x", exec.State, exec.ReturnData)
+	require.Equal(t, ev.SequenceNumber, exec.MessageNumber, "dest message number should match source sequence number")
+
+	// Exact only while nothing else pays this receiver in this token meanwhile.
+	receiverAfter, err := evmToken.BalanceOf(&bind.CallOpts{Context: ctx}, cfg.EVMReceiver)
+	require.NoError(t, err)
+	minted := new(big.Int).Sub(receiverAfter, receiverBefore)
+	require.Zerof(t, minted.Cmp(wantMinted), "EVM receiver gained %s, want %s", minted, wantMinted)
 }
 
 // TestStagingStellarToEVMUnsupportedDestination checks the Router rejects a
