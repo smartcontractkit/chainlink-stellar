@@ -30,17 +30,19 @@ pub struct AllowListEntry {
     pub allowlist: Vec<Address>,
 }
 
-/// Hooks for [`AllowListable`]. Deliberately a PLAIN trait, not part of the
-/// `#[contracttrait]`: contracttrait methods are exported as public entrypoints, and
-/// the event hook's payload is caller-controlled — an exported hook would let any
-/// account forge allowlist events. (Gating an exported hook with `require_owner` is
-/// NOT an option: `apply_allowlist_updates` already requires auth, and a second
-/// `require_auth` for the same address traps the frame with `Error(Auth, ExistingValue)`.)
+/// Internal hooks for [`AllowListable`]. Plain trait on purpose: `#[contracttrait]`
+/// exports every method as a public entrypoint — an exported event hook would let
+/// anyone forge allowlist events, and gating it would double-`require_auth` the same
+/// address in one frame (host trap `Error(Auth, ExistingValue)`). Direction is
+/// `AllowListable: AllowListHooks` because the main trait's default bodies call these
+/// hooks; the reverse would not compile.
 pub trait AllowListHooks {
     /// Emit the update's events (EVM `BaseVerifier._applyAllowlistUpdates` parity):
-    /// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
-    /// state-changed event only then), and `added_addresses`/`removed_addresses` carry
-    /// only the addresses that actually changed set membership.
+    /// state-changed only on an actual flip, per-sender events only for addresses that
+    /// actually changed membership. `new_enabled_state` is `Some(new_value)` on a flip
+    /// and `None` when unchanged — it is only the changed-vs-unchanged signal and is
+    /// never emitted itself; events carry the new state outright (like EVM
+    /// `AllowListStateChanged(uint64, bool)`), so listeners need no prior-state copy.
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
@@ -111,12 +113,13 @@ pub trait AllowListable: Ownable + AllowListHooks {
             .unwrap_or(false)
     }
 
-    /// Apply allowlist updates per destination chain.
+    /// Apply allowlist updates per destination chain (EVM
+    /// `CommitteeVerifier.applyAllowlistUpdates`).
     ///
-    /// EVM parity (`CommitteeVerifier.applyAllowlistUpdates`): authorized callers are the
-    /// owner OR the configured [`AllowListHooks::allowlist_admin`]. Bind-then-auth (same
-    /// pattern as `AccessControl::require_admin_or_owner`): the identity check runs first,
-    /// then a single `require_auth` on the caller.
+    /// Authorized: the owner OR the configured [`AllowListHooks::allowlist_admin`].
+    /// Bind-then-auth (same pattern as `AccessControl::require_admin_or_owner`):
+    /// check `caller`'s identity first, then one `caller.require_auth()` — Soroban has
+    /// no caller introspection, and stacking `require_auth` in one frame traps.
     ///
     /// # Arguments
     /// * `env` - The environment
@@ -130,7 +133,6 @@ pub trait AllowListable: Ownable + AllowListHooks {
     /// * `InvalidConfig` - Invalid update payload (e.g. zero `dest_chain_selector`)
     ///
     /// # Panics
-    ///
     /// If `caller` did not authorize this invocation (`require_auth`).
     fn apply_allowlist_updates(
         env: &Env,
