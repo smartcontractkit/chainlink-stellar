@@ -15,6 +15,7 @@ import (
 	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
+	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
@@ -517,4 +518,130 @@ func TestOnRampFunctionalExecutorChargesExecutionFee(t *testing.T) {
 	}
 	t.Logf("✅ functional executor: receipt issued by concrete %s with fee %s (>0, exec-gas charged)",
 		stack.ExecutorID, execReceipt.FeeTokenAmount.String())
+}
+
+// TestOnRampExecutorArgsCommittedInDestBlob is the integration-layer guard that
+// GenericExtraArgsV3.executor_args are committed into the SIGNED canonical message
+// via dest_blob — EVM `OnRamp.forwardFromRouter` parity (OnRamp.sol:253: "Executor
+// args hold security critical execution args, like Solana accounts or Sui object
+// IDs … they have to be part of the message that is signed off on by the
+// verifiers"). The Rust unit guard is
+// contracts/onramp/src/test.rs::test_forward_from_router_commits_executor_args_in_dest_blob;
+// this test pins the same property over RPC + the Go bindings.
+//
+// PROVES-WORKS: the emitted CCIPMessageSent encoded_message decodes (canonical
+// CCIP v1 wire format) with dest_blob == the sender-supplied executor_args, and
+// re-hashing the decoded message reproduces the on-chain message_id — so
+// executor_args are inside the CCV-signed pre-image.
+//
+// PROVES-DOESN'T-HAPPEN: re-hashing with dest_blob emptied yields a DIFFERENT id —
+// executor_args materially change the signed hash (they are not carried only in the
+// unhashed executor receipt, the pre-fix behavior).
+func TestOnRampExecutorArgsCommittedInDestBlob(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	projectRoot, deployerKP, deployer, rpcClient, networkPassphrase, friendbotURL := GetIsolatedTestEnv(ctx, t)
+	deployerAddr := deployerKP.Address()
+
+	const localSourceChain = uint64(11111)
+	const remoteDestChain = uint64(22222)
+	const saltPrefix = "destblob"
+
+	stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, localSourceChain, saltPrefix, false)
+	feeToken := deployIntegrationTestSAC(ctx, t, rpcClient, deployer, deployerAddr, networkPassphrase, friendbotURL, saltPrefix+"-fee")
+
+	wire := deployOutboundSendWire(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack,
+		localSourceChain, remoteDestChain, feeToken, nil)
+
+	// Distinctive non-empty executor args (a stand-in for a Solana account list /
+	// Sui object IDs — the content is opaque bytes to the OnRamp).
+	executorArgs := []byte("solana-accounts-v1:9xQeWvG816bUx9EPjHmaT23yvVM2ZWb")
+
+	extraArgs, err := encodeOnrampExtraArgsV3(onrampbindings.GenericExtraArgsV3{
+		Ccvs:               []string{stack.VvrID},
+		CcvArgs:            [][]byte{{}},
+		Executor:           sentinelContractStrkey(t, common.UseDefaultExecutorAddressRaw),
+		ExecutorArgs:       executorArgs,
+		GasLimit:           0,
+		BlockConfirmations: 0,
+		TokenReceiver:      []byte{},
+		TokenArgs:          []byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode extra args: %v", err)
+	}
+
+	evmReceiver := make([]byte, 20)
+	for i := range evmReceiver {
+		evmReceiver[i] = 0x33
+	}
+
+	msg := routerbindings.StellarToAnyMessage{
+		Receiver:  evmReceiver,
+		Data:      []byte("dest_blob commitment integration guard"),
+		FeeToken:  feeToken,
+		ExtraArgs: extraArgs,
+	}
+
+	requiredFee, err := stack.RouterClient.GetFee(ctx, remoteDestChain, msg)
+	if err != nil {
+		t.Fatalf("Router GetFee: %v", err)
+	}
+	if requiredFee.Sign() <= 0 {
+		t.Fatalf("expected positive total fee, got %s", requiredFee.String())
+	}
+
+	latest, err := rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestLedger: %v", err)
+	}
+	startLedger := latest.Sequence
+
+	msgID, err := stack.RouterClient.CcipSend(ctx, deployerAddr, remoteDestChain, msg)
+	if err != nil {
+		t.Fatalf("Router CcipSend: %v", err)
+	}
+	if msgID == ([32]byte{}) {
+		t.Fatal("CcipSend returned empty message_id")
+	}
+
+	sentEvt, err := wire.OnRampClient.WaitForCCIPMessageSentEvent(ctx, startLedger, 30*time.Second,
+		func(e *onrampbindings.CCIPMessageSentEvent) bool {
+			return e.DestChainSelector == remoteDestChain && bytes.Equal(e.MessageId[:], msgID[:])
+		})
+	if err != nil {
+		t.Fatalf("WaitForCCIPMessageSentEvent: %v", err)
+	}
+
+	// Decode the emitted canonical message with the chain-agnostic CCIP v1 codec
+	// (chainlink-ccv protocol package, the same format the offchain services use).
+	decoded, err := protocol.DecodeMessage(sentEvt.EncodedMessage)
+	if err != nil {
+		t.Fatalf("DecodeMessage(EncodedMessage): %v", err)
+	}
+	if !bytes.Equal(decoded.DestBlob, executorArgs) {
+		t.Fatalf("dest_blob must equal the sender-supplied executor_args: got %x, want %x",
+			decoded.DestBlob, executorArgs)
+	}
+
+	// The committed message_id must hash the canonical bytes INCLUDING dest_blob.
+	if got := decoded.MustMessageID(); got != msgID {
+		t.Fatalf("re-hashed decoded message must equal on-chain message_id: got %s, want %x",
+			got.String(), msgID)
+	}
+
+	// Negative control: emptying dest_blob must change the hash — pre-fix behavior
+	// (dest_blob hard-coded empty) would make the two ids equal here.
+	decoded.DestBlob = nil
+	decoded.DestBlobLength = 0
+	emptyBlobID, err := decoded.MessageID()
+	if err != nil {
+		t.Fatalf("MessageID with emptied dest_blob: %v", err)
+	}
+	if emptyBlobID == msgID {
+		t.Fatal("emptying dest_blob must change the message id — executor_args are not in the hash")
+	}
+	t.Logf("✅ executor_args committed via dest_blob: message_id %x hashes %d dest_blob bytes", msgID, len(executorArgs))
 }
