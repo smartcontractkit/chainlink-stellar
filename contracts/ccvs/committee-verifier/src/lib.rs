@@ -3,7 +3,9 @@
 mod events;
 pub mod types;
 
-use common_authorization::allowlist::{AllowListEntry, AllowListUpdate, AllowListable};
+use common_authorization::allowlist::{
+    AllowListEntry, AllowListEvents, AllowListUpdate, AllowListable,
+};
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
@@ -86,7 +88,11 @@ impl CurseCheckable for CommitteeVerifierContract {
 #[contractimpl(contracttrait)]
 impl AllowListable for CommitteeVerifierContract {
     const ALLOW_LIST: Symbol = ALLOWLIST;
+}
 
+// Plain impl, NOT `#[contractimpl]`: keeps the event hook out of the exported
+// entrypoints, so no account can call it directly to forge allowlist events.
+impl AllowListEvents for CommitteeVerifierContract {
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
@@ -94,11 +100,6 @@ impl AllowListable for CommitteeVerifierContract {
         added_addresses: &Vec<Address>,
         removed_addresses: &Vec<Address>,
     ) {
-        // Exported via `#[contractimpl(contracttrait)]`: without this gate any account
-        // could publish forged allowlist events. Owner auth is already attached when
-        // `apply_allowlist_updates` calls this hook.
-        <Self as Ownable>::require_owner(env).expect("owner set at initialize");
-
         // EVM parity (`BaseVerifier._applyAllowlistUpdates`): state-changed only on an
         // actual flag flip; per-sender events only for actual set changes.
         if let Some(allowlist_enabled) = new_enabled_state {

@@ -102,13 +102,6 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         allowed_finality: u32,
     ) -> Result<(), CCIPError>;
-    fn emit_allowlist_updated_events(
-        env: soroban_sdk::Env,
-        key: u64,
-        new_enabled_state: Option<bool>,
-        added_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-        removed_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-    );
     fn get_pending_storage_loc_admin(
         env: soroban_sdk::Env,
     ) -> Result<Option<soroban_sdk::Address>, CCIPError>;

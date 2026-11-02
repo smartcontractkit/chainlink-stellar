@@ -135,6 +135,27 @@ fn test_double_initialize_fails() {
 }
 
 #[test]
+fn test_curse_checkable_init_rejects_reinit() {
+    // `init` is exported via contracttrait: re-pointing the RMN proxy post-initialize
+    // must fail, or any account could install an always-uncursed RMN and disable every
+    // curse check.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(OnRampContract, ());
+    let client = OnRampContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let static_config = create_test_static_config(&env);
+    let dynamic_config = create_test_dynamic_config(&env);
+    client.initialize(&owner, &static_config, &dynamic_config);
+
+    let attacker_rmn = Address::generate(&env);
+    let r = client.try_init(&attacker_rmn);
+    assert_eq!(r.unwrap_err().unwrap(), CCIPError::AlreadyInitialized);
+}
+
+#[test]
 fn test_apply_dest_chain_config() {
     let env = Env::default();
     env.mock_all_auths();

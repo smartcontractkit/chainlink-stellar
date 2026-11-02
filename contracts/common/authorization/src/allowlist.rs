@@ -36,18 +36,19 @@ pub struct AllowListEntry {
 /// For example: The Committee Verifier contract can use this trait to maintain a set of allowed addresses for a given destination chain.
 ///
 /// The allow list is a map of u64 to vector of addresses.
-#[contracttrait]
-pub trait AllowListable: Ownable {
-    const ALLOW_LIST: Symbol; // Storage key for the allow list data
-
-    /// Emit the update's events (EVM `BaseVerifier._applyAllowlistUpdates` parity):
-    /// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
-    /// state-changed event only then), and `added_addresses`/`removed_addresses` carry
-    /// only the addresses that actually changed set membership.
-    ///
-    /// `#[contractimpl(contracttrait)]` exports this as a public entrypoint with a
-    /// caller-controlled payload — implementers MUST owner-gate it (see the
-    /// committee-verifier impl), otherwise any account can forge allowlist events.
+/// Event hook for [`AllowListable::apply_allowlist_updates`]. Deliberately a PLAIN
+/// trait, not part of the `#[contracttrait]`: contracttrait methods are exported as
+/// public entrypoints, and this payload is caller-controlled — an exported hook would
+/// let any account forge allowlist events. (Gating an exported hook with
+/// `require_owner` is NOT an option: `apply_allowlist_updates` already requires owner
+/// auth, and a second `require_auth` for the same address traps the frame with
+/// `Error(Auth, ExistingValue)`.)
+///
+/// `new_enabled_state` is `Some(v)` iff the enabled flag actually flipped (emit a
+/// state-changed event only then — EVM `BaseVerifier._applyAllowlistUpdates` parity),
+/// and `added_addresses`/`removed_addresses` carry only the addresses that actually
+/// changed set membership.
+pub trait AllowListEvents {
     fn emit_allowlist_updated_events(
         env: &Env,
         key: u64,
@@ -55,6 +56,11 @@ pub trait AllowListable: Ownable {
         added_addresses: &Vec<Address>,
         removed_addresses: &Vec<Address>,
     );
+}
+
+#[contracttrait]
+pub trait AllowListable: Ownable + AllowListEvents {
+    const ALLOW_LIST: Symbol; // Storage key for the allow list data
 
     /// Initialize the authorized callers list.
     /// This enables the feature and sets the initial list of authorized callers.
@@ -172,6 +178,9 @@ pub trait AllowListable: Ownable {
                 }
             }
 
+            // No zero-address guard (EVM rejects address(0), BaseVerifier.sol:276-278):
+            // address(0) is EVM's default/unset sentinel, leaked by zero-initialized
+            // fields; Soroban senders are explicit strkeys with no zero-default pathway.
             let mut actually_added: Vec<Address> = Vec::new(env);
             for address in to_add.iter() {
                 if !allowlist_entry.allowlist.contains(address.clone()) {
@@ -183,7 +192,7 @@ pub trait AllowListable: Ownable {
             data.set(key, allowlist_entry);
             env.storage().instance().set(&Self::ALLOW_LIST, &data);
 
-            Self::emit_allowlist_updated_events(
+            <Self as AllowListEvents>::emit_allowlist_updated_events(
                 env,
                 key,
                 flipped,
