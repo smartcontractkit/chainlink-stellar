@@ -1477,3 +1477,46 @@ func TestStellarTxm_BroadcastPipeline_InsufficientFeeBidsWhatCoreAsksFor(t *test
 	assert.Equal(t, int64(requiredInclusion), envelopeInclusionFee(t, sent[1]),
 		"retry should bid the inclusion fee stellar-core reported, not just BumpMultiplier x the rejected bid")
 }
+
+func TestStellarTxm_BroadcastPipeline_LaggingRPCExtendsLedgerBounds(t *testing.T) {
+	t.Parallel()
+
+	sent := make(chan xdr.TransactionEnvelope, 1)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: 1000, LedgerCloseTime: time.Now().Add(-11 * time.Second).Unix()}, nil
+		},
+		simulateResp: protocolrpc.SimulateTransactionResponse{MinResourceFee: 10000, LatestLedger: 1000},
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			var env xdr.TransactionEnvelope
+			if err := xdr.SafeUnmarshalBase64(req.Transaction, &env); err != nil {
+				return protocolrpc.SendTransactionResponse{}, err
+			}
+			sent <- env
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+	}
+
+	cfg := config.TxManagerConfig{LedgerBoundsOffset: ptr(uint32(3))}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	_, err = txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations:  []txnbuild.Operation{testInvokeNoopOp()},
+	})
+	require.NoError(t, err)
+
+	select {
+	case env := <-sent:
+		assert.Equal(t, xdr.Uint32(1000+2+3), env.LedgerBounds().MaxLedger,
+			"an RPC whose latest ledger closed 11s ago is 2 ledgers behind the network")
+	case <-time.After(5 * time.Second):
+		t.Fatal("tx was not sent")
+	}
+}

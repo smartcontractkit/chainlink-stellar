@@ -2288,6 +2288,65 @@ func TestStellarTxm_Enqueue_ConcurrentWithCloseNeverPanics(t *testing.T) {
 	require.ErrorIs(t, err, ErrTxmStopped)
 }
 
+func TestHeadLagLedgers(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_000_000, 0)
+	tests := map[string]struct {
+		closeTime int64
+		want      uint32
+	}{
+		"close time unknown":                 {closeTime: 0, want: 0},
+		"close time ahead of the node clock": {closeTime: now.Unix() + 3, want: 0},
+		"next ledger not due yet":            {closeTime: now.Unix() - 4, want: 0},
+		"one ledger behind":                  {closeTime: now.Unix() - 5, want: 1},
+		"two ledgers behind":                 {closeTime: now.Unix() - 11, want: 2},
+		"far behind is reported uncapped":    {closeTime: now.Unix() - 60, want: 12},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, headLagLedgers(tc.closeTime, now))
+		})
+	}
+}
+
+func TestStellarTxm_EstimateNetworkHead(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_000_000, 0)
+	tests := map[string]struct {
+		latest    protocolrpc.GetLatestLedgerResponse
+		simLatest uint32
+		want      uint32
+	}{
+		"fresh RPC": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100, LedgerCloseTime: now.Unix() - 2}, simLatest: 100, want: 100,
+		},
+		"no close time and no simulation ledger": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100}, want: 100,
+		},
+		"simulation ran on a newer ledger": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100, LedgerCloseTime: now.Unix() - 2}, simLatest: 101, want: 101,
+		},
+		"two ledgers behind": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100, LedgerCloseTime: now.Unix() - 11}, simLatest: 100, want: 102,
+		},
+		"lag is capped": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100, LedgerCloseTime: now.Unix() - 60}, simLatest: 100, want: 100 + maxHeadLagLedgers,
+		},
+		"simulation ledger beats the clock estimate": {
+			latest: protocolrpc.GetLatestLedgerResponse{Sequence: 100, LedgerCloseTime: now.Unix() - 6}, simLatest: 104, want: 104,
+		},
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, config.TxManagerConfig{}, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, txm.estimateNetworkHead(t.Context(), logger.Test(t), tc.latest, tc.simLatest, now))
+		})
+	}
+}
+
 // --- Fee seeding ---
 
 // feeSeedingHarness drives the fee seeding tests: fee stats and the latest ledger can
