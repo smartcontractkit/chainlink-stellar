@@ -40,6 +40,8 @@ type destinationConfig struct {
 	// keyName is the name of the Ed25519 key in the bootstrap keystore that the
 	// destination-side Deployer uses to sign Soroban transactions.
 	keyName string
+	// maxResourceFee is the per-transaction Soroban resource fee cap in stroops.
+	maxResourceFee int64
 }
 
 type factory struct {
@@ -392,7 +394,11 @@ func buildDestinationComponents(
 	}
 
 	rpcClient := rpcclient.NewClient(reader.SorobanRPCURL, rpclimit.NewClient(60*time.Second))
-	deployer := deployment.NewDeployerWithSigner(rpcClient, reader.NetworkPassphrase, signer)
+	maxResourceFee := dest.maxResourceFee
+	if maxResourceFee <= 0 {
+		maxResourceFee = contracttransmitter.DefaultMaxResourceFee
+	}
+	deployer := deployment.NewDeployerWithSigner(rpcClient, reader.NetworkPassphrase, signer, deployment.WithMaxResourceFee(maxResourceFee))
 
 	stateChangedTopic := dest.stateChangedTopic
 	if stateChangedTopic == "" {

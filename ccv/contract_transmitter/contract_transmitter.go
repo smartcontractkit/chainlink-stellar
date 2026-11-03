@@ -33,6 +33,9 @@ const DefaultGasLimitOverride uint32 = 0
 
 var _ chainaccess.ContractTransmitter = (*ContractTransmitter)(nil)
 
+// DefaultMaxResourceFee caps one executor transaction's Soroban resource fee at 200 XLM.
+const DefaultMaxResourceFee int64 = 2_000_000_000
+
 // ContractTransmitterConfig is the configuration required to create a Stellar contract transmitter.
 type ContractTransmitterConfig struct {
 	// NetworkPassphrase is the Stellar network passphrase (e.g., "Standalone Network ; February 2017").
@@ -45,6 +48,9 @@ type ContractTransmitterConfig struct {
 	CCIPStateChangedTopic string `toml:"ccip_state_changed_topic"`
 	// RMNRemoteAddress is the address of the RMN Remote contract.
 	RMNRemoteAddress string `toml:"rmn_remote_address"`
+	// MaxResourceFee caps one transaction's Soroban resource fee, in stroops.
+	// Zero uses DefaultMaxResourceFee.
+	MaxResourceFee int64 `toml:"max_resource_fee"`
 }
 
 // ContractTransmitter transmits aggregated reports to the Stellar OffRamp

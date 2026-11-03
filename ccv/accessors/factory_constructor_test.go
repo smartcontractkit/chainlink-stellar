@@ -84,6 +84,7 @@ func TestBuildStellarDestConfigs(t *testing.T) {
 					OffRampContractID:     "offramp-file",
 					RMNRemoteAddress:      "rmn-file",
 					CCIPStateChangedTopic: "topic",
+					MaxResourceFee:        750_000_000,
 				},
 			},
 		}
@@ -93,6 +94,7 @@ func TestBuildStellarDestConfigs(t *testing.T) {
 		assert.Equal(t, "offramp-file", out[sel].offRampContractID)
 		assert.Equal(t, "rmn-file", out[sel].rmnRemoteContractID)
 		assert.Equal(t, common.StellarTransmitterKeyName, out[sel].keyName)
+		assert.Equal(t, int64(750_000_000), out[sel].maxResourceFee)
 	})
 
 	t.Run("overlays hex addresses from ChainConfiguration", func(t *testing.T) {
