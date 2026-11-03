@@ -10,6 +10,7 @@ import (
 	"time"
 
 	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/strkey"
 )
@@ -100,6 +101,36 @@ func WaitForFriendbot(ctx context.Context, friendbotBaseURL string, timeout time
 	}
 
 	return fmt.Errorf("friendbot not ready after %v: %w", timeout, lastErr)
+}
+
+// WaitForRPC polls the Soroban RPC getHealth endpoint until it reports a
+// healthy status. Newer quickstart images can take longer to initialize the
+// simulation endpoint, and friendbot readiness alone does not guarantee the
+// RPC is serving simulations.
+func WaitForRPC(ctx context.Context, client *rpcclient.Client, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			health, err := client.GetHealth(ctx)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if health.Status == "healthy" {
+				return nil
+			}
+			lastErr = fmt.Errorf("RPC status: %s", health.Status)
+		}
+	}
+
+	return fmt.Errorf("RPC not ready after %v: %w", timeout, lastErr)
 }
 
 func FundViaFriendbot(friendbotURL, address string) error {

@@ -9,9 +9,6 @@ import (
 	"os"
 	"time"
 
-	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
-	"github.com/smartcontractkit/chainlink-stellar/bindings"
-	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/network"
@@ -19,6 +16,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
+	"github.com/smartcontractkit/chainlink-stellar/bindings"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 )
 
 // stellarHashTransactionInEnvelope is a thin alias for
@@ -511,7 +512,7 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 	}
 
 	if simResult.Error != "" {
-		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
+		return nil, fmt.Errorf("simulation error: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
@@ -557,7 +558,7 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 		}
 
 		if simResult.Error != "" {
-			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
+			return nil, fmt.Errorf("simulation error after restore: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 		}
 		if simResult.RestorePreamble != nil {
 			return nil, fmt.Errorf("simulation after restore still requires another restore: unexpected second RestorePreamble")
@@ -696,7 +697,7 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 	}
 
 	if simResult.Error != "" {
-		return nil, fmt.Errorf("simulation error: %s", simResult.Error)
+		return nil, fmt.Errorf("simulation error: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
@@ -741,7 +742,7 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		}
 
 		if simResult.Error != "" {
-			return nil, fmt.Errorf("simulation error after restore: %s", simResult.Error)
+			return nil, fmt.Errorf("simulation error after restore: %s (events: %v)", simResult.Error, simResult.EventsXDR)
 		}
 		if simResult.RestorePreamble != nil {
 			// The RPC should capture all archived entries in a single RestorePreamble.

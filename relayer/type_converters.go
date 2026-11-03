@@ -1,6 +1,7 @@
 package relayer
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -589,9 +590,32 @@ func convertScAddressToDomain(value xdr.ScAddress) (*stellartypes.ScAddress, err
 			LiquidityPoolID: append([]byte(nil), hash[:]...),
 		}, nil
 
+	case xdr.ScAddressTypeScAddressTypeMuxedContract:
+		// Protocol 30 (CAP-0084) muxed contract addresses carry a contract id plus a 64-bit mux id.
+		// The domain ScAddress has no variant for them yet, and collapsing to the bare contract
+		// would silently drop the mux id, so they are rejected with the W-address for diagnostics.
+		if value.MuxedContract == nil {
+			return nil, fmt.Errorf("muxed contract is nil")
+		}
+		return nil, fmt.Errorf("muxed contract address %s is not supported by the domain sc address type",
+			muxedContractAddress(*value.MuxedContract))
+
 	default:
 		return nil, fmt.Errorf("unsupported sc address type: %v", value.Type)
 	}
+}
+
+// muxedContractAddress renders a muxed contract as its W-address strkey (CAP-0084), falling back to
+// a hex rendering if encoding fails.
+func muxedContractAddress(m xdr.MuxedContract) string {
+	raw := make([]byte, 0, len(m.ContractId)+8)
+	raw = append(raw, m.ContractId[:]...)
+	raw = binary.BigEndian.AppendUint64(raw, uint64(m.Id))
+	addr, err := strkey.Encode(strkey.VersionByteMuxedContract, raw)
+	if err != nil {
+		return fmt.Sprintf("%x", raw)
+	}
+	return addr
 }
 
 func convertContractExecutableToDomain(value xdr.ContractExecutable) (*stellartypes.ContractExecutable, error) {
