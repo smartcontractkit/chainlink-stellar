@@ -181,7 +181,7 @@ const UPGRADE_TARGET_WASM: &[u8] =
 /// Decode the `new_wasm_hash` field from the last `Upgraded` event emitted by
 /// `contract`. `#[contractevent]` serializes the struct as a `Map<Symbol, Val>`
 /// keyed by field name, so we match on the field name (not the topic) — this
-/// stays correct whether the event topic is `onramp_1_7_Upgraded` or the shared
+/// stays correct whether the event topic is `onramp_2_0_Upgraded` or the shared
 /// trait's `Upgraded`.
 fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     let evs = env.events().all().filter_by_contract(contract);

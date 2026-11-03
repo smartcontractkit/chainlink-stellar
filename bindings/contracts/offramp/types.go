@@ -585,7 +585,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // ExecutionStateChangedEvent represents the ExecutionStateChangedEvent event.
-// Topics: [offramp_1_7_ExecStateChanged]
+// Topics: [offramp_2_0_ExecStateChanged]
 type ExecutionStateChangedEvent struct {
 	SourceChainSelector uint64
 	SequenceNumber      uint64
@@ -598,10 +598,10 @@ type ExecutionStateChangedEvent struct {
 }
 
 // ExecutionStateChangedEventTopic is the event topic identifier.
-const ExecutionStateChangedEventTopic = "offramp_1_7_ExecStateChanged"
+const ExecutionStateChangedEventTopic = "offramp_2_0_ExecStateChanged"
 
 // SourceChainConfigSetEvent represents the SourceChainConfigSetEvent event.
-// Topics: [offramp_1_7_SrcChainCfgSet]
+// Topics: [offramp_2_0_SrcChainCfgSet]
 type SourceChainConfigSetEvent struct {
 	SourceChainSelector uint64
 	SourceConfig        SourceChainConfig
@@ -611,10 +611,10 @@ type SourceChainConfigSetEvent struct {
 }
 
 // SourceChainConfigSetEventTopic is the event topic identifier.
-const SourceChainConfigSetEventTopic = "offramp_1_7_SrcChainCfgSet"
+const SourceChainConfigSetEventTopic = "offramp_2_0_SrcChainCfgSet"
 
 // StaticConfigSetEvent represents the StaticConfigSetEvent event.
-// Topics: [offramp_1_7_StaticConfigSet]
+// Topics: [offramp_2_0_StaticConfigSet]
 type StaticConfigSetEvent struct {
 	StaticConfig StaticConfig
 	// Event metadata
@@ -623,7 +623,7 @@ type StaticConfigSetEvent struct {
 }
 
 // StaticConfigSetEventTopic is the event topic identifier.
-const StaticConfigSetEventTopic = "offramp_1_7_StaticConfigSet"
+const StaticConfigSetEventTopic = "offramp_2_0_StaticConfigSet"
 
 // MessageExecutionState represents the MessageExecutionState enum (unit-only Soroban contracttype, encoded as ScVal::U32).
 type MessageExecutionState uint32

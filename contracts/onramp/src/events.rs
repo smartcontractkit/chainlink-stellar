@@ -3,7 +3,7 @@ use soroban_sdk::{contractevent, Address, Bytes, BytesN, Vec};
 use crate::{DestChainConfig, DynamicConfig, Receipt, StaticConfig};
 
 /// Event data for CCIPMessageSent
-#[contractevent(topics = ["onramp_1_7_CCIPMessageSent"])]
+#[contractevent(topics = ["onramp_2_0_CCIPMessageSent"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CCIPMessageSentEvent {
     /// Destination chain selector
@@ -26,14 +26,14 @@ pub struct CCIPMessageSentEvent {
     pub verifier_blobs: Vec<Bytes>,
 }
 
-#[contractevent(topics = ["onramp_1_7_ConfigSet"])]
+#[contractevent(topics = ["onramp_2_0_ConfigSet"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigSetEvent {
     pub static_config: StaticConfig,
     pub dynamic_config: DynamicConfig,
 }
 
-#[contractevent(topics = ["onramp_1_7_DestChainConfigSet"])]
+#[contractevent(topics = ["onramp_2_0_DestChainConfigSet"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DestChainConfigSetEvent {
     pub dest_chain_selector: u64,
@@ -55,7 +55,7 @@ pub struct DestChainConfigSetEvent {
 /// storage, fees, receipts, or message-id derivation, so storage layout is
 /// identical across the upgrade.
 #[cfg(feature = "e2e-upgrade-marker")]
-#[contractevent(topics = ["onramp_1_7_E2EUpgradeMarker"])]
+#[contractevent(topics = ["onramp_2_0_E2EUpgradeMarker"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct E2EUpgradeMarker {
     /// Fixed sentinel so the test can confirm it found the right event, not a

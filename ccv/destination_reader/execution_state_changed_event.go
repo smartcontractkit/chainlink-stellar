@@ -11,7 +11,7 @@ import (
 )
 
 // ExecutionStateChangedEvent represents the ExecutionStateChangedEvent event.
-// Topics: [offramp_1_7_ExecStateChanged]
+// Topics: [offramp_2_0_ExecStateChanged]
 type ExecutionStateChangedEvent struct {
 	SourceChainSelector uint64
 	SequenceNumber      uint64
@@ -24,7 +24,7 @@ type ExecutionStateChangedEvent struct {
 }
 
 // ExecutionStateChangedEventTopic is the event topic identifier.
-const ExecutionStateChangedEventTopic = "offramp_1_7_ExecStateChanged"
+const ExecutionStateChangedEventTopic = "offramp_2_0_ExecStateChanged"
 
 // ParseExecutionStateChangedEvent decodes an ExecutionStateChangedEvent from an
 // RPC event info entry.

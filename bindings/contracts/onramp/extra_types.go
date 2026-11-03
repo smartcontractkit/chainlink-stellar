@@ -205,7 +205,7 @@ func ReceiptFromScVal(val xdr.ScVal) (*Receipt, error) {
 }
 
 // CCIPMessageSentEvent represents the CCIPMessageSentEvent event.
-// Topics: [onramp_1_7_CCIPMessageSent]. token_amount_before_fees is *big.Int
+// Topics: [onramp_2_0_CCIPMessageSent]. token_amount_before_fees is *big.Int
 // for lossless i128 handling.
 type CCIPMessageSentEvent struct {
 	DestChainSelector     uint64
@@ -223,7 +223,7 @@ type CCIPMessageSentEvent struct {
 }
 
 // CCIPMessageSentEventTopic is the event topic identifier.
-const CCIPMessageSentEventTopic = "onramp_1_7_CCIPMessageSent"
+const CCIPMessageSentEventTopic = "onramp_2_0_CCIPMessageSent"
 
 // WaitForCCIPMessageSentEvent waits for a CCIPMessageSentEvent event.
 func (c *OnRampClient) WaitForCCIPMessageSentEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*CCIPMessageSentEvent) bool) (*CCIPMessageSentEvent, error) {

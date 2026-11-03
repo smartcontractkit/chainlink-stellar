@@ -17,7 +17,7 @@ import (
 )
 
 // CCIPMessageSentEvent represents the CCIPMessageSentEvent event.
-// Topics: [onramp_1_7_CCIPMessageSent]
+// Topics: [onramp_2_0_CCIPMessageSent]
 type CCIPMessageSentEvent struct {
 	DestChainSelector     uint64
 	SequenceNumber        uint64
@@ -34,7 +34,7 @@ type CCIPMessageSentEvent struct {
 }
 
 // CCIPMessageSentEventTopic is the event topic identifier.
-const CCIPMessageSentEventTopic = "onramp_1_7_CCIPMessageSent"
+const CCIPMessageSentEventTopic = "onramp_2_0_CCIPMessageSent"
 
 // ParseCCIPMessageSentEvent decodes a CCIPMessageSentEvent from an RPC event
 // info entry.

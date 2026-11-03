@@ -4,7 +4,7 @@ import "github.com/smartcontractkit/chainlink-stellar/deployment"
 
 const (
 	StellarDeployerKeypairEnv   = "STELLAR_DEPLOYER_PRIVATE_KEY"
-	StellarCCIPMessageSentTopic = "onramp_1_7_CCIPMessageSent"
+	StellarCCIPMessageSentTopic = "onramp_2_0_CCIPMessageSent"
 )
 
 // StellarTransmitterKeyName re-exports deployment.StellarTransmitterKeyName.

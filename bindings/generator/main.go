@@ -35,7 +35,7 @@ func writeGoFile(outDir, name, src string) {
 // mergeEvents appends src events to dst, skipping any whose name is already
 // present (in dst or earlier in src), so supplementing via -events is
 // idempotent by event name. -events exists to re-supply events pruned out of
-// the interface (e.g. offramp's offramp_1_7_* topics); for contracts whose
+// the interface (e.g. offramp's offramp_2_0_* topics); for contracts whose
 // interface already carries all events (keep-all prefixes), appending
 // unconditionally would redeclare every Parse*Event/Event in the output.
 func mergeEvents(dst, src []Event) []Event {

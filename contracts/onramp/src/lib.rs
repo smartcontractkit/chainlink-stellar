@@ -150,7 +150,7 @@ impl Ownable for OnRampContract {
 // In-place self-upgrade via the shared `common_authorization::Upgradeable`
 // trait (owner-gated, address + storage preserved, emits `Upgraded` with topic
 // `["Upgraded"]`). Replaces the former inline `upgrade`; behaviour is identical
-// except the event topic changed from `onramp_1_7_Upgraded` to the fleet-wide
+// except the event topic changed from `onramp_2_0_Upgraded` to the fleet-wide
 // `Upgraded` (see tests/integration/onramp_upgrade_test.go).
 #[contractimpl(contracttrait)]
 impl Upgradeable for OnRampContract {}
