@@ -100,6 +100,7 @@ func buildStellarDestConfigs(
 			rmnRemoteContractID: tc.RMNRemoteAddress,
 			stateChangedTopic:   tc.CCIPStateChangedTopic,
 			keyName:             common.StellarTransmitterKeyName,
+			maxResourceFee:      tc.MaxResourceFee,
 		}
 	}
 	for sel, drCfg := range stellarFileCfg.DestinationReaderConfigs {

@@ -166,6 +166,12 @@ func WithLogger(l cldflogger.Logger) DeployerOption {
 	return func(dep *Deployer) { dep.logger = l }
 }
 
+// WithMaxResourceFee caps the Soroban resource fee a transaction may declare.
+// Zero disables the cap.
+func WithMaxResourceFee(maxFee int64) DeployerOption {
+	return func(dep *Deployer) { dep.maxResourceFee = maxFee }
+}
+
 // Deployer handles Soroban contract deployment and initialization.
 type Deployer struct {
 	rpcClient         stellarRPCClient
@@ -186,6 +192,8 @@ type Deployer struct {
 	// waitForTransaction polls for exactly this duration, so the poll
 	// deadline and MaxTime stay in sync. Defaults to defaultTxnTimeBound.
 	txnTimeBound time.Duration
+	// maxResourceFee caps the Soroban resource fee per transaction; 0 disables it.
+	maxResourceFee int64
 }
 
 // NewDeployer creates a Deployer from a *keypair.Full, suiting the call sites
@@ -1038,6 +1046,9 @@ func (d *Deployer) restoreFootprint(ctx context.Context, preamble protocolrpc.Re
 	// once, via SorobanData.ResourceFee; BaseFee stays at the inclusion minimum.
 	// Putting MinResourceFee+bump in BaseFee as well double-counts it.
 	sorobanData.ResourceFee += xdr.Int64(d.resourceFeeBump(preamble.MinResourceFee))
+	if err := d.checkResourceFee(sorobanData.ResourceFee); err != nil {
+		return fmt.Errorf("restore footprint: %w", err)
+	}
 
 	restoreOp := &txnbuild.RestoreFootprint{
 		SourceAccount: d.signer.Address(),
@@ -1076,6 +1087,13 @@ func (d *Deployer) resourceFeeBump(minResourceFee int64) int64 {
 		bump = minFeeBuffer
 	}
 	return bump
+}
+
+func (d *Deployer) checkResourceFee(fee xdr.Int64) error {
+	if d.maxResourceFee > 0 && int64(fee) > d.maxResourceFee {
+		return fmt.Errorf("resource fee %d stroops exceeds configured cap %d stroops", int64(fee), d.maxResourceFee)
+	}
+	return nil
 }
 
 // assembleTransaction injects simulation results (Soroban data, auth, fee) into the
@@ -1145,6 +1163,9 @@ func (d *Deployer) assembleTransaction(ctx context.Context, tx *txnbuild.Transac
 					}
 					sorobanData.Resources.Instructions = caps.instructions
 				}
+			}
+			if err := d.checkResourceFee(sorobanData.ResourceFee); err != nil {
+				return nil, err
 			}
 			ihf.Ext = xdr.TransactionExt{
 				V:           1,
