@@ -85,7 +85,9 @@ impl RmnProxyContract {
 
     /// Set the RMN implementation address. Only callable by owner.
     ///
-    /// Equivalent to EVM's `setARM(address arm)`.
+    /// Diverges deliberately from EVM `setARM(address arm)` (no validation there):
+    /// rotation must preserve curse state exactly, so a repoint can never silently
+    /// lift — or add — a pause.
     ///
     /// # Arguments
     /// * `rmn` - The new RMN implementation address
@@ -93,9 +95,32 @@ impl RmnProxyContract {
     /// # Errors
     /// * `NotInitialized` - If contract is not initialized
     /// * `Unauthorized` - If caller is not the owner
+    /// * `InvalidConfig` - If the new RMN's cursed-subject set differs from the current one
     pub fn set_rmn(env: Env, rmn: Address) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
         <Self as Ownable>::require_owner(&env)?;
+
+        let old_rmn: Address = env
+            .storage()
+            .instance()
+            .get(&RMN)
+            .ok_or(CCIPError::NotInitialized)?;
+
+        let old_client = RmnRemoteClient::new(&env, &old_rmn);
+        let new_client = RmnRemoteClient::new(&env, &rmn);
+
+        // Client calls panic (and abort this call) on any error: unreadable old RMN,
+        // uninitialized or non-RMN new target — all fail closed.
+        let old_subjects = old_client.get_cursed_subjects();
+        let new_subjects = new_client.get_cursed_subjects();
+
+        if old_subjects.len() != new_subjects.len()
+            || old_subjects
+                .iter()
+                .any(|s| !new_subjects.contains(s.clone()))
+        {
+            return Err(CCIPError::InvalidConfig);
+        }
 
         env.storage().instance().set(&RMN, &rmn);
 

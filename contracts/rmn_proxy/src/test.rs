@@ -58,10 +58,25 @@ fn test_set_rmn() {
 
     client.initialize(&owner, &rmn);
 
-    let new_rmn = Address::generate(&env);
+    // No active curses: rotation to any initialized RMN Remote is allowed.
+    let new_rmn = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &new_rmn).initialize(&owner, &soroban_sdk::Vec::new(&env));
     client.set_rmn(&new_rmn);
 
     assert_eq!(client.get_rmn(), new_rmn);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")] // NotInitialized from the new RMN's get_cursed_subjects
+fn test_set_rmn_rejects_uninitialized_new_rmn() {
+    let (env, contract_id, owner, rmn) = setup_env();
+    let client = RmnProxyContractClient::new(&env, &contract_id);
+
+    client.initialize(&owner, &rmn);
+
+    // New target is a deployed but uninitialized RMN Remote.
+    let new_rmn = env.register(RmnRemoteContract, ());
+    client.set_rmn(&new_rmn);
 }
 
 #[test]
@@ -125,16 +140,80 @@ fn test_set_rmn_switches_delegation() {
     // Curse the first remote
     let rmn1_client = RmnRemoteContractClient::new(&env, &rmn1);
     let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
+    rmn1_client.curse(&owner, &vec![&env, global.clone()]);
+    assert!(client.is_cursed());
+
+    // Rotation requires identical curse state: replicate the curse on rmn2 first.
+    rmn2_client.curse(&owner, &vec![&env, global]);
+    client.set_rmn(&rmn2_id);
+    assert!(client.is_cursed());
+
+    // Switch back to first remote (identical curse set)
+    client.set_rmn(&rmn1);
+    assert!(client.is_cursed());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_set_rmn_rejects_fresh_rmn_during_active_curse() {
+    let (env, contract_id, owner, rmn1) = setup_env();
+    let client = RmnProxyContractClient::new(&env, &contract_id);
+
+    let rmn2_id = env.register(RmnRemoteContract, ());
+    RmnRemoteContractClient::new(&env, &rmn2_id).initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    client.initialize(&owner, &rmn1);
+
+    // Global curse active on the current RMN; the new one has none.
+    let rmn1_client = RmnRemoteContractClient::new(&env, &rmn1);
+    let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
     rmn1_client.curse(&owner, &vec![&env, global]);
     assert!(client.is_cursed());
 
-    // Switch proxy to second (uncursed) remote
     client.set_rmn(&rmn2_id);
-    assert!(!client.is_cursed());
+}
 
-    // Switch back to first (still cursed) remote
-    client.set_rmn(&rmn1);
-    assert!(client.is_cursed());
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_set_rmn_rejects_global_curse_substituting_lane_curse() {
+    let (env, contract_id, owner, rmn1) = setup_env();
+    let client = RmnProxyContractClient::new(&env, &contract_id);
+
+    let rmn2_id = env.register(RmnRemoteContract, ());
+    let rmn2_client = RmnRemoteContractClient::new(&env, &rmn2_id);
+    rmn2_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    client.initialize(&owner, &rmn1);
+
+    // Old has a lane curse only; new has the global curse. Different curse
+    // state, so rotation is rejected even though global would pause more.
+    let lane_subject = BytesN::from_array(&env, &[0xAA; 16]);
+    RmnRemoteContractClient::new(&env, &rmn1).curse(&owner, &vec![&env, lane_subject]);
+    let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
+    rmn2_client.curse(&owner, &vec![&env, global]);
+
+    client.set_rmn(&rmn2_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig
+fn test_set_rmn_rejects_extra_curse_on_new_rmn() {
+    let (env, contract_id, owner, rmn1) = setup_env();
+    let client = RmnProxyContractClient::new(&env, &contract_id);
+
+    let rmn2_id = env.register(RmnRemoteContract, ());
+    let rmn2_client = RmnRemoteContractClient::new(&env, &rmn2_id);
+    rmn2_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+
+    client.initialize(&owner, &rmn1);
+
+    // Both have the global curse, but the new RMN carries an extra lane curse.
+    let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
+    RmnRemoteContractClient::new(&env, &rmn1).curse(&owner, &vec![&env, global.clone()]);
+    let lane_subject = BytesN::from_array(&env, &[0xAA; 16]);
+    rmn2_client.curse(&owner, &vec![&env, global, lane_subject]);
+
+    client.set_rmn(&rmn2_id);
 }
 
 #[test]
