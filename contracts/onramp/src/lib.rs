@@ -1066,7 +1066,10 @@ impl OnRampContract {
             offramp_address: dest_config.off_ramp.clone(),
             sender: original_sender.clone().to_xdr(&env),
             receiver: message.receiver.clone(),
-            dest_blob: Bytes::new(&env),
+            // Executor args carry security-critical dest-side execution params (Solana
+            // account lists, Sui object IDs), so they must be committed into the signed
+            // message via dest_blob — EVM `OnRamp.forwardFromRouter` parity (OnRamp.sol:253).
+            dest_blob: extra_args.executor_args.clone(),
             token_transfer: token_transfer_bytes,
             data: message.data.clone(),
         };
