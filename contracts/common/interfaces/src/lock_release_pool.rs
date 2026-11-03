@@ -372,6 +372,7 @@ pub enum CCIPError {
     DuplicateCCVNotAllowed = 320,
     InvalidTokenTransferFeeConfig = 321,
     InvalidTransferFeeBps = 322,
+    InvalidAllowListRequest = 323,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,

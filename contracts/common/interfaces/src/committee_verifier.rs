@@ -78,6 +78,7 @@ pub trait CommitteeVerifierInterface {
     ) -> Result<soroban_sdk::Vec<soroban_sdk::Bytes>, CCIPError>;
     fn apply_allowlist_updates(
         env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
         updates: soroban_sdk::Vec<AllowListUpdate>,
     ) -> Result<(), CCIPError>;
     fn apply_signature_configs(
@@ -102,12 +103,6 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         allowed_finality: u32,
     ) -> Result<(), CCIPError>;
-    fn emit_allowlist_updated_event(
-        env: soroban_sdk::Env,
-        key: u64,
-        added_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-        removed_addresses: soroban_sdk::Vec<soroban_sdk::Address>,
-    );
     fn get_pending_storage_loc_admin(
         env: soroban_sdk::Env,
     ) -> Result<Option<soroban_sdk::Address>, CCIPError>;
@@ -288,6 +283,7 @@ pub enum CCIPError {
     DuplicateCCVNotAllowed = 320,
     InvalidTokenTransferFeeConfig = 321,
     InvalidTransferFeeBps = 322,
+    InvalidAllowListRequest = 323,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,

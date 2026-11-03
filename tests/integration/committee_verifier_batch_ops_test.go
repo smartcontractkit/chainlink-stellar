@@ -25,6 +25,7 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters" // registers the adapter under test
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
@@ -264,29 +265,61 @@ func TestCommitteeVerifierBatchOps(t *testing.T) {
 		require.Equal(t, uint32(5), got)
 	})
 
-	t.Run("allowlist proposal executes through the timelock", func(t *testing.T) {
+	t.Run("allowlist admin direct and timelock proposal paths", func(t *testing.T) {
 		added := []string{
 			helpers.GenerateMockContractID(t, deployerKP.Address(), "cv-allowlist-a"),
 			helpers.GenerateMockContractID(t, deployerKP.Address(), "cv-allowlist-b"),
 		}
+
+		// The deploy sequence defaults allowlist_admin to the initial owner, so the
+		// deployer is still the allowlist admin after ownership moved to the timelock:
+		// the update executes directly, like the EVM adapter's admin-direct path.
 		ops, err := adapter.ApplyAllowlistUpdates(ctx, cldfEnv, sel, qual, allowKey, true, added, nil)
 		require.NoError(t, err)
-		tx, args := requireProposal(t, ops, "apply_allowlist_updates")
-		require.Len(t, args, 1)
-		updates := requireAllowListUpdatesVec(t, args[0])
-		require.Len(t, updates, 1)
-		require.Equal(t, allowKey, updates[0].DestChainSelector)
-		require.True(t, updates[0].AllowlistEnabled)
-		require.Equal(t, added, updates[0].AddedAllowlistedSenders)
-		require.Empty(t, updates[0].RemovedAllowlistedSenders)
-
-		execute(t, tx, 4)
+		require.Empty(t, ops, "allowlist admin executes directly, no proposal")
 
 		entry, err := verifier.GetAllowlistEntry(ctx, allowKey)
 		require.NoError(t, err)
 		require.NotNil(t, entry)
 		require.True(t, entry.AllowlistEnabled)
 		require.ElementsMatch(t, added, entry.Allowlist)
+
+		// Clear the allowlist admin through the timelock owner so the next update must
+		// be owner-authorized — the proposal path.
+		cfg, err := verifier.GetDynamicConfig(ctx)
+		require.NoError(t, err)
+		cfgVal, err := cvbindings.DynamicConfig{AllowlistAdmin: nil, FeeAggregator: cfg.FeeAggregator}.ToScVal()
+		require.NoError(t, err)
+		cfgArgs, err := mcmsutil.EncodeSorobanInvokeArgs([]xdr.ScVal{cfgVal})
+		require.NoError(t, err)
+		var cfgSalt [32]byte
+		cfgSalt[31] = 2
+		callsCfg := timelockbindings.Calls{
+			Inner: []timelockbindings.Call{{Target: verifierID, Function: "set_dynamic_config", ArgsXdr: cfgArgs}},
+		}
+		helpers.MCMSTimelockScheduleAndExecute(t, ctx, e2eEnv, gov, callsCfg, [32]byte{}, cfgSalt)
+
+		ops, err = adapter.ApplyAllowlistUpdates(ctx, cldfEnv, sel, qual, allowKey, true, nil, added)
+		require.NoError(t, err)
+		tx, args := requireProposal(t, ops, "apply_allowlist_updates")
+		require.Len(t, args, 2)
+		caller, err := scval.AddressFromScVal(args[0])
+		require.NoError(t, err)
+		require.Equal(t, gov.TimelockID, caller, "proposal caller is the timelock")
+		updates := requireAllowListUpdatesVec(t, args[1])
+		require.Len(t, updates, 1)
+		require.Equal(t, allowKey, updates[0].DestChainSelector)
+		require.True(t, updates[0].AllowlistEnabled)
+		require.Empty(t, updates[0].AddedAllowlistedSenders)
+		require.Equal(t, added, updates[0].RemovedAllowlistedSenders)
+
+		execute(t, tx, 4)
+
+		entry, err = verifier.GetAllowlistEntry(ctx, allowKey)
+		require.NoError(t, err)
+		require.NotNil(t, entry)
+		require.True(t, entry.AllowlistEnabled)
+		require.Empty(t, entry.Allowlist)
 	})
 }
 

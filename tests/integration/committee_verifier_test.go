@@ -80,7 +80,7 @@ func TestCommitteeVerifier(t *testing.T) {
 
 	t.Run("set allowlist", func(t *testing.T) {
 		mockedAllowlistedSender := helpers.GenerateMockContractID(t, deployerKP.Address(), "allowlisted-sender")
-		err := client.ApplyAllowlistUpdates(ctx, []ccvsbindings.AllowListUpdate{
+		err := client.ApplyAllowlistUpdates(ctx, deployerKP.Address(), []ccvsbindings.AllowListUpdate{
 			{
 				DestChainSelector:         1,
 				AllowlistEnabled:          true,

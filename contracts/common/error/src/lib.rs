@@ -223,6 +223,9 @@ pub enum CCIPError {
     /// A token-transfer fee config bps is >= `BPS_DIVIDER` (10_000)
     /// (EVM `TokenPool.InvalidTransferFeeBps`).
     InvalidTransferFeeBps = 322,
+    /// Allowlist update adds senders while setting `allowlistEnabled = false`
+    /// (EVM `BaseVerifier.InvalidAllowListRequest`).
+    InvalidAllowListRequest = 323,
 
     // ============================================================
     // Calculation errors
