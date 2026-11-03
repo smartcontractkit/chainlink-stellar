@@ -11,7 +11,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/stretchr/testify/require"
 
+	evmrouter "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v1_2_0/router"
 	erc20 "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v1_5_1/factory_burn_mint_erc20"
+	bnmtokenbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/bnm_token"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 )
 
@@ -124,6 +126,80 @@ func TestStagingEVMToStellarSequentialMessages(t *testing.T) {
 	last, err := env.receiver.LastMessageId(ctx)
 	require.NoError(t, err, "receiver last_message_id")
 	require.True(t, seen[last], "receiver's last message %s is not from this batch", hexID(last))
+}
+
+// TestStagingEVMToStellarTokenTransfer sends STAGING_TOKEN_TRANSFER_AMOUNT
+// (scaled to the EVM token's decimals) of the EVM BnM token, with a short
+// payload, via the EVM Router.ccipSend. It first checks both pools are linked
+// to each other, then that the pool burns exactly the amount from the sender,
+// waits for successful execution on the Stellar OffRamp and checks the Stellar
+// receiver was minted exactly STAGING_TOKEN_TRANSFER_AMOUNT. The sender is
+// topped up from the EVM token's drip when short.
+func TestStagingEVMToStellarTokenTransfer(t *testing.T) {
+	ctx := t.Context()
+	env := newEVMToStellarEnv(t, ctx)
+	cfg := env.cfg
+	tt := loadTokenTransferConfig(t)
+
+	// Execution invokes the Stellar token and pool; keep their entries live.
+	extendContractTTLs(t, ctx, env.deployer, env.l, tt.StellarToken, tt.StellarPool)
+	stellarDecimals := checkStellarTokenPool(t, ctx, env.deployer, tt, cfg.EVMChainSelector, "", env.offRampID)
+	evmDecimals := checkEVMTokenPool(t, ctx, env.evm, tt, cfg.StellarChainSelector)
+	evmAmount := scaleAmount(t, tt.Amount, stellarDecimals, evmDecimals)
+
+	env.ensureEVMTokenBalance(t, ctx, tt.EVMToken, evmAmount)
+	evmToken, err := erc20.NewFactoryBurnMintERC20(tt.EVMToken, env.evm)
+	require.NoError(t, err)
+	stellarToken := bnmtokenbindings.NewBnmTokenClient(env.deployer, tt.StellarToken)
+
+	startLedger := env.latestStellarLedger(t, ctx)
+	senderBefore, err := evmToken.BalanceOf(&bind.CallOpts{Context: ctx}, env.sender)
+	require.NoError(t, err)
+	receiverBefore, err := stellarToken.Balance(ctx, cfg.ReceiverID)
+	require.NoError(t, err, "Stellar receiver token balance")
+
+	data := []byte(fmt.Sprintf("staging evm->stellar token transfer %s", time.Now().UTC().Format(time.RFC3339Nano)))
+	msg := env.buildMessage(t, data)
+	msg.TokenAmounts = []evmrouter.ClientEVMTokenAmount{{Token: tt.EVMToken, Amount: evmAmount}}
+	sent := env.sendAndConfirm(t, ctx, msg)
+
+	ev := sent.Event
+	require.Equal(t, cfg.StellarChainSelector, ev.DestChainSelector)
+	require.Equal(t, env.sender, ev.Sender)
+	require.NotEmpty(t, ev.Receipts, "CCIPMessageSent carried no receipts")
+
+	// The pool burns exactly the amount; the fee also comes out of this balance
+	// if the transferred token is the fee token.
+	wantSpent := new(big.Int).Set(evmAmount)
+	if cfg.EVMFeeToken == tt.EVMToken {
+		wantSpent.Add(wantSpent, sent.Fee)
+	}
+	senderAfter, err := evmToken.BalanceOf(&bind.CallOpts{Context: ctx}, env.sender)
+	require.NoError(t, err)
+	spent := new(big.Int).Sub(senderBefore, senderAfter)
+	require.Zerof(t, spent.Cmp(wantSpent), "sender token balance dropped by %s, want %s", spent, wantSpent)
+
+	exec := env.waitForStellarExecution(t, ctx, startLedger, sent.MessageID)
+	env.l.Info().
+		Str("messageID", hexID(sent.MessageID)).
+		Uint64("sequenceNumber", exec.SequenceNumber).
+		Str("txHash", exec.TxHash).
+		Uint32("ledger", exec.Ledger).
+		Msg("ExecutionStateChanged observed on Stellar")
+	require.Equalf(t, offrampbindings.MessageExecutionStateSuccess, exec.State,
+		"message executed with state %d, return data 0x%x", exec.State, exec.ReturnData)
+	require.Equal(t, cfg.EVMChainSelector, exec.SourceChainSelector)
+	require.Equal(t, sent.MessageNumber, exec.SequenceNumber, "Stellar sequence number should match the EVM message number")
+
+	last, err := env.receiver.LastMessageId(ctx)
+	require.NoError(t, err, "receiver last_message_id")
+	require.Equal(t, sent.MessageID, last, "receiver did not record the message")
+
+	// Exact only while nothing else pays this receiver in this token meanwhile.
+	receiverAfter, err := stellarToken.Balance(ctx, cfg.ReceiverID)
+	require.NoError(t, err)
+	minted := new(big.Int).Sub(receiverAfter, receiverBefore)
+	require.Zerof(t, minted.Cmp(tt.Amount), "Stellar receiver gained %s, want %s", minted, tt.Amount)
 }
 
 // TestStagingEVMToStellarUnsupportedDestination checks the EVM Router rejects

@@ -1,16 +1,19 @@
 package staging_tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -27,11 +30,15 @@ import (
 	evmonramp "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/latest/onramp"
 	evmrouter "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v1_2_0/router"
 	erc20 "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v1_5_1/factory_burn_mint_erc20"
+	evmtokenpool "github.com/smartcontractkit/chainlink-ccip/chains/evm/gobindings/generated/v2_0_0/token_pool"
 	"github.com/smartcontractkit/chainlink-ccv/build/devenv/cciptestinterfaces"
 	devenvevm "github.com/smartcontractkit/chainlink-ccv/build/devenv/evm"
+	bnmtokenbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/bnm_token"
+	burnmintpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/burn_mint_pool"
 	ccipreceiverbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ccip_receiver"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	rampregistrybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ramp_registry"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
@@ -64,7 +71,7 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 	cfg := loadStagingConfig(t)
 
 	l := zerolog.New(zerolog.NewTestWriter(t)).With().Timestamp().Logger()
-	rpc, deployer := newStellarClients(cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.Sender)
+	rpc, deployer := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.Sender)
 	router := routerbindings.NewRouterClient(deployer, cfg.RouterID)
 
 	tv, err := router.TypeAndVersion(ctx)
@@ -218,33 +225,53 @@ func (e *stagingEnv) waitForSentEvent(t *testing.T, ctx context.Context, startLe
 	ticker := time.NewTicker(stellarPollInterval)
 	defer ticker.Stop()
 
-	var lastErr error
+	var (
+		lastErr     error
+		scanned     int // CCIPMessageSent events seen in the scanned windows
+		parseErrors int
+	)
 	fromLedger := startLedger
 	for {
 		// Bounded, advancing window: an unpaginated query from a fixed
 		// startLedger only ever returns the server's first page of matches, so
 		// an event beyond it would never be seen (see waitForStellarExecution).
+		// The window only advances once it has been read: a failed query is
+		// retried from the same ledger, or its event would be skipped for good.
+		// getEvents' endLedger is exclusive, so [fromLedger, latest) leaves the
+		// latest ledger for the next window to start from.
 		latest, err := e.rpc.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
-		} else if uint32(latest.Sequence) >= fromLedger {
-			events, err := destinationreader.GetEventsInRange(ctx, e.rpc, e.onRampID, fromLedger, uint32(latest.Sequence), []string{ccvchain.CCIPMessageSentEventTopic})
+			e.l.Warn().Err(err).Msg("getLatestLedger failed; retrying")
+		} else if uint32(latest.Sequence) > fromLedger {
+			toLedger := uint32(latest.Sequence)
+			events, err := destinationreader.GetEventsInRange(ctx, e.rpc, e.onRampID, fromLedger, toLedger, []string{ccvchain.CCIPMessageSentEventTopic})
 			if err != nil {
 				lastErr = err
-			}
-			for _, raw := range events {
-				ev, err := ccvchain.ParseCCIPMessageSentEvent(raw)
-				if err == nil && ev.MessageId == messageID {
-					return ev
+				e.l.Warn().Err(err).Uint32("fromLedger", fromLedger).Uint32("toLedger", toLedger).Msg("getEvents failed; retrying the same window")
+			} else {
+				for _, raw := range events {
+					scanned++
+					ev, err := ccvchain.ParseCCIPMessageSentEvent(raw)
+					if err != nil {
+						parseErrors++
+						lastErr = err
+						e.l.Warn().Err(err).Str("txHash", raw.TransactionHash).Msg("unparseable CCIPMessageSent event")
+						continue
+					}
+					if ev.MessageId == messageID {
+						return ev
+					}
 				}
+				fromLedger = toLedger
 			}
-			fromLedger = uint32(latest.Sequence) + 1
 		}
 		select {
 		case <-ctx.Done():
 			require.FailNowf(t, "CCIPMessageSent not observed",
-				"message %s not seen on OnRamp %s from ledger %d within %s (last RPC error: %v)",
-				hexID(messageID), e.onRampID, startLedger, e.cfg.SentEventTimeout, lastErr)
+				"message %s not seen on OnRamp %s in ledgers [%d, %d) within %s: scanned %d CCIPMessageSent events (%d unparseable); last error: %v. "+
+					"Look up the ccip_send transaction hash logged above (\"submitted stellar transaction\") in the explorer.",
+				hexID(messageID), e.onRampID, startLedger, fromLedger, e.cfg.SentEventTimeout, scanned, parseErrors, lastErr)
 		case <-ticker.C:
 		}
 	}
@@ -434,7 +461,7 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 	onRamp, err := evmonramp.NewOnRamp(onRampAt, client)
 	require.NoError(t, err)
 
-	stellarRPC, deployer := newStellarClients(cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.StellarAccount)
+	stellarRPC, deployer := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.StellarAccount)
 	offRampID := cfg.OffRampID
 	if offRampID == "" {
 		entries, err := routerbindings.NewRouterClient(deployer, cfg.StellarRouterID).GetOfframps(ctx)
@@ -528,8 +555,8 @@ type evmSentMessage struct {
 }
 
 // sendAndConfirm quotes the fee, pays it (msg.value for native, an ERC-20
-// approval otherwise), calls Router.ccipSend and parses the OnRamp's
-// CCIPMessageSent from the receipt.
+// approval otherwise), approves the Router for any transferred tokens, calls
+// Router.ccipSend and parses the OnRamp's CCIPMessageSent from the receipt.
 func (e *evmToStellarEnv) sendAndConfirm(t *testing.T, ctx context.Context, msg evmrouter.ClientEVM2AnyMessage) evmSentMessage {
 	t.Helper()
 
@@ -537,11 +564,26 @@ func (e *evmToStellarEnv) sendAndConfirm(t *testing.T, ctx context.Context, msg 
 	require.NoError(t, err, "EVM Router.getFee")
 	e.l.Info().Str("fee", fee.String()).Str("feeToken", e.feeTokenLabel()).Msg("Fee quote")
 
+	// approve sets (not adds to) the allowance, so a token that is both
+	// transferred and the fee token gets one approval for the sum.
+	allowances := make(map[common.Address]*big.Int)
+	addAllowance := func(token common.Address, amount *big.Int) {
+		if allowances[token] == nil {
+			allowances[token] = new(big.Int)
+		}
+		allowances[token].Add(allowances[token], amount)
+	}
+	for _, ta := range msg.TokenAmounts {
+		addAllowance(ta.Token, ta.Amount)
+	}
 	if !e.nativeFee() {
-		token, err := erc20.NewFactoryBurnMintERC20(e.cfg.EVMFeeToken, e.evm)
+		addAllowance(e.cfg.EVMFeeToken, fee)
+	}
+	for addr, amount := range allowances {
+		token, err := erc20.NewFactoryBurnMintERC20(addr, e.evm)
 		require.NoError(t, err)
-		tx, err := token.Approve(e.transactOpts(t, ctx), e.cfg.EVMRouter, fee)
-		require.NoError(t, err, "approve fee token")
+		tx, err := token.Approve(e.transactOpts(t, ctx), e.cfg.EVMRouter, amount)
+		require.NoError(t, err, "approve %s", addr.Hex())
 		e.waitMined(t, ctx, tx, "approve")
 	}
 
@@ -588,6 +630,7 @@ func (e *evmToStellarEnv) transactOpts(t *testing.T, ctx context.Context) *bind.
 
 func (e *evmToStellarEnv) waitMined(t *testing.T, ctx context.Context, tx *types.Transaction, what string) *types.Receipt {
 	t.Helper()
+	e.l.Info().Str("tx", what).Str("txHash", tx.Hash().Hex()).Msg("EVM transaction submitted")
 	ctx, cancel := context.WithTimeout(ctx, e.cfg.EVMSentTimeout)
 	defer cancel()
 	receipt, err := bind.WaitMined(ctx, e.evm, tx)
@@ -634,21 +677,25 @@ func (e *evmToStellarEnv) waitForStellarExecution(t *testing.T, ctx context.Cont
 		latest, err := e.stellarRPC.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
-		} else if uint32(latest.Sequence) >= fromLedger {
+		} else if uint32(latest.Sequence) > fromLedger {
+			// Advance only past a window that was read, and resume at the
+			// excluded end ledger; see waitForSentEvent.
 			events, err := destinationreader.GetEventsInRange(ctx, e.stellarRPC, e.offRampID, fromLedger, uint32(latest.Sequence), []string{destinationreader.ExecutionStateChangedEventTopic})
 			if err != nil {
 				lastErr = err
-			}
-			for _, raw := range events {
-				ev, err := destinationreader.ParseExecutionStateChangedEvent(raw)
-				if err != nil || ev.MessageId != messageID {
-					continue
+				e.l.Warn().Err(err).Uint32("fromLedger", fromLedger).Msg("getEvents failed; retrying the same window")
+			} else {
+				for _, raw := range events {
+					ev, err := destinationreader.ParseExecutionStateChangedEvent(raw)
+					if err != nil || ev.MessageId != messageID {
+						continue
+					}
+					if ev.State == offrampbindings.MessageExecutionStateSuccess || ev.State == offrampbindings.MessageExecutionStateFailure {
+						return ev
+					}
 				}
-				if ev.State == offrampbindings.MessageExecutionStateSuccess || ev.State == offrampbindings.MessageExecutionStateFailure {
-					return ev
-				}
+				fromLedger = uint32(latest.Sequence)
 			}
-			fromLedger = uint32(latest.Sequence) + 1
 		}
 		select {
 		case <-ctx.Done():
@@ -704,4 +751,171 @@ func revertData(err error) string {
 		}
 	}
 	return ""
+}
+
+// ============================================================
+// Token transfers
+// ============================================================
+
+// dripABI is the permissionless faucet of BurnMintERC20WithDrip, which the
+// chainlink-ccip gobindings do not cover.
+const dripABI = `[{"type":"function","name":"drip","inputs":[{"name":"to","type":"address"}],"outputs":[],"stateMutability":"nonpayable"}]`
+
+// maxDrips bounds faucet top-ups so a misconfigured amount fails fast instead
+// of looping. One drip is 0.1 BnM on Stellar and 1 token on EVM.
+const maxDrips = 10
+
+// checkStellarTokenPool checks the Stellar pool serves the configured token and
+// is linked to the EVM token and pool for remoteSelector, that its ramp registry
+// accepts the given OnRamp and/or OffRamp (skipped when empty), and returns the
+// token's decimals. EVM addresses may be stored raw (20 bytes) or ABI-padded
+// (32 bytes); the last 20 bytes are compared.
+func checkStellarTokenPool(t *testing.T, ctx context.Context, deployer *stellardeployment.Deployer, tt *tokenTransferConfig, remoteSelector uint64, onRamp, offRamp string) uint32 {
+	t.Helper()
+	pool := burnmintpoolbindings.NewBurnMintPoolClient(deployer, tt.StellarPool)
+
+	token, err := pool.GetToken(ctx)
+	require.NoError(t, err, "Stellar pool %s get_token — is %s a token pool?", tt.StellarPool, envStellarTokenPool)
+	require.Equal(t, tt.StellarToken, token, "Stellar pool %s serves a different token", tt.StellarPool)
+
+	supported, err := pool.IsSupportedChain(ctx, remoteSelector)
+	require.NoError(t, err)
+	require.True(t, supported, "Stellar pool %s does not support chain %d", tt.StellarPool, remoteSelector)
+
+	remoteToken, err := pool.GetRemoteToken(ctx, remoteSelector)
+	require.NoError(t, err, "Stellar pool get_remote_token(%d)", remoteSelector)
+	require.Equalf(t, tt.EVMToken, common.BytesToAddress(remoteToken),
+		"Stellar pool's remote token 0x%x != %s", remoteToken, tt.EVMToken.Hex())
+
+	remotePools, err := pool.GetRemotePools(ctx, remoteSelector)
+	require.NoError(t, err, "Stellar pool get_remote_pools(%d)", remoteSelector)
+	require.Truef(t, slices.ContainsFunc(remotePools, func(p []byte) bool { return common.BytesToAddress(p) == tt.EVMPool }),
+		"Stellar pool's remote pools %x do not include %s", remotePools, tt.EVMPool.Hex())
+
+	// The pool authorizes its caller against its own ramp registry, not the
+	// Router: lock_or_burn needs the registry's OnRamp for remoteSelector to be
+	// the lane's, release_or_mint needs the lane's OffRamp registered. A miss
+	// surfaces as Error(Contract, #63) / CallerNotAuthorized deep in ccip_send.
+	registryID, err := pool.GetRampRegistry(ctx)
+	require.NoError(t, err, "Stellar pool get_ramp_registry")
+	require.NotNil(t, registryID, "Stellar pool %s has no ramp registry", tt.StellarPool)
+	registry := rampregistrybindings.NewRampRegistryClient(deployer, *registryID)
+	if onRamp != "" {
+		got, err := registry.GetOnramp(ctx, remoteSelector)
+		require.NoErrorf(t, err, "Stellar pool's ramp registry %s has no OnRamp for chain %d; its owner must apply_onramp_updates with %s",
+			*registryID, remoteSelector, onRamp)
+		require.Equalf(t, onRamp, got, "Stellar pool's ramp registry %s maps chain %d to a different OnRamp", *registryID, remoteSelector)
+	}
+	if offRamp != "" {
+		ok, err := registry.IsOfframp(ctx, remoteSelector, offRamp)
+		require.NoError(t, err, "ramp registry is_offramp")
+		require.Truef(t, ok, "Stellar pool's ramp registry %s does not register OffRamp %s for chain %d; its owner must apply_offramp_updates",
+			*registryID, offRamp, remoteSelector)
+	}
+
+	decimals, err := pool.GetTokenDecimals(ctx)
+	require.NoError(t, err)
+	return decimals
+}
+
+// checkEVMTokenPool checks the EVM pool serves the configured token and is
+// linked to the Stellar token and pool (raw 32-byte contract ids) for
+// remoteSelector, and returns the token's decimals.
+func checkEVMTokenPool(t *testing.T, ctx context.Context, backend bind.ContractBackend, tt *tokenTransferConfig, remoteSelector uint64) uint8 {
+	t.Helper()
+	pool, err := evmtokenpool.NewTokenPool(tt.EVMPool, backend)
+	require.NoError(t, err)
+	opts := &bind.CallOpts{Context: ctx}
+
+	token, err := pool.GetToken(opts)
+	require.NoError(t, err, "EVM pool %s getToken — is %s a token pool?", tt.EVMPool.Hex(), envEVMTokenPool)
+	require.Equal(t, tt.EVMToken, token, "EVM pool %s serves a different token", tt.EVMPool.Hex())
+
+	supported, err := pool.IsSupportedChain(opts, remoteSelector)
+	require.NoError(t, err)
+	require.True(t, supported, "EVM pool %s does not support chain %d", tt.EVMPool.Hex(), remoteSelector)
+
+	stellarToken, err := strkey.Decode(strkey.VersionByteContract, tt.StellarToken)
+	require.NoError(t, err)
+	remoteToken, err := pool.GetRemoteToken(opts, remoteSelector)
+	require.NoError(t, err, "EVM pool getRemoteToken(%d)", remoteSelector)
+	require.Truef(t, bytes.Equal(stellarToken, remoteToken),
+		"EVM pool's remote token 0x%x != %s (0x%x)", remoteToken, tt.StellarToken, stellarToken)
+
+	stellarPool, err := strkey.Decode(strkey.VersionByteContract, tt.StellarPool)
+	require.NoError(t, err)
+	isRemote, err := pool.IsRemotePool(opts, remoteSelector, stellarPool)
+	require.NoError(t, err, "EVM pool isRemotePool(%d)", remoteSelector)
+	require.True(t, isRemote, "EVM pool %s does not list %s as a remote pool", tt.EVMPool.Hex(), tt.StellarPool)
+
+	decimals, err := pool.GetTokenDecimals(opts)
+	require.NoError(t, err)
+	return decimals
+}
+
+// scaleAmount converts a Stellar-token amount to EVM-token units. The pools
+// convert with integer division, so only up-scaling (EVM decimals >= Stellar
+// decimals) round-trips exactly.
+func scaleAmount(t *testing.T, stellarAmount *big.Int, stellarDecimals uint32, evmDecimals uint8) *big.Int {
+	t.Helper()
+	require.GreaterOrEqual(t, uint32(evmDecimals), stellarDecimals,
+		"EVM token has fewer decimals (%d) than the Stellar token (%d)", evmDecimals, stellarDecimals)
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(uint32(evmDecimals)-stellarDecimals)), nil)
+	return new(big.Int).Mul(stellarAmount, scale)
+}
+
+// ensureStellarTokenBalance tops the account up from the BnM token's
+// permissionless drip until it holds at least need.
+func ensureStellarTokenBalance(t *testing.T, ctx context.Context, token *bnmtokenbindings.BnmTokenClient, account string, need *big.Int, l *zerolog.Logger) {
+	t.Helper()
+	for range maxDrips {
+		bal, err := token.Balance(ctx, account)
+		require.NoError(t, err, "Stellar token balance")
+		if bal.Cmp(need) >= 0 {
+			return
+		}
+		l.Info().Str("balance", bal.String()).Str("need", need.String()).Msg("Dripping Stellar BnM token to sender")
+		require.NoError(t, token.Drip(ctx, account), "Stellar token drip")
+	}
+	bal, err := token.Balance(ctx, account)
+	require.NoError(t, err)
+	require.GreaterOrEqualf(t, bal.Cmp(need), 0, "Stellar sender holds %s < %s after %d drips; lower %s",
+		bal, need, maxDrips, envTokenTransferAmount)
+}
+
+// ensureEVMTokenBalance tops the sender up from the token's permissionless
+// drip until it holds at least need, failing with funding instructions when the
+// token has no working drip.
+func (e *evmToStellarEnv) ensureEVMTokenBalance(t *testing.T, ctx context.Context, tokenAddr common.Address, need *big.Int) {
+	t.Helper()
+	token, err := erc20.NewFactoryBurnMintERC20(tokenAddr, e.evm)
+	require.NoError(t, err)
+	parsed, err := abi.JSON(strings.NewReader(dripABI))
+	require.NoError(t, err)
+	faucet := bind.NewBoundContract(tokenAddr, parsed, e.evm, e.evm, e.evm)
+
+	for range maxDrips {
+		bal, err := token.BalanceOf(&bind.CallOpts{Context: ctx}, e.sender)
+		require.NoError(t, err, "EVM token balance")
+		if bal.Cmp(need) >= 0 {
+			return
+		}
+		// Dry-run first: a token deployed without the faucet (or a plain
+		// BurnMintERC20) reverts here, and the sender must be funded out of band.
+		if err := faucet.Call(&bind.CallOpts{Context: ctx, From: e.sender}, nil, "drip", e.sender); err != nil {
+			require.FailNowf(t, "EVM sender cannot be funded from drip",
+				"sender %s holds %s < %s of %s and drip(address) reverts (%v). The token may not implement drip; "+
+					"fund the sender out of band, e.g. have an account with MINTER_ROLE mint to it, or run "+
+					"TestStagingStellarToEVMTokenTransfer with %s set to the sender.",
+				e.sender.Hex(), bal, need, tokenAddr.Hex(), err, envEVMReceiver)
+		}
+		e.l.Info().Str("balance", bal.String()).Str("need", need.String()).Msg("Dripping EVM token to sender")
+		tx, err := faucet.Transact(e.transactOpts(t, ctx), "drip", e.sender)
+		require.NoError(t, err, "EVM token drip")
+		e.waitMined(t, ctx, tx, "drip")
+	}
+	bal, err := token.BalanceOf(&bind.CallOpts{Context: ctx}, e.sender)
+	require.NoError(t, err)
+	require.GreaterOrEqualf(t, bal.Cmp(need), 0, "EVM sender holds %s < %s after %d drips; lower %s",
+		bal, need, maxDrips, envTokenTransferAmount)
 }
