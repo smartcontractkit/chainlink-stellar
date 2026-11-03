@@ -56,6 +56,7 @@ type StellarTx struct {
 	ResultMetaXDR   string   // XDR-encoded result meta from GetTransaction SUCCESS
 	MaxLedger       uint32   // broadcast-loop-owned; ledger bounds set during broadcast
 	MinResourceFee  int64    // broadcast-loop-owned; from simulation result
+	InclusionFee    int64    // broadcast-loop-owned; inclusion bid of the last accepted envelope
 
 	// Done is closed when the transaction reaches a terminal state.
 	Done     chan struct{}

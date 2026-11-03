@@ -172,6 +172,18 @@ func sendRequestHash(t *testing.T, req protocolrpc.SendTransactionRequest) strin
 	return hash
 }
 
+// envelopeInclusionFee returns the inclusion bid of a signed envelope: its fee minus the declared resource fee.
+func envelopeInclusionFee(t *testing.T, signedXDR string) int64 {
+	t.Helper()
+	var env xdr.TransactionEnvelope
+	require.NoError(t, xdr.SafeUnmarshalBase64(signedXDR, &env))
+	fee := int64(env.Fee())
+	if data, ok := env.V1.Tx.Ext.GetSorobanData(); ok {
+		fee -= int64(data.ResourceFee)
+	}
+	return fee
+}
+
 // lastSendRequestHash returns sendRequestHash for the last SendTransaction the mock received.
 func lastSendRequestHash(t *testing.T, mock *mockRPCClient) string {
 	t.Helper()
@@ -919,6 +931,84 @@ func TestStellarTxm_ConfirmLoop_ExpiredTxRetries(t *testing.T) {
 		status, _ := txm.GetStatus(txID)
 		return status == commontypes.Failed
 	}, 5*time.Second, 50*time.Millisecond, "expired tx with 0 retries should be Failed")
+}
+
+func TestStellarTxm_ConfirmLoop_RebroadcastOutbidsExpiredEnvelope(t *testing.T) {
+	t.Parallel()
+
+	var latestLedgerSeq atomic.Uint32
+	latestLedgerSeq.Store(1000)
+	var mu sync.Mutex
+	var sent []string
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		simulateResp: protocolrpc.SimulateTransactionResponse{
+			MinResourceFee:     10000,
+			TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+		},
+		getFeeStatsResp: protocolrpc.GetFeeStatsResponse{
+			SorobanInclusionFee: protocolrpc.FeeDistribution{P50: 4_000, P90: 4_500, P99: 5_000},
+		},
+		sendHook: func(req protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			sent = append(sent, req.Transaction)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending}, nil
+		},
+		getTransactionHook: func(protocolrpc.GetTransactionRequest) (protocolrpc.GetTransactionResponse, error) {
+			return protocolrpc.GetTransactionResponse{
+				LatestLedger:       latestLedgerSeq.Load(),
+				TransactionDetails: protocolrpc.TransactionDetails{Status: protocolrpc.TransactionStatusNotFound},
+			}, nil
+		},
+		getLatestLedgerHook: func() (protocolrpc.GetLatestLedgerResponse, error) {
+			return protocolrpc.GetLatestLedgerResponse{Sequence: latestLedgerSeq.Load()}, nil
+		},
+	}
+	sentCount := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(sent)
+	}
+
+	cfg := config.TxManagerConfig{
+		ConfirmPollInterval: clconfig.MustNewDuration(10 * time.Millisecond),
+		MaxTxRetryAttempts:  ptr(uint64(2)),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+
+	_, err = txm.Enqueue(t.Context(), TxRequest{
+		FromAddress: testAddress,
+		Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &xdr.ContractId{},
+					},
+					FunctionName: xdr.ScSymbol("noop"),
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return sentCount() == 1 }, 5*time.Second, 10*time.Millisecond)
+	latestLedgerSeq.Store(2000)
+	require.Eventually(t, func() bool { return sentCount() == 2 }, 5*time.Second, 10*time.Millisecond,
+		"expired envelope should be rebroadcast")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, int64(4_500), envelopeInclusionFee(t, sent[0]), "first broadcast bids P90")
+	assert.Equal(t, int64(6_750), envelopeInclusionFee(t, sent[1]),
+		"rebroadcast outbids the expired envelope by FeeBumpMultiplier when that beats P99")
 }
 
 // --- EnqueueAndWait test ---
@@ -2386,7 +2476,9 @@ func TestStellarTxm_FeePercentilesConfigurable(t *testing.T) {
 	}{
 		"P50 then P90": {"P50", "P90", 100, 1_000_000},
 		"P50 then P99": {"P50", "P99", 100, 26_000_000},
-		"P90 only":     {"p90", "p90", 1_000_000, 1_000_000},
+		// A rebroadcast still outbids the expired envelope by FeeBumpMultiplier when the
+		// percentile alone would repeat its bid.
+		"P90 only": {"p90", "p90", 1_000_000, 1_500_000},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
