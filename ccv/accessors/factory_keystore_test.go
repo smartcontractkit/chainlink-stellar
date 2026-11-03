@@ -38,7 +38,7 @@ func newDestFactoryUnderTest(t *testing.T) (*factory, string) {
 			stellarKey: {
 				offRampContractID:   "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
 				rmnRemoteContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-				stateChangedTopic:   "offramp_1_7_ExecStateChanged",
+				stateChangedTopic:   "offramp_2_0_ExecStateChanged",
 				keyName:             "stellar/tx/dest-test",
 			},
 		},

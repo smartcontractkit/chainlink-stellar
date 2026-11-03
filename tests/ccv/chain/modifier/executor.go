@@ -133,7 +133,7 @@ func buildExecutorStellarConfig(executorInput *executor.Input, outputs []*blockc
 			NetworkPassphrase:     networkPassphrase,
 			OffRampContractID:     offRampContractID,
 			CCIPOfframpAddress:    offRampContractID,
-			CCIPStateChangedTopic: "offramp_1_7_ExecStateChanged",
+			CCIPStateChangedTopic: "offramp_2_0_ExecStateChanged",
 			RMNRemoteAddress:      rmnRemoteContractID,
 		}
 
