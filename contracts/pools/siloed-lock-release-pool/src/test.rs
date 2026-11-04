@@ -19,8 +19,8 @@ use common_interfaces::token_pool::{
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
 use common_pool::{
-    ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig, ReleaseOrMintIn,
-    TokenTransferFeeConfig, TokenTransferFeeConfigArgs, encode_local_decimals,
+    encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
+    ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use pools_advanced_pool_hooks::{
     AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
