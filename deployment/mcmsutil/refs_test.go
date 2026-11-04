@@ -142,6 +142,31 @@ func TestFindExistingStellarTimelock(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestStellarTimelocksByQualifier(t *testing.T) {
+	chainSel := uint64(999)
+	qualA := "qual-a"
+	qualB := "fastcurse-devenv-curse"
+	tlA := "CTIMELOCKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	tlB := "CTIMELOCKBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+
+	refs := []datastore.AddressRef{
+		StellarTimelockDatastoreRef(chainSel, qualA, tlA),
+		StellarTimelockDatastoreRef(chainSel, qualB, tlB),
+	}
+	got := StellarTimelocksByQualifier(refs, chainSel)
+	require.Equal(t, map[string]string{qualA: tlA, qualB: tlB}, got)
+
+	// Other chains, other contract types and empty qualifiers are excluded.
+	otherChain := StellarTimelockDatastoreRef(chainSel+1, qualA, tlA)
+	otherChain.Qualifier = ""
+	refs = append(refs, otherChain)
+	wrongType := StellarTimelockDatastoreRef(chainSel, "qual-c", tlA)
+	wrongType.Type = datastore.ContractType(utils.ProposerManyChainMultisig)
+	refs = append(refs, wrongType)
+	got = StellarTimelocksByQualifier(refs, chainSel)
+	require.Equal(t, map[string]string{qualA: tlA, qualB: tlB}, got)
+}
+
 func TestStellarTimelockDatastoreRef(t *testing.T) {
 	ref := StellarTimelockDatastoreRef(3, "q", "CADDR")
 	require.Equal(t, uint64(3), ref.ChainSelector)

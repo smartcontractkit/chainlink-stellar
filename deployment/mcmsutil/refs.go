@@ -137,6 +137,30 @@ func FindExistingStellarTimelock(refs []datastore.AddressRef, chainSelector uint
 	return "", false
 }
 
+// StellarTimelocksByQualifier returns every RBACTimelock contract id on the chain
+// keyed by its qualifier. The qualifier is a generic MCMS stack selector, matching
+// how EVM and Sui route proposals, so every deployed qualifier is returned rather
+// than a fixed list.
+func StellarTimelocksByQualifier(refs []datastore.AddressRef, chainSelector uint64) map[string]string {
+	v := deploy.MCMSVersion
+	out := make(map[string]string)
+	for _, r := range refs {
+		if r.ChainSelector != chainSelector {
+			continue
+		}
+		if r.Qualifier == "" || r.Address == "" {
+			continue
+		}
+		if !r.Version.Equal(v) {
+			continue
+		}
+		if r.Type == datastore.ContractType(utils.RBACTimelock) {
+			out[r.Qualifier] = r.Address
+		}
+	}
+	return out
+}
+
 // StellarTimelockDatastoreRef is a single RBACTimelock ref (matches EVM datastore labeling).
 func StellarTimelockDatastoreRef(chainSelector uint64, qual, contractID string) datastore.AddressRef {
 	return datastore.AddressRef{

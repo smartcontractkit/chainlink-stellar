@@ -196,6 +196,25 @@ func TestStellarCurseAdapter_InitializeResolvesRoutingFacts(t *testing.T) {
 	require.Empty(t, a.curseAdmins[sel])
 }
 
+func TestStellarCurseAdapter_InitializeResolvesAnyDeployedQualifier(t *testing.T) {
+	sel := uint64(424242420110)
+	// A qualifier outside the historical CLLCCIP/RMNMCMS/UltraFastCurse set must
+	// still be routable: environments like the fastcurse devenv deploy their
+	// curse-admin stack under their own qualifier.
+	qual := "fastcurse-devenv-curse"
+	tl := stellarutil.MustGenerateMockContractID("deployer", "timelock-0")
+
+	env := adapterTestEnv(t, sel, true, qual)
+	a := NewStellarCurseAdapter()
+
+	// The dead RPC endpoint fails the mandatory owner read after the datastore
+	// facts are cached.
+	err := a.Initialize(env, sel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read RMN Remote owner")
+	require.Equal(t, tl, a.timelocks[sel][qual])
+}
+
 func TestStellarCurseAdapter_InitializeRefreshesGovernanceFacts(t *testing.T) {
 	sel := uint64(424242420104)
 	env1 := adapterTestEnv(t, sel, true, utils.RMNTimelockQualifier)
