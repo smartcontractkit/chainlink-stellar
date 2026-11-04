@@ -1138,6 +1138,66 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
     );
 }
 
+/// A token receiver with no deployed contract can never authorize a transfer,
+/// so tokens minted to it are stuck. Reject it before the pool call.
+#[test]
+fn test_execute_token_receiver_without_deployed_contract_records_failure() {
+    let (env, client, _receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    // A 32-byte token receiver with no ledger entry: decodes to a contract
+    // address that has no code.
+    let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: phantom_receiver,
+        extra_data: Bytes::new(&env),
+    };
+
+    // Token-only (no data, no receive gas): routing is skipped, so only the
+    // release path decides this message's outcome.
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::new(&env),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a typed pre-release error must be caught per-message: {:?}",
+        res
+    );
+    let code = last_execution_error_code(&env, &client.address);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure,
+        "a receiver with no deployed code must record a retryable Failure"
+    );
+    assert_eq!(code, CCIPError::ReceiverDoesNotExist as u32);
+    assert_eq!(
+        pool_client.release_count(),
+        0,
+        "no tokens may move to a receiver that cannot authorize them"
+    );
+    assert!(
+        pool_client.try_last_receiver().is_err(),
+        "the pool must never be called for an undeployed token receiver"
+    );
+}
+
 #[test]
 // The token-only zero-receiver exception is granted only to the canonical
 // 32-byte zero address. The decoder does not enforce the receiver length, so
