@@ -27,8 +27,6 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ownership"
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
-
-	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
 )
 
 var (
@@ -107,19 +105,11 @@ func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) er
 	}
 	// Timelocks are resolved from the environment datastore on every call: a
 	// stack deployed by an earlier changeset in the same run must be visible to
-	// the next one. All three governance stacks are resolved: CLLCCIP is kept
-	// for diagnostics only — it holds no RMN role, but naming its timelock in
-	// build-time errors makes the likeliest operator mistake actionable.
-	tls := make(map[string]string)
-	for _, qual := range []string{cciputils.CLLQualifier, cciputils.RMNTimelockQualifier, cciputils.UltraFastCurseMCMSQualifier} {
-		if tl, ok := mcmsutil.FindExistingStellarTimelock(datastoreRefs(e), selector, qual); ok {
-			tls[qual] = tl
-		} else {
-			e.Logger.Debugw("no RBACTimelock deployed for qualifier; it will be unavailable for curse routing",
-				"chainSelector", selector, "qualifier", qual)
-		}
-	}
-	a.timelocks[selector] = tls
+	// the next one. Every deployed qualifier is resolved, matching how EVM and
+	// Sui treat the qualifier as a generic MCMS stack selector; whether a
+	// timelock may curse stays an on-chain fact checked when the proposal is
+	// built.
+	a.timelocks[selector] = mcmsutil.StellarTimelocksByQualifier(datastoreRefs(e), selector)
 
 	// The owner and curse-admin facts are always re-read: ownership moves at
 	// activation and admin grants move at apply_curse_admin_updates, and one
