@@ -62,7 +62,12 @@ type TxSigner interface {
 	Address() string
 	// SignTransaction signs the given transaction for the given network passphrase
 	// and returns a new transaction with the signature appended.
-	SignTransaction(networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error)
+	//
+	// ctx bounds the signing operation: implementations backed by a remote or
+	// otherwise potentially slow signer (e.g. a keystore) MUST honour ctx
+	// cancellation and deadlines so a stalled signer cannot block submission
+	// past the caller's lifetime.
+	SignTransaction(ctx context.Context, networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error)
 }
 
 // keypairSigner adapts a *keypair.Full to the TxSigner interface for callers
@@ -80,7 +85,10 @@ func NewKeypairSigner(kp *keypair.Full) TxSigner {
 
 func (s *keypairSigner) Address() string { return s.kp.Address() }
 
-func (s *keypairSigner) SignTransaction(networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+func (s *keypairSigner) SignTransaction(ctx context.Context, networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return tx.Sign(networkPassphrase, s.kp)
 }
 
@@ -113,7 +121,14 @@ func (s *sdkTxSigner) Address() string { return s.sdk.Address() }
 // SignTransaction hashes the envelope, obtains a decorated signature from the
 // underlying signer, and appends it to a clone of tx — mirroring
 // (*txnbuild.Transaction).Sign without requiring a *keypair.Full.
-func (s *sdkTxSigner) SignTransaction(networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+//
+// The SDK-shaped SignDecorated has no context parameter, so ctx is only
+// checked before signing; this adapter is used by deployment tooling, not the
+// long-running CCV services.
+func (s *sdkTxSigner) SignTransaction(ctx context.Context, networkPassphrase string, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	envelope := tx.ToXDR()
 	h, err := stellarHashTransactionInEnvelope(envelope, networkPassphrase)
 	if err != nil {
@@ -817,7 +832,7 @@ func (d *Deployer) buildSimulateAndSubmitOnce(ctx context.Context, sourceAccount
 // word "transaction" in errors (e.g. "restore "). The submitted transaction's
 // hash is returned alongside the confirmed meta.
 func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transaction, deadline time.Time, label string) (*xdr.TransactionMeta, string, error) {
-	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, tx)
+	signedTx, err := d.signer.SignTransaction(ctx, d.networkPassphrase, tx)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to sign %stransaction: %w", label, err)
 	}
@@ -1498,7 +1513,7 @@ func (d *Deployer) SubmitClassicOperation(ctx context.Context, op txnbuild.Opera
 		return fmt.Errorf("build transaction: %w", err)
 	}
 
-	signedTx, err := d.signer.SignTransaction(d.networkPassphrase, tx)
+	signedTx, err := d.signer.SignTransaction(ctx, d.networkPassphrase, tx)
 	if err != nil {
 		return fmt.Errorf("sign transaction: %w", err)
 	}
