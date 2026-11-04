@@ -1,6 +1,8 @@
 package config
 
 import (
+	"math"
+
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
@@ -54,6 +56,10 @@ type TxManagerConfig struct {
 	ResourceFeeBuffer *int64   `toml:"ResourceFeeBuffer"`
 	RestoreFeeBuffer  *int64   `toml:"RestoreFeeBuffer"`
 	MaxResourceFee    *int64   `toml:"MaxResourceFee"`
+	// MaxCumulativeFee caps the total fee (inclusion plus resource) one enqueued
+	// transaction may burn across all broadcast and restore attempts.
+	// Zero derives MaxResourceFee * (MaxTxRetryAttempts + 2).
+	MaxCumulativeFee *int64 `toml:"MaxCumulativeFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee percentiles in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
@@ -169,6 +175,9 @@ func (c *TxManagerConfig) Resolve() {
 	if c.MaxRestoreAttempts == nil {
 		c.MaxRestoreAttempts = ptr(*d.MaxRestoreAttempts)
 	}
+	if c.MaxCumulativeFee == nil || *c.MaxCumulativeFee <= 0 {
+		c.MaxCumulativeFee = deriveMaxCumulativeFee(*c.MaxResourceFee, *c.MaxTxRetryAttempts)
+	}
 	if c.PruneInterval == nil {
 		v := *d.PruneInterval
 		c.PruneInterval = &v
@@ -179,6 +188,23 @@ func (c *TxManagerConfig) Resolve() {
 	}
 	c.SimulationTerminalHints = mergeSimulationHintLists(builtinSimulationTerminalHints, c.SimulationTerminalHints)
 	c.SimulationRetryableHints = mergeSimulationHintLists(builtinSimulationRetryableHints, c.SimulationRetryableHints)
+}
+
+// deriveMaxCumulativeFee returns the loose default cap: the per-attempt resource
+// fee times every broadcast and restore attempt the lifecycle can make. Saturates
+// at MaxInt64 instead of overflowing; a non-positive resource cap disables it.
+func deriveMaxCumulativeFee(maxResourceFee int64, maxTxRetryAttempts uint64) *int64 {
+	if maxResourceFee <= 0 {
+		return ptr(int64(0))
+	}
+	if maxTxRetryAttempts > math.MaxUint64-2 {
+		return ptr(int64(math.MaxInt64))
+	}
+	attempts := maxTxRetryAttempts + 2
+	if uint64(maxResourceFee) > uint64(math.MaxInt64)/attempts {
+		return ptr(int64(math.MaxInt64))
+	}
+	return ptr(maxResourceFee * int64(attempts))
 }
 
 // mergeSimulationHintLists returns built-in hints followed by any extra hints
