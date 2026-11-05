@@ -2,8 +2,10 @@ package ccip
 
 // Datastore contract type strings for Stellar CCIP deployments.
 const (
-	CcipReceiverContractType               = "CcipReceiverExample"
-	TokenAdminRegistryContractType         = "token_admin_registry"
+	CcipReceiverContractType = "CcipReceiverExample"
+	// TokenAdminRegistryContractType matches the EVM datastore type (and the ops
+	// constant): a single vocabulary, no boundary translation.
+	TokenAdminRegistryContractType         = "TokenAdminRegistry"
 	LockReleaseTokenPoolContractType       = "lock_release_token_pool"
 	SiloedLockReleaseTokenPoolContractType = "siloed_lock_release_token_pool"
 	TokenLockBoxContractType               = "token_lock_box"

@@ -13,11 +13,6 @@ import (
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
-	cciprecvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ccip_receiver"
-	rmnproxyops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_proxy"
-	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
-	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
-	vvrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
@@ -50,13 +45,6 @@ type upgradeComponentSpec struct {
 	// requiresQualifier).
 	refFn             func(qualifier string) stellarccip.DatastoreSorobanContractRef
 	requiresQualifier bool
-	// opsType is the Stellar ops contract type, set when the datastore type
-	// differs (e.g. "ARMProxy" vs "RmnProxy"); the upgrade sequence keys on it.
-	opsType string
-}
-
-func (s upgradeComponentSpec) contractType(ref stellarccip.DatastoreSorobanContractRef) string {
-	return cmp.Or(s.opsType, string(ref.Type))
 }
 
 // fixedRef lifts a singleton ref constructor into the qualifier-resolving shape.
@@ -100,27 +88,24 @@ func UpgradeFeeQuoter(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSe
 // UpgradeTokenAdminRegistry upgrades the deployed Stellar TokenAdminRegistry in place.
 func UpgradeTokenAdminRegistry(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSetV2[changesets.WithMCMS[UpgradeComponentConfig]] {
 	return newUpgradeComponent(mcmsRegistry, upgradeComponentSpec{
-		name:    "TokenAdminRegistry",
-		refFn:   fixedRef(stellarccip.TokenAdminRegistryDatastoreRef),
-		opsType: tarops.ContractType,
+		name:  "TokenAdminRegistry",
+		refFn: fixedRef(stellarccip.TokenAdminRegistryDatastoreRef),
 	})
 }
 
 // UpgradeRmnProxy upgrades the deployed Stellar RMN Proxy in place.
 func UpgradeRmnProxy(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSetV2[changesets.WithMCMS[UpgradeComponentConfig]] {
 	return newUpgradeComponent(mcmsRegistry, upgradeComponentSpec{
-		name:    "RMN Proxy",
-		refFn:   fixedRef(stellarccip.RMNProxyDatastoreRef),
-		opsType: rmnproxyops.ContractType,
+		name:  "RMN Proxy",
+		refFn: fixedRef(stellarccip.RMNProxyDatastoreRef),
 	})
 }
 
 // UpgradeRmnRemote upgrades the deployed Stellar RMN Remote in place.
 func UpgradeRmnRemote(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSetV2[changesets.WithMCMS[UpgradeComponentConfig]] {
 	return newUpgradeComponent(mcmsRegistry, upgradeComponentSpec{
-		name:    "RMN Remote",
-		refFn:   fixedRef(stellarccip.RMNRemoteDatastoreRef),
-		opsType: rmnremoteops.ContractType,
+		name:  "RMN Remote",
+		refFn: fixedRef(stellarccip.RMNRemoteDatastoreRef),
 	})
 }
 
@@ -146,9 +131,8 @@ func UpgradeCommitteeVerifier(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.
 // instance (empty keeps the default).
 func UpgradeVersionedVerifierResolver(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSetV2[changesets.WithMCMS[UpgradeComponentConfig]] {
 	return newUpgradeComponent(mcmsRegistry, upgradeComponentSpec{
-		name:    "VersionedVerifierResolver",
-		refFn:   stellarccip.VVRDatastoreRefWithQualifier,
-		opsType: vvrops.ContractType,
+		name:  "VersionedVerifierResolver",
+		refFn: stellarccip.VVRDatastoreRefWithQualifier,
 	})
 }
 
@@ -156,9 +140,8 @@ func UpgradeVersionedVerifierResolver(mcmsRegistry *changesets.MCMSReaderRegistr
 // the qualifier selects the receiver instance (empty keeps the unqualified ref).
 func UpgradeCCIPReceiver(mcmsRegistry *changesets.MCMSReaderRegistry) cldf.ChangeSetV2[changesets.WithMCMS[UpgradeComponentConfig]] {
 	return newUpgradeComponent(mcmsRegistry, upgradeComponentSpec{
-		name:    "CCIP Receiver",
-		refFn:   stellarccip.CCIPReceiverDatastoreRefWithQualifier,
-		opsType: cciprecvops.ContractType,
+		name:  "CCIP Receiver",
+		refFn: stellarccip.CCIPReceiverDatastoreRefWithQualifier,
 	})
 }
 
@@ -242,8 +225,8 @@ func newUpgradeComponent(mcmsRegistry *changesets.MCMSReaderRegistry, spec upgra
 				return fmt.Errorf("qualifier is required: one pool per token, identify the instance (e.g. the token symbol)")
 			}
 			ref := spec.refFn(input.Cfg.Qualifier)
-			if _, ok := stellarutil.UpgradeWasmFilename(spec.contractType(ref)); !ok {
-				return fmt.Errorf("no upgrade WASM mapping for %s type %q", spec.name, spec.contractType(ref))
+			if _, ok := stellarutil.UpgradeWasmFilename(string(ref.Type)); !ok {
+				return fmt.Errorf("no upgrade WASM mapping for %s type %q", spec.name, ref.Type)
 			}
 			return verifyComponent(e, input.Cfg.ChainSelector, []componentDep{{name: spec.name, ref: ref}}, nil)
 		},
@@ -275,7 +258,6 @@ func applyUpgradeComponent(
 	governance, _ := mcmsutil.FindExistingStellarTimelock(refs, cfg.ChainSelector, mcmsInput.Qualifier)
 
 	addrRef := ref.FullAddressRef(cfg.ChainSelector, componentID)
-	addrRef.Type = datastore.ContractType(spec.contractType(ref))
 
 	report, err := cldf_ops.ExecuteSequence(e.OperationsBundle, sequences.StellarUpgradeContractsViaMCMS, e.BlockChains, sequences.StellarUpgradeContractsInput{
 		ChainSelector:  cfg.ChainSelector,

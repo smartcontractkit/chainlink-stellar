@@ -16,7 +16,6 @@ import (
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
-	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
@@ -93,14 +92,10 @@ func applyActivateRMN(
 	}
 	rmnRef := activate.Output.Addresses[0]
 
-	// The ownership ops dispatch on the stellar-local RMN Remote type; the
-	// recorded ref keeps the upstream type the datastore uses.
-	acceptRef := rmnRef
-	acceptRef.Type = datastore.ContractType(rmnremoteops.ContractType)
 	accept, err := cldf_ops.ExecuteSequence(e.OperationsBundle, sequences.StellarAcceptOwnership, e.BlockChains, sequences.StellarTransferOwnershipInput{
 		TransferOwnershipPerChainInput: deploy.TransferOwnershipPerChainInput{
 			ChainSelector: cfg.ChainSelector,
-			ContractRef:   []datastore.AddressRef{acceptRef},
+			ContractRef:   []datastore.AddressRef{rmnRef},
 			ProposedOwner: govTL,
 		},
 		GovernanceAddr: govTL,

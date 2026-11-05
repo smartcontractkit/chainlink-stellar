@@ -202,7 +202,7 @@ func TestStellarCurse_ProposesViaQualifierTimelock(t *testing.T) {
 		txs := out.Output.BatchOps[0].Transactions
 		require.Len(t, txs, 1)
 		require.Equal(t, rmn, txs[0].To)
-		require.Equal(t, "RmnRemote", txs[0].ContractType)
+		require.Equal(t, "RMNRemote", txs[0].ContractType)
 		require.JSONEq(t, `{"family":"stellar","encodingVersion":1}`, string(txs[0].AdditionalFields))
 
 		fn, args, err := mcmsutil.DecodeSorobanMCMSInvokePayload(txs[0].Data)
