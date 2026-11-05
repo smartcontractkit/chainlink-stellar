@@ -330,8 +330,13 @@ impl SiloedLockReleaseTokenPoolContract {
 
         let lock_box_addr = resolve_lock_box(&env, input.remote_chain_selector)?;
         let pool_address = env.current_contract_address();
-        let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
-        lb_client.withdraw(&pool_address, &local_amount, &input.receiver);
+        // A zero-amount release transfers no value, so skip the lockbox
+        // withdrawal — the lockbox `withdraw` rejects `amount <= 0` (same
+        // guard as the canonical lock-release pool).
+        if local_amount > 0 {
+            let lb_client = TokenLockBoxClient::new(&env, &lock_box_addr);
+            lb_client.withdraw(&pool_address, &local_amount, &input.receiver);
+        }
 
         ReleasedEvent {
             sender: pool_address,

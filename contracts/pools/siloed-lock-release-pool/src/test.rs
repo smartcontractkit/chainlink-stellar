@@ -19,8 +19,8 @@ use common_interfaces::token_pool::{
     PoolRequiredCCVs as IfacePoolRequiredCCVs, ReleaseOrMintIn as IfaceReleaseOrMintIn,
 };
 use common_pool::{
-    ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig, ReleaseOrMintIn,
-    TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
+    encode_local_decimals, ChainUpdate, LockOrBurnIn, MessageDirection, RateLimitConfig,
+    ReleaseOrMintIn, TokenTransferFeeConfig, TokenTransferFeeConfigArgs,
 };
 use pools_advanced_pool_hooks::{
     AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
@@ -496,6 +496,62 @@ fn release_withdraws_from_lockbox() {
     assert_eq!(out.destination_amount, 800);
     assert_eq!(t.tc.balance(&receiver), 800);
     assert_eq!(t.tc.balance(&t.lockbox_client.address), 1_200);
+}
+
+/// Dust inbound from a higher-decimals remote chain truncates to a zero local
+/// amount; the release must succeed as a no-op rather than calling the lockbox
+/// `withdraw(0)`, which rejects `amount <= 0` and would trap the whole execute.
+#[test]
+fn release_or_mint_dust_truncating_to_zero_succeeds() {
+    let t = setup();
+
+    let liquidity_provider = Address::generate(&t.env);
+    t.sac.mint(&liquidity_provider, &2_000);
+    t.lockbox_client
+        .add_allowed_callers(&vec![&t.env, liquidity_provider.clone()]);
+    let exp = t.env.ledger().sequence().saturating_add(10_000);
+    t.tc.approve(&liquidity_provider, &t.lockbox_client.address, &2_000, &exp);
+    t.lockbox_client.deposit(&liquidity_provider, &2_000);
+
+    let receiver = Address::generate(&t.env);
+    // Local decimals are 7 (see `setup`); with remote 18 decimals anything
+    // below 10^11 truncates to 0 local units.
+    let input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        receiver: receiver.clone(),
+        amount: 10_000_000_000,
+        local_token: t.token_addr.clone(),
+        source_pool_address: Bytes::from_slice(&t.env, &[0xaa; 32]),
+        source_pool_data: encode_local_decimals(&t.env, 18).unwrap(),
+    };
+    let out = t.stub_client.release(&t.pool_client.address, &input, &0);
+
+    assert_eq!(out.destination_amount, 0);
+    assert_eq!(t.tc.balance(&receiver), 0);
+    assert_eq!(t.tc.balance(&t.lockbox_client.address), 2_000);
+}
+
+/// A directly-zero inbound amount releases no value and must not reach the
+/// lockbox `withdraw` (same guard as the canonical lock-release pool).
+#[test]
+fn release_or_mint_zero_amount_succeeds_without_lockbox_liquidity() {
+    let t = setup();
+
+    let receiver = Address::generate(&t.env);
+    let input = ReleaseOrMintIn {
+        original_sender: Bytes::from_slice(&t.env, &[0xcd; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        receiver: receiver.clone(),
+        amount: 0,
+        local_token: t.token_addr.clone(),
+        source_pool_address: Bytes::from_slice(&t.env, &[0xaa; 32]),
+        source_pool_data: Bytes::new(&t.env),
+    };
+    let out = t.stub_client.release(&t.pool_client.address, &input, &0);
+
+    assert_eq!(out.destination_amount, 0);
+    assert_eq!(t.tc.balance(&receiver), 0);
 }
 
 #[test]
