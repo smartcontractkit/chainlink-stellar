@@ -243,7 +243,7 @@ func LockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(LockReleaseTokenPoolContractType),
+		Type:      datastore.ContractType(lrops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvLegacyLockReleasePoolQualifier,
 	}
@@ -251,7 +251,7 @@ func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(SiloedLockReleaseTokenPoolContractType),
+		Type:      datastore.ContractType(slrrops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}
@@ -259,7 +259,7 @@ func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func TokenLockBoxDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(TokenLockBoxContractType),
+		Type:      datastore.ContractType(tlbops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}

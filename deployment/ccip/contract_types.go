@@ -5,11 +5,8 @@ const (
 	CcipReceiverContractType = "CcipReceiverExample"
 	// TokenAdminRegistryContractType matches the EVM datastore type (and the ops
 	// constant): a single vocabulary, no boundary translation.
-	TokenAdminRegistryContractType         = "TokenAdminRegistry"
-	LockReleaseTokenPoolContractType       = "lock_release_token_pool"
-	SiloedLockReleaseTokenPoolContractType = "siloed_lock_release_token_pool"
-	TokenLockBoxContractType               = "token_lock_box"
-	TestTokenContractType                  = "sac_token"
+	TokenAdminRegistryContractType = "TokenAdminRegistry"
+	TestTokenContractType          = "sac_token"
 
 	// DevenvTestTokenPoolQualifier is the datastore qualifier for the siloed test pool used in E2E transfers.
 	DevenvTestTokenPoolQualifier = "TEST"
