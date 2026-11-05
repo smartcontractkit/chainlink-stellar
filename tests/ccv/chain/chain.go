@@ -74,7 +74,6 @@ import (
 const CcipReceiverContractType = stellarccip.CcipReceiverContractType
 
 const TokenAdminRegistryContractType = stellarccip.TokenAdminRegistryContractType
-const LockReleaseTokenPoolContractType = stellarccip.LockReleaseTokenPoolContractType
 
 func ptrU32(v uint32) *uint32 { return &v }
 
