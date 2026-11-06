@@ -1098,7 +1098,7 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
 
     // EVM parity: the zero receiver has no code (OffRamp.sol
     // `_isTokenOnlyTransfer`), so receive gas alone must NOT trigger the
-    // receiver call — without the zero-receiver skip this traps with
+    // receiver call — without the non-Wasm skip this traps with
     // ReceiverDoesNotExist.
     let msg = CcipMessageV1 {
         source_chain_selector: EXEC_TEST_SRC_CHAIN,
@@ -1142,8 +1142,7 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
 /// explicit token receiver and the payload is dropped instead of stranding the message.
 #[test]
 fn test_execute_payload_to_non_wasm_receiver_delivers_tokens_token_only() {
-    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) =
-        setup_l10_lane();
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
 
     // No ledger entry: `executable()` is None, so this receiver has no code.
     let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
@@ -1209,8 +1208,7 @@ fn test_execute_payload_to_non_wasm_receiver_delivers_tokens_token_only() {
 /// message receiver has no code: classification must not mint to an unusable address.
 #[test]
 fn test_execute_payload_to_non_wasm_receiver_empty_token_receiver_records_failure() {
-    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) =
-        setup_l10_lane();
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
 
     let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
 
@@ -1249,7 +1247,11 @@ fn test_execute_payload_to_non_wasm_receiver_empty_token_receiver_records_failur
     let verifier_results = vec![&env, Bytes::new(&env)];
 
     let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
-    assert!(res.is_ok(), "execute must record a Failure, not trap: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "execute must record a Failure, not trap: {:?}",
+        res.err()
+    );
     // Read the event before any other client call: `env.events()` only holds the
     // most recent top-level invocation.
     let code = last_execution_error_code(&env, &client.address);
@@ -1326,13 +1328,9 @@ fn test_execute_token_receiver_without_deployed_contract_records_failure() {
 }
 
 #[test]
-// The token-only zero-receiver exception is granted only to the canonical
-// 32-byte zero address. The decoder does not enforce the receiver length, so
-// an empty or short all-zero receiver carrying data or receive gas must NOT
-// be classified token-only (which would skip receiver validation and delivery
-// and record Success without delivery) — it must fail receiver decoding
-// (InvalidReceiverLength, the same rejection `get_ccvs_for_message` applies,
-// EVM InvalidEVMAddress parity) and record a retryable Failure.
+// The token-only exception needs a decodable 32-byte receiver, so a malformed
+// zero receiver carrying data or receive gas fails decoding (InvalidReceiverLength,
+// EVM InvalidEVMAddress parity) and records a retryable Failure.
 fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
