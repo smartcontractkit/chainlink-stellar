@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -137,4 +138,70 @@ func TestResolve_StellarTimeoutDefaults(t *testing.T) {
 	assert.Equal(t, int64(300), *cfg.TxTimeoutSecs, "5 min wall-clock fallback")
 	assert.Equal(t, uint(3), *cfg.MaxRestoreAttempts, "max restore attempts")
 	assert.Equal(t, uint(3), *cfg.MaxSimulateAttempts, "max simulate attempts")
+}
+
+func TestResolve_MaxCumulativeFeeDerivesFromDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(2_000_000_000)*(5+2), *cfg.MaxCumulativeFee,
+		"derived as MaxResourceFee * (MaxTxRetryAttempts + 2)")
+}
+
+func TestResolve_MaxCumulativeFeeExplicitValueSurvives(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{MaxCumulativeFee: ptr(int64(50_000))}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(50_000), *cfg.MaxCumulativeFee)
+}
+
+func TestResolve_MaxCumulativeFeeZeroDerives(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{MaxCumulativeFee: ptr(int64(0))}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(2_000_000_000)*(5+2), *cfg.MaxCumulativeFee)
+}
+
+func TestResolve_MaxCumulativeFeeUsesOverriddenAttempts(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{
+		MaxResourceFee:     ptr(int64(1_000)),
+		MaxTxRetryAttempts: ptr(uint64(3)),
+	}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(1_000)*(3+2), *cfg.MaxCumulativeFee)
+}
+
+func TestResolve_MaxCumulativeFeeSaturatesInsteadOfOverflowing(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{MaxResourceFee: ptr(int64(math.MaxInt64))}
+	cfg.Resolve()
+	assert.Equal(t, int64(math.MaxInt64), *cfg.MaxCumulativeFee)
+
+	cfg = TxManagerConfig{
+		MaxResourceFee:     ptr(int64(1)),
+		MaxTxRetryAttempts: ptr(uint64(math.MaxUint64 - 1)),
+	}
+	cfg.Resolve()
+	assert.Equal(t, int64(math.MaxInt64), *cfg.MaxCumulativeFee,
+		"an attempt count near MaxUint64 must saturate, not wrap")
+}
+
+func TestResolve_MaxCumulativeFeeDisabledWithoutResourceCap(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{MaxResourceFee: ptr(int64(0))}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee,
+		"with no resource cap there is nothing to derive, so the budget stays disabled")
 }

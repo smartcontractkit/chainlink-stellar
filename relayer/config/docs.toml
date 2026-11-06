@@ -17,6 +17,8 @@ BaseInclusionFee = 100 # Default
 MaxInclusionFee = 200000000 # Default
 # MaxResourceFee is the cap (in stroops) on the Soroban resource fee, used when a request does not set its own cap. A per-request cap overrides it. 2_000_000_000 stroops = 200 XLM. Excess is refunded so there is no risk to setting a high value.
 MaxResourceFee = 2000000000 # Default
+# MaxCumulativeFee caps the total fee (in stroops) one enqueued transaction may burn across all broadcast and restore attempts. Each envelope's fee is reserved before send and settles to the amount actually charged on confirmation. Zero derives MaxResourceFee * (MaxTxRetryAttempts + 2); set it lower to tighten the cap.
+MaxCumulativeFee = 0 # Default
 # FeeBumpMultiplier is the geometric multiplier applied to the inclusion fee on each retry attempt.
 FeeBumpMultiplier = 1.5 # Default
 # ResourceFeeBuffer is the flat buffer (in stroops) added to the simulated MinResourceFee to compute the resource fee.

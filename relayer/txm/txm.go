@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	chain_selectors "github.com/smartcontractkit/chain-selectors"
 	protocolrpc "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -207,6 +208,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
+		budget:             newFeeBudget(uint64(*s.config.MaxCumulativeFee)),
 	}
 
 	return s.enqueueTransaction(ctx, tx)
@@ -691,7 +693,11 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			}
 			if err := s.handleRestore(ctx, client, tx, *simResult.RestorePreamble, seq, inclusionFee); err != nil {
 				ctxLogger.Errorw("failed to restore archived ledger entries", "error", err)
-				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonRestoreFailed)
+				reason := ErrorReasonRestoreFailed
+				if errors.Is(err, ErrCumulativeFeeExceeded) {
+					reason = ErrorReasonCumulativeFeeExceeded
+				}
+				s.releaseSeqAndFailTx(ctx, txStore, seq, tx, reason)
 				return
 			}
 			restoreHandled = true
@@ -739,6 +745,13 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
+		if err := tx.budget.reserve(localHash, totalFee); err != nil {
+			ctxLogger.Errorw("cumulative fee budget exceeded, envelope not sent",
+				"hash", localHash, "fee", totalFee, "error", err)
+			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonCumulativeFeeExceeded)
+			return
+		}
+
 		submitResult, err := client.SendTransaction(ctx, protocolrpc.SendTransactionRequest{
 			Transaction: signedXDR,
 		})
@@ -768,6 +781,13 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 
 		lastRejectReason = retryReason
 		s.metrics.IncrementSubmitRejected(ctx, retryReason)
+
+		// A rejected status proves the envelope is in no ledger, so its reservation is
+		// freed. Any other non-accepted status may still land, so its fee stays reserved.
+		switch submitResult.Status {
+		case stellarcore.TXStatusTryAgainLater, stellarcore.TXStatusError:
+			tx.budget.release(localHash)
+		}
 
 		if fatalErr {
 			ctxLogger.Errorw("fatal error during broadcast", "reason", retryReason)
@@ -1009,6 +1029,7 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 							ctxLogger.Warnw("failed to decode ResultXDR for fee extraction", "hash", hash, "error", decodeErr)
 						} else {
 							s.updateTransactionFee(utx.Tx, big.NewInt(int64(txResult.FeeCharged)))
+							utx.Tx.budget.settle(hash, int64(txResult.FeeCharged))
 						}
 					}
 
@@ -1032,6 +1053,9 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 					classification := classifyFailedTransactionResult(resp.ResultXDR)
 					s.updateTransactionResultCode(utx.Tx, string(classification.resultCode))
 					s.updateTransactionLedgerCloseTime(utx.Tx, resp.LedgerCloseTime)
+					if classification.feeCharged > 0 {
+						utx.Tx.budget.settle(hash, classification.feeCharged)
+					}
 
 					ctxLogger.Infow("confirmed tx: failed on-chain", "hash", hash, "resultCode", classification.resultCode, "retryable", classification.retryable)
 
@@ -1066,6 +1090,8 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
 					ctxLogger.Errorw("couldn't release sequence of tx with unknown status", "error", confirmErr)
 				}
+				// The fee stays reserved: an unproven status cannot rule out that the
+				// envelope landed before its time bound.
 				s.updateTransactionResultCode(utx.Tx, string(ErrorReasonStatusUnknown))
 				s.metrics.IncrementErrorTxs(ctx, ErrorReasonStatusUnknown)
 				s.updateTransactionStatus(utx.Tx, commontypes.Failed)
@@ -1095,7 +1121,8 @@ func (s *StellarTxm) checkUnconfirmed(ctx context.Context) {
 				continue
 			}
 
-			// Expired: confirm as failed, recycle the sequence.
+			// Expired: the envelope can no longer be included, so its fee is freed.
+			utx.Tx.budget.release(hash)
 			if confirmErr := txStore.Confirm(utx.Sequence, hash, true); confirmErr != nil {
 				ctxLogger.Errorw("couldn't confirm expired tx", "error", confirmErr)
 				s.metrics.IncrementErrorTxs(ctx, ErrorReasonTimedOut)

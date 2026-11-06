@@ -35,7 +35,8 @@ type StellarTx struct {
 	Operations         []txnbuild.Operation
 	LedgerBoundsOffset uint32 // per-tx override (0 = use config default)
 	MaxResourceFee     uint64
-	Fingerprint        [32]byte // payload digest bound to ID; see txFingerprint
+	Fingerprint        [32]byte   // payload digest bound to ID; see txFingerprint
+	budget             *feeBudget // cumulative fee cap for every envelope this tx sends
 
 	Attempt       atomic.Uint64
 	InfraAttempts atomic.Uint64
@@ -138,6 +139,9 @@ const (
 	// ErrorReasonSubmitErrorUndecoded means the node returned TXStatusError but
 	// ErrorResultXDR was empty or not valid transaction-result XDR.
 	ErrorReasonSubmitErrorUndecoded ErrorReason = "submit_error_undecoded"
+	// ErrorReasonCumulativeFeeExceeded means the next envelope's fee would push
+	// the tx's total spend past MaxCumulativeFee, so nothing was sent.
+	ErrorReasonCumulativeFeeExceeded ErrorReason = "cumulative_fee_exceeded"
 )
 
 // DropReason is a bounded label classifying why a transaction was dropped from
