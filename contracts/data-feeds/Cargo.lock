@@ -485,6 +485,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-feeds-sep40-proxy"
+version = "0.1.0"
+dependencies = [
+ "data-feeds-cache",
+ "data-feeds-common",
+ "data-feeds-proxy",
+ "soroban-sdk",
+ "stellar-access",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
