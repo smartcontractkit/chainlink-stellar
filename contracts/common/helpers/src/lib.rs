@@ -5,6 +5,7 @@ pub mod fee_math;
 pub mod finality_codec;
 pub mod map_updater;
 pub mod soroban_invoke;
+pub mod try_call;
 pub mod validation;
 pub mod verifier_versioning;
 
