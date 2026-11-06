@@ -9,10 +9,8 @@ use crate::interface::Sep40ProxyError;
 use crate::interface::{Asset, PriceData, PriceFeedTrait};
 use crate::storage;
 
-/// Fixed precision of every price this adapter returns. Changes only through a contract upgrade.
 pub const DECIMALS: u32 = 18;
 
-/// Every price is already a distinct Unix-second observation, so no bucketing is applied.
 const RESOLUTION: u32 = 1;
 
 #[contract]

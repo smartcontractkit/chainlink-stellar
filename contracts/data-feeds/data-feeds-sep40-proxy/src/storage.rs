@@ -69,7 +69,6 @@ pub(crate) fn asset_for(env: &Env, data_id: &DataId) -> Option<Asset> {
         .get(&DataKey::FeedToAsset(data_id.clone()))
 }
 
-/// Maps a new asset to a feed and appends it to the asset list.
 pub(crate) fn insert_feed(env: &Env, asset: &Asset, data_id: &DataId) {
     let mut list = assets(env);
     list.push_back(asset.clone());
@@ -77,7 +76,6 @@ pub(crate) fn insert_feed(env: &Env, asset: &Asset, data_id: &DataId) {
     link(env, asset, data_id);
 }
 
-/// Points an already-listed asset at a different feed. The asset list is untouched.
 pub(crate) fn replace_feed(env: &Env, asset: &Asset, old: &DataId, new: &DataId) {
     env.storage()
         .persistent()
@@ -85,7 +83,6 @@ pub(crate) fn replace_feed(env: &Env, asset: &Asset, old: &DataId, new: &DataId)
     link(env, asset, new);
 }
 
-/// Removes an asset's mapping and drops it from the asset list, preserving the order of the rest.
 pub(crate) fn delete_feed(env: &Env, asset: &Asset, data_id: &DataId) {
     let mut list = assets(env);
     if let Some(idx) = list.iter().position(|a| a == *asset) {
@@ -100,7 +97,6 @@ pub(crate) fn delete_feed(env: &Env, asset: &Asset, data_id: &DataId) {
         .remove(&DataKey::FeedToAsset(data_id.clone()));
 }
 
-/// Refreshes every persistent entry a read of `asset` depends on.
 pub(crate) fn extend_feed_ttl(env: &Env, asset: &Asset, data_id: &DataId) {
     extend_persistent(env, &DataKey::Assets);
     extend_persistent(env, &DataKey::AssetToFeed(asset.clone()));
