@@ -14,15 +14,17 @@ use common_interfaces::{
 // OffRamp reuses it for the receiver allowed-finality check (H-7) so the rule stays identical.
 use common_pool::finality_codec;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, ConversionError, Env,
-    Executable, IntoVal, InvokeError, Map, Symbol, Vec,
+    contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, Executable,
+    IntoVal, InvokeError, Map, Symbol, Vec,
 };
 use stellar_strkey::Contract as StrkeyContract;
 
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
-use common_helpers::{curse_checkable::CurseCheckable, validation::Validatable};
+use common_helpers::{
+    curse_checkable::CurseCheckable, try_call::try_call, validation::Validatable,
+};
 use common_message::{
     AnyToStellarMessage, CcipMessageV1, CcipTokenTransferV1, FromBytes, MessageIdCompute,
     TokenAmount,
@@ -47,55 +49,6 @@ const RMN_PROXY: Symbol = symbol_short!("RMN_PROXY");
 const TTL_THRESHOLD: u32 = 518_400;
 // Extend to ~180 days (at 5s/ledger)
 const TTL_EXTEND_TO: u32 = 3_110_400;
-
-/// The generated per-interface `CCIPError` enums all encode `common_error::CCIPError`'s
-/// codes; this exposes the code for the conversion below.
-trait InterfaceErrorCode {
-    fn as_code(self) -> u32;
-}
-
-impl InterfaceErrorCode for common_interfaces::token_admin_registry::CCIPError {
-    fn as_code(self) -> u32 {
-        self as u32
-    }
-}
-impl InterfaceErrorCode for common_interfaces::token_pool::CCIPError {
-    fn as_code(self) -> u32 {
-        self as u32
-    }
-}
-impl InterfaceErrorCode for common_interfaces::versioned_verifier_resolver::CCIPError {
-    fn as_code(self) -> u32 {
-        self as u32
-    }
-}
-
-/// Converts a typed error returned by a cross-contract `try_*` call back into the
-/// common error.
-#[inline]
-fn ccip_error_from_code(code: u32) -> CCIPError {
-    // SAFETY: generated interface `CCIPError` discriminants match `common_error::CCIPError`
-    // (`#[repr(u32)]` on both). Invalid values cannot be produced by an on-chain contract return.
-    unsafe { core::mem::transmute::<u32, CCIPError>(code) }
-}
-
-/// Collapses a `try_*` cross-contract result into the common error type, so a callee
-/// failure flows to `execute`'s per-message catch (recorded as a retryable `Failure`
-/// + `ExecutionStateChangedEvent`) instead of host-aborting the whole execute tx —
-/// EVM `_callWithGasBuffer` catch-all parity (`OffRamp.sol:244-260`). A typed callee
-/// `Err` keeps its code; an undecodable return maps to `MessageDecodingError`; a host
-/// trap maps to `on_trap`.
-fn try_call<T, E: InterfaceErrorCode>(
-    res: Result<Result<T, ConversionError>, Result<E, InvokeError>>,
-    on_trap: CCIPError,
-) -> Result<T, CCIPError> {
-    match res {
-        Ok(Ok(v)) => Ok(v),
-        Ok(Err(_)) => Err(CCIPError::MessageDecodingError),
-        Err(Ok(e)) => Err(ccip_error_from_code(e.as_code())),
-        Err(Err(_)) => Err(on_trap),
-    }
-}
 
 // ============================================================
 // Contract
