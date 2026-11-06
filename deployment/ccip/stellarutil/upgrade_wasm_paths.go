@@ -24,9 +24,9 @@ var upgradeWasmByContractType = map[string]string{
 	"TokenAdminRegistry":        "token_admin_registry.wasm",
 	"Executor":                  "executor.wasm",
 	"CommitteeVerifier":         "ccvs_committee_verifier.wasm",
-	"VersionedVerifierResolver": "ccvs_versioned_verifier_resolver.wasm",
+	"CommitteeVerifierResolver": "ccvs_versioned_verifier_resolver.wasm",
 	"RmnProxy":                  "rmn_proxy.wasm",
-	"RmnRemote":                 "rmn_remote.wasm",
+	"RMNRemote":                 "rmn_remote.wasm",
 	"BurnMintPool":              "pools_burn_mint_pool.wasm",
 	"LockReleasePool":           "pools_lock_release_pool.wasm",
 	"SiloedLockReleasePool":     "pools_siloed_lock_release_pool.wasm",
@@ -34,7 +34,7 @@ var upgradeWasmByContractType = map[string]string{
 	"AdvancedPoolHooks":         "pools_advanced_pool_hooks.wasm",
 	"RampRegistry":              "ccip_ramp_registry.wasm",
 	"MCMS":                      "mcms.wasm",
-	"CCIPReceiver":              "ccip_receiver_example.wasm",
+	"CcipReceiverExample":       "ccip_receiver_example.wasm",
 }
 
 // UpgradeWasmFilename returns the release WASM filename for the given contract

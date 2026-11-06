@@ -7,8 +7,10 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// ContractType labels Versioned Verifier Resolver.
-const ContractType = "VersionedVerifierResolver"
+// ContractType labels Versioned Verifier Resolver. Matches the canonical EVM datastore type
+// (versioned_verifier_resolver.CommitteeVerifierResolverType): a single vocabulary, no boundary
+// translation.
+const ContractType = "CommitteeVerifierResolver"
 
 // Deploy uploads ccvs_versioned_verifier_resolver.wasm.
 var Deploy = stellarops.NewDeployOperation("versioned-verifier-resolver:deploy", "Deploys the Versioned Verifier Resolver Soroban contract from WASM")

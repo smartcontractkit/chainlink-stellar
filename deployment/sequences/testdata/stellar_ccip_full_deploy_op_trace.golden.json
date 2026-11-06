@@ -194,8 +194,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           }
         ]
       }
@@ -266,8 +266,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -360,8 +360,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -376,7 +376,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           }
         ]
@@ -450,8 +450,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -466,7 +466,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -571,8 +571,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -587,7 +587,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -683,8 +683,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -699,7 +699,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -923,8 +923,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -939,7 +939,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -1053,8 +1053,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -1069,7 +1069,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -1232,8 +1232,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -1248,7 +1248,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -1403,8 +1403,8 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "ARMProxy",
-            "version": "1.0.0"
+            "type": "RmnProxy",
+            "version": "2.0.0"
           },
           {
             "address": "0x480944dce9f8e1a7cdb6aaab74fa9e6dafb61a110b8ba9cf28537c248617ac41",
@@ -1419,7 +1419,7 @@
             "chainSelector": 17301180955411967724,
             "labels": [],
             "qualifier": "",
-            "type": "token_admin_registry",
+            "type": "TokenAdminRegistry",
             "version": "2.0.0"
           },
           {
@@ -1502,14 +1502,6 @@
   ],
   "addresses": [
     {
-      "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
-      "chainSelector": 17301180955411967724,
-      "labels": [],
-      "qualifier": "",
-      "type": "ARMProxy",
-      "version": "1.0.0"
-    },
-    {
       "address": "0xfcf20fe8baf4242fbce77e1f48bb44ab85452db5e5acd6c038f8190bb2e52053",
       "chainSelector": 17301180955411967724,
       "labels": [],
@@ -1590,6 +1582,14 @@
       "version": "2.0.0"
     },
     {
+      "address": "0xa7e8bbd368419437d566bbec362dfe1a1eb187c484811964acebbeaa46850e12",
+      "chainSelector": 17301180955411967724,
+      "labels": [],
+      "qualifier": "",
+      "type": "RmnProxy",
+      "version": "2.0.0"
+    },
+    {
       "address": "0x16a732486ec62da0372e710375e75efb4616e8c57e613744bd9c83005ddb1909",
       "chainSelector": 17301180955411967724,
       "labels": [],
@@ -1602,7 +1602,7 @@
       "chainSelector": 17301180955411967724,
       "labels": [],
       "qualifier": "",
-      "type": "token_admin_registry",
+      "type": "TokenAdminRegistry",
       "version": "2.0.0"
     }
   ]

@@ -23,7 +23,6 @@ import (
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
-	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ownership"
 	stellarsequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
@@ -115,10 +114,7 @@ func (a *StellarCurseAdapter) Initialize(e cldf.Environment, selector uint64) er
 	// activation and admin grants move at apply_curse_admin_updates, and one
 	// adapter instance serves every changeset application in the process.
 	rmnID := a.rmnContractID[selector]
-	// Canonical datastore type "RMNRemote"; the ownership helpers match the
-	// stellar-local "RmnRemote" constant, so remap the in-memory ref type.
 	rmnRef := stellarccip.RMNRemoteDatastoreRef().FullAddressRef(selector, rmnID)
-	rmnRef.Type = datastore.ContractType(rmnremoteops.ContractType)
 	ch, ok := e.BlockChains.StellarChains()[selector]
 	if !ok {
 		return fmt.Errorf("stellar chain %d not found in environment", selector)

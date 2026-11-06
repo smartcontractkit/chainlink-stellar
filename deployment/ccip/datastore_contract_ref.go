@@ -2,7 +2,6 @@ package ccip
 
 import (
 	"github.com/Masterminds/semver/v3"
-	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_0_0/operations/rmn_proxy"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v1_2_0/operations/router"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/committee_verifier"
 	"github.com/smartcontractkit/chainlink-ccip/chains/evm/deployment/v2_0_0/operations/executor"
@@ -20,6 +19,7 @@ import (
 	lnkops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/link_token"
 	lrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
 	rrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/ramp_registry"
+	rmnproxyops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_proxy"
 	slrrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
 	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 )
@@ -114,9 +114,9 @@ func FeeQuoterDatastoreRef() DatastoreSorobanContractRef {
 // chainlink-ccip/chains/evm/deployment/v1_6_0/operations/rmn_remote. That package was removed;
 // upstream now keeps the type string private (chains/evm/deployment/utils/rmn.go
 // `rmnRemoteContractType`) and resolves it by datastore lookup. These constants preserve the
-// exact values that package exported so existing Stellar datastore refs keep resolving — do not
-// switch them to the Stellar-local deployment/operations/rmn_remote values ("RmnRemote"/2.0.0),
-// which would silently orphan every recorded ref.
+// exact values that package exported so existing Stellar datastore refs keep resolving. The
+// Stellar-local ops constant (deployment/operations/rmn_remote.ContractType) carries the same
+// "RMNRemote" string: one vocabulary, no boundary translation.
 const (
 	RMNRemoteContractType    = "RMNRemote"
 	RMNRemoteContractVersion = "1.6.0"
@@ -157,10 +157,15 @@ func RMNRemoteDatastoreRef() DatastoreSorobanContractRef {
 	}
 }
 
+// RMNProxyDatastoreRef uses the stellar-ops type and the stellar deployment version. The
+// proxy has no family-agnostic readers (the EVM "ARMProxy" type exists only for EVM's legacy
+// records), so there is no reason to inherit EVM's pre-rename name — and the pre-unification
+// pair (ARMProxy/1.0.0) matched nothing the ops world resolves (RmnProxy/2.0.0), which forced
+// hand-corrected datastore rows in the staging pipelines.
 func RMNProxyDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(rmn_proxy.ContractType),
-		Version:   semver.MustParse(rmn_proxy.Deploy.Version()),
+		Type:      datastore.ContractType(rmnproxyops.ContractType),
+		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: "",
 	}
 }
@@ -238,7 +243,7 @@ func LockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(LockReleaseTokenPoolContractType),
+		Type:      datastore.ContractType(lrops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvLegacyLockReleasePoolQualifier,
 	}
@@ -246,7 +251,7 @@ func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(SiloedLockReleaseTokenPoolContractType),
+		Type:      datastore.ContractType(slrrops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}
@@ -254,7 +259,7 @@ func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 
 func TokenLockBoxDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
-		Type:      datastore.ContractType(TokenLockBoxContractType),
+		Type:      datastore.ContractType(tlbops.ContractType),
 		Version:   stellarops.ContractDeploymentVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}

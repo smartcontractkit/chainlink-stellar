@@ -8,6 +8,9 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
+	lrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/lock_release_pool"
+	slrrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/siloed_lock_release_pool"
+	tlbops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_lock_box"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +30,7 @@ func TestLockReleasePoolAddressRefDataStore(t *testing.T) {
 		require.Len(t, addrs, 1)
 		ref := addrs[0]
 		assert.Equal(t, uint64(4242), ref.ChainSelector)
-		assert.Equal(t, datastore.ContractType(LockReleaseTokenPoolContractType), ref.Type)
+		assert.Equal(t, datastore.ContractType(lrops.ContractType), ref.Type)
 		assert.Equal(t, stellarops.ContractDeploymentVersion, ref.Version)
 		assert.Equal(t, DevenvLegacyLockReleasePoolQualifier, ref.Qualifier)
 		assert.NotEmpty(t, ref.Address)
@@ -47,7 +50,7 @@ func TestLockReleasePoolAddressRefDataStore(t *testing.T) {
 			assert.Equal(t, uint64(4242), ref.ChainSelector)
 			assert.NotEmpty(t, ref.Address)
 			switch ref.Type {
-			case datastore.ContractType(LockReleaseTokenPoolContractType):
+			case lrops.ContractType:
 				poolFound = true
 				assert.Equal(t, DevenvLegacyLockReleasePoolQualifier, ref.Qualifier)
 			case datastore.ContractType(TestTokenContractType):
@@ -77,17 +80,17 @@ func TestDevenvTokenPoolsAddressRefDataStore(t *testing.T) {
 		found[ref.Type] = true
 		assert.Equal(t, uint64(4242), ref.ChainSelector)
 		switch ref.Type {
-		case datastore.ContractType(SiloedLockReleaseTokenPoolContractType),
-			datastore.ContractType(TokenLockBoxContractType),
+		case slrrops.ContractType,
+			tlbops.ContractType,
 			datastore.ContractType(TestTokenContractType):
 			assert.Equal(t, DevenvTestTokenPoolQualifier, ref.Qualifier)
-		case datastore.ContractType(LockReleaseTokenPoolContractType):
+		case lrops.ContractType:
 			assert.Equal(t, DevenvLegacyLockReleasePoolQualifier, ref.Qualifier)
 		}
 	}
-	assert.True(t, found[datastore.ContractType(SiloedLockReleaseTokenPoolContractType)])
-	assert.True(t, found[datastore.ContractType(LockReleaseTokenPoolContractType)])
-	assert.True(t, found[datastore.ContractType(TokenLockBoxContractType)])
+	assert.True(t, found[slrrops.ContractType])
+	assert.True(t, found[lrops.ContractType])
+	assert.True(t, found[tlbops.ContractType])
 	assert.True(t, found[datastore.ContractType(TestTokenContractType)])
 }
 

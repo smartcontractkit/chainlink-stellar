@@ -7,8 +7,9 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// ContractType labels the example CCIP receiver contract.
-const ContractType = "CCIPReceiver"
+// ContractType labels the example CCIP receiver contract. Matches the canonical datastore
+// type (ccip.CcipReceiverContractType): a single vocabulary, no boundary translation.
+const ContractType = "CcipReceiverExample"
 
 // Deploy uploads ccip_receiver_example.wasm.
 var Deploy = stellarops.NewDeployOperation("ccip-receiver:deploy", "Deploys the example CCIP receiver Soroban contract from WASM")

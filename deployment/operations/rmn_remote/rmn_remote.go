@@ -7,8 +7,9 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// ContractType labels RMN Remote.
-const ContractType = "RmnRemote"
+// ContractType labels RMN Remote. Matches the canonical EVM-compatible datastore type
+// (ccip.RMNRemoteContractType): a single vocabulary, no boundary translation.
+const ContractType = "RMNRemote"
 
 // Deploy uploads rmn_remote.wasm.
 var Deploy = stellarops.NewDeployOperation("rmn-remote:deploy", "Deploys the RMN Remote Soroban contract from WASM")
