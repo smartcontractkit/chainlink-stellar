@@ -1335,6 +1335,11 @@ impl OffRampContract {
         // transaction (message stays `Untouched`, retryable by resubmission) —
         // outcome-equivalent retryability, at the cost of no on-chain FAILURE
         // record/event for pool errors.
+        //
+        // Verify actual delivery: snapshot the receiver balance before calling the
+        // pool so a malicious/faulty pool cannot claim success without delivering.
+        let pre_balance =
+            soroban_sdk::token::Client::new(env, &dest_token).balance(&receiver_address);
         let release_result = pool_client.release_or_mint(
             &env.current_contract_address(),
             &ReleaseOrMintIn {
@@ -1349,10 +1354,23 @@ impl OffRampContract {
             &requested_finality,
         );
 
+        // Post-call: measure the delivered amount and require it matches the
+        // pool-reported amount. A mismatch traps, rolling back the whole
+        // transaction (message stays `Untouched`, retryable by resubmission).
+        let post_balance =
+            soroban_sdk::token::Client::new(env, &dest_token).balance(&receiver_address);
+        if post_balance < pre_balance {
+            env.panic_with_error(CCIPError::TokenHandlingError);
+        }
+        let delivered = post_balance - pre_balance;
+        if delivered != release_result.destination_amount {
+            env.panic_with_error(CCIPError::TokenHandlingError);
+        }
+
         let mut amounts = Vec::new(env);
         amounts.push_back(TokenAmount {
             token: dest_token,
-            amount: release_result.destination_amount,
+            amount: delivered,
         });
         Ok(amounts)
     }
