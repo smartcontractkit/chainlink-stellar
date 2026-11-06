@@ -1312,6 +1312,17 @@ impl OffRampContract {
         };
         let receiver_address = Self::address_from_token_bytes(env, receiver_bytes)?;
 
+        // The wire carries no receiver type tag, so a 32-byte value always decodes
+        // to a contract id. A non-Wasm address can never authorize a transfer, so
+        // tokens released to it would be stuck.
+        match receiver_address.executable() {
+            Some(Executable::Wasm(_)) => {}
+            None => return Err(CCIPError::ReceiverDoesNotExist),
+            Some(Executable::Account) | Some(Executable::StellarAsset) => {
+                return Err(CCIPError::ReceiverNotWasmContract);
+            }
+        }
+
         // Deliberate divergence from EVM's letter, documented so a future parity
         // sweep doesn't re-flag it: EVM `OffRamp._releaseOrMintSingleToken`
         // (`OffRamp.sol:820-835`) wraps `releaseOrMint` in try/catch and re-raises
