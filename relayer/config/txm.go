@@ -58,7 +58,9 @@ type TxManagerConfig struct {
 	MaxResourceFee    *int64   `toml:"MaxResourceFee"`
 	// MaxCumulativeFee caps the total fee (inclusion plus resource) one enqueued
 	// transaction may burn across all broadcast and restore attempts.
-	// Zero derives MaxResourceFee * (MaxTxRetryAttempts + 2).
+	// Above zero it is a hard cap for every request. Zero derives a cap per request:
+	// its resource fee cap (the request's own when set, otherwise MaxResourceFee)
+	// * (MaxTxRetryAttempts + 2). The derived cap leaves out the inclusion fee.
 	MaxCumulativeFee *int64 `toml:"MaxCumulativeFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee percentiles in the feeTracker; back-to-back broadcasts reuse values.
@@ -175,8 +177,10 @@ func (c *TxManagerConfig) Resolve() {
 	if c.MaxRestoreAttempts == nil {
 		c.MaxRestoreAttempts = ptr(*d.MaxRestoreAttempts)
 	}
-	if c.MaxCumulativeFee == nil || *c.MaxCumulativeFee <= 0 {
-		c.MaxCumulativeFee = deriveMaxCumulativeFee(*c.MaxResourceFee, *c.MaxTxRetryAttempts)
+	// Stays 0 rather than resolving to a derived value: the TXM derives per request,
+	// and must be able to tell that apart from an explicit cap.
+	if c.MaxCumulativeFee == nil || *c.MaxCumulativeFee < 0 {
+		c.MaxCumulativeFee = ptr(int64(0))
 	}
 	if c.PruneInterval == nil {
 		v := *d.PruneInterval
@@ -190,10 +194,10 @@ func (c *TxManagerConfig) Resolve() {
 	c.SimulationRetryableHints = mergeSimulationHintLists(builtinSimulationRetryableHints, c.SimulationRetryableHints)
 }
 
-// deriveMaxCumulativeFee returns the loose default cap: the per-attempt resource
-// fee times every broadcast and restore attempt the lifecycle can make. Saturates
-// at MaxInt64 instead of overflowing; a non-positive resource cap disables it.
-func deriveMaxCumulativeFee(maxResourceFee int64, maxTxRetryAttempts uint64) *int64 {
+// DeriveMaxCumulativeFee returns the default cap for one request: its resource fee
+// cap times the first broadcast, every retry and one restore. Saturates at MaxInt64
+// instead of overflowing; a non-positive resource cap disables it.
+func DeriveMaxCumulativeFee(maxResourceFee int64, maxTxRetryAttempts uint64) *int64 {
 	if maxResourceFee <= 0 {
 		return ptr(int64(0))
 	}

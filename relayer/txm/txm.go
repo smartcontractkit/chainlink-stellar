@@ -208,7 +208,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
-		budget:             newFeeBudget(uint64(*s.config.MaxCumulativeFee)),
+		budget:             s.newTxFeeBudget(req.MaxResourceFee),
 	}
 
 	return s.enqueueTransaction(ctx, tx)

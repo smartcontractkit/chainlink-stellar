@@ -3,8 +3,11 @@ package txm
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"sync"
+
+	"github.com/smartcontractkit/chainlink-stellar/relayer/config"
 )
 
 // ErrCumulativeFeeExceeded reports that reserving another envelope's fee would
@@ -30,6 +33,21 @@ func newFeeBudget(max uint64) *feeBudget {
 		spent:        new(big.Int),
 		reservations: make(map[string]*big.Int),
 	}
+}
+
+// newTxFeeBudget returns the budget for one request. An explicit MaxCumulativeFee
+// is a hard cap. Otherwise the budget derives from the cap FeeStrategy.ResourceFee
+// applies to this request: its own when set, else the node's. With neither, the
+// budget is disabled.
+func (s *StellarTxm) newTxFeeBudget(requestMaxResourceFee uint64) *feeBudget {
+	if explicit := *s.config.MaxCumulativeFee; explicit > 0 {
+		return newFeeBudget(uint64(explicit))
+	}
+	resourceCap := s.feeStrat.MaxResourceFee
+	if requestMaxResourceFee > 0 {
+		resourceCap = int64(min(requestMaxResourceFee, math.MaxInt64))
+	}
+	return newFeeBudget(uint64(*config.DeriveMaxCumulativeFee(resourceCap, *s.config.MaxTxRetryAttempts)))
 }
 
 // reserve records fee for hash, failing if it would exceed the budget.
