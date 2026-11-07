@@ -745,7 +745,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
-		if err := tx.budget.reserve(localHash, totalFee); err != nil {
+		if err := tx.budget.reserve(seq, localHash, totalFee); err != nil {
 			ctxLogger.Errorw("cumulative fee budget exceeded, envelope not sent",
 				"hash", localHash, "fee", totalFee, "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonCumulativeFeeExceeded)

@@ -218,6 +218,53 @@ func TestStellarTxm_CumulativeFee_RejectedEnvelopeReleasesReservation(t *testing
 	assert.Equal(t, int32(2), sendCalls.Load())
 }
 
+func TestStellarTxm_CumulativeFee_SendErrorsAtOneSequenceCountOnce(t *testing.T) {
+	t.Parallel()
+
+	const rpcErrors = 10
+	var sendCalls atomic.Int32
+	var simCalls atomic.Int32
+	transactionDataXDR := buildRestorePreambleTransactionDataXDR(t)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateHook: func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+			// 885_000 plus the 15_000 buffer is 0.9 x the request cap. The fee moves by a
+			// stroop per simulation so every retry signs a new envelope with a new hash.
+			return protocolrpc.SimulateTransactionResponse{
+				MinResourceFee:     885_000 + int64(simCalls.Add(1)),
+				TransactionDataXDR: transactionDataXDR,
+			}, nil
+		},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			if sendCalls.Add(1) <= rpcErrors {
+				return protocolrpc.SendTransactionResponse{}, errors.New("rpc unavailable")
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
+		},
+	}
+	// The request cap of 1_000_000 derives a 7_000_000 budget. Summed, the ten unsent
+	// envelopes would pass it, but they share one sequence and at most one can land.
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(rpcErrors + 1)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Millisecond),
+	}, mock)
+
+	tx := enqueueForBudget(t, txm, 1_000_000)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(tx.ID)
+		require.NoError(t, err)
+		return st == commontypes.Unconfirmed || st == commontypes.Failed
+	}, 5*time.Second, 10*time.Millisecond)
+
+	st, err := txm.GetStatus(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Unconfirmed, st, "same-sequence envelopes must not fail with %s", ErrorReasonCumulativeFeeExceeded)
+	assert.Equal(t, int32(rpcErrors+1), sendCalls.Load())
+}
+
 func TestStellarTxm_CumulativeFee_SuccessSettlesToFeeCharged(t *testing.T) {
 	t.Parallel()
 
@@ -233,7 +280,7 @@ func TestStellarTxm_CumulativeFee_SuccessSettlesToFeeCharged(t *testing.T) {
 	require.NoError(t, err)
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -257,7 +304,7 @@ func TestStellarTxm_CumulativeFee_OnChainFailureSettlesChargedFee(t *testing.T) 
 	require.NoError(t, err)
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -279,7 +326,7 @@ func TestStellarTxm_CumulativeFee_ExpiredEnvelopeReleasesReservation(t *testing.
 	const maxLedger = uint32(1050)
 	_, tx := seedUnconfirmed(t, txm, 101, maxLedger, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -296,7 +343,7 @@ func TestStellarTxm_CumulativeFee_UnknownStatusExpiryKeepsReservation(t *testing
 	timeBound := time.Now().Add(-2 * statusUnknownMargin).Unix()
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, timeBound, time.Now().Add(-time.Hour))
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
