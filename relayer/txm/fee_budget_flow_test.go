@@ -21,6 +21,111 @@ import (
 	"github.com/stellar/go-stellar-sdk/protocols/stellarcore"
 )
 
+// enqueueForBudget enqueues a noop invoke with the given per-request resource fee cap
+// and returns the tracked tx.
+func enqueueForBudget(t *testing.T, txm *StellarTxm, requestMaxResourceFee uint64) *StellarTx {
+	t.Helper()
+	txID, err := txm.Enqueue(t.Context(), TxRequest{
+		FromAddress:    testAddress,
+		Operations:     []txnbuild.Operation{testInvokeNoopOp()},
+		MaxResourceFee: requestMaxResourceFee,
+	})
+	require.NoError(t, err)
+	txm.transactionsMapLock.RLock()
+	defer txm.transactionsMapLock.RUnlock()
+	tx, ok := txm.transactions[txID]
+	require.True(t, ok)
+	return tx
+}
+
+func newBudgetTestTxm(t *testing.T, cfg config.TxManagerConfig, mock *mockRPCClient) *StellarTxm {
+	t.Helper()
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(mock), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+	require.NoError(t, txm.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, txm.Close()) })
+	return txm
+}
+
+func TestStellarTxm_CumulativeFee_DerivesFromRequestCap(t *testing.T) {
+	t.Parallel()
+
+	// SetDefaults is the production path: the config New receives has already been resolved.
+	toml := config.TOMLConfig{}
+	toml.SetDefaults()
+	txm := newBudgetTestTxm(t, toml.TxManager, &mockRPCClient{})
+
+	tx := enqueueForBudget(t, txm, 1_000_000)
+	require.NotNil(t, tx.budget)
+	assert.Equal(t, int64(7_000_000), tx.budget.max.Int64(), "request cap * (MaxTxRetryAttempts + 2)")
+}
+
+func TestStellarTxm_CumulativeFee_DerivesFromNodeCapWithoutRequestCap(t *testing.T) {
+	t.Parallel()
+
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{}, &mockRPCClient{})
+
+	tx := enqueueForBudget(t, txm, 0)
+	require.NotNil(t, tx.budget)
+	assert.Equal(t, int64(2_000_000_000)*(5+2), tx.budget.max.Int64())
+}
+
+func TestStellarTxm_CumulativeFee_ExplicitCapWinsOverRequestCap(t *testing.T) {
+	t.Parallel()
+
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{MaxCumulativeFee: ptr(int64(50_000))}, &mockRPCClient{})
+
+	tx := enqueueForBudget(t, txm, 1_000_000)
+	require.NotNil(t, tx.budget)
+	assert.Equal(t, int64(50_000), tx.budget.max.Int64())
+}
+
+func TestStellarTxm_CumulativeFee_DisabledWithoutAnyResourceCap(t *testing.T) {
+	t.Parallel()
+
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{MaxResourceFee: ptr(int64(0))}, &mockRPCClient{})
+
+	assert.Nil(t, enqueueForBudget(t, txm, 0).budget, "no resource cap leaves nothing to derive from")
+
+	tx := enqueueForBudget(t, txm, 1_000_000)
+	require.NotNil(t, tx.budget, "a request cap still derives when the node has none")
+	assert.Equal(t, int64(7_000_000), tx.budget.max.Int64())
+}
+
+func TestStellarTxm_CumulativeFee_RequestCapAboveNodeCapSends(t *testing.T) {
+	t.Parallel()
+
+	var sendCalls atomic.Int32
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateResp: protocolrpc.SimulateTransactionResponse{
+			MinResourceFee:     80_000_000,
+			TransactionDataXDR: buildRestorePreambleTransactionDataXDR(t),
+		},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			sendCalls.Add(1)
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
+		},
+	}
+	// The node cap derives only 70_000_000, less than this one envelope.
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{MaxResourceFee: ptr(int64(10_000_000))}, mock)
+
+	tx := enqueueForBudget(t, txm, 100_000_000)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(tx.ID)
+		require.NoError(t, err)
+		return st == commontypes.Unconfirmed || st == commontypes.Failed
+	}, 5*time.Second, 50*time.Millisecond)
+
+	st, err := txm.GetStatus(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Unconfirmed, st)
+	assert.Equal(t, int32(1), sendCalls.Load(), "an envelope within its own cap must be sent")
+}
+
 func TestStellarTxm_CumulativeFee_ExceededFailsWithoutSending(t *testing.T) {
 	chainID := chainsel.STELLAR_TESTNET.ChainID
 	reason := string(ErrorReasonCumulativeFeeExceeded)
@@ -113,6 +218,53 @@ func TestStellarTxm_CumulativeFee_RejectedEnvelopeReleasesReservation(t *testing
 	assert.Equal(t, int32(2), sendCalls.Load())
 }
 
+func TestStellarTxm_CumulativeFee_SendErrorsAtOneSequenceCountOnce(t *testing.T) {
+	t.Parallel()
+
+	const rpcErrors = 10
+	var sendCalls atomic.Int32
+	var simCalls atomic.Int32
+	transactionDataXDR := buildRestorePreambleTransactionDataXDR(t)
+	mock := &mockRPCClient{
+		getLedgerEntriesResp: protocolrpc.GetLedgerEntriesResponse{
+			Entries: []protocolrpc.LedgerEntryResult{{DataXDR: buildAccountEntryXDR(t, testAddress, 100)}},
+		},
+		getLatestLedgerResp: protocolrpc.GetLatestLedgerResponse{Sequence: 1000},
+		simulateHook: func(protocolrpc.SimulateTransactionRequest) (protocolrpc.SimulateTransactionResponse, error) {
+			// 885_000 plus the 15_000 buffer is 0.9 x the request cap. The fee moves by a
+			// stroop per simulation so every retry signs a new envelope with a new hash.
+			return protocolrpc.SimulateTransactionResponse{
+				MinResourceFee:     885_000 + int64(simCalls.Add(1)),
+				TransactionDataXDR: transactionDataXDR,
+			}, nil
+		},
+		sendHook: func(protocolrpc.SendTransactionRequest) (protocolrpc.SendTransactionResponse, error) {
+			if sendCalls.Add(1) <= rpcErrors {
+				return protocolrpc.SendTransactionResponse{}, errors.New("rpc unavailable")
+			}
+			return protocolrpc.SendTransactionResponse{Status: stellarcore.TXStatusPending, Hash: "test-hash"}, nil
+		},
+	}
+	// The request cap of 1_000_000 derives a 7_000_000 budget. Summed, the ten unsent
+	// envelopes would pass it, but they share one sequence and at most one can land.
+	txm := newBudgetTestTxm(t, config.TxManagerConfig{
+		MaxSubmitRetryAttempts: ptr(uint(rpcErrors + 1)),
+		SubmitRetryDelay:       clconfig.MustNewDuration(time.Millisecond),
+	}, mock)
+
+	tx := enqueueForBudget(t, txm, 1_000_000)
+	require.Eventually(t, func() bool {
+		st, err := txm.GetStatus(tx.ID)
+		require.NoError(t, err)
+		return st == commontypes.Unconfirmed || st == commontypes.Failed
+	}, 5*time.Second, 10*time.Millisecond)
+
+	st, err := txm.GetStatus(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, commontypes.Unconfirmed, st, "same-sequence envelopes must not fail with %s", ErrorReasonCumulativeFeeExceeded)
+	assert.Equal(t, int32(rpcErrors+1), sendCalls.Load())
+}
+
 func TestStellarTxm_CumulativeFee_SuccessSettlesToFeeCharged(t *testing.T) {
 	t.Parallel()
 
@@ -128,7 +280,7 @@ func TestStellarTxm_CumulativeFee_SuccessSettlesToFeeCharged(t *testing.T) {
 	require.NoError(t, err)
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -152,7 +304,7 @@ func TestStellarTxm_CumulativeFee_OnChainFailureSettlesChargedFee(t *testing.T) 
 	require.NoError(t, err)
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -174,7 +326,7 @@ func TestStellarTxm_CumulativeFee_ExpiredEnvelopeReleasesReservation(t *testing.
 	const maxLedger = uint32(1050)
 	_, tx := seedUnconfirmed(t, txm, 101, maxLedger, time.Now().Add(time.Hour).Unix(), time.Now())
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
@@ -191,7 +343,7 @@ func TestStellarTxm_CumulativeFee_UnknownStatusExpiryKeepsReservation(t *testing
 	timeBound := time.Now().Add(-2 * statusUnknownMargin).Unix()
 	_, tx := seedUnconfirmed(t, txm, 101, 1050, timeBound, time.Now().Add(-time.Hour))
 	tx.budget = newFeeBudget(1_000_000)
-	require.NoError(t, tx.budget.reserve("seeded-hash", 50_000))
+	require.NoError(t, tx.budget.reserve(101, "seeded-hash", 50_000))
 
 	txm.checkUnconfirmed(t.Context())
 
