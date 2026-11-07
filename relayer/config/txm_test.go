@@ -140,14 +140,23 @@ func TestResolve_StellarTimeoutDefaults(t *testing.T) {
 	assert.Equal(t, uint(3), *cfg.MaxSimulateAttempts, "max simulate attempts")
 }
 
-func TestResolve_MaxCumulativeFeeDerivesFromDefaults(t *testing.T) {
+func TestResolve_MaxCumulativeFeeStaysZeroForPerRequestDerive(t *testing.T) {
 	t.Parallel()
 
 	cfg := TxManagerConfig{}
 	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "unset stays 0 so the TXM can derive per request")
 
-	assert.Equal(t, int64(2_000_000_000)*(5+2), *cfg.MaxCumulativeFee,
-		"derived as MaxResourceFee * (MaxTxRetryAttempts + 2)")
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "a second Resolve, as in New after SetDefaults, keeps 0")
+
+	cfg = TxManagerConfig{MaxCumulativeFee: ptr(int64(0))}
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee)
+
+	cfg = TxManagerConfig{MaxCumulativeFee: ptr(int64(-1))}
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "a negative value means derive, same as 0")
 }
 
 func TestResolve_MaxCumulativeFeeExplicitValueSurvives(t *testing.T) {
@@ -159,49 +168,25 @@ func TestResolve_MaxCumulativeFeeExplicitValueSurvives(t *testing.T) {
 	assert.Equal(t, int64(50_000), *cfg.MaxCumulativeFee)
 }
 
-func TestResolve_MaxCumulativeFeeZeroDerives(t *testing.T) {
+func TestDeriveMaxCumulativeFee(t *testing.T) {
 	t.Parallel()
 
-	cfg := TxManagerConfig{MaxCumulativeFee: ptr(int64(0))}
-	cfg.Resolve()
-
-	assert.Equal(t, int64(2_000_000_000)*(5+2), *cfg.MaxCumulativeFee)
+	assert.Equal(t, int64(2_000_000_000)*(5+2), *DeriveMaxCumulativeFee(2_000_000_000, 5),
+		"derived as resource cap * (MaxTxRetryAttempts + 2)")
+	assert.Equal(t, int64(1_000)*(3+2), *DeriveMaxCumulativeFee(1_000, 3))
 }
 
-func TestResolve_MaxCumulativeFeeUsesOverriddenAttempts(t *testing.T) {
+func TestDeriveMaxCumulativeFee_SaturatesInsteadOfOverflowing(t *testing.T) {
 	t.Parallel()
 
-	cfg := TxManagerConfig{
-		MaxResourceFee:     ptr(int64(1_000)),
-		MaxTxRetryAttempts: ptr(uint64(3)),
-	}
-	cfg.Resolve()
-
-	assert.Equal(t, int64(1_000)*(3+2), *cfg.MaxCumulativeFee)
-}
-
-func TestResolve_MaxCumulativeFeeSaturatesInsteadOfOverflowing(t *testing.T) {
-	t.Parallel()
-
-	cfg := TxManagerConfig{MaxResourceFee: ptr(int64(math.MaxInt64))}
-	cfg.Resolve()
-	assert.Equal(t, int64(math.MaxInt64), *cfg.MaxCumulativeFee)
-
-	cfg = TxManagerConfig{
-		MaxResourceFee:     ptr(int64(1)),
-		MaxTxRetryAttempts: ptr(uint64(math.MaxUint64 - 1)),
-	}
-	cfg.Resolve()
-	assert.Equal(t, int64(math.MaxInt64), *cfg.MaxCumulativeFee,
+	assert.Equal(t, int64(math.MaxInt64), *DeriveMaxCumulativeFee(math.MaxInt64, 5))
+	assert.Equal(t, int64(math.MaxInt64), *DeriveMaxCumulativeFee(1, math.MaxUint64-1),
 		"an attempt count near MaxUint64 must saturate, not wrap")
 }
 
-func TestResolve_MaxCumulativeFeeDisabledWithoutResourceCap(t *testing.T) {
+func TestDeriveMaxCumulativeFee_DisabledWithoutResourceCap(t *testing.T) {
 	t.Parallel()
 
-	cfg := TxManagerConfig{MaxResourceFee: ptr(int64(0))}
-	cfg.Resolve()
-
-	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee,
+	assert.Equal(t, int64(0), *DeriveMaxCumulativeFee(0, 5),
 		"with no resource cap there is nothing to derive, so the budget stays disabled")
 }

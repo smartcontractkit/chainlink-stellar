@@ -208,7 +208,7 @@ func (s *StellarTxm) Enqueue(ctx context.Context, req TxRequest) (string, error)
 		Metadata:           req.Metadata,
 		Status:             commontypes.Pending,
 		Done:               make(chan struct{}),
-		budget:             newFeeBudget(uint64(*s.config.MaxCumulativeFee)),
+		budget:             s.newTxFeeBudget(req.MaxResourceFee),
 	}
 
 	return s.enqueueTransaction(ctx, tx)
@@ -745,7 +745,7 @@ func (s *StellarTxm) simulateAssembleSignAndSend(ctx context.Context, tx *Stella
 			return
 		}
 
-		if err := tx.budget.reserve(localHash, totalFee); err != nil {
+		if err := tx.budget.reserve(seq, localHash, totalFee); err != nil {
 			ctxLogger.Errorw("cumulative fee budget exceeded, envelope not sent",
 				"hash", localHash, "fee", totalFee, "error", err)
 			s.releaseSeqAndFailTx(ctx, txStore, seq, tx, ErrorReasonCumulativeFeeExceeded)

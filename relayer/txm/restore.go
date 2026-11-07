@@ -81,7 +81,7 @@ func (s *StellarTxm) handleRestore(
 
 	// One envelope is resubmitted on every restore attempt, so its fee is reserved once
 	// and only settled or released once the envelope's fate is known.
-	if err := tx.budget.reserve(localHash, inclusionFee+resourceFee); err != nil {
+	if err := tx.budget.reserve(seq, localHash, inclusionFee+resourceFee); err != nil {
 		return fmt.Errorf("restore fee budget: %w", err)
 	}
 
