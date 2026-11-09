@@ -73,14 +73,14 @@ pub trait TokenAdminRegistryInterface {
         max_count: u32,
     ) -> Result<soroban_sdk::Vec<soroban_sdk::Address>, CCIPError>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenConfig {
     pub administrator: Option<soroban_sdk::Address>,
     pub pending_administrator: Option<soroban_sdk::Address>,
     pub token_pool: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -213,61 +213,37 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tar_PoolSet"])]
+#[soroban_sdk::contractevent(topics = ["tar_PoolSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PoolSetEvent {
     pub token: soroban_sdk::Address,
     pub previous_pool: Option<soroban_sdk::Address>,
     pub new_pool: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contractevent(topics = ["tar_ModuleAdded"])]
+#[soroban_sdk::contractevent(topics = ["tar_ModuleAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RegistryModuleAddedEvent {
     pub module: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tar_ModuleRemoved"])]
+#[soroban_sdk::contractevent(topics = ["tar_ModuleRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RegistryModuleRemovedEvent {
     pub module: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tar_AdminTransferReq"])]
+#[soroban_sdk::contractevent(topics = ["tar_AdminTransferReq", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AdminTransferRequestedEvent {
     pub token: soroban_sdk::Address,
     pub current_admin: Option<soroban_sdk::Address>,
     pub new_admin: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contractevent(topics = ["tar_AdminTransferred"])]
+#[soroban_sdk::contractevent(topics = ["tar_AdminTransferred", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AdministratorTransferredEvent {
     pub token: soroban_sdk::Address,

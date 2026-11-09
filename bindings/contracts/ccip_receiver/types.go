@@ -671,7 +671,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // CcipCcvConfigSetEvent represents the CcipCcvConfigSetEvent event.
-// Topics: [example_CcvCfg]
+// Topics: [example_CcvCfg map]
 type CcipCcvConfigSetEvent struct {
 	SourceChainSelector uint64
 	RequiredLen         uint32
@@ -686,7 +686,7 @@ type CcipCcvConfigSetEvent struct {
 const CcipCcvConfigSetEventTopic = "example_CcvCfg"
 
 // CcipMessageReceivedEvent represents the CcipMessageReceivedEvent event.
-// Topics: [example_CcipMessageReceived]
+// Topics: [example_CcipMessageReceived map]
 type CcipMessageReceivedEvent struct {
 	MessageId           [32]byte
 	SourceChainSelector uint64
@@ -702,7 +702,7 @@ type CcipMessageReceivedEvent struct {
 const CcipMessageReceivedEventTopic = "example_CcipMessageReceived"
 
 // CcipRemoteChainConfiguredEvent represents the CcipRemoteChainConfiguredEvent event.
-// Topics: [example_RemChCfg]
+// Topics: [example_RemChCfg map]
 type CcipRemoteChainConfiguredEvent struct {
 	DestChainSelector     uint64
 	ExtraArgsLen          uint32
@@ -715,60 +715,8 @@ type CcipRemoteChainConfiguredEvent struct {
 // CcipRemoteChainConfiguredEventTopic is the event topic identifier.
 const CcipRemoteChainConfiguredEventTopic = "example_RemChCfg"
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

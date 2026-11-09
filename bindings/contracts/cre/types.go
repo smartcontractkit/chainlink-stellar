@@ -418,60 +418,8 @@ var ForwarderErrorMessage = map[int]string{
 	21: "unauthorized relayer",
 }
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -484,7 +432,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [forwarder_ConfigSet]
+// Topics: [forwarder_ConfigSet map]
 type ConfigSetEvent struct {
 	DonId         uint32
 	ConfigVersion uint32
@@ -499,7 +447,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "forwarder_ConfigSet"
 
 // RelayerAddedEvent represents the RelayerAddedEvent event.
-// Topics: [forwarder_RelayerAdded]
+// Topics: [forwarder_RelayerAdded map]
 type RelayerAddedEvent struct {
 	Relayer string
 	// Event metadata
@@ -511,7 +459,7 @@ type RelayerAddedEvent struct {
 const RelayerAddedEventTopic = "forwarder_RelayerAdded"
 
 // ForwarderAddedEvent represents the ForwarderAddedEvent event.
-// Topics: [forwarder_ForwarderAdded]
+// Topics: [forwarder_ForwarderAdded map]
 type ForwarderAddedEvent struct {
 	Forwarder string
 	// Event metadata
@@ -523,7 +471,7 @@ type ForwarderAddedEvent struct {
 const ForwarderAddedEventTopic = "forwarder_ForwarderAdded"
 
 // RelayerRemovedEvent represents the RelayerRemovedEvent event.
-// Topics: [forwarder_RelayerRemoved]
+// Topics: [forwarder_RelayerRemoved map]
 type RelayerRemovedEvent struct {
 	Relayer string
 	// Event metadata
@@ -535,7 +483,7 @@ type RelayerRemovedEvent struct {
 const RelayerRemovedEventTopic = "forwarder_RelayerRemoved"
 
 // RelayProcessedEvent represents the RelayProcessedEvent event.
-// Topics: [forwarder_RelayProcessed]
+// Topics: [forwarder_RelayProcessed single-value]
 type RelayProcessedEvent struct {
 	Receiver    string
 	ExecutionId [32]byte
@@ -550,7 +498,7 @@ type RelayProcessedEvent struct {
 const RelayProcessedEventTopic = "forwarder_RelayProcessed"
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
-// Topics: [forwarder_ReportProcessed]
+// Topics: [forwarder_ReportProcessed single-value]
 type ReportProcessedEvent struct {
 	Receiver            string
 	WorkflowExecutionId [32]byte
@@ -565,7 +513,7 @@ type ReportProcessedEvent struct {
 const ReportProcessedEventTopic = "forwarder_ReportProcessed"
 
 // ForwarderRemovedEvent represents the ForwarderRemovedEvent event.
-// Topics: [forwarder_ForwarderRemoved]
+// Topics: [forwarder_ForwarderRemoved map]
 type ForwarderRemovedEvent struct {
 	Forwarder string
 	// Event metadata

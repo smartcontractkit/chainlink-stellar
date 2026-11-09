@@ -611,60 +611,8 @@ var CCIPErrorMessage = map[int]string{
 	808: "zero address not allowed",
 }
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -677,7 +625,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // OnRampSetEvent represents the OnRampSetEvent event.
-// Topics: [router_OnRampSet]
+// Topics: [router_OnRampSet map]
 type OnRampSetEvent struct {
 	DestChainSelector uint64
 	Onramp            string
@@ -690,7 +638,7 @@ type OnRampSetEvent struct {
 const OnRampSetEventTopic = "router_OnRampSet"
 
 // OffRampAddedEvent represents the OffRampAddedEvent event.
-// Topics: [router_OffRampAdded]
+// Topics: [router_OffRampAdded map]
 type OffRampAddedEvent struct {
 	SourceChainSelector uint64
 	Offramp             string
@@ -703,7 +651,7 @@ type OffRampAddedEvent struct {
 const OffRampAddedEventTopic = "router_OffRampAdded"
 
 // OnRampRemovedEvent represents the OnRampRemovedEvent event.
-// Topics: [router_OnRampRemoved]
+// Topics: [router_OnRampRemoved map]
 type OnRampRemovedEvent struct {
 	DestChainSelector uint64
 	Onramp            string
@@ -716,7 +664,7 @@ type OnRampRemovedEvent struct {
 const OnRampRemovedEventTopic = "router_OnRampRemoved"
 
 // OffRampRemovedEvent represents the OffRampRemovedEvent event.
-// Topics: [router_OffRampRemoved]
+// Topics: [router_OffRampRemoved map]
 type OffRampRemovedEvent struct {
 	SourceChainSelector uint64
 	Offramp             string
@@ -729,7 +677,7 @@ type OffRampRemovedEvent struct {
 const OffRampRemovedEventTopic = "router_OffRampRemoved"
 
 // MessageExecutedEvent represents the MessageExecutedEvent event.
-// Topics: [router_MessageExecuted]
+// Topics: [router_MessageExecuted map]
 type MessageExecutedEvent struct {
 	MessageId           [32]byte
 	SourceChainSelector uint64
@@ -743,7 +691,7 @@ type MessageExecutedEvent struct {
 const MessageExecutedEventTopic = "router_MessageExecuted"
 
 // CCIPSendRequestedEvent represents the CCIPSendRequestedEvent event.
-// Topics: [router_CCIPSendRequested]
+// Topics: [router_CCIPSendRequested map]
 type CCIPSendRequestedEvent struct {
 	MessageId         [32]byte
 	DestChainSelector uint64

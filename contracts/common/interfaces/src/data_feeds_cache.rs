@@ -99,7 +99,7 @@ pub trait DataFeedsCacheInterface {
         data_id: soroban_sdk::BytesN<32>,
     ) -> soroban_sdk::Vec<WorkflowPermission>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoundData {
     pub answer: soroban_sdk::I256,
@@ -108,32 +108,32 @@ pub struct RoundData {
     pub round_id: u64,
     pub timestamp: u64,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfig {
     pub description: soroban_sdk::String,
     pub workflow_permissions: soroban_sdk::Vec<WorkflowPermission>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigEntry {
     pub config: FeedConfig,
     pub data_id: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct WorkflowPermission {
     pub allowed_sender: soroban_sdk::Address,
     pub allowed_workflow_name: soroban_sdk::BytesN<10>,
     pub allowed_workflow_owner: soroban_sdk::BytesN<20>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Bound {
     AtOrBefore = 0,
     AtOrAfter = 1,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CacheError {
     MalformedReport = 100,
@@ -148,7 +148,7 @@ pub enum CacheError {
     FeedFrozen = 109,
     NoFeedState = 110,
 }
-#[soroban_sdk::contractevent(topics = ["FeedUpdated"])]
+#[soroban_sdk::contractevent(topics = ["FeedUpdated", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedUpdated {
     #[topic]
@@ -159,7 +159,7 @@ pub struct FeedUpdated {
     pub ledger_seq: u32,
     pub primary: bool,
 }
-#[soroban_sdk::contractevent(topics = ["StaleReport"])]
+#[soroban_sdk::contractevent(topics = ["StaleReport", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StaleReport {
     #[topic]
@@ -167,7 +167,7 @@ pub struct StaleReport {
     pub report_ts: u64,
     pub stored_ts: u64,
 }
-#[soroban_sdk::contractevent(topics = ["FeedConfigSet"])]
+#[soroban_sdk::contractevent(topics = ["FeedConfigSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigSet {
     #[topic]
@@ -176,32 +176,32 @@ pub struct FeedConfigSet {
     pub description: soroban_sdk::String,
     pub workflow_permissions: soroban_sdk::Vec<WorkflowPermission>,
 }
-#[soroban_sdk::contractevent(topics = ["FeedFrozenSet"])]
+#[soroban_sdk::contractevent(topics = ["FeedFrozenSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedFrozenSet {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
     pub frozen: bool,
 }
-#[soroban_sdk::contractevent(topics = ["FeedAdminAdded"])]
+#[soroban_sdk::contractevent(topics = ["FeedAdminAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedAdminAdded {
     #[topic]
     pub admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["FeedAdminRemoved"])]
+#[soroban_sdk::contractevent(topics = ["FeedAdminRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedAdminRemoved {
     #[topic]
     pub admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["FeedConfigRemoved"])]
+#[soroban_sdk::contractevent(topics = ["FeedConfigRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeedConfigRemoved {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["InvalidUpdatePermission"])]
+#[soroban_sdk::contractevent(topics = ["InvalidUpdatePermission", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InvalidUpdatePermission {
     #[topic]
@@ -210,31 +210,31 @@ pub struct InvalidUpdatePermission {
     pub workflow_owner: soroban_sdk::BytesN<20>,
     pub workflow_name: soroban_sdk::BytesN<10>,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded"])]
+#[soroban_sdk::contractevent(topics = ["Upgraded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["TokenRecovered"])]
+#[soroban_sdk::contractevent(topics = ["TokenRecovered", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenRecovered {
     pub token: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransfer {
     pub old_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
     pub live_until_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_renounced"])]
+#[soroban_sdk::contractevent(topics = ["ownership_renounced", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipRenounced {
     pub old_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferCompleted {
     pub new_owner: soroban_sdk::Address,

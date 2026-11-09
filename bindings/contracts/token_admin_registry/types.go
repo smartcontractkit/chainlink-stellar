@@ -329,60 +329,8 @@ var CCIPErrorMessage = map[int]string{
 	808: "zero address not allowed",
 }
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -395,7 +343,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // PoolSetEvent represents the PoolSetEvent event.
-// Topics: [tar_PoolSet]
+// Topics: [tar_PoolSet map]
 type PoolSetEvent struct {
 	Token        string
 	PreviousPool *string
@@ -409,7 +357,7 @@ type PoolSetEvent struct {
 const PoolSetEventTopic = "tar_PoolSet"
 
 // RegistryModuleAddedEvent represents the RegistryModuleAddedEvent event.
-// Topics: [tar_ModuleAdded]
+// Topics: [tar_ModuleAdded map]
 type RegistryModuleAddedEvent struct {
 	Module string
 	// Event metadata
@@ -421,7 +369,7 @@ type RegistryModuleAddedEvent struct {
 const RegistryModuleAddedEventTopic = "tar_ModuleAdded"
 
 // RegistryModuleRemovedEvent represents the RegistryModuleRemovedEvent event.
-// Topics: [tar_ModuleRemoved]
+// Topics: [tar_ModuleRemoved map]
 type RegistryModuleRemovedEvent struct {
 	Module string
 	// Event metadata
@@ -433,7 +381,7 @@ type RegistryModuleRemovedEvent struct {
 const RegistryModuleRemovedEventTopic = "tar_ModuleRemoved"
 
 // AdminTransferRequestedEvent represents the AdminTransferRequestedEvent event.
-// Topics: [tar_AdminTransferReq]
+// Topics: [tar_AdminTransferReq map]
 type AdminTransferRequestedEvent struct {
 	Token        string
 	CurrentAdmin *string
@@ -447,7 +395,7 @@ type AdminTransferRequestedEvent struct {
 const AdminTransferRequestedEventTopic = "tar_AdminTransferReq"
 
 // AdministratorTransferredEvent represents the AdministratorTransferredEvent event.
-// Topics: [tar_AdminTransferred]
+// Topics: [tar_AdminTransferred map]
 type AdministratorTransferredEvent struct {
 	Token    string
 	NewAdmin string

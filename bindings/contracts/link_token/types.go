@@ -301,72 +301,8 @@ var LinkErrorMessage = map[int]string{
 	11: "cannot remove primary minter",
 }
 
-// Upgraded represents the Upgraded event.
-// Topics: [Upgraded]
-type Upgraded struct {
-	NewWasmHash [32]byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// UpgradedTopic is the event topic identifier.
-const UpgradedTopic = "Upgraded"
-
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -379,7 +315,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // BurnEvent represents the BurnEvent event.
-// Topics: [burn]
+// Topics: [burn map]
 type BurnEvent struct {
 	From   string
 	Amount *big.Int
@@ -392,7 +328,7 @@ type BurnEvent struct {
 const BurnEventTopic = "burn"
 
 // MintEvent represents the MintEvent event.
-// Topics: [mint]
+// Topics: [mint map]
 type MintEvent struct {
 	To     string
 	Amount *big.Int
@@ -405,7 +341,7 @@ type MintEvent struct {
 const MintEventTopic = "mint"
 
 // ApproveEvent represents the ApproveEvent event.
-// Topics: [approve]
+// Topics: [approve map]
 type ApproveEvent struct {
 	From             string
 	Spender          string
@@ -420,7 +356,7 @@ type ApproveEvent struct {
 const ApproveEventTopic = "approve"
 
 // SetAdminEvent represents the SetAdminEvent event.
-// Topics: [set_admin]
+// Topics: [set_admin map]
 type SetAdminEvent struct {
 	Admin    string
 	NewAdmin string
@@ -433,7 +369,7 @@ type SetAdminEvent struct {
 const SetAdminEventTopic = "set_admin"
 
 // TransferEvent represents the TransferEvent event.
-// Topics: [transfer]
+// Topics: [transfer map]
 type TransferEvent struct {
 	From   string
 	To     string
@@ -447,7 +383,7 @@ type TransferEvent struct {
 const TransferEventTopic = "transfer"
 
 // SetAuthorizedEvent represents the SetAuthorizedEvent event.
-// Topics: [set_authorized]
+// Topics: [set_authorized map]
 type SetAuthorizedEvent struct {
 	Id        string
 	Authorize bool

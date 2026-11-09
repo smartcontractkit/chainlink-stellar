@@ -7,61 +7,66 @@ pub trait AdvancedPoolHooksExtractorInterface {
     ) -> Result<soroban_sdk::Vec<Parameter>, CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PreflightPayload {
+    pub amount_post_fee: i128,
+    pub lock_or_burn_in: LockOrBurnIn,
+    pub requested_finality: u32,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PostflightPayload {
+    pub local_amount: i128,
+    pub release_or_mint_in: ReleaseOrMintIn,
+    pub requested_finality: u32,
+}
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockOrBurnIn {
+    pub amount: i128,
+    pub local_token: soroban_sdk::Address,
+    pub original_sender: soroban_sdk::Address,
     pub receiver: soroban_sdk::Bytes,
     pub remote_chain_selector: u64,
-    pub original_sender: soroban_sdk::Address,
-    pub amount: i128,
-    pub local_token: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReleaseOrMintIn {
-    pub original_sender: soroban_sdk::Bytes,
-    pub remote_chain_selector: u64,
-    pub receiver: soroban_sdk::Address,
-    /// Source-denominated amount (EVM `sourceDenominatedAmount`).
     pub amount: i128,
     pub local_token: soroban_sdk::Address,
+    pub original_sender: soroban_sdk::Bytes,
+    pub receiver: soroban_sdk::Address,
+    pub remote_chain_selector: u64,
     pub source_pool_address: soroban_sdk::Bytes,
     pub source_pool_data: soroban_sdk::Bytes,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct PreflightPayload {
-    pub lock_or_burn_in: LockOrBurnIn,
-    pub requested_finality: u32,
-    pub amount_post_fee: i128,
+pub struct Payload {
+    pub context: soroban_sdk::Bytes,
+    pub data: PolicyData,
+    pub selector: soroban_sdk::Symbol,
+    pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct PostflightPayload {
-    pub release_or_mint_in: ReleaseOrMintIn,
-    pub local_amount: i128,
-    pub requested_finality: u32,
+pub struct Parameter {
+    pub name: soroban_sdk::Symbol,
+    pub value: PolicyValue,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PoolHooksPayloadData {
     Preflight(PreflightPayload),
     Postflight(PostflightPayload),
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PolicyData {
     PoolHooks(PoolHooksPayloadData),
 }
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Payload {
-    pub selector: soroban_sdk::Symbol,
-    pub sender: soroban_sdk::Address,
-    pub data: PolicyData,
-    pub context: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PolicyValue {
     Address(soroban_sdk::Address),
@@ -70,13 +75,7 @@ pub enum PolicyValue {
     U32(u32),
     Bytes(soroban_sdk::Bytes),
 }
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Parameter {
-    pub name: soroban_sdk::Symbol,
-    pub value: PolicyValue,
-}
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,

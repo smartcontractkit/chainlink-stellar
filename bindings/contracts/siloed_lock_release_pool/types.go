@@ -9,6 +9,116 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// LockOrBurnIn represents the LockOrBurnIn struct from the contract.
+type LockOrBurnIn struct {
+	Amount              *big.Int
+	LocalToken          string
+	OriginalSender      string
+	Receiver            []byte
+	RemoteChainSelector uint64
+}
+
+// ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
+func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"amount":                scval.I128ToScVal(s.Amount),
+		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"original_sender":       scval.AddressToScVal(s.OriginalSender),
+		"receiver":              scval.BytesToScVal(s.Receiver),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+	})
+}
+
+// LockOrBurnInFromScVal parses an xdr.ScVal into LockOrBurnIn.
+func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &LockOrBurnIn{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("amount: %w", err)
+			}
+			result.Amount = v
+		case "local_token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("local_token: %w", err)
+			}
+			result.LocalToken = v
+		case "original_sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("original_sender: %w", err)
+			}
+			result.OriginalSender = v
+		case "receiver":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("receiver is not bytes")
+			}
+			result.Receiver = []byte(v)
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
+		}
+	}
+
+	return result, nil
+}
+
+// ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
+type ReleaseOrMintOut struct {
+	DestinationAmount *big.Int
+}
+
+// ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.
+func (s ReleaseOrMintOut) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"destination_amount": scval.I128ToScVal(s.DestinationAmount),
+	})
+}
+
+// ReleaseOrMintOutFromScVal parses an xdr.ScVal into ReleaseOrMintOut.
+func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &ReleaseOrMintOut{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "destination_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("destination_amount: %w", err)
+			}
+			result.DestinationAmount = v
+		}
+	}
+
+	return result, nil
+}
+
 // ChainUpdate represents the ChainUpdate struct from the contract.
 type ChainUpdate struct {
 	InboundRateLimiterConfig  RateLimitConfig
@@ -193,77 +303,6 @@ func LockBoxEntryFromScVal(val xdr.ScVal) (*LockBoxEntry, error) {
 				return nil, fmt.Errorf("lock_box: %w", err)
 			}
 			result.LockBox = v
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
-			}
-			result.RemoteChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
-// LockOrBurnIn represents the LockOrBurnIn struct from the contract.
-type LockOrBurnIn struct {
-	Amount              *big.Int
-	LocalToken          string
-	OriginalSender      string
-	Receiver            []byte
-	RemoteChainSelector uint64
-}
-
-// ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
-func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"amount":                scval.I128ToScVal(s.Amount),
-		"local_token":           scval.AddressToScVal(s.LocalToken),
-		"original_sender":       scval.AddressToScVal(s.OriginalSender),
-		"receiver":              scval.BytesToScVal(s.Receiver),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
-	})
-}
-
-// LockOrBurnInFromScVal parses an xdr.ScVal into LockOrBurnIn.
-func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &LockOrBurnIn{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("amount: %w", err)
-			}
-			result.Amount = v
-		case "local_token":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("local_token: %w", err)
-			}
-			result.LocalToken = v
-		case "original_sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("original_sender: %w", err)
-			}
-			result.OriginalSender = v
-		case "receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("receiver is not bytes")
-			}
-			result.Receiver = []byte(v)
 		case "remote_chain_selector":
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err != nil {
@@ -639,45 +678,6 @@ func RateLimiterStateFromScVal(val xdr.ScVal) (*RateLimiterState, error) {
 				return nil, fmt.Errorf("outbound: %w", err)
 			}
 			result.Outbound = *v
-		}
-	}
-
-	return result, nil
-}
-
-// ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
-type ReleaseOrMintOut struct {
-	DestinationAmount *big.Int
-}
-
-// ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.
-func (s ReleaseOrMintOut) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"destination_amount": scval.I128ToScVal(s.DestinationAmount),
-	})
-}
-
-// ReleaseOrMintOutFromScVal parses an xdr.ScVal into ReleaseOrMintOut.
-func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &ReleaseOrMintOut{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "destination_amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("destination_amount: %w", err)
-			}
-			result.DestinationAmount = v
 		}
 	}
 
@@ -1084,60 +1084,8 @@ var CCIPErrorMessage = map[int]string{
 	808: "zero address not allowed",
 }
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -1149,21 +1097,8 @@ type OwnershipTransferStartedEvent struct {
 // OwnershipTransferStartedEventTopic is the event topic identifier.
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
-// BurnedEvent represents the BurnedEvent event.
-// Topics: [pool_Burned]
-type BurnedEvent struct {
-	Sender string
-	Amount *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// BurnedEventTopic is the event topic identifier.
-const BurnedEventTopic = "pool_Burned"
-
 // LockedEvent represents the LockedEvent event.
-// Topics: [pool_Locked]
+// Topics: [pool_Locked map]
 type LockedEvent struct {
 	Sender string
 	Amount *big.Int
@@ -1175,22 +1110,8 @@ type LockedEvent struct {
 // LockedEventTopic is the event topic identifier.
 const LockedEventTopic = "pool_Locked"
 
-// MintedEvent represents the MintedEvent event.
-// Topics: [pool_Minted]
-type MintedEvent struct {
-	Sender    string
-	Recipient string
-	Amount    *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// MintedEventTopic is the event topic identifier.
-const MintedEventTopic = "pool_Minted"
-
 // ReleasedEvent represents the ReleasedEvent event.
-// Topics: [pool_Released]
+// Topics: [pool_Released map]
 type ReleasedEvent struct {
 	Sender    string
 	Recipient string
@@ -1204,7 +1125,7 @@ type ReleasedEvent struct {
 const ReleasedEventTopic = "pool_Released"
 
 // ChainRemovedEvent represents the ChainRemovedEvent event.
-// Topics: [pool_ChainRemoved]
+// Topics: [pool_ChainRemoved map]
 type ChainRemovedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1215,8 +1136,87 @@ type ChainRemovedEvent struct {
 // ChainRemovedEventTopic is the event topic identifier.
 const ChainRemovedEventTopic = "pool_ChainRemoved"
 
+// FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
+// Topics: [pool_FinalityConfigSet map]
+type FinalityConfigSetEvent struct {
+	AllowedFinality uint32
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FinalityConfigSetEventTopic is the event topic identifier.
+const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
+
+// FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
+// Topics: [pool_FtfInboundConsumed map]
+type FtfInboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfInboundConsumedEventTopic is the event topic identifier.
+const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
+
+// RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
+// Topics: [pool_RateLimitConfigured map]
+type RateLimitConfiguredEvent struct {
+	RemoteChainSelector uint64
+	FastFinality        bool
+	OutboundConfig      RateLimitConfig
+	InboundConfig       RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RateLimitConfiguredEventTopic is the event topic identifier.
+const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
+
+// AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
+// Topics: [pool_HooksUpdated map]
+type AdvancedPoolHooksUpdatedEvent struct {
+	OldHooks *string
+	NewHooks *string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AdvancedPoolHooksUpdatedEventTopic is the event topic identifier.
+const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
+
+// InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
+// Topics: [pool_InboundRateLimitConsumed map]
+type InboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// InboundRateLimitConsumedEventTopic is the event topic identifier.
+const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
+
+// OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
+// Topics: [pool_OutboundRateLimitConsumed map]
+type OutboundRateLimitConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// OutboundRateLimitConsumedEventTopic is the event topic identifier.
+const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
+
 // ChainConfiguredEvent represents the ChainConfiguredEvent event.
-// Topics: [pool_ChainConfigured]
+// Topics: [pool_ChainConfigured map]
 type ChainConfiguredEvent struct {
 	RemoteChainSelector       uint64
 	RemotePoolAddresses       [][]byte
@@ -1232,7 +1232,7 @@ type ChainConfiguredEvent struct {
 const ChainConfiguredEventTopic = "pool_ChainConfigured"
 
 // RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
-// Topics: [pool_RemotePoolAdded]
+// Topics: [pool_RemotePoolAdded map]
 type RemotePoolAddedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1244,20 +1244,8 @@ type RemotePoolAddedEvent struct {
 // RemotePoolAddedEventTopic is the event topic identifier.
 const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
 
-// FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
-// Topics: [pool_FinalityConfigSet]
-type FinalityConfigSetEvent struct {
-	AllowedFinality uint32
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FinalityConfigSetEventTopic is the event topic identifier.
-const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
-
 // LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
-// Topics: [pool_LockBoxConfigured]
+// Topics: [pool_LockBoxConfigured map]
 type LockBoxConfiguredEvent struct {
 	RemoteChainSelector uint64
 	LockBox             string
@@ -1270,7 +1258,7 @@ type LockBoxConfiguredEvent struct {
 const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
 
 // RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
-// Topics: [pool_RemotePoolRemoved]
+// Topics: [pool_RemotePoolRemoved map]
 type RemotePoolRemovedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1282,21 +1270,8 @@ type RemotePoolRemovedEvent struct {
 // RemotePoolRemovedEventTopic is the event topic identifier.
 const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
 
-// FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
-// Topics: [pool_FtfInboundConsumed]
-type FtfInboundConsumedEvent struct {
-	RemoteChainSelector uint64
-	Amount              *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FtfInboundConsumedEventTopic is the event topic identifier.
-const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
-
 // TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
-// Topics: [pool_TokenFeeCfgDeleted]
+// Topics: [pool_TokenFeeCfgDeleted map]
 type TokenFeeCfgDeletedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1308,7 +1283,7 @@ type TokenFeeCfgDeletedEvent struct {
 const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
 
 // TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
-// Topics: [pool_TokenFeeCfgUpdated]
+// Topics: [pool_TokenFeeCfgUpdated map]
 type TokenFeeCfgUpdatedEvent struct {
 	RemoteChainSelector uint64
 	Config              TokenTransferFeeConfig
@@ -1321,7 +1296,7 @@ type TokenFeeCfgUpdatedEvent struct {
 const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
 
 // FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
-// Topics: [pool_FtfOutboundConsumed]
+// Topics: [pool_FtfOutboundConsumed map]
 type FtfOutboundConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1332,60 +1307,6 @@ type FtfOutboundConsumedEvent struct {
 
 // FtfOutboundConsumedEventTopic is the event topic identifier.
 const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
-
-// RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
-// Topics: [pool_RateLimitConfigured]
-type RateLimitConfiguredEvent struct {
-	RemoteChainSelector uint64
-	FastFinality        bool
-	OutboundConfig      RateLimitConfig
-	InboundConfig       RateLimitConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RateLimitConfiguredEventTopic is the event topic identifier.
-const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
-
-// AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
-// Topics: [pool_HooksUpdated]
-type AdvancedPoolHooksUpdatedEvent struct {
-	OldHooks *string
-	NewHooks *string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AdvancedPoolHooksUpdatedEventTopic is the event topic identifier.
-const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
-
-// InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
-// Topics: [pool_InboundRateLimitConsumed]
-type InboundRateLimitConsumedEvent struct {
-	RemoteChainSelector uint64
-	Amount              *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// InboundRateLimitConsumedEventTopic is the event topic identifier.
-const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
-
-// OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
-// Topics: [pool_OutboundRateLimitConsumed]
-type OutboundRateLimitConsumedEvent struct {
-	RemoteChainSelector uint64
-	Amount              *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// OutboundRateLimitConsumedEventTopic is the event topic identifier.
-const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
 
 // MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).
