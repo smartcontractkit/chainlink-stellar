@@ -1946,6 +1946,56 @@ fn test_execute_token_transfer_remote_decimals_conversion_passes() {
     );
 }
 
+#[test]
+fn test_execute_bad_remote_decimals_traps_and_stays_untouched() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::from_array(&env, &[0u8; 31]),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "bad remote decimals must trap the whole execute tx: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "a decimals decode failure must not record Failure"
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0
+    );
+}
+
 // ============================================================
 // try_* conversion: typed callee errors record per-message Failure
 // (EVM `OffRamp.execute`'s `_callWithGasBuffer` catch-all parity)

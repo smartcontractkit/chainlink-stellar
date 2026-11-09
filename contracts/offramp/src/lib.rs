@@ -1290,8 +1290,10 @@ impl OffRampContract {
         // record/event for pool errors.
         //
         let local_decimals = soroban_sdk::token::Client::new(env, &dest_token).decimals();
-        let remote_decimals = parse_remote_decimals(&token_transfer.extra_data, local_decimals)?;
-        let expected_amount = calculate_local_amount(amount, remote_decimals, local_decimals)?;
+        let remote_decimals = parse_remote_decimals(&token_transfer.extra_data, local_decimals)
+            .unwrap_or_else(|e| env.panic_with_error(e));
+        let expected_amount = calculate_local_amount(amount, remote_decimals, local_decimals)
+            .unwrap_or_else(|e| env.panic_with_error(e));
 
         // Verify actual delivery: snapshot the receiver balance before calling the
         // pool so a malicious/faulty pool cannot claim success without delivering.
