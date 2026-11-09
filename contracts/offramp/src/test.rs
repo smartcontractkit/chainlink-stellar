@@ -24,6 +24,7 @@ use common_message::{
     AnyToStellarMessage, CcipMessageV1, CcipTokenTransferV1, MessageIdCompute, ToBytes,
     MESSAGE_V1_VERSION,
 };
+use common_pool::{calculate_local_amount, encode_local_decimals, parse_remote_decimals};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use soroban_sdk::{
@@ -829,6 +830,18 @@ impl MockTokenPool {
             .set(&Symbol::new(&env, "skimrel"), &skim);
     }
 
+    pub fn set_report_delivered(env: Env, report_delivered: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "repdel"), &report_delivered);
+    }
+
+    pub fn set_self_receiver_noop(env: Env, self_receiver_noop: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "selfrecv"), &self_receiver_noop);
+    }
+
     pub fn release_or_mint(
         env: Env,
         _caller: Address,
@@ -852,8 +865,22 @@ impl MockTokenPool {
             .instance()
             .get(&Symbol::new(&env, "skimrel"))
             .unwrap_or(0);
-        let deliver = input.amount - skim;
-        if deliver > 0 {
+        let report_delivered: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "repdel"))
+            .unwrap_or(false);
+        let self_receiver_noop: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "selfrecv"))
+            .unwrap_or(false);
+        let local_decimals = soroban_sdk::token::Client::new(&env, &input.local_token).decimals();
+        let remote_decimals = parse_remote_decimals(&input.source_pool_data, local_decimals)?;
+        let local_amount = calculate_local_amount(input.amount, remote_decimals, local_decimals)?;
+        let deliver = local_amount - skim;
+        let self_transfer = self_receiver_noop && input.receiver == env.current_contract_address();
+        if deliver > 0 && !self_transfer {
             soroban_sdk::token::StellarAssetClient::new(&env, &input.local_token)
                 .mint(&input.receiver, &deliver);
         }
@@ -872,7 +899,11 @@ impl MockTokenPool {
             .instance()
             .set(&Symbol::new(&env, "lastrecv"), &input.receiver);
         Ok(ReleaseOrMintOut {
-            destination_amount: input.amount,
+            destination_amount: if report_delivered {
+                deliver
+            } else {
+                local_amount
+            },
         })
     }
 
@@ -1728,6 +1759,190 @@ fn test_execute_pool_underdelivery_traps_and_is_retriable() {
         soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
         100,
         "the receiver's balance delta equals the reported destination amount"
+    );
+}
+
+#[test]
+fn test_execute_pool_zero_delivery_zero_report_traps() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_skim_release(&100);
+    pool_client.set_report_delivered(&true);
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a pool that delivers and reports 0 must trap the whole execute tx: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "no Success without actual token delivery"
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0,
+        "nothing was delivered"
+    );
+
+    pool_client.set_skim_release(&0);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "resubmission after the pool is fixed must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        100
+    );
+}
+
+#[test]
+fn test_execute_pool_as_own_token_receiver_trusts_report() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_self_receiver_noop(&true);
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+    let pool_field = offramp_address_field_from_contract(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: pool_field,
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a pool that is its own token receiver must not trap: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&pool_client.address),
+        0,
+        "the self-transfer moved nothing"
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0,
+        "the message receiver holds no tokens: the pool was the token receiver"
+    );
+}
+
+#[test]
+fn test_execute_token_transfer_remote_decimals_conversion_passes() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[16..32].copy_from_slice(&1_000_000_000_000_000_000u128.to_be_bytes());
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: encode_local_decimals(&env, 18u32).unwrap(),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::new(&env),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a correct release across a decimals change must not trap: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(
+        receiver_client.receive_count(),
+        0,
+        "token-only message skips routing"
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        10_000_000,
+        "the delivered amount is the wire amount converted to local decimals"
     );
 }
 

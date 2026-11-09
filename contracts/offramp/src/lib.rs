@@ -12,7 +12,7 @@ use common_interfaces::{
 };
 // `finality_codec` lives in `common-pool` (the inbound pools already use it in `release_or_mint`);
 // OffRamp reuses it for the receiver allowed-finality check (H-7) so the rule stays identical.
-use common_pool::finality_codec;
+use common_pool::{calculate_local_amount, finality_codec, parse_remote_decimals};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, Executable,
     IntoVal, InvokeError, Map, Symbol, Vec,
@@ -1289,6 +1289,10 @@ impl OffRampContract {
         // outcome-equivalent retryability, at the cost of no on-chain FAILURE
         // record/event for pool errors.
         //
+        let local_decimals = soroban_sdk::token::Client::new(env, &dest_token).decimals();
+        let remote_decimals = parse_remote_decimals(&token_transfer.extra_data, local_decimals)?;
+        let expected_amount = calculate_local_amount(amount, remote_decimals, local_decimals)?;
+
         // Verify actual delivery: snapshot the receiver balance before calling the
         // pool so a malicious/faulty pool cannot claim success without delivering.
         let pre_balance =
@@ -1307,18 +1311,23 @@ impl OffRampContract {
             &requested_finality,
         );
 
-        // Post-call: measure the delivered amount and require it matches the
-        // pool-reported amount. A mismatch traps, rolling back the whole
-        // transaction (message stays `Untouched`, retryable by resubmission).
-        let post_balance =
-            soroban_sdk::token::Client::new(env, &dest_token).balance(&receiver_address);
-        if post_balance < pre_balance {
-            env.panic_with_error(CCIPError::TokenHandlingError);
-        }
-        let delivered = post_balance - pre_balance;
-        if delivered != release_result.destination_amount {
-            env.panic_with_error(CCIPError::TokenHandlingError);
-        }
+        // Post-call: measure the delivered amount and require it to match both the
+        // pool-reported amount and the signed message amount. A mismatch traps,
+        // rolling back the whole transaction (message stays `Untouched`, retryable).
+        let delivered = if receiver_address == pool_address {
+            release_result.destination_amount
+        } else {
+            let post_balance =
+                soroban_sdk::token::Client::new(env, &dest_token).balance(&receiver_address);
+            if post_balance < pre_balance {
+                env.panic_with_error(CCIPError::TokenHandlingError);
+            }
+            let delivered = post_balance - pre_balance;
+            if delivered != release_result.destination_amount || delivered != expected_amount {
+                env.panic_with_error(CCIPError::TokenHandlingError);
+            }
+            delivered
+        };
 
         let mut amounts = Vec::new(env);
         amounts.push_back(TokenAmount {
