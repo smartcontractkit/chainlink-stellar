@@ -47,7 +47,7 @@ pub trait TokenLockBoxInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -180,20 +180,20 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["lockbox_Deposit", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["lockbox_Deposit", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DepositEvent {
     pub token: soroban_sdk::Address,
     pub depositor: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["lockbox_Withdrawal", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["lockbox_Withdrawal", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct WithdrawalEvent {
     pub token: soroban_sdk::Address,

@@ -49,28 +49,28 @@ pub trait RmnRemoteInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["rmn_Cursed", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["rmn_Cursed", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CursedEvent {
     pub subjects: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,
 }
-#[soroban_sdk::contractevent(topics = ["rmn_Uncursed", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["rmn_Uncursed", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct UncursedEvent {
     pub subjects: soroban_sdk::Vec<soroban_sdk::BytesN<16>>,

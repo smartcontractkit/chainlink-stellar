@@ -71,19 +71,19 @@ pub trait creInterface {
     ) -> Result<TransmissionInfo, ForwarderError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ed25519Signature {
     pub public_key: soroban_sdk::BytesN<32>,
     pub signature: soroban_sdk::BytesN<64>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TransmissionInfo {
     pub state: TransmissionState,
     pub transmitter: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TransmissionState {
     NotAttempted = 0,
@@ -91,7 +91,7 @@ pub enum TransmissionState {
     InvalidReceiver = 2,
     Failed = 3,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -224,7 +224,7 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ForwarderError {
     AlreadyInitialized = 1,
@@ -249,13 +249,13 @@ pub enum ForwarderError {
     CannotRemoveSelf = 20,
     UnauthorizedRelayer = 21,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     #[topic]
@@ -265,22 +265,22 @@ pub struct ConfigSetEvent {
     pub f: u32,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayerAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerAdded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayerAddedEvent {
     pub relayer: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderAddedEvent {
     pub forwarder: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayerRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayerRemovedEvent {
     pub relayer: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayProcessed", "single-value"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayProcessed", "single-value"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayProcessedEvent {
     #[topic]
@@ -291,7 +291,7 @@ pub struct RelayProcessedEvent {
     pub payload_hash: soroban_sdk::BytesN<32>,
     pub state: TransmissionState,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed", "single-value"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed", "single-value"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReportProcessedEvent {
     #[topic]
@@ -302,7 +302,7 @@ pub struct ReportProcessedEvent {
     pub report_id: soroban_sdk::BytesN<2>,
     pub success: bool,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderRemovedEvent {
     pub forwarder: soroban_sdk::Address,
