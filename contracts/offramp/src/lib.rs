@@ -407,6 +407,10 @@ impl OffRampContract {
         static_config: &StaticConfig,
         _gas_limit_override: u32,
     ) -> Result<(), CCIPError> {
+        // EVM `_isTokenOnlyTransfer`, classified once per execution so the quorum and the
+        // routing gate cannot disagree. A malformed receiver fails here, before token movement.
+        let is_token_only = Self::is_token_only_transfer(env, message)?;
+
         // --- CCV Verification ---
         Self::verify_ccv_quorum(
             env,
@@ -417,6 +421,7 @@ impl OffRampContract {
             verifier_results,
             source_config,
             static_config,
+            is_token_only,
         )?;
 
         // --- Token Handling ---
@@ -435,16 +440,10 @@ impl OffRampContract {
         };
 
         // --- Message Routing ---
-        // EVM skips `_callReceiver` for token-only (no data and
-        // ccipReceiveGasLimit == 0), and for a zero receiver: address(0) has
-        // no code, so EVM's `_isTokenOnlyTransfer` skips the call even with
-        // receive gas. The canonical zero receiver is a token-only delivery —
-        // never route to it (receive gas alone must not trigger routing).
-        let has_data = message.data.len() > 0;
-        let has_receive_gas = message.ccip_receive_gas_limit > 0;
-        let zero_receiver = Self::is_canonical_zero_receiver(&message.receiver);
-
-        if (has_data || has_receive_gas) && !zero_receiver {
+        // EVM `_isTokenOnlyTransfer`: token-only messages never call the receiver. A
+        // non-Wasm receiver has no code to call, so its payload is dropped and only the
+        // tokens are delivered.
+        if !is_token_only {
             let routing_result = Self::route_verified_message(
                 env,
                 message,
@@ -543,15 +542,13 @@ impl OffRampContract {
         Ok(Address::from_str(env, encoded.as_str()))
     }
 
-    /// The canonical zero receiver: exactly the 32-byte zero address — the Soroban analog of
-    /// EVM `address(0)` (whose empty code makes `_isTokenOnlyTransfer` skip the receiver). The
-    /// message decoder does not enforce the receiver length, and a bare `iter().all()` would
-    /// also grant the token-only exception to an empty or short all-zero receiver — letting a
-    /// data/gas message skip receiver validation and delivery, while `get_ccvs_for_message`
-    /// rejects the same malformed receiver (`InvalidReceiverLength`, EVM `InvalidEVMAddress`
-    /// parity). Only the canonical form gets the exception.
-    fn is_canonical_zero_receiver(receiver: &Bytes) -> bool {
-        receiver.len() == 32 && receiver.iter().all(|b| b == 0)
+    /// EVM `_isTokenOnlyTransfer` on Soroban: no payload, or a non-Wasm receiver. With no
+    /// `supportsInterface` probe, a Wasm receiver carrying a payload is never token-only:
+    /// a missing consult symbol fails quorum, and a missing `ccip_receive` fails delivery.
+    fn is_token_only_transfer(env: &Env, message: &CcipMessageV1) -> Result<bool, CCIPError> {
+        let no_payload = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
+        let receiver = Self::ccip_receiver_contract_address(env, &message.receiver)?;
+        Ok(no_payload || !matches!(receiver.executable(), Some(Executable::Wasm(_))))
     }
 
     /// Pool-required CCVs for an inbound token transfer (EVM `OffRamp._getCCVsFromPool`).
@@ -647,41 +644,10 @@ impl OffRampContract {
         let source_config =
             Self::get_source_chain_config_internal(&env, message.source_chain_selector)?;
 
-        // EVM `_isTokenOnlyTransfer` (`OffRamp.sol:426`):
-        //   `(dataLength == 0 && ccipReceiveGasLimit == 0) || receiver.code.length == 0
-        //    || !supportsInterface(IAny2EVMMessageReceiver)`
-        // This **view** is the off-chain source of truth for which CCVs the DON must gather before
-        // it can transmit. EVM's `getCCVsForMessage` returns token-only defaults when the receiver is
-        // not a contract (`receiver.code.length == 0`), so aggregation/transmission is never blocked
-        // by an undeliverable receiver — the message is still transmitted and `_executeSingleMessage`
-        // decides its fate on-chain. The previous Stellar view omitted the `receiver.code.length == 0`
-        // clause and instead fell through to `get_ccvs_for_message_internal`, which fail-fasts with
-        // `ReceiverDoesNotExist` — so the view reverted, the DON could never gather CCVs, `execute`
-        // was never called, and the test timed out waiting for an execution event.
-        //
-        // `receiver.code.length == 0` ⇔ Soroban `executable()` returning a non-`Wasm` variant (or
-        // `None` for a contract that was never deployed). Soroban has no cheap `supportsInterface`
-        // probe; a Wasm contract that does not implement `ccip_receive` is caught at delivery (its
-        // invocation traps ⇒ `Failure`) rather than pre-classified as token-only here.
-        //
-        // INTENTIONAL VIEW↔EXECUTE DIVERGENCE for a non-Wasm receiver carrying a payload (data
-        // or gas): this view classifies it as token-only (`receiver_not_wasm`) and returns the
-        // token-only required set (pool-required + lane-mandated, or lane defaults for a no-token
-        // no-op) so the DON transmits, while the on-chain `execute` path (`verify_ccv_quorum`'s
-        // `is_token_only` is `no_payload` only) keeps the require-V2 fail-fast and rejects with
-        // `ReceiverDoesNotExist`/`ReceiverNotWasmContract` (recorded as `Failure`, retryable). The
-        // divergence is benign: `execute` rejects at the pre-quorum existence check
-        // (`get_ccvs_for_message_internal`, before `ensure_quorum_present`), so the CCVs the DON
-        // gathered never affect the outcome. This is the C-1 require-V2 policy, preserved on-chain;
-        // the view simply mirrors EVM in not blocking transmission.
-        let no_payload = message.data.is_empty() && message.ccip_receive_gas_limit == 0;
-        let receiver_not_wasm = match Self::ccip_receiver_contract_address(&env, &message.receiver)
-        {
-            Ok(addr) => !matches!(addr.executable(), Some(Executable::Wasm(_))),
-            // Malformed receiver (not 32 bytes): EVM `getCCVsForMessage` reverts `InvalidEVMAddress`.
-            Err(e) => return Err(e),
-        };
-        let is_token_only = no_payload || receiver_not_wasm;
+        // EVM `_isTokenOnlyTransfer` (`OffRamp.sol:426`): no payload, or a receiver with no
+        // code. Shared with `execute` (`is_token_only_transfer`), so the CCV set gathered
+        // here is exactly the set the on-chain quorum enforces.
+        let is_token_only = Self::is_token_only_transfer(&env, &message)?;
 
         if is_token_only {
             // Token-only quorum (EVM `_getCCVsForMessage` token-only arm — H-10): no receiver
@@ -718,10 +684,9 @@ impl OffRampContract {
     /// message by consulting the receiver, mirroring EVM `OffRamp._getCCVsFromReceiver` +
     /// the merge in `_getCCVsForMessage`.
     ///
-    /// **Require-V2, fail-fast policy.** A non-contract receiver is rejected *before* any
-    /// consultation (the Wasm-existence check below) — Stellar, unlike EVM, does not treat a
-    /// non-contract receiver as token-only, and already rejects non-Wasm receivers at delivery
-    /// (`execute_single_message`). For a Wasm receiver, `get_ccvs_and_finality_config` is invoked
+    /// **Wasm-only policy.** Callers classify token-only first (`is_token_only_transfer`), so
+    /// this is reached only for a Wasm receiver; the check below stays as a fail-fast guard.
+    /// For a Wasm receiver, `get_ccvs_and_finality_config` is invoked
     /// via `try_invoke_contract`; a receiver that *returns* a `CCIPError` has it propagated
     /// unchanged, and **any other consult failure** (missing symbol / trap / non-convertible
     /// result) fails the message with `ReceiverError` (recorded as `Failure`, retryable) — it does
@@ -811,7 +776,7 @@ impl OffRampContract {
             // symbol) or that trapped / returned a non-convertible value. EVM splits "non-V2 ⇒
             // defaults" from "V2-trap ⇒ Failure", but Soroban's `InvokeError` cannot tell them
             // apart (both surface as `Abort`) and there is no symbol-presence probe short of
-            // invoking. Per the require-V2 policy we fail the message (`Failure`, retryable) —
+            // invoking. We fail the message (`Failure`, retryable) —
             // mirroring EVM's no-catch trap behavior — rather than silently defaulting (which would
             // also drop `pool_required`, see the purity/pool-merge rationale in the fn doc).
             _ => return Err(CCIPError::ReceiverError),
@@ -1045,10 +1010,10 @@ impl OffRampContract {
     /// Verify that the CCV quorum is met for a message (EVM `OffRamp._getCCVsForMessage` +
     /// `_ensureCCVQuorumIsReached`).
     ///
-    /// **Token-only** messages (`data` empty AND `ccip_receive_gas_limit == 0`) mirror EVM
-    /// `_getCCVsForMessage`'s token-only arm (H-10): the receiver is NOT consulted, there is NO
-    /// "≥1 default CCV" floor, and `required` = pool-required + lane-mandated only (defaults
-    /// enter solely via the pool's `include_defaults` fallback, which
+    /// **Token-only** messages (`is_token_only_transfer`: no payload, or a non-Wasm receiver)
+    /// mirror EVM `_getCCVsForMessage`'s token-only arm (H-10): the receiver is NOT consulted,
+    /// there is NO "≥1 default CCV" floor, and `required` = pool-required + lane-mandated only
+    /// (defaults enter solely via the pool's `include_defaults` fallback, which
     /// `get_inbound_pool_required_ccvs` already folds in). A no-token no-op (no data, no gas, no
     /// tokens) seeds `required` with the lane defaults — EVM achieves this via the receiver arm's
     /// `address(0)` marker. Optional/threshold are zero. Every required CCV must be supplied
@@ -1060,11 +1025,9 @@ impl OffRampContract {
     /// required/optional/threshold + allowed-finality, enforce the receiver's finality config
     /// (H-7), require every required CCV present (`RequiredCCVMissing`), require ≥`optional_threshold`
     /// optional CCVs present (`OptionalCCVQuorumNotReached`), then verify ONLY the required set
-    /// plus the first `optional_threshold` present optionals — extras are dropped (M-12 / INV-DST-20). A
-    /// non-contract receiver, or a Wasm receiver whose consult fails (missing symbol / trap / typed
-    /// error), is rejected up front with `ReceiverDoesNotExist` / `ReceiverNotWasmContract` /
-    /// `ReceiverError` (recorded as `Failure`, retryable) — there is **no** defaults fallback (see
-    /// `get_ccvs_for_message` for the require-V2 policy and purity strategy).
+    /// plus the first `optional_threshold` present optionals — extras are dropped (M-12 /
+    /// INV-DST-20). A Wasm receiver whose consult fails is rejected with `ReceiverError`
+    /// (recorded as `Failure`, retryable); there is no defaults fallback.
     fn verify_ccv_quorum(
         env: &Env,
         source_chain_selector: u64,
@@ -1074,16 +1037,8 @@ impl OffRampContract {
         verifier_results: &Vec<Bytes>,
         source_config: &SourceChainConfig,
         static_config: &StaticConfig,
+        is_token_only: bool,
     ) -> Result<(), CCIPError> {
-        // EVM parity (OffRamp.sol `_isTokenOnlyTransfer`: address(0) has no
-        // code, so EVM skips the receiver consult for the zero receiver even
-        // with receive gas): the canonical zero receiver is a token-only
-        // delivery. Non-zero non-Wasm receivers keep the C-1 require-V2
-        // fail-fast.
-        let zero_receiver = Self::is_canonical_zero_receiver(&message.receiver);
-        let is_token_only =
-            (message.data.is_empty() && message.ccip_receive_gas_limit == 0) || zero_receiver;
-
         if is_token_only {
             // === Token-only path (EVM `_getCCVsForMessage` token-only arm — H-10) ===
             //
@@ -1142,8 +1097,8 @@ impl OffRampContract {
         let (required, optional, optional_threshold, allowed_finality) =
             Self::get_ccvs_for_message_internal(env, message, source_config, static_config)?;
 
-        // H-7: enforce the receiver's allowed-finality config. When the receiver is not V2 /
-        // not a contract, `get_ccvs_for_message` returned `WAIT_FOR_FINALITY_FLAG` (always allowed).
+        // H-7: enforce the receiver's allowed-finality config. This path is reached only for a
+        // Wasm receiver carrying a payload, so `allowed_finality` comes from its consult.
         finality_codec::ensure_requested_finality_allowed(message.finality, allowed_finality)?;
 
         // Build the exact set to verify (required + the first `optional_threshold` present

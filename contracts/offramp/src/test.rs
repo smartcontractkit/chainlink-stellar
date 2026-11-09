@@ -1142,7 +1142,7 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
 
     // EVM parity: the zero receiver has no code (OffRamp.sol
     // `_isTokenOnlyTransfer`), so receive gas alone must NOT trigger the
-    // receiver call — without the zero-receiver skip this traps with
+    // receiver call — without the non-Wasm skip this traps with
     // ReceiverDoesNotExist.
     let msg = CcipMessageV1 {
         source_chain_selector: EXEC_TEST_SRC_CHAIN,
@@ -1179,6 +1179,135 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
         pool_client.last_receiver(),
         token_receiver_contract,
         "the pool must release to the separate token receiver"
+    );
+}
+
+/// A receiver with no code is token-only (EVM `_isTokenOnlyTransfer`): tokens go to the
+/// explicit token receiver and the payload is dropped instead of stranding the message.
+#[test]
+fn test_execute_payload_to_non_wasm_receiver_delivers_tokens_token_only() {
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
+
+    // No ledger entry: `executable()` is None, so this receiver has no code.
+    let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
+    let token_receiver_contract = env.register(MockVerifier, ());
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: offramp_address_field_from_contract(&env, &token_receiver_contract),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: sample_onramp_bytes(&env),
+        offramp_address: offramp_address_field_from_contract(&env, &client.address),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: phantom_receiver,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::from_array(&env, b"payload"),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // The view is the relayer's source of truth: token-only CCVs (lane defaults only).
+    let (required, optional, threshold) = client.get_ccvs_for_message(&encoded);
+    assert_eq!(required.len(), 1);
+    assert_eq!(required.get(0).unwrap(), vvr_id);
+    assert_eq!(optional.len(), 0);
+    assert_eq!(threshold, 0);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(res.is_ok(), "execute must not trap: {:?}", res.err());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "a non-Wasm receiver is token-only on both sides; the payload is dropped"
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(
+        pool_client.last_receiver(),
+        token_receiver_contract,
+        "tokens must go to the explicit token receiver"
+    );
+}
+
+/// The token receiver check still rejects the empty-`token_receiver` fallback when the
+/// message receiver has no code: classification must not mint to an unusable address.
+#[test]
+fn test_execute_payload_to_non_wasm_receiver_empty_token_receiver_records_failure() {
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
+
+    let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: sample_onramp_bytes(&env),
+        offramp_address: offramp_address_field_from_contract(&env, &client.address),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: phantom_receiver,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::from_array(&env, b"payload"),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "execute must record a Failure, not trap: {:?}",
+        res.err()
+    );
+    // Read the event before any other client call: `env.events()` only holds the
+    // most recent top-level invocation.
+    let code = last_execution_error_code(&env, &client.address);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+    assert_eq!(code, CCIPError::ReceiverDoesNotExist as u32);
+    assert_eq!(
+        pool_client.release_count(),
+        0,
+        "nothing may be minted to a token receiver that cannot control it"
     );
 }
 
@@ -1243,13 +1372,9 @@ fn test_execute_token_receiver_without_deployed_contract_records_failure() {
 }
 
 #[test]
-// The token-only zero-receiver exception is granted only to the canonical
-// 32-byte zero address. The decoder does not enforce the receiver length, so
-// an empty or short all-zero receiver carrying data or receive gas must NOT
-// be classified token-only (which would skip receiver validation and delivery
-// and record Success without delivery) — it must fail receiver decoding
-// (InvalidReceiverLength, the same rejection `get_ccvs_for_message` applies,
-// EVM InvalidEVMAddress parity) and record a retryable Failure.
+// The token-only exception needs a decodable 32-byte receiver, so a malformed
+// zero receiver carrying data or receive gas fails decoding (InvalidReceiverLength,
+// EVM InvalidEVMAddress parity) and records a retryable Failure.
 fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
