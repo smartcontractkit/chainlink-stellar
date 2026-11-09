@@ -1317,6 +1317,9 @@ impl OffRampContract {
         // pool-reported amount and the signed message amount. A mismatch traps,
         // rolling back the whole transaction (message stays `Untouched`, retryable).
         let delivered = if receiver_address == pool_address {
+            if release_result.destination_amount != expected_amount {
+                env.panic_with_error(CCIPError::TokenHandlingError);
+            }
             release_result.destination_amount
         } else {
             let post_balance =
