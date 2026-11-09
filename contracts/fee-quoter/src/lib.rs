@@ -311,6 +311,35 @@ impl FeeQuoterContract {
     }
 
     // ========================================
+    // Authorized Callers (price updaters)
+    // ========================================
+
+    /// Get all authorized price updaters (EVM `getAllAuthorizedCallers`).
+    pub fn get_authorized_callers(env: Env) -> Vec<Address> {
+        AuthorizedCallers::get_callers(&env)
+    }
+
+    /// Owner-only: add/remove authorized price updaters.
+    ///
+    /// Gates on the contract's own owner (the `OWNER` key), so the set stays
+    /// manageable across ownership transfers. `AuthorizedCallerAddedEvent` /
+    /// `AuthorizedCallerRemovedEvent` are emitted by the library for each
+    /// caller actually added/removed; duplicate adds and removals of absent
+    /// callers are no-ops.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract not initialized
+    /// * `NotOwner` - Caller is not the owner
+    pub fn apply_authorized_callers_updates(
+        env: Env,
+        add: Vec<Address>,
+        remove: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        AuthorizedCallers::apply_caller_updates::<Self>(&env, remove, add)
+    }
+
+    // ========================================
     // Price Update Functions
     // ========================================
 
