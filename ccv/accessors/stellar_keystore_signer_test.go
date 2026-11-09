@@ -3,6 +3,7 @@ package accessors
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/smartcontractkit/chainlink-common/keystore"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -103,7 +104,7 @@ func TestKeystoreTxSigner_SignTransaction_MatchesKeypairFull(t *testing.T) {
 	require.NoError(t, err)
 
 	tx := buildTestTx(t, signer.Address())
-	signedViaSigner, err := signer.SignTransaction(testNetworkPassphrase, tx)
+	signedViaSigner, err := signer.SignTransaction(ctx, testNetworkPassphrase, tx)
 	require.NoError(t, err)
 	require.Len(t, signedViaSigner.Signatures(), 1)
 	got := signedViaSigner.Signatures()[0]
@@ -136,7 +137,7 @@ func TestKeystoreTxSigner_SignTransaction_VerifiableByPublicKey(t *testing.T) {
 	require.NoError(t, err)
 
 	tx := buildTestTx(t, signer.Address())
-	signedTx, err := signer.SignTransaction(testNetworkPassphrase, tx)
+	signedTx, err := signer.SignTransaction(ctx, testNetworkPassphrase, tx)
 	require.NoError(t, err)
 	require.Len(t, signedTx.Signatures(), 1)
 	sig := signedTx.Signatures()[0]
@@ -176,4 +177,64 @@ func buildTestTx(t *testing.T, sourceAddr string) *txnbuild.Transaction {
 	})
 	require.NoError(t, err)
 	return tx
+}
+
+// blockingKeystore wraps a real keystore but blocks Sign until release is
+// closed, ignoring ctx — modelling a stalled keystore that does not itself
+// honour cancellation.
+type blockingKeystore struct {
+	keystore.Keystore
+	release chan struct{}
+}
+
+func (b *blockingKeystore) Sign(ctx context.Context, req keystore.SignRequest) (keystore.SignResponse, error) {
+	<-b.release
+	return b.Keystore.Sign(ctx, req)
+}
+
+func newBlockingSigner(t *testing.T, timeout time.Duration) (*keystoreTxSigner, chan struct{}) {
+	t.Helper()
+	const keyName = "stellar/tx/blocking"
+	ks := newTestKeystore(t)
+	createKey(t, ks, keyName, keystore.Ed25519)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	s, err := LoadStellarKeystoreSigner(context.Background(), &blockingKeystore{Keystore: ks, release: release}, keyName)
+	require.NoError(t, err)
+	ks2 := s.(*keystoreTxSigner)
+	ks2.signTimeout = timeout
+	return ks2, release
+}
+
+func TestKeystoreTxSigner_SignTransaction_HonoursCallerCancellation(t *testing.T) {
+	signer, _ := newBlockingSigner(t, time.Hour)
+	tx := buildTestTx(t, signer.Address())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err := signer.SignTransaction(ctx, testNetworkPassphrase, tx)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestKeystoreTxSigner_SignTransaction_EnforcesSignTimeout(t *testing.T) {
+	signer, _ := newBlockingSigner(t, 50*time.Millisecond)
+	tx := buildTestTx(t, signer.Address())
+
+	start := time.Now()
+	_, err := signer.SignTransaction(context.Background(), testNetworkPassphrase, tx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestKeystoreTxSigner_SignTransaction_AlreadyCancelled(t *testing.T) {
+	signer, _ := newBlockingSigner(t, time.Hour)
+	tx := buildTestTx(t, signer.Address())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := signer.SignTransaction(ctx, testNetworkPassphrase, tx)
+	require.ErrorIs(t, err, context.Canceled)
 }
