@@ -347,6 +347,18 @@ fn offramp_address_field_from_contract(env: &Env, contract: &Address) -> Bytes {
     xdr.slice(start..xdr.len())
 }
 
+/// Register a Stellar Asset Contract whose admin is the mock pool, returning the token
+/// address plus its 32-byte wire-format `dest_token_address`. The pool mints the released
+/// amount to the receiver in `release_or_mint`, which the offramp's post-release
+/// balance-delta check (NONEVM-6645) requires — a fake token address would trap the check.
+fn setup_dest_token(env: &Env, pool: &Address) -> (Address, Bytes) {
+    let token = env
+        .register_stellar_asset_contract_v2(pool.clone())
+        .address();
+    let wire = offramp_address_field_from_contract(env, &token);
+    (token, wire)
+}
+
 fn sample_onramp_bytes(env: &Env) -> Bytes {
     Bytes::from_array(env, &[1u8; 32])
 }
@@ -736,7 +748,9 @@ impl MockTokenAdminRegistry {
 }
 
 /// Mock TokenPool: records the receiver passed to `release_or_mint` so the test can assert
-/// the H-2 fallback resolved an empty `token_receiver` to `message.receiver`.
+/// the H-2 fallback resolved an empty `token_receiver` to `message.receiver`. It also MINTS
+/// the released amount to the receiver (the pool is the SAC admin via `setup_dest_token`),
+/// so the offramp's post-release balance-delta check (NONEVM-6645) observes the delivery.
 #[contract]
 pub struct MockTokenPool;
 
@@ -806,6 +820,15 @@ impl MockTokenPool {
             .set(&Symbol::new(&env, "traprel"), &trap);
     }
 
+    /// Deliver `amount - skim` tokens while REPORTING the full `amount` — the lever for the
+    /// pool-delivery-verification regression test (NONEVM-6645): a malicious/faulty pool
+    /// claiming success without actually delivering must trap the whole execute tx.
+    pub fn set_skim_release(env: Env, skim: i128) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "skimrel"), &skim);
+    }
+
     pub fn release_or_mint(
         env: Env,
         _caller: Address,
@@ -819,6 +842,20 @@ impl MockTokenPool {
             .unwrap_or(false);
         if trap {
             env.panic_with_error(CCIPError::TokenHandlingError);
+        }
+        // Actually deliver the tokens (mint/burn-pool semantics: the mock pool is the
+        // SAC admin in these tests) so the offramp's post-release balance-delta check
+        // (NONEVM-6645) observes the delivery. A nonzero `skimrel` under-delivers while
+        // still reporting the full amount — the check must trap on the mismatch.
+        let skim: i128 = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "skimrel"))
+            .unwrap_or(0);
+        let deliver = input.amount - skim;
+        if deliver > 0 {
+            soroban_sdk::token::StellarAssetClient::new(&env, &input.local_token)
+                .mint(&input.receiver, &deliver);
         }
         // Count invocations so the L-10 regression tests can assert exactly one
         // COMMITTED release across a failure+retry cycle (a release inside a tx that
@@ -986,6 +1023,10 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
     let receiver_contract = env.register(MockVerifier, ());
     let receiver_field = offramp_address_field_from_contract(&env, &receiver_contract);
 
+    // Real SAC token administered by the mock pool, so the offramp's post-release
+    // balance-delta check observes the pool's mint to the receiver (NONEVM-6645).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     // Token transfer with an EMPTY `token_receiver` (the H-2 condition).
     let mut amount_bytes = [0u8; 32];
     amount_bytes[31] = 100;
@@ -994,7 +1035,7 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: Bytes::new(&env),
         extra_data: Bytes::new(&env),
     };
@@ -1082,6 +1123,9 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
     // Token-only transfer to a separate token receiver (a throwaway
     // contract); the MESSAGE receiver is all zeros (the tcapi token-only
     // convention).
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     let token_receiver_contract = env.register(MockVerifier, ());
     let token_receiver = offramp_address_field_from_contract(&env, &token_receiver_contract);
     let mut amount_bytes = [0u8; 32];
@@ -1091,7 +1135,7 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: token_receiver.clone(),
         extra_data: Bytes::new(&env),
     };
@@ -1412,6 +1456,9 @@ fn test_execute_token_message_receiver_failure_traps_and_rolls_back_release() {
     // committed tx, so it survives the whole-tx rollback of the trapping execute below.
     receiver_client.set_should_fail(&true);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_client.address).1;
+
     let mut amount_bytes = [0u8; 32];
     amount_bytes[31] = 100;
     let token_transfer = CcipTokenTransferV1 {
@@ -1419,7 +1466,7 @@ fn test_execute_token_message_receiver_failure_traps_and_rolls_back_release() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
         extra_data: Bytes::new(&env),
     };
@@ -1550,6 +1597,9 @@ fn test_execute_pool_release_trap_reverts_whole_tx() {
 
     pool_client.set_trap_release(&true);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_client.address).1;
+
     let mut amount_bytes = [0u8; 32];
     amount_bytes[31] = 100;
     let token_transfer = CcipTokenTransferV1 {
@@ -1557,7 +1607,7 @@ fn test_execute_pool_release_trap_reverts_whole_tx() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
         extra_data: Bytes::new(&env),
     };
@@ -1606,6 +1656,81 @@ fn test_execute_pool_release_trap_reverts_whole_tx() {
     assert_eq!(receiver_client.receive_count(), 1);
 }
 
+/// NONEVM-6645 / pool-delivery verification: a pool that reports full delivery but
+/// actually moves FEWER tokens must NOT finalize `Success` — the offramp snapshots the
+/// receiver's balance around `release_or_mint` and traps on mismatch, reverting the whole
+/// execute tx (message stays `Untouched`, retriable). Resubmitting after the pool is
+/// fixed delivers exactly once.
+#[test]
+fn test_execute_pool_underdelivery_traps_and_is_retriable() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    // The pool claims the full amount but mints 1 unit short.
+    pool_client.set_skim_release(&1);
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    // Delivered (99) != reported (100) ⇒ the whole tx traps; nothing commits.
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a pool that under-delivers must trap the whole execute tx (no false Success): {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "no Success without actual token delivery"
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+
+    // Fix the pool (separate committed tx) and resubmit: full delivery, exactly once.
+    pool_client.set_skim_release(&0);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "resubmission after the pool is fixed must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        100,
+        "the receiver's balance delta equals the reported destination amount"
+    );
+}
+
 // ============================================================
 // try_* conversion: typed callee errors record per-message Failure
 // (EVM `OffRamp.execute`'s `_callWithGasBuffer` catch-all parity)
@@ -1622,6 +1747,9 @@ fn test_execute_pool_required_ccvs_typed_error_records_failure() {
 
     pool_client.set_fail_required_ccvs(&true);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_client.address).1;
+
     let mut amount_bytes = [0u8; 32];
     amount_bytes[31] = 100;
     let token_transfer = CcipTokenTransferV1 {
@@ -1629,7 +1757,7 @@ fn test_execute_pool_required_ccvs_typed_error_records_failure() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
         extra_data: Bytes::new(&env),
     };
@@ -1710,6 +1838,9 @@ fn test_execute_resolver_typed_error_records_failure() {
 
     MockVvrClient::new(&env, &vvr_id).set_fail_inbound(&true);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_client.address).1;
+
     let mut amount_bytes = [0u8; 32];
     amount_bytes[31] = 100;
     let token_transfer = CcipTokenTransferV1 {
@@ -1717,7 +1848,7 @@ fn test_execute_resolver_typed_error_records_failure() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: Bytes::new(&env),
         extra_data: Bytes::new(&env),
     };
@@ -1792,6 +1923,9 @@ fn test_execute_token_only_skips_default_ccv_floor() {
     // The pool mandates its own CCV and does NOT fold lane defaults.
     pool_client.set_required_ccvs(&vec![&env, pool_vvr_id.clone()], &false);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     let static_config = StaticConfig {
         chain_selector: EXEC_TEST_DEST_CHAIN,
         rmn_proxy: rmn_proxy_id,
@@ -1825,7 +1959,7 @@ fn test_execute_token_only_skips_default_ccv_floor() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: receiver_field.clone(),
         extra_data: Bytes::new(&env),
     };
@@ -1900,6 +2034,9 @@ fn test_execute_token_only_still_requires_pool_ccvs() {
 
     pool_client.set_required_ccvs(&vec![&env, pool_vvr_id.clone()], &false);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     let static_config = StaticConfig {
         chain_selector: EXEC_TEST_DEST_CHAIN,
         rmn_proxy: rmn_proxy_id,
@@ -1931,7 +2068,7 @@ fn test_execute_token_only_still_requires_pool_ccvs() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: receiver_field.clone(),
         extra_data: Bytes::new(&env),
     };
@@ -2014,6 +2151,9 @@ fn test_execute_token_only_empty_pool_falls_back_to_defaults() {
     // into the lane defaults instead.
     pool_client.set_required_ccvs(&Vec::new(&env), &false);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     let static_config = StaticConfig {
         chain_selector: EXEC_TEST_DEST_CHAIN,
         rmn_proxy: rmn_proxy_id,
@@ -2045,7 +2185,7 @@ fn test_execute_token_only_empty_pool_falls_back_to_defaults() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: receiver_field.clone(),
         extra_data: Bytes::new(&env),
     };
@@ -2199,6 +2339,9 @@ fn test_execute_drops_reverting_extra_ccv() {
     // The pool mandates its own CCV and does NOT fold in lane defaults.
     pool_client.set_required_ccvs(&vec![&env, pool_vvr_id.clone()], &false);
 
+    // Real SAC token administered by the mock pool (NONEVM-6645 delivery check).
+    let dest_token_wire = setup_dest_token(&env, &pool_id).1;
+
     let static_config = StaticConfig {
         chain_selector: EXEC_TEST_DEST_CHAIN,
         rmn_proxy: rmn_proxy_id,
@@ -2236,7 +2379,7 @@ fn test_execute_drops_reverting_extra_ccv() {
         amount: BytesN::from_array(&env, &amount_bytes),
         source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
         source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
-        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        dest_token_address: dest_token_wire,
         token_receiver: receiver_field.clone(),
         extra_data: Bytes::new(&env),
     };
