@@ -22,7 +22,8 @@ const (
 	defaultStellarPollInterval  = 5 * time.Second
 	defaultStellarRetryInterval = 7 * time.Second
 	// defaultRetryQueueLimit for the max number of retriable fetches held in the queue
-	defaultRetryQueueLimit = 64
+	defaultRetryQueueLimit        = 64
+	defaultAttemptCacheQueueLimit = 256
 	// maxEventProcessRetries for the limit of event details fetch retry
 	maxEventProcessRetries = 3
 	// Stellar ledgers close approximately every 5-6 seconds.
@@ -78,7 +79,11 @@ func NewStellarExecutionAttemptPoller(
 		return nil, fmt.Errorf("offramp contract ID cannot be empty")
 	}
 
-	attemptCache := expirable.NewLRU[protocol.Bytes32, []protocol.ExecutionAttempt](0, nil, attemptCacheExpiration)
+	attemptCache := expirable.NewLRU[protocol.Bytes32, []protocol.ExecutionAttempt](
+		defaultAttemptCacheQueueLimit,
+		nil,
+		attemptCacheExpiration,
+	)
 
 	return &StellarExecutionAttemptPoller{
 		lggr:              lggr,
@@ -160,6 +165,11 @@ func (p *StellarExecutionAttemptPoller) GetExecutionAttempts(_ context.Context, 
 	attempts, exists := p.attemptCache.Get(msgID)
 	if !exists {
 		return nil, nil
+	}
+
+	// Retain at most the last 2 attempts of a given message in cache
+	if len(attempts) > 2 {
+		attempts = attempts[len(attempts)-2:]
 	}
 
 	result := make([]protocol.ExecutionAttempt, len(attempts))
