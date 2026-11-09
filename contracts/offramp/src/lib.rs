@@ -1289,8 +1289,6 @@ impl OffRampContract {
         // outcome-equivalent retryability, at the cost of no on-chain FAILURE
         // record/event for pool errors.
         //
-        // The expected local amount comes from the signed message, not from the pool:
-        // a pool that under-delivers can report the same low number it delivered.
         let local_decimals = soroban_sdk::token::Client::new(env, &dest_token).decimals();
         let remote_decimals = parse_remote_decimals(&token_transfer.extra_data, local_decimals)?;
         let expected_amount = calculate_local_amount(amount, remote_decimals, local_decimals)?;
@@ -1317,8 +1315,6 @@ impl OffRampContract {
         // pool-reported amount and the signed message amount. A mismatch traps,
         // rolling back the whole transaction (message stays `Untouched`, retryable).
         let delivered = if receiver_address == pool_address {
-            // EVM parity (`OffRamp.sol:364-370`): a pool that is its own receiver shows
-            // no balance delta, so trust its report.
             release_result.destination_amount
         } else {
             let post_balance =

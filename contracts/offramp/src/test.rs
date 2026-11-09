@@ -830,16 +830,12 @@ impl MockTokenPool {
             .set(&Symbol::new(&env, "skimrel"), &skim);
     }
 
-    /// Report what was actually delivered instead of the full requested amount. The lever
-    /// for the ticket's main case: a pool that mints 0 and reports 0 must still trap.
     pub fn set_report_delivered(env: Env, report_delivered: bool) {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, "repdel"), &report_delivered);
     }
 
-    /// Model a pool that holds its own liquidity: when the receiver is the pool itself, the
-    /// release is a self-transfer and the balance does not change (EVM parity skip case).
     pub fn set_self_receiver_noop(env: Env, self_receiver_noop: bool) {
         env.storage()
             .instance()
@@ -879,8 +875,6 @@ impl MockTokenPool {
             .instance()
             .get(&Symbol::new(&env, "selfrecv"))
             .unwrap_or(false);
-        // Real pools convert the wire amount with these helpers before delivering. Mirror
-        // them so the encoded remote-decimals path is exercised end to end.
         let local_decimals = soroban_sdk::token::Client::new(&env, &input.local_token).decimals();
         let remote_decimals = parse_remote_decimals(&input.source_pool_data, local_decimals)?;
         let local_amount = calculate_local_amount(input.amount, remote_decimals, local_decimals)?;
@@ -1768,14 +1762,10 @@ fn test_execute_pool_underdelivery_traps_and_is_retriable() {
     );
 }
 
-/// NONEVM-6645 main case: a pool that delivers NOTHING and reports 0 must not finalize
-/// `Success`. The delta equals the report (both 0), so only the amount in the signed
-/// message can catch this.
 #[test]
 fn test_execute_pool_zero_delivery_zero_report_traps() {
     let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
 
-    // The pool mints nothing and reports exactly what it delivered (0).
     pool_client.set_skim_release(&100);
     pool_client.set_report_delivered(&true);
 
@@ -1806,7 +1796,6 @@ fn test_execute_pool_zero_delivery_zero_report_traps() {
     let ccvs = vec![&env, vvr_id.clone()];
     let verifier_results = vec![&env, Bytes::new(&env)];
 
-    // Nothing delivered, nothing reported: the expected amount (100) still mismatches.
     let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
     assert!(
         res.is_err(),
@@ -1826,7 +1815,6 @@ fn test_execute_pool_zero_delivery_zero_report_traps() {
         "nothing was delivered"
     );
 
-    // Fix the pool (separate committed tx) and resubmit: full delivery, exactly once.
     pool_client.set_skim_release(&0);
     let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
     assert!(
@@ -1846,14 +1834,10 @@ fn test_execute_pool_zero_delivery_zero_report_traps() {
     );
 }
 
-/// EVM parity (`OffRamp.sol:364-370`): when the token receiver IS the pool, a release to
-/// itself shows no balance delta, so the offramp trusts the pool's reported amount
-/// instead of trapping every retry.
 #[test]
 fn test_execute_pool_as_own_token_receiver_trusts_report() {
     let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
 
-    // A pool that holds its own liquidity: releasing to itself moves nothing.
     pool_client.set_self_receiver_noop(&true);
 
     let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
@@ -1908,17 +1892,12 @@ fn test_execute_pool_as_own_token_receiver_trusts_report() {
     );
 }
 
-/// The amount in the signed message is denominated in the SOURCE token's decimals, so the
-/// expected local amount must be computed with the same conversion the pools use. A
-/// correct release across a decimals change (18 remote -> 7 local) must succeed.
 #[test]
 fn test_execute_token_transfer_remote_decimals_conversion_passes() {
     let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
 
     let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
 
-    // 1e18 wire units at 18 decimals is one token, which is 1e7 minimal units at the
-    // SAC's 7 decimals.
     let mut amount_bytes = [0u8; 32];
     amount_bytes[16..32].copy_from_slice(&1_000_000_000_000_000_000u128.to_be_bytes());
     let token_transfer = CcipTokenTransferV1 {
@@ -1970,7 +1949,9 @@ fn test_execute_token_transfer_remote_decimals_conversion_passes() {
 // ============================================================
 // try_* conversion: typed callee errors record per-message Failure
 // (EVM `OffRamp.execute`'s `_callWithGasBuffer` catch-all parity)
-// ============================================================/// A pool whose `get_required_ccvs` returns a typed `Err` must be caught at the
+// ============================================================
+
+/// A pool whose `get_required_ccvs` returns a typed `Err` must be caught at the
 /// per-message boundary: the execute tx SUCCEEDS, the message records `Failure`
 /// with the typed code in the event's `return_data`, and nothing is released.
 /// Pre-conversion the non-try call host-aborted the whole tx — no `Failure`
