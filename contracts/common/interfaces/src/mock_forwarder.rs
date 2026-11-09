@@ -17,19 +17,19 @@ pub trait MockForwarderInterface {
         report_id: soroban_sdk::BytesN<2>,
     ) -> TransmissionInfo;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ed25519Signature {
     pub public_key: soroban_sdk::BytesN<32>,
     pub signature: soroban_sdk::BytesN<64>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TransmissionInfo {
     pub state: TransmissionState,
     pub transmitter: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TransmissionState {
     NotAttempted = 0,
@@ -37,7 +37,7 @@ pub enum TransmissionState {
     InvalidReceiver = 2,
     Failed = 3,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum MockForwarderError {
     InvalidReport = 2,
@@ -46,7 +46,7 @@ pub enum MockForwarderError {
     AlreadyProcessed = 13,
     InvalidReceiver = 18,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReportProcessedEvent {
     #[topic]
