@@ -35,7 +35,7 @@ members = [
 soroban-sdk = "29.0.1"
 stellar-strkey = "1.0.0"
 sha3 = "0.12"
-k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 common-message = { path = "contracts/common/message" }
 common-guard = { path = "contracts/common/guard" }
 common-authorization = { path = "contracts/common/authorization" }
