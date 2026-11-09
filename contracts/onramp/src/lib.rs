@@ -21,7 +21,8 @@ use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::{initializable::Initializable, ReentrancyGuard};
 use common_helpers::{
-    curse_checkable::CurseCheckable, fee_math, finality_codec, validation::Validatable,
+    curse_checkable::CurseCheckable, fee_math, finality_codec, try_call::try_call,
+    validation::Validatable,
 };
 use common_message::{
     CcipMessageV1, CcipTokenTransferV1, GenericExtraArgsV3, MessageIdCompute, StellarToAnyMessage,
@@ -274,7 +275,15 @@ impl OnRampContract {
             let ccv_args = merged_ccv_args.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
 
             let vvr = VersionedVerifierResolverClient::new(env, &ccv);
-            let verifier_address = vvr.get_outbound_implementation(&dest_chain_selector, &ccv_args);
+            // `try_call` (`try_*`): a typed resolver `Err` (e.g.
+            // `OutboundImplementationNotFound`) keeps its code instead of the
+            // non-try client panic host-aborting the whole `ccip_send` with no
+            // error. A trap maps to `OutboundImplementationNotFound` — the
+            // resolver failed to yield an outbound implementation either way.
+            let verifier_address = try_call(
+                vvr.try_get_outbound_implementation(&dest_chain_selector, &ccv_args),
+                CCIPError::OutboundImplementationNotFound,
+            )?;
 
             let ccv_fee_response = Self::get_ccv_fee_internal(
                 env,
@@ -1740,7 +1749,15 @@ impl OnRampContract {
                 .ok_or(CCIPError::CCVLengthMismatch)?;
 
             let vvr = VersionedVerifierResolverClient::new(env, &ccv);
-            let verifier_address = vvr.get_outbound_implementation(&dest_chain_selector, &ccv_args);
+            // `try_call` (`try_*`): a typed resolver `Err` (e.g.
+            // `OutboundImplementationNotFound`) keeps its code instead of the
+            // non-try client panic host-aborting the whole `ccip_send` with no
+            // error. A trap maps to `OutboundImplementationNotFound` — the
+            // resolver failed to yield an outbound implementation either way.
+            let verifier_address = try_call(
+                vvr.try_get_outbound_implementation(&dest_chain_selector, &ccv_args),
+                CCIPError::OutboundImplementationNotFound,
+            )?;
 
             receipts.push_back(Receipt {
                 issuer: ccv,
