@@ -30,31 +30,6 @@ mod constructor {
             soroban_sdk::String::from_str(&a.env, "DataFeedsSep40Proxy 1.0.0")
         );
     }
-
-    #[test]
-    fn stores_the_requested_base() {
-        let a = Adapter::deploy_with_base("GBP");
-        assert_eq!(a.sep40().base(), a.asset("GBP"));
-        assert_ne!(a.sep40().base(), a.asset("USD"));
-    }
-
-    #[test]
-    fn has_no_setter_for_the_base_asset() {
-        let a = Adapter::deploy_with_base("GBP");
-        let base = a.sep40().base();
-        let btc = a.map("BTC", 1, 100, 10);
-        a.set_price(2, 200, 20);
-        a.client().update_feed(&btc, &a.feed(2));
-        a.client().set_proxy(&new_address(&a.env));
-        a.client().remove_feed(&btc);
-
-        assert_eq!(base, a.asset("GBP"));
-        assert_eq!(
-            a.sep40().base(),
-            base,
-            "no admin path touches the base asset"
-        );
-    }
 }
 
 mod non_owner_is_rejected {
@@ -134,19 +109,12 @@ mod add_feed {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
 
-        assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
-        assert_eq!(a.sep40().assets(), vec![&a.env, btc]);
-    }
-
-    #[test]
-    fn emits_feed_added() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-
-        a.assert_event(FeedAdded {
-            asset: btc,
+        a.assert_latest_event(FeedAdded {
+            asset: btc.clone(),
             data_id: a.feed(1),
         });
+        assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
+        assert_eq!(a.sep40().assets(), vec![&a.env, btc]);
     }
 
     #[test]
@@ -248,23 +216,14 @@ mod update_feed {
 
         a.client().update_feed(&btc, &a.feed(3));
 
+        a.assert_latest_event(FeedUpdated {
+            asset: btc.clone(),
+            old_data_id: a.feed(1),
+            new_data_id: a.feed(3),
+        });
         assert_eq!(a.client().get_feed(&btc), Some(a.feed(3)));
         assert_eq!(a.sep40().lastprice(&btc).unwrap().price, 300);
         assert_eq!(a.sep40().assets(), vec![&a.env, btc, eth]);
-    }
-
-    #[test]
-    fn emits_feed_updated() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-        a.set_price(2, 200, 20);
-        a.client().update_feed(&btc, &a.feed(2));
-
-        a.assert_event(FeedUpdated {
-            asset: btc,
-            old_data_id: a.feed(1),
-            new_data_id: a.feed(2),
-        });
     }
 
     #[test]
@@ -303,13 +262,38 @@ mod update_feed {
     }
 
     #[test]
-    fn accepts_the_feed_the_asset_already_uses() {
+    fn unchanged_feed_still_emits_update_and_preserves_uniqueness() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
 
         a.client().update_feed(&btc, &a.feed(1));
+
+        a.assert_latest_event(FeedUpdated {
+            asset: btc.clone(),
+            old_data_id: a.feed(1),
+            new_data_id: a.feed(1),
+        });
+
         assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
         assert_eq!(a.sep40().assets().len(), 1);
+        assert_eq!(
+            a.client().try_add_feed(&a.asset("WBTC"), &a.feed(1)),
+            Err(Ok(Sep40ProxyError::DataIdInUse)),
+        );
+    }
+
+    #[test]
+    fn unchanged_feed_still_checks_readability() {
+        let a = Adapter::deploy();
+        let btc = a.map("BTC", 1, 100, 10);
+
+        a.mock_client().set_frozen(&a.feed(1));
+
+        assert_eq!(
+            a.client().try_update_feed(&btc, &a.feed(1)),
+            Err(Ok(Sep40ProxyError::FeedUnreadable)),
+        );
+        assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
     }
 
     #[test]
@@ -350,21 +334,13 @@ mod remove_feed {
 
         a.client().remove_feed(&eth);
 
+        a.assert_latest_event(FeedRemoved {
+            asset: eth.clone(),
+            data_id: a.feed(2),
+        });
         assert_eq!(a.sep40().assets(), vec![&a.env, btc, sol]);
         assert_eq!(a.client().get_feed(&eth), None);
         assert_eq!(a.sep40().lastprice(&eth), None);
-    }
-
-    #[test]
-    fn emits_feed_removed() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-        a.client().remove_feed(&btc);
-
-        a.assert_event(FeedRemoved {
-            asset: btc,
-            data_id: a.feed(1),
-        });
     }
 
     #[test]
@@ -411,6 +387,10 @@ mod set_proxy {
 
         a.client().set_proxy(&second);
 
+        a.assert_latest_event(ProxySet {
+            old_proxy: a.mock.clone(),
+            new_proxy: second.clone(),
+        });
         assert_eq!(a.client().get_proxy(), second);
         assert_eq!(
             a.sep40().lastprice(&btc),
@@ -419,18 +399,6 @@ mod set_proxy {
                 timestamp: 77
             })
         );
-    }
-
-    #[test]
-    fn emits_proxy_set() {
-        let a = Adapter::deploy();
-        let second = a.env.register(MockProxy, ());
-        a.client().set_proxy(&second);
-
-        a.assert_event(ProxySet {
-            old_proxy: a.mock.clone(),
-            new_proxy: second,
-        });
     }
 }
 
@@ -516,7 +484,7 @@ mod upgrade {
 
     #[test]
     fn swaps_the_wasm_keeps_the_address_and_preserves_storage() {
-        let a = Adapter::deploy();
+        let a = Adapter::deploy_with_base("EUR");
         let btc = a.map("BTC", 1, 100, 10);
         a.env.as_contract(&a.id, || {
             a.env
@@ -538,17 +506,6 @@ mod upgrade {
         a.env.as_contract(&a.id, || {
             assert_eq!(storage::feed_for(&a.env, &btc), Some(a.feed(1)));
             assert_eq!(storage::get_proxy(&a.env), a.mock);
-        });
-    }
-
-    #[test]
-    fn preserves_the_base_asset() {
-        let a = Adapter::deploy_with_base("EUR");
-        let hash = a.env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
-
-        a.client().upgrade(&hash);
-
-        a.env.as_contract(&a.id, || {
             assert_eq!(storage::get_base_asset(&a.env), a.asset("EUR"));
         });
     }

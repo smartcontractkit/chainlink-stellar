@@ -25,7 +25,7 @@ impl DataFeedsSep40Proxy {
         storage::extend_ttl(&env);
     }
 
-    pub fn add_feed(env: Env, asset: Asset, data_id: BytesN<32>) -> Result<(), Sep40ProxyError> {
+    pub fn add_feed(env: Env, asset: Asset, data_id: DataId) -> Result<(), Sep40ProxyError> {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
         assert_nonzero(&data_id)?;
@@ -42,7 +42,7 @@ impl DataFeedsSep40Proxy {
         Ok(())
     }
 
-    pub fn update_feed(env: Env, asset: Asset, data_id: BytesN<32>) -> Result<(), Sep40ProxyError> {
+    pub fn update_feed(env: Env, asset: Asset, data_id: DataId) -> Result<(), Sep40ProxyError> {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
         let old_data_id = storage::feed_for(&env, &asset).ok_or(Sep40ProxyError::AssetNotMapped)?;
@@ -91,7 +91,7 @@ impl DataFeedsSep40Proxy {
         storage::get_proxy(&env)
     }
 
-    pub fn get_feed(env: Env, asset: Asset) -> Option<BytesN<32>> {
+    pub fn get_feed(env: Env, asset: Asset) -> Option<DataId> {
         storage::extend_ttl(&env);
         storage::feed_for(&env, &asset)
     }

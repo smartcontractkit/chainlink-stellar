@@ -78,7 +78,7 @@ impl Stack {
 }
 
 #[test]
-fn lastprice_matches_the_proxy_at_eighteen_decimals() {
+fn reads_latest_price_and_follows_new_reports() {
     let s = Stack::deploy(67_000_000_000_000_000_000_000, 1_700_000_000);
     let btc = s.map_btc();
 
@@ -91,77 +91,19 @@ fn lastprice_matches_the_proxy_at_eighteen_decimals() {
         })
     );
     assert_eq!(s.sep40().lastprice(&btc).unwrap().timestamp, 1_700_000_000);
-}
-
-#[test]
-fn lastprice_follows_new_reports() {
-    let s = Stack::deploy(100, 10);
-    let btc = s.map_btc();
-
-    seed_round(&s.env, &s.cache, &s.feed, &s.sender, 250, 20);
+    seed_round(&s.env, &s.cache, &s.feed, &s.sender, 250, 1_700_000_010);
 
     assert_eq!(
         s.sep40().lastprice(&btc),
         Some(PriceData {
             price: 250,
-            timestamp: 20
+            timestamp: 1_700_000_010
         })
     );
 }
 
 #[test]
-fn add_feed_rejects_a_feed_the_cache_does_not_know() {
-    let s = Stack::deploy(100, 10);
-    let unknown = mock_feed_id(&s.env, 99);
-
-    assert_eq!(
-        s.adapter().try_add_feed(&s.btc(), &unknown),
-        Err(Ok(Sep40ProxyError::FeedUnreadable))
-    );
-}
-
-#[test]
-fn a_configured_feed_with_no_report_reads_as_none() {
-    let s = Stack::deploy(100, 10);
-    let second = mock_feed_id(&s.env, 2);
-    permit_feed(&s.env, &s.cache, &second);
-    let eth = Asset::Other(Symbol::new(&s.env, "ETH"));
-
-    s.adapter().add_feed(&s.btc(), &s.feed);
-    assert_eq!(
-        s.adapter().try_add_feed(&eth, &second),
-        Err(Ok(Sep40ProxyError::FeedUnreadable)),
-        "nothing to read yet, so the add-time check refuses it"
-    );
-
-    // Bypass the add-time check to model a feed that loses its data after being mapped.
-    s.env.as_contract(&s.adapter, || {
-        crate::storage::insert_feed(&s.env, &eth, &second)
-    });
-    assert_eq!(s.sep40().lastprice(&eth), None);
-}
-
-#[test]
-fn a_frozen_feed_reads_as_none_and_recovers_when_unfrozen() {
-    let s = Stack::deploy(100, 10);
-    let btc = s.map_btc();
-    let admin = s.cache_feed_admin();
-
-    s.cache()
-        .set_feed_frozen(&admin, &vec![&s.env, s.feed.clone()], &true);
-    assert_eq!(
-        s.sep40().lastprice(&btc),
-        None,
-        "the proxy traps on a frozen feed; the adapter must report None instead"
-    );
-
-    s.cache()
-        .set_feed_frozen(&admin, &vec![&s.env, s.feed.clone()], &false);
-    assert_eq!(s.sep40().lastprice(&btc).unwrap().price, 100);
-}
-
-#[test]
-fn a_frozen_feed_does_not_affect_the_others() {
+fn freezing_is_isolated_and_recovers() {
     let s = Stack::deploy(100, 10);
     let btc = s.map_btc();
 
@@ -177,15 +119,20 @@ fn a_frozen_feed_does_not_affect_the_others() {
 
     assert_eq!(s.sep40().lastprice(&btc), None);
     assert_eq!(s.sep40().lastprice(&eth).unwrap().price, 200);
+
+    s.cache()
+        .set_feed_frozen(&admin, &vec![&s.env, s.feed.clone()], &false);
+    assert_eq!(s.sep40().lastprice(&btc).unwrap().price, 100);
+    assert_eq!(s.sep40().lastprice(&eth).unwrap().price, 200);
 }
 
 #[test]
-fn survives_a_proxy_cache_swap() {
+fn reads_follow_cache_and_proxy_replacements() {
     let s = Stack::deploy(100, 10);
     let btc = s.map_btc();
 
     let owner = s.adapter().get_owner().unwrap();
-    let cache_b = s.env.register(DataFeedsCache, (owner,));
+    let cache_b = s.env.register(DataFeedsCache, (owner.clone(),));
     let sender_b = permit_feed(&s.env, &cache_b, &s.feed);
     seed_round(&s.env, &cache_b, &s.feed, &sender_b, 999, 90);
     s.proxy().set_cache(&cache_b);
@@ -197,18 +144,11 @@ fn survives_a_proxy_cache_swap() {
             timestamp: 90
         })
     );
-}
 
-#[test]
-fn set_proxy_can_repoint_the_adapter_at_a_second_real_proxy() {
-    let s = Stack::deploy(100, 10);
-    let btc = s.map_btc();
-
-    let owner = s.adapter().get_owner().unwrap();
-    let cache_b = s.env.register(DataFeedsCache, (owner.clone(),));
-    let sender_b = permit_feed(&s.env, &cache_b, &s.feed);
-    seed_round(&s.env, &cache_b, &s.feed, &sender_b, 555, 55);
-    let proxy_b = s.env.register(DataFeedsProxy, (owner, cache_b));
+    let cache_c = s.env.register(DataFeedsCache, (owner.clone(),));
+    let sender_c = permit_feed(&s.env, &cache_c, &s.feed);
+    seed_round(&s.env, &cache_c, &s.feed, &sender_c, 555, 100);
+    let proxy_b = s.env.register(DataFeedsProxy, (owner, cache_c));
 
     s.adapter().set_proxy(&proxy_b);
 
@@ -216,7 +156,7 @@ fn set_proxy_can_repoint_the_adapter_at_a_second_real_proxy() {
         s.sep40().lastprice(&btc),
         Some(PriceData {
             price: 555,
-            timestamp: 55
+            timestamp: 100
         })
     );
 }

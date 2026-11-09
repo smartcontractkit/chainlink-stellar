@@ -67,3 +67,23 @@ impl MockProxy {
 fn set_mode(env: &Env, data_id: DataId, mode: Mode) {
     env.storage().instance().set(&MockKey::Mode(data_id), &mode);
 }
+
+#[contract]
+pub(crate) struct MissingLatestRound;
+
+#[contractimpl]
+impl MissingLatestRound {
+    pub fn ping(_env: Env) -> bool {
+        true
+    }
+}
+
+#[contract]
+pub(crate) struct MalformedLatestRound;
+
+#[contractimpl]
+impl MalformedLatestRound {
+    pub fn latest_round(_env: Env, _data_id: DataId, _decimals: u32) -> u32 {
+        123
+    }
+}

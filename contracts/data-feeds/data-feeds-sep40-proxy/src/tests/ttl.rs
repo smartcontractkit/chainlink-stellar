@@ -25,15 +25,6 @@ mod lastprice {
     use super::*;
 
     #[test]
-    fn extends_instance_ttl() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-        assert_aged_then_restored(&a, |a| {
-            a.sep40().lastprice(&btc);
-        });
-    }
-
-    #[test]
     fn extends_instance_ttl_even_for_an_unmapped_asset() {
         let a = Adapter::deploy();
         let unmapped = a.asset("BTC");
@@ -43,7 +34,7 @@ mod lastprice {
     }
 
     #[test]
-    fn extends_every_persistent_entry_the_read_depends_on() {
+    fn extends_instance_and_persistent_entry_ttls() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
         let keys = [
@@ -54,10 +45,12 @@ mod lastprice {
         let full = network_max_ttl(&a.env);
 
         age_ttl(&a.env);
+        assert!(a.instance_ttl() < full);
         for key in &keys {
             assert!(a.persistent_ttl(key) < full, "{key:?} ages with the ledger");
         }
         a.sep40().lastprice(&btc);
+        assert_eq!(a.instance_ttl(), full);
         for key in &keys {
             assert_eq!(a.persistent_ttl(key), full, "{key:?} is re-pinned to max");
         }
@@ -79,6 +72,28 @@ mod lastprice {
 
 mod writes {
     use super::*;
+
+    #[test]
+    fn unchanged_feed_preserves_mapping_ttl_renewal() {
+        let a = Adapter::deploy();
+        let btc = a.map("BTC", 1, 100, 10);
+        let keys = [
+            DataKey::AssetToFeed(btc.clone()),
+            DataKey::FeedToAsset(a.feed(1)),
+        ];
+        let full = network_max_ttl(&a.env);
+
+        age_ttl(&a.env);
+        for key in &keys {
+            assert!(a.persistent_ttl(key) < full);
+        }
+
+        a.client().update_feed(&btc, &a.feed(1));
+
+        for key in &keys {
+            assert_eq!(a.persistent_ttl(key), full);
+        }
+    }
 
     #[test]
     fn new_mappings_are_pinned_to_max() {

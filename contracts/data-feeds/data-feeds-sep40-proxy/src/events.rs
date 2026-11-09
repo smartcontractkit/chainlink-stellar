@@ -1,4 +1,6 @@
-use soroban_sdk::{contractevent, Address, BytesN};
+use soroban_sdk::{contractevent, Address};
+
+use data_feeds_proxy::DataId;
 
 use crate::interface::Asset;
 
@@ -7,7 +9,7 @@ use crate::interface::Asset;
 pub struct FeedAdded {
     #[topic]
     pub asset: Asset,
-    pub data_id: BytesN<32>,
+    pub data_id: DataId,
 }
 
 #[contractevent(topics = ["FeedUpdated"])]
@@ -15,8 +17,8 @@ pub struct FeedAdded {
 pub struct FeedUpdated {
     #[topic]
     pub asset: Asset,
-    pub old_data_id: BytesN<32>,
-    pub new_data_id: BytesN<32>,
+    pub old_data_id: DataId,
+    pub new_data_id: DataId,
 }
 
 #[contractevent(topics = ["FeedRemoved"])]
@@ -24,7 +26,7 @@ pub struct FeedUpdated {
 pub struct FeedRemoved {
     #[topic]
     pub asset: Asset,
-    pub data_id: BytesN<32>,
+    pub data_id: DataId,
 }
 
 #[contractevent(topics = ["ProxySet"])]

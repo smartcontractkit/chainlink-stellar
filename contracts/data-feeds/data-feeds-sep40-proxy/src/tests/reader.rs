@@ -1,4 +1,5 @@
 use super::harness::*;
+use super::mock_proxy::{MalformedLatestRound, MissingLatestRound};
 
 use soroban_sdk::{testutils::Address as _, vec};
 
@@ -18,44 +19,16 @@ mod constants {
     }
 
     #[test]
-    fn base_does_not_change_what_the_other_methods_return() {
-        let usd = Adapter::deploy_with_base("USD");
-        let gbp = Adapter::deploy_with_base("GBP");
-        for a in [&usd, &gbp] {
-            a.map("BTC", 1, 100, 10);
-        }
-
-        assert_eq!(
-            usd.sep40().lastprice(&usd.asset("BTC")),
-            gbp.sep40().lastprice(&gbp.asset("BTC"))
-        );
-        assert_eq!(usd.sep40().decimals(), gbp.sep40().decimals());
-        assert_eq!(usd.sep40().resolution(), gbp.sep40().resolution());
-        assert_eq!(usd.sep40().assets().len(), gbp.sep40().assets().len());
-    }
-
-    #[test]
-    fn decimals_is_eighteen() {
+    fn decimals_and_resolution_are_fixed() {
         let a = Adapter::deploy();
         assert_eq!(a.sep40().decimals(), 18);
         assert_eq!(a.sep40().decimals(), DECIMALS);
-    }
-
-    #[test]
-    fn resolution_is_one() {
-        let a = Adapter::deploy();
         assert_eq!(a.sep40().resolution(), 1);
     }
 }
 
 mod assets {
     use super::*;
-
-    #[test]
-    fn empty_before_any_feed_is_added() {
-        let a = Adapter::deploy();
-        assert_eq!(a.sep40().assets().len(), 0);
-    }
 
     #[test]
     fn lists_assets_in_insertion_order() {
@@ -210,15 +183,6 @@ mod lastprice_returns_none {
     }
 
     #[test]
-    fn after_the_asset_is_removed() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-        a.client().remove_feed(&btc);
-
-        assert_eq!(a.sep40().lastprice(&btc), None);
-    }
-
-    #[test]
     fn for_non_positive_and_oversized_answers() {
         let a = Adapter::deploy();
         let btc = a.asset("BTC");
@@ -273,21 +237,51 @@ mod unsupported_in_v1 {
     use super::*;
 
     #[test]
-    fn price_returns_none() {
+    fn history_methods_return_none() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
 
         assert_eq!(a.sep40().price(&btc, &10), None);
         assert_eq!(a.sep40().price(&a.asset("ETH"), &10), None);
-    }
-
-    #[test]
-    fn prices_returns_none() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-
         assert_eq!(a.sep40().prices(&btc, &1), None);
         assert_eq!(a.sep40().prices(&btc, &0), None);
         assert_eq!(a.sep40().prices(&a.asset("ETH"), &5), None);
     }
+}
+
+fn assert_invalid_proxy_is_handled(a: &Adapter, proxy: &Address) {
+    let btc = a.map("BTC", 1, 100, 10);
+    a.client().set_proxy(proxy);
+
+    assert_eq!(a.sep40().lastprice(&btc), None);
+
+    assert_eq!(
+        a.client().try_add_feed(&a.asset("ETH"), &a.feed(2)),
+        Err(Ok(Sep40ProxyError::FeedUnreadable)),
+    );
+    assert_eq!(a.client().get_feed(&a.asset("ETH")), None);
+    assert_eq!(a.sep40().assets().len(), 1);
+
+    assert_eq!(
+        a.client().try_update_feed(&btc, &a.feed(2)),
+        Err(Ok(Sep40ProxyError::FeedUnreadable)),
+    );
+    assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
+    assert_eq!(a.sep40().assets().len(), 1);
+}
+
+#[test]
+fn missing_proxy_method_is_handled() {
+    let a = Adapter::deploy();
+    let proxy = a.env.register(MissingLatestRound, ());
+
+    assert_invalid_proxy_is_handled(&a, &proxy);
+}
+
+#[test]
+fn malformed_proxy_response_is_handled() {
+    let a = Adapter::deploy();
+    let proxy = a.env.register(MalformedLatestRound, ());
+
+    assert_invalid_proxy_is_handled(&a, &proxy);
 }

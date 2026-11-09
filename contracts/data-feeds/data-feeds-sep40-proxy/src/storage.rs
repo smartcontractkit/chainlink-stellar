@@ -1,8 +1,8 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, IntoVal, Val, Vec};
+use soroban_sdk::{contracttype, Address, Env, IntoVal, Val, Vec};
+
+use data_feeds_proxy::DataId;
 
 use crate::interface::Asset;
-
-type DataId = BytesN<32>;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -22,8 +22,10 @@ pub(crate) fn extend_ttl(env: &Env) {
 }
 
 fn set_persistent<K: IntoVal<Env, Val>, V: IntoVal<Env, Val>>(env: &Env, key: &K, value: &V) {
-    env.storage().persistent().set(key, value);
-    extend_persistent(env, key);
+    let store = env.storage().persistent();
+    store.set(key, value);
+    let max = env.storage().max_ttl();
+    store.extend_ttl(key, max.saturating_sub(1), max);
 }
 
 fn extend_persistent<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
@@ -77,6 +79,12 @@ pub(crate) fn insert_feed(env: &Env, asset: &Asset, data_id: &DataId) {
 }
 
 pub(crate) fn replace_feed(env: &Env, asset: &Asset, old: &DataId, new: &DataId) {
+    if old == new {
+        extend_persistent(env, &DataKey::AssetToFeed(asset.clone()));
+        extend_persistent(env, &DataKey::FeedToAsset(new.clone()));
+        return;
+    }
+
     env.storage()
         .persistent()
         .remove(&DataKey::FeedToAsset(old.clone()));

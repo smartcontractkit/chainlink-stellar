@@ -94,13 +94,6 @@ mod invoked_by_function_name {
     use super::*;
 
     #[test]
-    fn base() {
-        let a = Adapter::deploy();
-        let base: Asset = call(&a, "base", vec![&a.env]);
-        assert_eq!(base, a.asset("USD"));
-    }
-
-    #[test]
     fn base_on_the_wire_is_other_wrapping_the_constructor_symbol() {
         for name in ["USD", "GBP", "EUR"] {
             let a = Adapter::deploy_with_base(name);
@@ -122,32 +115,23 @@ mod invoked_by_function_name {
     }
 
     #[test]
-    fn assets() {
+    fn consumer_interface_is_callable_by_function_name() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
+
+        let base: Asset = call(&a, "base", vec![&a.env]);
+        assert_eq!(base, a.asset("USD"), "base");
+
         let listed: SorobanVec<Asset> = call(&a, "assets", vec![&a.env]);
-        assert_eq!(listed, vec![&a.env, btc]);
-    }
+        assert_eq!(listed, vec![&a.env, btc.clone()], "assets");
 
-    #[test]
-    fn decimals() {
-        let a = Adapter::deploy();
         let decimals: u32 = call(&a, "decimals", vec![&a.env]);
-        assert_eq!(decimals, 18);
-    }
+        assert_eq!(decimals, 18, "decimals");
 
-    #[test]
-    fn resolution() {
-        let a = Adapter::deploy();
         let resolution: u32 = call(&a, "resolution", vec![&a.env]);
-        assert_eq!(resolution, 1);
-    }
+        assert_eq!(resolution, 1, "resolution");
 
-    #[test]
-    fn lastprice() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
-        let args: SorobanVec<Val> = vec![&a.env, btc.into_val(&a.env)];
+        let args: SorobanVec<Val> = vec![&a.env, btc.clone().into_val(&a.env)];
 
         let data: Option<PriceData> = call(&a, "lastprice", args);
         assert_eq!(
@@ -155,32 +139,23 @@ mod invoked_by_function_name {
             Some(PriceData {
                 price: 100,
                 timestamp: 10
-            })
+            }),
+            "lastprice"
         );
-    }
 
-    #[test]
-    fn lastprice_of_an_unknown_asset_is_none_not_an_error() {
-        let a = Adapter::deploy();
         let args: SorobanVec<Val> = vec![&a.env, a.asset("NOPE").into_val(&a.env)];
 
         let data: Option<PriceData> = call(&a, "lastprice", args);
-        assert_eq!(data, None);
-    }
-
-    #[test]
-    fn price_and_prices_are_callable_and_answer_none() {
-        let a = Adapter::deploy();
-        let btc = a.map("BTC", 1, 100, 10);
+        assert_eq!(data, None, "lastprice for unknown asset");
 
         let price_args: SorobanVec<Val> =
             vec![&a.env, btc.into_val(&a.env), 10u64.into_val(&a.env)];
         let price: Option<PriceData> = call(&a, "price", price_args);
-        assert_eq!(price, None);
+        assert_eq!(price, None, "price");
 
         let prices_args: SorobanVec<Val> =
             vec![&a.env, btc.into_val(&a.env), 3u32.into_val(&a.env)];
         let prices: Option<SorobanVec<PriceData>> = call(&a, "prices", prices_args);
-        assert_eq!(prices, None);
+        assert_eq!(prices, None, "prices");
     }
 }
