@@ -244,6 +244,7 @@ pub enum CCIPError {
     InvalidTokenTransferFeeConfig = 321,
     InvalidTransferFeeBps = 322,
     InvalidAllowListRequest = 323,
+    MintAllowanceExceeded = 324,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
@@ -253,68 +254,68 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_OnRampSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_OnRampSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OnRampSetEvent {
     pub dest_chain_selector: u64,
     pub onramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_OffRampAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_OffRampAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OffRampAddedEvent {
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_OnRampRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_OnRampRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OnRampRemovedEvent {
     pub dest_chain_selector: u64,
     pub onramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_OffRampRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_OffRampRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OffRampRemovedEvent {
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_MessageExecuted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_MessageExecuted", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MessageExecutedEvent {
     pub message_id: soroban_sdk::BytesN<32>,
     pub source_chain_selector: u64,
     pub offramp: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["router_CCIPSendRequested"], export = false)]
+#[soroban_sdk::contractevent(topics = ["router_CCIPSendRequested", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCIPSendRequestedEvent {
     pub message_id: soroban_sdk::BytesN<32>,

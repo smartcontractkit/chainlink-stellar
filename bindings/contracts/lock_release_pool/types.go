@@ -894,6 +894,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -1027,6 +1028,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -1038,7 +1040,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -1052,7 +1054,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -1066,7 +1068,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -1078,7 +1080,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -1090,7 +1092,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -1103,7 +1105,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // BurnedEvent represents the BurnedEvent event.
-// Topics: [pool_Burned]
+// Topics: [pool_Burned map]
 type BurnedEvent struct {
 	Sender string
 	Amount *big.Int
@@ -1116,7 +1118,7 @@ type BurnedEvent struct {
 const BurnedEventTopic = "pool_Burned"
 
 // LockedEvent represents the LockedEvent event.
-// Topics: [pool_Locked]
+// Topics: [pool_Locked map]
 type LockedEvent struct {
 	Sender string
 	Amount *big.Int
@@ -1129,7 +1131,7 @@ type LockedEvent struct {
 const LockedEventTopic = "pool_Locked"
 
 // MintedEvent represents the MintedEvent event.
-// Topics: [pool_Minted]
+// Topics: [pool_Minted map]
 type MintedEvent struct {
 	Sender    string
 	Recipient string
@@ -1143,7 +1145,7 @@ type MintedEvent struct {
 const MintedEventTopic = "pool_Minted"
 
 // ReleasedEvent represents the ReleasedEvent event.
-// Topics: [pool_Released]
+// Topics: [pool_Released map]
 type ReleasedEvent struct {
 	Sender    string
 	Recipient string
@@ -1157,7 +1159,7 @@ type ReleasedEvent struct {
 const ReleasedEventTopic = "pool_Released"
 
 // ChainRemovedEvent represents the ChainRemovedEvent event.
-// Topics: [pool_ChainRemoved]
+// Topics: [pool_ChainRemoved map]
 type ChainRemovedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1169,7 +1171,7 @@ type ChainRemovedEvent struct {
 const ChainRemovedEventTopic = "pool_ChainRemoved"
 
 // ChainConfiguredEvent represents the ChainConfiguredEvent event.
-// Topics: [pool_ChainConfigured]
+// Topics: [pool_ChainConfigured map]
 type ChainConfiguredEvent struct {
 	RemoteChainSelector       uint64
 	RemotePoolAddresses       [][]byte
@@ -1185,7 +1187,7 @@ type ChainConfiguredEvent struct {
 const ChainConfiguredEventTopic = "pool_ChainConfigured"
 
 // RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
-// Topics: [pool_RemotePoolAdded]
+// Topics: [pool_RemotePoolAdded map]
 type RemotePoolAddedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1198,7 +1200,7 @@ type RemotePoolAddedEvent struct {
 const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
 
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
-// Topics: [pool_FinalityConfigSet]
+// Topics: [pool_FinalityConfigSet map]
 type FinalityConfigSetEvent struct {
 	AllowedFinality uint32
 	// Event metadata
@@ -1210,7 +1212,7 @@ type FinalityConfigSetEvent struct {
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
 
 // LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
-// Topics: [pool_LockBoxConfigured]
+// Topics: [pool_LockBoxConfigured map]
 type LockBoxConfiguredEvent struct {
 	RemoteChainSelector uint64
 	LockBox             string
@@ -1223,7 +1225,7 @@ type LockBoxConfiguredEvent struct {
 const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
 
 // RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
-// Topics: [pool_RemotePoolRemoved]
+// Topics: [pool_RemotePoolRemoved map]
 type RemotePoolRemovedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1236,7 +1238,7 @@ type RemotePoolRemovedEvent struct {
 const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
 
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
-// Topics: [pool_FtfInboundConsumed]
+// Topics: [pool_FtfInboundConsumed map]
 type FtfInboundConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1249,7 +1251,7 @@ type FtfInboundConsumedEvent struct {
 const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
 
 // TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
-// Topics: [pool_TokenFeeCfgDeleted]
+// Topics: [pool_TokenFeeCfgDeleted map]
 type TokenFeeCfgDeletedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1261,7 +1263,7 @@ type TokenFeeCfgDeletedEvent struct {
 const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
 
 // TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
-// Topics: [pool_TokenFeeCfgUpdated]
+// Topics: [pool_TokenFeeCfgUpdated map]
 type TokenFeeCfgUpdatedEvent struct {
 	RemoteChainSelector uint64
 	Config              TokenTransferFeeConfig
@@ -1274,7 +1276,7 @@ type TokenFeeCfgUpdatedEvent struct {
 const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
 
 // FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
-// Topics: [pool_FtfOutboundConsumed]
+// Topics: [pool_FtfOutboundConsumed map]
 type FtfOutboundConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1287,7 +1289,7 @@ type FtfOutboundConsumedEvent struct {
 const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
-// Topics: [pool_RateLimitConfigured]
+// Topics: [pool_RateLimitConfigured map]
 type RateLimitConfiguredEvent struct {
 	RemoteChainSelector uint64
 	FastFinality        bool
@@ -1302,7 +1304,7 @@ type RateLimitConfiguredEvent struct {
 const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
 
 // AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
-// Topics: [pool_HooksUpdated]
+// Topics: [pool_HooksUpdated map]
 type AdvancedPoolHooksUpdatedEvent struct {
 	OldHooks *string
 	NewHooks *string
@@ -1315,7 +1317,7 @@ type AdvancedPoolHooksUpdatedEvent struct {
 const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
 
 // InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
-// Topics: [pool_InboundRateLimitConsumed]
+// Topics: [pool_InboundRateLimitConsumed map]
 type InboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1328,7 +1330,7 @@ type InboundRateLimitConsumedEvent struct {
 const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
 
 // OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
-// Topics: [pool_OutboundRateLimitConsumed]
+// Topics: [pool_OutboundRateLimitConsumed map]
 type OutboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int

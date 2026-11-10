@@ -281,6 +281,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -414,6 +415,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -425,7 +427,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -439,7 +441,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -453,7 +455,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -465,7 +467,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -477,7 +479,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -490,7 +492,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // CCVAddedEvent represents the CCVAddedEvent event.
-// Topics: [exec_CCVAdded]
+// Topics: [exec_CCVAdded map]
 type CCVAddedEvent struct {
 	Ccv string
 	// Event metadata
@@ -502,7 +504,7 @@ type CCVAddedEvent struct {
 const CCVAddedEventTopic = "exec_CCVAdded"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [exec_ConfigSet]
+// Topics: [exec_ConfigSet map]
 type ConfigSetEvent struct {
 	DynamicConfig DynamicConfig
 	// Event metadata
@@ -514,7 +516,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "exec_ConfigSet"
 
 // CCVRemovedEvent represents the CCVRemovedEvent event.
-// Topics: [exec_CCVRemoved]
+// Topics: [exec_CCVRemoved map]
 type CCVRemovedEvent struct {
 	Ccv string
 	// Event metadata
@@ -526,7 +528,7 @@ type CCVRemovedEvent struct {
 const CCVRemovedEventTopic = "exec_CCVRemoved"
 
 // DestChainAddedEvent represents the DestChainAddedEvent event.
-// Topics: [exec_DestChainAdded]
+// Topics: [exec_DestChainAdded map]
 type DestChainAddedEvent struct {
 	DestChainSelector uint64
 	Config            RemoteChainConfig
@@ -539,7 +541,7 @@ type DestChainAddedEvent struct {
 const DestChainAddedEventTopic = "exec_DestChainAdded"
 
 // DestChainRemovedEvent represents the DestChainRemovedEvent event.
-// Topics: [exec_DestChainRemoved]
+// Topics: [exec_DestChainRemoved map]
 type DestChainRemovedEvent struct {
 	DestChainSelector uint64
 	// Event metadata
@@ -551,7 +553,7 @@ type DestChainRemovedEvent struct {
 const DestChainRemovedEventTopic = "exec_DestChainRemoved"
 
 // FeeTokenWithdrawnEvent represents the FeeTokenWithdrawnEvent event.
-// Topics: [exec_FeeTokenWithdrawn]
+// Topics: [exec_FeeTokenWithdrawn map]
 type FeeTokenWithdrawnEvent struct {
 	Receiver string
 	FeeToken string
@@ -565,7 +567,7 @@ type FeeTokenWithdrawnEvent struct {
 const FeeTokenWithdrawnEventTopic = "exec_FeeTokenWithdrawn"
 
 // CCVAllowlistUpdatedEvent represents the CCVAllowlistUpdatedEvent event.
-// Topics: [exec_CCVAllowlistUpdated]
+// Topics: [exec_CCVAllowlistUpdated map]
 type CCVAllowlistUpdatedEvent struct {
 	Enabled bool
 	// Event metadata

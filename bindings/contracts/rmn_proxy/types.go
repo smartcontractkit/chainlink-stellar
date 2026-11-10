@@ -124,6 +124,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -257,6 +258,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -268,7 +270,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -282,7 +284,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -296,7 +298,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -308,7 +310,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -320,7 +322,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -333,7 +335,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // RmnSetEvent represents the RmnSetEvent event.
-// Topics: [rmn_proxy_RmnSet]
+// Topics: [rmn_proxy_RmnSet map]
 type RmnSetEvent struct {
 	Rmn string
 	// Event metadata

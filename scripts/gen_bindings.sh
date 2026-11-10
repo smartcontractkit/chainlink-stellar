@@ -62,6 +62,10 @@ CONTRACTS=(
   "link_token|LinkToken|link_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version,owner,is_owner,get_minters,get_pending_owner|burn,mint,mint_as,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
   "token_pool|TokenPool|token_pool|0"
   "token_lock_box|TokenLockBox|token_lock_box|0"
+  # token_pool_proxy: the SACAdminWrapper entrypoints (mint/set_admin/
+  # set_authorized/clawback) are void (`()`, fixed by the OpenZeppelin trait),
+  # so they're omitted unless explicitly listed.
+  "token_pool_proxy|TokenPoolProxy|token_pool_proxy|0||owner,is_owner,get_pending_owner,get_caller_config,is_allowed_caller,get_allowed_callers,get_asset,type_and_version|mint,set_admin,set_authorized,clawback"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"
   "advanced_pool_hooks|AdvancedPoolHooks|advanced_pool_hooks|0|"
   # advanced_pool_hooks_extractor: both fns are pure views (EVM IExtractor

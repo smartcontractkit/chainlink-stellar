@@ -225,6 +225,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -358,6 +359,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -419,7 +421,7 @@ var ForwarderErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -433,7 +435,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -447,7 +449,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -459,7 +461,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -471,7 +473,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -484,7 +486,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [forwarder_ConfigSet]
+// Topics: [forwarder_ConfigSet map]
 type ConfigSetEvent struct {
 	DonId         uint32
 	ConfigVersion uint32
@@ -499,7 +501,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "forwarder_ConfigSet"
 
 // RelayerAddedEvent represents the RelayerAddedEvent event.
-// Topics: [forwarder_RelayerAdded]
+// Topics: [forwarder_RelayerAdded map]
 type RelayerAddedEvent struct {
 	Relayer string
 	// Event metadata
@@ -511,7 +513,7 @@ type RelayerAddedEvent struct {
 const RelayerAddedEventTopic = "forwarder_RelayerAdded"
 
 // ForwarderAddedEvent represents the ForwarderAddedEvent event.
-// Topics: [forwarder_ForwarderAdded]
+// Topics: [forwarder_ForwarderAdded map]
 type ForwarderAddedEvent struct {
 	Forwarder string
 	// Event metadata
@@ -523,7 +525,7 @@ type ForwarderAddedEvent struct {
 const ForwarderAddedEventTopic = "forwarder_ForwarderAdded"
 
 // RelayerRemovedEvent represents the RelayerRemovedEvent event.
-// Topics: [forwarder_RelayerRemoved]
+// Topics: [forwarder_RelayerRemoved map]
 type RelayerRemovedEvent struct {
 	Relayer string
 	// Event metadata
@@ -535,7 +537,7 @@ type RelayerRemovedEvent struct {
 const RelayerRemovedEventTopic = "forwarder_RelayerRemoved"
 
 // RelayProcessedEvent represents the RelayProcessedEvent event.
-// Topics: [forwarder_RelayProcessed]
+// Topics: [forwarder_RelayProcessed single-value]
 type RelayProcessedEvent struct {
 	Receiver    string
 	ExecutionId [32]byte
@@ -550,7 +552,7 @@ type RelayProcessedEvent struct {
 const RelayProcessedEventTopic = "forwarder_RelayProcessed"
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
-// Topics: [forwarder_ReportProcessed]
+// Topics: [forwarder_ReportProcessed single-value]
 type ReportProcessedEvent struct {
 	Receiver            string
 	WorkflowExecutionId [32]byte
@@ -565,7 +567,7 @@ type ReportProcessedEvent struct {
 const ReportProcessedEventTopic = "forwarder_ReportProcessed"
 
 // ForwarderRemovedEvent represents the ForwarderRemovedEvent event.
-// Topics: [forwarder_ForwarderRemoved]
+// Topics: [forwarder_ForwarderRemoved map]
 type ForwarderRemovedEvent struct {
 	Forwarder string
 	// Event metadata

@@ -566,6 +566,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -699,6 +700,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -710,7 +712,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -724,7 +726,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -738,7 +740,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -750,7 +752,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -762,7 +764,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -775,7 +777,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // AllowListAddEvent represents the AllowListAddEvent event.
-// Topics: [aph_AllowListAdd]
+// Topics: [aph_AllowListAdd map]
 type AllowListAddEvent struct {
 	Sender string
 	// Event metadata
@@ -787,7 +789,7 @@ type AllowListAddEvent struct {
 const AllowListAddEventTopic = "aph_AllowListAdd"
 
 // AllowListRemoveEvent represents the AllowListRemoveEvent event.
-// Topics: [aph_AllowListRemove]
+// Topics: [aph_AllowListRemove map]
 type AllowListRemoveEvent struct {
 	Sender string
 	// Event metadata
@@ -799,7 +801,7 @@ type AllowListRemoveEvent struct {
 const AllowListRemoveEventTopic = "aph_AllowListRemove"
 
 // CCVConfigUpdatedEvent represents the CCVConfigUpdatedEvent event.
-// Topics: [aph_CCVConfigUpdated]
+// Topics: [aph_CCVConfigUpdated map]
 type CCVConfigUpdatedEvent struct {
 	RemoteChainSelector uint64
 	Config              CCVConfig
@@ -812,7 +814,7 @@ type CCVConfigUpdatedEvent struct {
 const CCVConfigUpdatedEventTopic = "aph_CCVConfigUpdated"
 
 // ThresholdAmountSetEvent represents the ThresholdAmountSetEvent event.
-// Topics: [aph_ThresholdAmountSet]
+// Topics: [aph_ThresholdAmountSet map]
 type ThresholdAmountSetEvent struct {
 	ThresholdAmount *big.Int
 	// Event metadata
@@ -824,7 +826,7 @@ type ThresholdAmountSetEvent struct {
 const ThresholdAmountSetEventTopic = "aph_ThresholdAmountSet"
 
 // PolicyEngineAttachedEvent represents the PolicyEngineAttachedEvent event.
-// Topics: [aph_PolicyEngineAttached]
+// Topics: [aph_PolicyEngineAttached map]
 type PolicyEngineAttachedEvent struct {
 	PolicyEngine *string
 	// Event metadata
@@ -836,7 +838,7 @@ type PolicyEngineAttachedEvent struct {
 const PolicyEngineAttachedEventTopic = "aph_PolicyEngineAttached"
 
 // PolicyEngineDetachFailedEvent represents the PolicyEngineDetachFailedEvent event.
-// Topics: [aph_PolicyEngineDetachFailed]
+// Topics: [aph_PolicyEngineDetachFailed map]
 type PolicyEngineDetachFailedEvent struct {
 	PolicyEngine string
 	// Event metadata

@@ -307,3 +307,28 @@ func TestContractAddressWireBytes(t *testing.T) {
 	_, err = ContractIDFromWireBytes(raw)
 	require.ErrorContains(t, err, "expected 40-byte address wire envelope")
 }
+
+func TestOptionalI128_RoundTrip(t *testing.T) {
+	none := OptionalI128ToScVal(nil)
+	if none.Type != xdr.ScValTypeScvVoid {
+		t.Fatalf("nil should encode as void, got %v", none.Type)
+	}
+	got, err := OptionalI128FromScVal(none)
+	if err != nil || got != nil {
+		t.Fatalf("void should decode as nil, got %v (err %v)", got, err)
+	}
+
+	for _, want := range []*big.Int{big.NewInt(0), big.NewInt(-5), new(big.Int).Lsh(big.NewInt(1), 100)} {
+		got, err := OptionalI128FromScVal(OptionalI128ToScVal(want))
+		if err != nil {
+			t.Fatalf("decode %s: %v", want, err)
+		}
+		if got == nil || got.Cmp(want) != 0 {
+			t.Fatalf("round trip %s: got %v", want, got)
+		}
+	}
+
+	if _, err := OptionalI128FromScVal(Uint32ToScVal(1)); err == nil {
+		t.Fatal("expected error for non-i128, non-void value")
+	}
+}

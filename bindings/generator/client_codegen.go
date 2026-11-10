@@ -234,6 +234,8 @@ func generateReturnValueParsing(b *strings.Builder, returnType string) {
 			b.WriteString("\tv, err := scval.OptionalAddressFromScVal(*result)\n")
 		case "u32":
 			b.WriteString("\tv, err := scval.OptionalUint32FromScVal(*result)\n")
+		case "i128":
+			b.WriteString("\tv, err := scval.OptionalI128FromScVal(*result)\n")
 		case "soroban_sdk::String":
 			b.WriteString("\tv, err := scval.OptionalStringFromScVal(*result)\n")
 		default:
@@ -609,6 +611,11 @@ func generateEventFieldParsing(b *strings.Builder, f Field, target string) {
 		b.WriteString("\t\t\tif err == nil {\n")
 		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
 		b.WriteString("\t\t\t}\n")
+	case isOptionalI128(f.Type):
+		b.WriteString("\t\t\tv, err := scval.OptionalI128FromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\t%s = v\n", target))
+		b.WriteString("\t\t\t}\n")
 	case f.Type == "soroban_sdk::Symbol":
 		b.WriteString("\t\t\tv, err := scval.SymbolFromScVal(entry.Val)\n")
 		b.WriteString("\t\t\tif err == nil {\n")
@@ -822,6 +829,9 @@ func getArgConverter(rustType, varName string) string {
 
 	if strings.HasPrefix(rustType, "Option<") && strings.Contains(rustType, "soroban_sdk::Address") {
 		return fmt.Sprintf("scval.OptionalAddressToScVal(%s)", varName)
+	}
+	if isOptionalI128(rustType) {
+		return fmt.Sprintf("scval.OptionalI128ToScVal(%s)", varName)
 	}
 
 	if strings.HasPrefix(rustType, "soroban_sdk::BytesN<") {
