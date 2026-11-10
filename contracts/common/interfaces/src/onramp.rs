@@ -3,7 +3,6 @@ use common_message::StellarToAnyMessage;
 #[soroban_sdk::contractargs(name = "OnRampArgs")]
 #[soroban_sdk::contractclient(name = "OnRampClient")]
 pub trait OnRampInterface {
-    fn init(env: soroban_sdk::Env, rmn_proxy: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_fee(
         env: soroban_sdk::Env,
@@ -14,26 +13,16 @@ pub trait OnRampInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         static_config: StaticConfig,
         dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
-    fn is_subject_cursed(
-        env: soroban_sdk::Env,
-        subject: soroban_sdk::BytesN<16>,
-    ) -> Result<bool, CCIPError>;
     fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
-    fn require_not_cursed(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn set_dynamic_config(
         env: soroban_sdk::Env,
         dynamic_config: DynamicConfig,
@@ -61,18 +50,9 @@ pub trait OnRampInterface {
         env: soroban_sdk::Env,
         source_token: soroban_sdk::Address,
     ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn require_chain_not_cursed(
-        env: soroban_sdk::Env,
-        chain_selector: u64,
-    ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_all_dest_chain_configs(
         env: soroban_sdk::Env,
     ) -> Result<(soroban_sdk::Vec<u64>, soroban_sdk::Vec<DestChainConfig>), CCIPError>;
-    fn require_subject_not_cursed(
-        env: soroban_sdk::Env,
-        subject: soroban_sdk::BytesN<16>,
-    ) -> Result<(), CCIPError>;
     fn apply_dest_chain_config_updates(
         env: soroban_sdk::Env,
         dest_chain_config_args: soroban_sdk::Vec<DestChainConfigArgs>,
@@ -261,31 +241,31 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,

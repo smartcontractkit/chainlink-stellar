@@ -57,7 +57,7 @@ impl Initializable for ExecutorContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for ExecutorContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -68,6 +68,18 @@ impl Upgradeable for ExecutorContract {}
 
 #[contractimpl]
 impl ExecutorContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     /// Initializes the Executor with `owner`, an immutable per-message CCV cap
     /// (`max_ccvs_per_msg`, EVM constructor `uint8 maxCCVsPerMsg` — widened to
     /// `u32` because Soroban has no `u8` arg type), and the initial dynamic

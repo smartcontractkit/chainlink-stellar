@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use common_authorization::Ownable;
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     IntoVal, String,
@@ -332,18 +333,24 @@ fn test_approve_rejects_negative_amount() {
 #[test]
 fn test_ownership_transfer_round_trip() {
     let (env, client, deployer) = setup();
+    let pending_owner = || {
+        env.as_contract(&client.address, || {
+            <LinkTokenContract as Ownable>::get_pending_owner(&env)
+        })
+    };
+
     assert_eq!(client.owner(), Some(deployer.clone()));
-    assert_eq!(client.get_pending_owner(), None);
+    assert_eq!(pending_owner(), None);
 
     let mcms = soroban_sdk::Address::generate(&env);
     client.transfer_ownership(&mcms);
-    assert_eq!(client.get_pending_owner(), Some(mcms.clone()));
+    assert_eq!(pending_owner(), Some(mcms.clone()));
     // Not yet transferred: the deployer is still the owner.
     assert_eq!(client.owner(), Some(deployer.clone()));
 
     client.accept_ownership();
     assert_eq!(client.owner(), Some(mcms.clone()));
-    assert_eq!(client.get_pending_owner(), None);
+    assert_eq!(pending_owner(), None);
 
     // The OLD owner's authorization no longer satisfies the owner gate
     // (precise auths: only the deployer is authorized for this exact invoke).
@@ -361,31 +368,16 @@ fn test_ownership_transfer_round_trip() {
         "the former owner must not be able to start an ownership transfer"
     );
 
-    // The NEW owner can start a transfer and cancel it.
-    env.mock_auths(&[
-        MockAuth {
-            address: &mcms,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "transfer_ownership",
-                args: soroban_sdk::vec![&env, deployer.clone().into_val(&env)],
-                sub_invokes: &[],
-            },
-        },
-        MockAuth {
-            address: &mcms,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "cancel_ownership_transfer",
-                args: soroban_sdk::vec![&env],
-                sub_invokes: &[],
-            },
-        },
-    ]);
+    // The NEW owner can start and cancel a transfer. Pending-owner reads and
+    // cancellation use the internal trait directly because they are not public
+    // token entrypoints.
+    env.mock_all_auths();
     client.transfer_ownership(&deployer);
-    assert_eq!(client.get_pending_owner(), Some(deployer.clone()));
-    client.cancel_ownership_transfer();
-    assert_eq!(client.get_pending_owner(), None);
+    assert_eq!(pending_owner(), Some(deployer.clone()));
+    env.as_contract(&client.address, || {
+        <LinkTokenContract as Ownable>::cancel_ownership_transfer(&env).unwrap();
+    });
+    assert_eq!(pending_owner(), None);
 
     // The minters set was untouched by the whole round-trip.
     assert_eq!(

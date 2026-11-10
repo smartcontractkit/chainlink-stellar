@@ -10,12 +10,10 @@ pub trait RampRegistryInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn get_onramp(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn is_offramp(
         env: soroban_sdk::Env,
@@ -24,10 +22,8 @@ pub trait RampRegistryInterface {
     ) -> Result<bool, CCIPError>;
     fn get_onramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OnRampEntry>, CCIPError>;
     fn get_offramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OffRampEntry>, CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn transfer_ownership(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
@@ -40,7 +36,6 @@ pub trait RampRegistryInterface {
         env: soroban_sdk::Env,
         updates: soroban_sdk::Vec<OffRampUpdate>,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -67,31 +62,31 @@ pub struct OffRampUpdate {
     pub offramp: soroban_sdk::Address,
     pub source_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
