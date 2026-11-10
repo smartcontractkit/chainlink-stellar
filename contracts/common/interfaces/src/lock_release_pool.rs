@@ -406,14 +406,52 @@ pub struct ReleasedEvent {
 pub struct ChainRemovedEvent {
     pub remote_chain_selector: u64,
 }
+#[soroban_sdk::contractevent(topics = ["pool_ChainConfigured", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ChainConfiguredEvent {
+    pub remote_chain_selector: u64,
+    pub remote_pool_addresses: soroban_sdk::Vec<soroban_sdk::Bytes>,
+    pub remote_token_address: soroban_sdk::Bytes,
+    pub outbound_rate_limiter_config: RateLimitConfig,
+    pub inbound_rate_limiter_config: RateLimitConfig,
+}
+#[soroban_sdk::contractevent(topics = ["pool_RemotePoolAdded", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RemotePoolAddedEvent {
+    pub remote_chain_selector: u64,
+    pub remote_pool_address: soroban_sdk::Bytes,
+}
 #[soroban_sdk::contractevent(topics = ["pool_FinalityConfigSet", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FinalityConfigSetEvent {
     pub allowed_finality: u32,
 }
+#[soroban_sdk::contractevent(topics = ["pool_RemotePoolRemoved", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RemotePoolRemovedEvent {
+    pub remote_chain_selector: u64,
+    pub remote_pool_address: soroban_sdk::Bytes,
+}
 #[soroban_sdk::contractevent(topics = ["pool_FtfInboundConsumed", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FtfInboundConsumedEvent {
+    pub remote_chain_selector: u64,
+    pub amount: i128,
+}
+#[soroban_sdk::contractevent(topics = ["pool_TokenFeeCfgDeleted", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenFeeCfgDeletedEvent {
+    pub remote_chain_selector: u64,
+}
+#[soroban_sdk::contractevent(topics = ["pool_TokenFeeCfgUpdated", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TokenFeeCfgUpdatedEvent {
+    pub remote_chain_selector: u64,
+    pub config: TokenTransferFeeConfig,
+}
+#[soroban_sdk::contractevent(topics = ["pool_FtfOutboundConsumed", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FtfOutboundConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }
@@ -440,44 +478,6 @@ pub struct InboundRateLimitConsumedEvent {
 #[soroban_sdk::contractevent(topics = ["pool_OutboundRateLimitConsumed", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundRateLimitConsumedEvent {
-    pub remote_chain_selector: u64,
-    pub amount: i128,
-}
-#[soroban_sdk::contractevent(topics = ["pool_ChainConfigured", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ChainConfiguredEvent {
-    pub remote_chain_selector: u64,
-    pub remote_pool_addresses: soroban_sdk::Vec<soroban_sdk::Bytes>,
-    pub remote_token_address: soroban_sdk::Bytes,
-    pub outbound_rate_limiter_config: RateLimitConfig,
-    pub inbound_rate_limiter_config: RateLimitConfig,
-}
-#[soroban_sdk::contractevent(topics = ["pool_RemotePoolAdded", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RemotePoolAddedEvent {
-    pub remote_chain_selector: u64,
-    pub remote_pool_address: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contractevent(topics = ["pool_RemotePoolRemoved", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RemotePoolRemovedEvent {
-    pub remote_chain_selector: u64,
-    pub remote_pool_address: soroban_sdk::Bytes,
-}
-#[soroban_sdk::contractevent(topics = ["pool_TokenFeeCfgDeleted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenFeeCfgDeletedEvent {
-    pub remote_chain_selector: u64,
-}
-#[soroban_sdk::contractevent(topics = ["pool_TokenFeeCfgUpdated", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TokenFeeCfgUpdatedEvent {
-    pub remote_chain_selector: u64,
-    pub config: TokenTransferFeeConfig,
-}
-#[soroban_sdk::contractevent(topics = ["pool_FtfOutboundConsumed", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct FtfOutboundConsumedEvent {
     pub remote_chain_selector: u64,
     pub amount: i128,
 }

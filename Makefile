@@ -17,11 +17,11 @@ build:
 # untouched. The feature makes forward_from_router emit an extra E2EUpgradeMarker
 # event; the integration upgrade test (tests/integration/onramp_upgrade_test.go)
 # upgrades an OnRamp to this Wasm and asserts the marker appears after a send.
-# Mirrors `make build`'s profile (workspace [profile.release]: opt-level=z,
-# panic=abort, lto=thin) via cargo, since the stellar CLI has no per-crate
-# --features passthrough. Requires the wasm32v1-none rustup target.
+# Must go through `stellar contract build` (not plain cargo): soroban-sdk 29's
+# build script rejects wasm builds not driven by stellar-cli >= 25.2.0.
+# Requires the wasm32v1-none rustup target.
 build-onramp-e2e-upgrade:
-	CARGO_TARGET_DIR=target/e2e-upgrade cargo build --release -p onramp --target wasm32v1-none --features e2e-upgrade-marker
+	CARGO_TARGET_DIR=target/e2e-upgrade stellar contract build --package onramp --features e2e-upgrade-marker
 
 # Rebuild the embedded CRE contract WASM committed under deployment/cre/artifacts/
 # (served to Go consumers via deployment/cre.Artifact). CI fails if these are

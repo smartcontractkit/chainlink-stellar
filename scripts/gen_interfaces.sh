@@ -5,13 +5,12 @@
 # output:
 #   1. strip_wasm_block        - remove the WASM const block (interfaces don't need it)
 #   2. normalize_attributes    - collapse CLI-version differences: stellar-cli 25.x
-#                                emits `contracttype(export = false)` while 28.x emits
-#                                plain `contracttype`; both are normalized to the
-#                                `export = false` form so local and CI (pinned 25.1.0)
-#                                output agree. export = false is required: without it
-#                                every type/event in this crate embeds spec entries into
-#                                the wasm of every contract linking common-interfaces,
-#                                inflating contract wasm past network upload limits.
+#                                emits `contracttype(export = false)` while 28.x+ emits
+#                                plain `contracttype`; both are normalized to the plain
+#                                form so local and CI output agree. soroban-sdk 29
+#                                removed the `export` parameter entirely — spec export
+#                                is now determined by reachability from the contract
+#                                boundary (functions, events, errors).
 #   3. strip_duplicate_auth_events - drop auth_OwnerTransferred (conflicts with the
 #                                contract-specific OwnershipTransferredEvent)
 #   4. prune_interface         - dedup trait fns and type/event definitions, drop
@@ -29,12 +28,13 @@
 #   ./scripts/gen_interfaces.sh              # Generate interfaces (builds first)
 #   ./scripts/gen_interfaces.sh --no-build   # Skip build, use existing wasm files
 #
-# Requires: stellar CLI (>= 25.1.0; CI pins 25.1.0, 28.x is verified compatible),
+# Requires: stellar CLI (>= 25.2.0, the minimum soroban-sdk 29 accepts for
+#           `stellar contract build`; CI pins 30.0.1),
 #           contracts built (stellar contract build)
 
 set -euo pipefail
 
-MIN_STELLAR="25.1.0"
+MIN_STELLAR="25.2.0"
 ACTUAL_STELLAR=$(stellar --version 2>/dev/null | head -1 | awk '{print $2}')
 if [[ -z "$ACTUAL_STELLAR" ]]; then
   echo "ERROR: stellar CLI not found. Install: cargo install stellar-cli --version $MIN_STELLAR"
@@ -87,17 +87,17 @@ strip_wasm_block() {
   sed -e '/^pub const WASM/,/^);$/d'
 }
 
-# Normalize attribute forms across stellar-cli versions to the canonical
-# `export = false` form. CLI 25.x emits it natively; CLI 28.x omits it. The
-# interfaces crate is only ever linked into other contracts, never deployed
-# itself, and export = false keeps its types/events out of dependent contracts'
-# wasm specs (otherwise every contract embedding common-interfaces balloons past
-# the network's wasm-upload resource limits).
+# Normalize attribute forms across stellar-cli versions to the canonical plain
+# form. CLI 25.x emits `export = false` natively; CLI 28.x+ omits it, and
+# soroban-sdk 29 removed the `export` parameter entirely (spec export is now
+# determined by reachability from the contract boundary, and stellar-cli shakes
+# unreachable spec entries out of the wasm at build time). Strip any `export`
+# argument so the output compiles on SDK 29 regardless of the generating CLI.
 normalize_attributes() {
   perl -0 -pe '
-    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype(export = false)]/gs;
-    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror(export = false)]/gs;
-    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{"#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } ($1 =~ /"([^"]*)"/g)) . "], export = false)]"}ges;
+    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype]/gs;
+    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror]/gs;
+    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{"#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } ($1 =~ /"([^"]*)"/g)) . "])]"}ges;
   '
 }
 
@@ -270,7 +270,7 @@ patch_ccip_receiver_interfaces() {
   local f="$1"
   perl -i -0pe '
     if ($_ !~ /pub struct CcvChainConfig/s) {
-      my $ccv = "#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvConfigUpdate {\n    pub source_chain_selector: u64,\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvChainConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct RemoteChainConfig {\n    pub extra_args: soroban_sdk::Bytes,\n    pub allowed_finality_config: u32,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvsAndFinalityConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n    pub allowed_finality_config: u32,\n}\n";
+      my $ccv = "#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvConfigUpdate {\n    pub source_chain_selector: u64,\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvChainConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct RemoteChainConfig {\n    pub extra_args: soroban_sdk::Bytes,\n    pub allowed_finality_config: u32,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct CcvsAndFinalityConfig {\n    pub required_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub optional_threshold: u32,\n    pub allowed_finality_config: u32,\n}\n";
       s/(\n\}\n)((?:#\[[^\n]*\]\n)+pub struct TokenAmount)/$1 . $ccv . $2/se;
     }
   ' "$f"
@@ -308,7 +308,7 @@ patch_advanced_pool_hooks_interfaces() {
   local f="$1"
   perl -i -0pe '
     unless (/pub struct LockOrBurnIn/s) {
-      my $types = "#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PoolRequiredCCVs {\n    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub include_defaults: bool,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum MessageDirection {\n    Outbound,\n    Inbound,\n}\n";
+      my $types = "#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PoolRequiredCCVs {\n    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,\n    pub include_defaults: bool,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum MessageDirection {\n    Outbound,\n    Inbound,\n}\n";
       s/(\n\}\n)((?:#\[[^\n]*\]\n)+pub struct CCVConfig)/$1 . $types . $2/se;
     }
   ' "$f"
@@ -326,7 +326,7 @@ patch_advanced_pool_hooks_extractor_interfaces() {
   local f="$1"
   perl -i -0pe '
     unless (/pub struct Payload/s) {
-      my $types = "#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PreflightPayload {\n    pub lock_or_burn_in: LockOrBurnIn,\n    pub requested_finality: u32,\n    pub amount_post_fee: i128,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PostflightPayload {\n    pub release_or_mint_in: ReleaseOrMintIn,\n    pub local_amount: i128,\n    pub requested_finality: u32,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PoolHooksPayloadData {\n    Preflight(PreflightPayload),\n    Postflight(PostflightPayload),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyData {\n    PoolHooks(PoolHooksPayloadData),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Payload {\n    pub selector: soroban_sdk::Symbol,\n    pub sender: soroban_sdk::Address,\n    pub data: PolicyData,\n    pub context: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyValue {\n    Address(soroban_sdk::Address),\n    I128(i128),\n    U64(u64),\n    U32(u32),\n    Bytes(soroban_sdk::Bytes),\n}\n#[soroban_sdk::contracttype(export = false)]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Parameter {\n    pub name: soroban_sdk::Symbol,\n    pub value: PolicyValue,\n}\n";
+      my $types = "#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct LockOrBurnIn {\n    pub receiver: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub original_sender: soroban_sdk::Address,\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct ReleaseOrMintIn {\n    pub original_sender: soroban_sdk::Bytes,\n    pub remote_chain_selector: u64,\n    pub receiver: soroban_sdk::Address,\n    /// Source-denominated amount (EVM `sourceDenominatedAmount`).\n    pub amount: i128,\n    pub local_token: soroban_sdk::Address,\n    pub source_pool_address: soroban_sdk::Bytes,\n    pub source_pool_data: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PreflightPayload {\n    pub lock_or_burn_in: LockOrBurnIn,\n    pub requested_finality: u32,\n    pub amount_post_fee: i128,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct PostflightPayload {\n    pub release_or_mint_in: ReleaseOrMintIn,\n    pub local_amount: i128,\n    pub requested_finality: u32,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PoolHooksPayloadData {\n    Preflight(PreflightPayload),\n    Postflight(PostflightPayload),\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyData {\n    PoolHooks(PoolHooksPayloadData),\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Payload {\n    pub selector: soroban_sdk::Symbol,\n    pub sender: soroban_sdk::Address,\n    pub data: PolicyData,\n    pub context: soroban_sdk::Bytes,\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub enum PolicyValue {\n    Address(soroban_sdk::Address),\n    I128(i128),\n    U64(u64),\n    U32(u32),\n    Bytes(soroban_sdk::Bytes),\n}\n#[soroban_sdk::contracttype]\n#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]\npub struct Parameter {\n    pub name: soroban_sdk::Symbol,\n    pub value: PolicyValue,\n}\n";
       s/(\n\}\n)((?:#\[[^\n]*\]\n)+pub enum CCIPError)/$1 . $types . $2/se;
     }
   ' "$f"
