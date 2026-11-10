@@ -167,6 +167,10 @@ func (d *DestinationReader) GetCCVSForMessage(ctx context.Context, message proto
 		optionalCCVs[i] = protocol.UnknownAddress(contractID)
 	}
 
+	if optionalThresholdU32 > 255 {
+		return protocol.CCVAddressInfo{}, fmt.Errorf("optional_threshold %d exceeds supported max 255 (optional CCVs: %d) for selector %d", optionalThresholdU32, len(optionalCCVs), sourceSelector)
+	}
+
 	ccvInfo := protocol.CCVAddressInfo{
 		RequiredCCVs:      requiredCCVs,
 		OptionalCCVs:      optionalCCVs,
