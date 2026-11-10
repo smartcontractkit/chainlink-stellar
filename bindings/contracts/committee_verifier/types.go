@@ -251,60 +251,6 @@ func SignatureQuorumConfigFromScVal(val xdr.ScVal) (*SignatureQuorumConfig, erro
 	return result, nil
 }
 
-// AllowListEntry represents the AllowListEntry struct from the contract.
-type AllowListEntry struct {
-	Allowlist        []string
-	AllowlistEnabled bool
-}
-
-// ToScVal converts AllowListEntry to an xdr.ScVal for contract calls.
-func (s AllowListEntry) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"allowlist":         scval.AddressSliceToScVal(s.Allowlist),
-		"allowlist_enabled": scval.BoolToScVal(s.AllowlistEnabled),
-	})
-}
-
-// AllowListEntryFromScVal parses an xdr.ScVal into AllowListEntry.
-func AllowListEntryFromScVal(val xdr.ScVal) (*AllowListEntry, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &AllowListEntry{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "allowlist":
-			vec, ok := entry.Val.GetVec()
-			if !ok || vec == nil {
-				return nil, fmt.Errorf("allowlist is not a vec")
-			}
-			result.Allowlist = make([]string, len(*vec))
-			for i, item := range *vec {
-				v, err := scval.AddressFromScVal(item)
-				if err != nil {
-					return nil, err
-				}
-				result.Allowlist[i] = v
-			}
-		case "allowlist_enabled":
-			v, ok := entry.Val.GetB()
-			if !ok {
-				return nil, fmt.Errorf("allowlist_enabled is not bool")
-			}
-			result.AllowlistEnabled = v
-		}
-	}
-
-	return result, nil
-}
-
 // AllowListUpdate represents the AllowListUpdate struct from the contract.
 type AllowListUpdate struct {
 	AddedAllowlistedSenders   []string
@@ -649,7 +595,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [ccv_ConfigSet]
+// Topics: [ccv_ConfigSet map]
 type ConfigSetEvent struct {
 	DynamicConfig DynamicConfig
 	// Event metadata
@@ -661,7 +607,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "ccv_ConfigSet"
 
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
-// Topics: [ccv_FinalityConfigSet]
+// Topics: [ccv_FinalityConfigSet map]
 type FinalityConfigSetEvent struct {
 	AllowedFinality uint32
 	// Event metadata
@@ -673,7 +619,7 @@ type FinalityConfigSetEvent struct {
 const FinalityConfigSetEventTopic = "ccv_FinalityConfigSet"
 
 // SignatureConfigSetEvent represents the SignatureConfigSetEvent event.
-// Topics: [ccv_SignatureConfigSet]
+// Topics: [ccv_SignatureConfigSet map]
 type SignatureConfigSetEvent struct {
 	SourceChainSelector uint64
 	Signers             [][32]byte
@@ -687,7 +633,7 @@ type SignatureConfigSetEvent struct {
 const SignatureConfigSetEventTopic = "ccv_SignatureConfigSet"
 
 // RemoteChainConfigSetEvent represents the RemoteChainConfigSetEvent event.
-// Topics: [ccv_RemoteChainConfigSet]
+// Topics: [ccv_RemoteChainConfigSet map]
 type RemoteChainConfigSetEvent struct {
 	RemoteChainSelector uint64
 	Router              *string
@@ -701,7 +647,7 @@ type RemoteChainConfigSetEvent struct {
 const RemoteChainConfigSetEventTopic = "ccv_RemoteChainConfigSet"
 
 // AllowListSendersAddedEvent represents the AllowListSendersAddedEvent event.
-// Topics: [ccv_AllowListSendersAdded]
+// Topics: [ccv_AllowListSendersAdded map]
 type AllowListSendersAddedEvent struct {
 	DestChainSelector uint64
 	Sender            string
@@ -714,7 +660,7 @@ type AllowListSendersAddedEvent struct {
 const AllowListSendersAddedEventTopic = "ccv_AllowListSendersAdded"
 
 // AllowListStateChangedEvent represents the AllowListStateChangedEvent event.
-// Topics: [ccv_AllowListStateChanged]
+// Topics: [ccv_AllowListStateChanged map]
 type AllowListStateChangedEvent struct {
 	DestChainSelector uint64
 	AllowlistEnabled  bool
@@ -727,7 +673,7 @@ type AllowListStateChangedEvent struct {
 const AllowListStateChangedEventTopic = "ccv_AllowListStateChanged"
 
 // AllowListSendersRemovedEvent represents the AllowListSendersRemovedEvent event.
-// Topics: [ccv_AllowListSendersRemoved]
+// Topics: [ccv_AllowListSendersRemoved map]
 type AllowListSendersRemovedEvent struct {
 	DestChainSelector uint64
 	Sender            string
@@ -740,7 +686,7 @@ type AllowListSendersRemovedEvent struct {
 const AllowListSendersRemovedEventTopic = "ccv_AllowListSendersRemoved"
 
 // StorageAdminTransferredEvent represents the StorageAdminTransferredEvent event.
-// Topics: [ccv_StorageAdminTransferred]
+// Topics: [ccv_StorageAdminTransferred map]
 type StorageAdminTransferredEvent struct {
 	From string
 	To   string
@@ -753,7 +699,7 @@ type StorageAdminTransferredEvent struct {
 const StorageAdminTransferredEventTopic = "ccv_StorageAdminTransferred"
 
 // StorageAdminTransferReqEvent represents the StorageAdminTransferReqEvent event.
-// Topics: [ccv_StorageAdminTransferReq]
+// Topics: [ccv_StorageAdminTransferReq map]
 type StorageAdminTransferReqEvent struct {
 	From string
 	To   string
@@ -766,7 +712,7 @@ type StorageAdminTransferReqEvent struct {
 const StorageAdminTransferReqEventTopic = "ccv_StorageAdminTransferReq"
 
 // StorageLocationsUpdatedEvent represents the StorageLocationsUpdatedEvent event.
-// Topics: [ccv_StorageLocationsUpdated]
+// Topics: [ccv_StorageLocationsUpdated map]
 type StorageLocationsUpdatedEvent struct {
 	OldLocations [][]byte
 	NewLocations [][]byte
@@ -779,7 +725,7 @@ type StorageLocationsUpdatedEvent struct {
 const StorageLocationsUpdatedEventTopic = "ccv_StorageLocationsUpdated"
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -793,7 +739,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -807,7 +753,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -819,7 +765,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -831,7 +777,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
