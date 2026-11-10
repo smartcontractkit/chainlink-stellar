@@ -28,6 +28,7 @@ members = [
   "contracts/cre/test/rejecting_receiver",
   "contracts/bnm-token",
   "contracts/link-token",
+  "contracts/token-pool-proxy",
   "contracts/common/*",
 ]
 
@@ -51,6 +52,7 @@ rmn_remote = { path = "contracts/rmn_remote" }
 router = { path = "contracts/router" }
 ccip-ramp-registry = { path = "contracts/ccip-ramp-registry" }
 ccvs-versioned-verifier-resolver = { path = "contracts/ccvs/versioned-verifier-resolver" }
+stellar-tokens = { version = "=0.7.2", default-features = false }
 
 [profile.release]
 opt-level = "z"
