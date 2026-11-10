@@ -272,7 +272,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted map]
+// Topics: [auth_RoleGranted]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -286,7 +286,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked map]
+// Topics: [auth_RoleRevoked]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -300,7 +300,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
+// Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -312,7 +312,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved map]
+// Topics: [auth_CallerRemoved]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -324,7 +324,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -337,7 +337,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // DepositEvent represents the DepositEvent event.
-// Topics: [lockbox_Deposit map]
+// Topics: [lockbox_Deposit]
 type DepositEvent struct {
 	Token     string
 	Depositor string
@@ -351,7 +351,7 @@ type DepositEvent struct {
 const DepositEventTopic = "lockbox_Deposit"
 
 // WithdrawalEvent represents the WithdrawalEvent event.
-// Topics: [lockbox_Withdrawal map]
+// Topics: [lockbox_Withdrawal]
 type WithdrawalEvent struct {
 	Token     string
 	Recipient string

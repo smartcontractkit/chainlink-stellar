@@ -320,74 +320,74 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["fq_FeeTokenAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_FeeTokenAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeTokenAddedEvent {
     pub fee_token: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["fq_DestChainAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_DestChainAdded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainAddedEvent {
     pub dest_chain_selector: u64,
     pub is_enabled: bool,
     pub max_data_bytes: u32,
 }
-#[soroban_sdk::contractevent(topics = ["fq_FeeTokenRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_FeeTokenRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeTokenRemovedEvent {
     pub fee_token: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["fq_UsdPerTokenUpdated", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_UsdPerTokenUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct UsdPerTokenUpdatedEvent {
     pub token: soroban_sdk::Address,
     pub value: u128,
     pub timestamp: u64,
 }
-#[soroban_sdk::contractevent(topics = ["fq_UsdPerUnitGasUpdated", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_UsdPerUnitGasUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct UsdPerUnitGasUpdatedEvent {
     pub dest_chain_selector: u64,
     pub value: u128,
     pub timestamp: u64,
 }
-#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeDeleted", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeDeleted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenFeeConfigDeletedEvent {
     pub dest_chain_selector: u64,
     pub token: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeUpdated", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_TknTransferFeeUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenFeeConfigUpdatedEvent {
     pub dest_chain_selector: u64,
@@ -396,7 +396,7 @@ pub struct TokenFeeConfigUpdatedEvent {
     pub dest_gas_overhead: u32,
     pub dest_bytes_overhead: u32,
 }
-#[soroban_sdk::contractevent(topics = ["fq_DestChainConfigUpdated", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["fq_DestChainConfigUpdated"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainConfigUpdatedEvent {
     pub dest_chain_selector: u64,

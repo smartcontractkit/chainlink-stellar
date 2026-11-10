@@ -46,7 +46,7 @@ pub enum MockForwarderError {
     AlreadyProcessed = 13,
     InvalidReceiver = 18,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed", "single-value"], export = false)]
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReportProcessedEvent {
     #[topic]

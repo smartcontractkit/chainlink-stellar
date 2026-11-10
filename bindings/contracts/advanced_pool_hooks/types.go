@@ -710,7 +710,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted map]
+// Topics: [auth_RoleGranted]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -724,7 +724,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked map]
+// Topics: [auth_RoleRevoked]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -738,7 +738,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
+// Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -750,7 +750,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved map]
+// Topics: [auth_CallerRemoved]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -762,7 +762,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -775,7 +775,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // AllowListAddEvent represents the AllowListAddEvent event.
-// Topics: [aph_AllowListAdd map]
+// Topics: [aph_AllowListAdd]
 type AllowListAddEvent struct {
 	Sender string
 	// Event metadata
@@ -787,7 +787,7 @@ type AllowListAddEvent struct {
 const AllowListAddEventTopic = "aph_AllowListAdd"
 
 // AllowListRemoveEvent represents the AllowListRemoveEvent event.
-// Topics: [aph_AllowListRemove map]
+// Topics: [aph_AllowListRemove]
 type AllowListRemoveEvent struct {
 	Sender string
 	// Event metadata
@@ -799,7 +799,7 @@ type AllowListRemoveEvent struct {
 const AllowListRemoveEventTopic = "aph_AllowListRemove"
 
 // CCVConfigUpdatedEvent represents the CCVConfigUpdatedEvent event.
-// Topics: [aph_CCVConfigUpdated map]
+// Topics: [aph_CCVConfigUpdated]
 type CCVConfigUpdatedEvent struct {
 	RemoteChainSelector uint64
 	Config              CCVConfig
@@ -812,7 +812,7 @@ type CCVConfigUpdatedEvent struct {
 const CCVConfigUpdatedEventTopic = "aph_CCVConfigUpdated"
 
 // ThresholdAmountSetEvent represents the ThresholdAmountSetEvent event.
-// Topics: [aph_ThresholdAmountSet map]
+// Topics: [aph_ThresholdAmountSet]
 type ThresholdAmountSetEvent struct {
 	ThresholdAmount *big.Int
 	// Event metadata
@@ -824,7 +824,7 @@ type ThresholdAmountSetEvent struct {
 const ThresholdAmountSetEventTopic = "aph_ThresholdAmountSet"
 
 // PolicyEngineAttachedEvent represents the PolicyEngineAttachedEvent event.
-// Topics: [aph_PolicyEngineAttached map]
+// Topics: [aph_PolicyEngineAttached]
 type PolicyEngineAttachedEvent struct {
 	PolicyEngine *string
 	// Event metadata
@@ -836,7 +836,7 @@ type PolicyEngineAttachedEvent struct {
 const PolicyEngineAttachedEventTopic = "aph_PolicyEngineAttached"
 
 // PolicyEngineDetachFailedEvent represents the PolicyEngineDetachFailedEvent event.
-// Topics: [aph_PolicyEngineDetachFailed map]
+// Topics: [aph_PolicyEngineDetachFailed]
 type PolicyEngineDetachFailedEvent struct {
 	PolicyEngine string
 	// Event metadata

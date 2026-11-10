@@ -901,7 +901,7 @@ var McmsErrorMessage = map[int]string{
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted map]
+// Topics: [auth_RoleGranted]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -915,7 +915,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked map]
+// Topics: [auth_RoleRevoked]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -929,7 +929,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
+// Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -941,7 +941,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved map]
+// Topics: [auth_CallerRemoved]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -953,7 +953,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -966,7 +966,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // NewRootEvent represents the NewRootEvent event.
-// Topics: [mcms_NewRoot map]
+// Topics: [mcms_NewRoot]
 type NewRootEvent struct {
 	Root       [32]byte
 	ValidUntil uint32
@@ -980,7 +980,7 @@ type NewRootEvent struct {
 const NewRootEventTopic = "mcms_NewRoot"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [mcms_ConfigSet map]
+// Topics: [mcms_ConfigSet]
 type ConfigSetEvent struct {
 	Config        Config
 	ConfigVersion uint64
@@ -994,7 +994,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "mcms_ConfigSet"
 
 // OpExecutedEvent represents the OpExecutedEvent event.
-// Topics: [mcms_OpExecuted map]
+// Topics: [mcms_OpExecuted]
 type OpExecutedEvent struct {
 	Nonce    uint64
 	Target   string

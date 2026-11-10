@@ -65,44 +65,44 @@ pub enum ProxyReadError {
     InvalidDecimals = 51,
     RoundsToZero = 52,
 }
-#[soroban_sdk::contractevent(topics = ["CacheSet", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["CacheSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CacheSet {
     pub old_cache: soroban_sdk::Address,
     pub new_cache: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["MinDecimalsSet", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["MinDecimalsSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MinDecimalsSet {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
     pub min: u32,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["Upgraded"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["TokenRecovered", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["TokenRecovered"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenRecovered {
     pub token: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransfer {
     pub old_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
     pub live_until_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_renounced", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_renounced"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipRenounced {
     pub old_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferCompleted {
     pub new_owner: soroban_sdk::Address,
