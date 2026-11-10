@@ -1743,22 +1743,69 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     panic!("expected Upgraded event with new_wasm_hash from contract");
 }
 
-/// Minimal initialized pool: `initialize` only stores its address args (it does
-/// not call into the token/router/ramp/registry/rmn at init), so dummy
-/// `Address::generate` values suffice for an upgrade test.
+/// Token stub exposing only `decimals` — enough for `initialize`'s SEP-41
+/// decimals validation in fixtures that never move tokens.
+mod decimals_only_token {
+    use soroban_sdk::{contract, contractimpl, Env};
+
+    #[contract]
+    pub struct DecimalsOnlyToken;
+
+    #[contractimpl]
+    impl DecimalsOnlyToken {
+        pub fn decimals(_env: Env) -> u32 {
+            18
+        }
+    }
+}
+
+/// Minimal initialized pool: `initialize` stores its address args and
+/// cross-calls the token's `decimals()` (SEP-41 validation), so the token must
+/// be a real contract — a decimals-only stub suffices since the fixture never
+/// moves tokens. Other args stay dummy `Address::generate`.
 fn setup_pool_for_upgrade(env: &Env) -> SiloedLockReleaseTokenPoolContractClient<'static> {
     let contract_id = env.register(SiloedLockReleaseTokenPoolContract, ());
     let client = SiloedLockReleaseTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
+    let token = env.register(decimals_only_token::DecimalsOnlyToken, ());
     client.initialize(
         &owner,
-        &Address::generate(env),
+        &token,
         &18,
         &Address::generate(env),
         &Address::generate(env),
         &Address::generate(env),
     );
     client
+}
+
+#[test]
+fn test_initialize_rejects_mismatched_token_decimals() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let owner = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_address = token_contract.address();
+
+    let router = Address::generate(&env);
+    let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
+    let pool_id = env.register(SiloedLockReleaseTokenPoolContract, ());
+    let pool_client = SiloedLockReleaseTokenPoolContractClient::new(&env, &pool_id);
+
+    // SAC tokens are 7 decimals; any other value is rejected against the
+    // token's on-chain decimals (EVM InvalidDecimalArgs).
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &6u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
+    assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
 }
 
 #[test]

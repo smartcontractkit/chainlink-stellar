@@ -66,6 +66,12 @@ pub trait BaseTokenPool {
         if token_decimals > u8::MAX as u32 {
             return Err(CCIPError::InvalidPoolTokenDecimals);
         }
+        // Validate the provided decimals against the token's on-chain SEP-41
+        // decimals (EVM TokenPool constructor parity, InvalidDecimalArgs).
+        let actual_decimals = soroban_sdk::token::Client::new(env, token).decimals();
+        if actual_decimals != token_decimals {
+            return Err(CCIPError::InvalidPoolTokenDecimals);
+        }
         env.storage().instance().set(&PoolDataKey::Token, token);
         env.storage()
             .instance()
