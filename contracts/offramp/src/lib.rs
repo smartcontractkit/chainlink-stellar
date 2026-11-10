@@ -1322,12 +1322,11 @@ impl OffRampContract {
             if post_balance < pre_balance {
                 env.panic_with_error(CCIPError::TokenHandlingError);
             }
-            let delivered = post_balance - pre_balance;
-            if delivered != release_result.destination_amount || delivered != expected_amount {
-                env.panic_with_error(CCIPError::TokenHandlingError);
-            }
-            delivered
+            post_balance - pre_balance
         };
+        if delivered != release_result.destination_amount || delivered != expected_amount {
+            env.panic_with_error(CCIPError::TokenHandlingError);
+        }
 
         let mut amounts = Vec::new(env);
         amounts.push_back(TokenAmount {

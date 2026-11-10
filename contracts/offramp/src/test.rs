@@ -1835,10 +1835,12 @@ fn test_execute_pool_zero_delivery_zero_report_traps() {
 }
 
 #[test]
-fn test_execute_pool_as_own_token_receiver_trusts_report() {
+fn test_execute_pool_as_own_token_receiver_checks_signed_amount() {
     let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
 
     pool_client.set_self_receiver_noop(&true);
+    pool_client.set_skim_release(&100);
+    pool_client.set_report_delivered(&true);
 
     let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
     let pool_field = offramp_address_field_from_contract(&env, &pool_client.address);
@@ -1870,8 +1872,26 @@ fn test_execute_pool_as_own_token_receiver_trusts_report() {
 
     let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
     assert!(
+        res.is_err(),
+        "a pool receiver's report must match the signed message amount: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&pool_client.address),
+        0
+    );
+
+    pool_client.set_skim_release(&0);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
         res.is_ok(),
-        "a pool that is its own token receiver must not trap: {:?}",
+        "a matching report must allow the zero-delta self-transfer: {:?}",
         res
     );
     assert_eq!(
