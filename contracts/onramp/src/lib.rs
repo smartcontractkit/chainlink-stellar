@@ -914,7 +914,11 @@ impl OnRampContract {
             &extra_args,
         )?;
 
-        // Track A: single fee breakdown for this send (Router no longer calls `get_fee` first).
+        // Second fee computation for this send: the Router quotes via `get_fee`
+        // first and pulls exactly that. Only `fee_token_amount >= total_fee` is
+        // enforced (EVM parity, OnRamp.sol:293-299) — a pool varying `get_fee`
+        // between the two calls can strand bounded excess, later swept to the
+        // fee aggregator.
         // Validate fee before any token lock or sequence bump.
         let breakdown = Self::compute_outbound_fee_breakdown(
             &env,

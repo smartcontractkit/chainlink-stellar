@@ -140,8 +140,12 @@ impl RouterContract {
     /// 2. Checks RMN curse status
     /// 3. Looks up the OnRamp for the destination chain
     /// 4. Quotes the fee from the OnRamp (`get_fee`) and pulls EXACTLY the quote
-    ///    from the sender to the OnRamp (when fee > 0) — the caller can never
-    ///    overpay or underpay; there is nothing to refund
+    ///    from the sender to the OnRamp (when fee > 0). Underpay is impossible
+    ///    (the OnRamp rejects below-total funding); a malicious registered pool
+    ///    can still force bounded overpay by returning inconsistent `get_fee`
+    ///    values on quote vs. recompute (Soroban does not enforce view purity) —
+    ///    capped by the per-message fee limit, excess swept to the fee
+    ///    aggregator. Same accepted behavior as EVM (OnRamp.sol:293).
     /// 5. Calls OnRamp.forward_from_router with the quoted amount (which
     ///    validates fee before side effects)
     /// 6. Returns the message ID
@@ -187,8 +191,11 @@ impl RouterContract {
         // `Router.ccipSend` has no fee-amount argument (`IRouterClient.ccipSend`):
         // `feeTokenAmount = getFee(...)`, then `safeTransferFrom(msg.sender,
         // onRamp, feeTokenAmount)` (Router.sol:132-137). Pulling exactly the
-        // quote removes both overpay (the old caller-specified full-amount pull
-        // with no refund) and underpay (the OnRamp rejects below-total funding).
+        // quote removes underpay (the OnRamp rejects below-total funding) and
+        // the old caller-specified overpay; a residual bounded overpay remains
+        // if a malicious pool varies `get_fee` between quote and recompute
+        // (EVM OnRamp.sol:293 accepts the same), with the excess swept to the
+        // fee aggregator.
         // The quote also runs the OnRamp's pre-flight validations (dest config,
         // curse is checked above) before any token transfer.
         // The sender has authorized `ccip_send` above; `OnRamp::forward_from_router` additionally
