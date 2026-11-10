@@ -66,6 +66,11 @@ pub trait BaseTokenPool {
         if token_decimals > u8::MAX as u32 {
             return Err(CCIPError::InvalidPoolTokenDecimals);
         }
+        if let Ok(Ok(actual)) = soroban_sdk::token::Client::new(env, token).try_decimals() {
+            if actual != token_decimals {
+                return Err(CCIPError::InvalidPoolTokenDecimals);
+            }
+        }
         env.storage().instance().set(&PoolDataKey::Token, token);
         env.storage()
             .instance()

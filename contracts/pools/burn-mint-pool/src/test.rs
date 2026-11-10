@@ -301,6 +301,15 @@ fn setup_router_with_rmn(
 /// `mock_all_auths` — the pool's `require_auth` inside `mint`/`mint_as` is
 /// satisfied regardless of the caller.
 fn register_bnm_token(env: &Env, pool: &Address) -> (Address, BnmTokenContractClient<'static>) {
+    register_bnm_token_with_decimals(env, pool, 7)
+}
+
+/// Same as `register_bnm_token`, for a token with `decimals` decimals.
+fn register_bnm_token_with_decimals(
+    env: &Env,
+    pool: &Address,
+    decimals: u32,
+) -> (Address, BnmTokenContractClient<'static>) {
     let token_admin = Address::generate(env);
     let token_id = env.register(BnmTokenContract, ());
     let token_client = BnmTokenContractClient::new(env, &token_id);
@@ -308,7 +317,7 @@ fn register_bnm_token(env: &Env, pool: &Address) -> (Address, BnmTokenContractCl
         &token_admin,
         &soroban_sdk::String::from_str(env, "CCIP BnM"),
         &soroban_sdk::String::from_str(env, "BnM"),
-        &7u32,
+        &decimals,
     );
     // Hand the primary mint to the pool; the deployer is demoted out of
     // MINTERS (the pool is the only minter).
@@ -1072,9 +1081,9 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
-    let (token_address, token_client) = register_bnm_token(&env, &pool_id);
-
     let local_decimals: u32 = 6;
+    let (token_address, token_client) =
+        register_bnm_token_with_decimals(&env, &pool_id, local_decimals);
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
@@ -1129,9 +1138,9 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
 
     let pool_id = env.register(BurnMintTokenPoolContract, ());
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
-    let (token_address, token_client) = register_bnm_token(&env, &pool_id);
-
     let local_decimals: u32 = 9;
+    let (token_address, token_client) =
+        register_bnm_token_with_decimals(&env, &pool_id, local_decimals);
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
@@ -1427,6 +1436,32 @@ fn test_initialize_rejects_decimals_above_uint8() {
         &owner,
         &token_address,
         &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
+    assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
+}
+
+#[test]
+fn test_initialize_rejects_decimals_not_matching_token() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let pool_id = env.register(BurnMintTokenPoolContract, ());
+    let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
+    let owner = Address::generate(&env);
+    // A Stellar Asset Contract always has 7 decimals.
+    let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+
+    let router = Address::generate(&env);
+    let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
+
+    let r = pool_client.try_initialize(
+        &owner,
+        &sac.address(),
+        &18u32,
         &router,
         &ramp_registry,
         &rmn_proxy,

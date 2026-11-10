@@ -1156,7 +1156,8 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     let stub_id = env.register(inbound_release_stub::PoolInboundReleaseStub, ());
     let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
 
-    let local_decimals: u32 = 6;
+    // A Stellar Asset Contract always has 7 decimals.
+    let local_decimals: u32 = 7;
     let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
     // The lockbox is fixed at pool `initialize` (EVM `i_lockBox`): stand it up
     // first, then authorize the pool as its sole caller.
@@ -1182,7 +1183,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let lockbox_client = wire_lockbox(&env, &pool_client);
 
-    let expected_local: i128 = 1_000_000;
+    let expected_local: i128 = 10_000_000;
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &expected_local);
 
