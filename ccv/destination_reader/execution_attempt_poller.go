@@ -31,6 +31,8 @@ const (
 	minStellarLedger         = uint32(7)
 	expectedExecuteArgCount  = 4
 	stellarPollerServiceName = "stellar.executionattemptpoller.Service"
+	// specifies the cap of how many attempts to hold for a given message ID
+	defaultLastNAttemptsCache = 10
 )
 
 // retryTask is a queue entry used for refetching an event's transaction
@@ -167,9 +169,9 @@ func (p *StellarExecutionAttemptPoller) GetExecutionAttempts(_ context.Context, 
 		return nil, nil
 	}
 
-	// Retain at most the last 2 attempts of a given message in cache
-	if len(attempts) > 2 {
-		attempts = attempts[len(attempts)-2:]
+	// Retain at most the last N attempts of a given message in cache
+	if len(attempts) > defaultLastNAttemptsCache {
+		attempts = attempts[len(attempts)-defaultLastNAttemptsCache:]
 	}
 
 	result := make([]protocol.ExecutionAttempt, len(attempts))
