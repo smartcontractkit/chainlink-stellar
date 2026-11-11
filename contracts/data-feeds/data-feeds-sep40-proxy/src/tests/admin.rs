@@ -105,6 +105,26 @@ mod add_feed {
     use super::*;
 
     #[test]
+    fn rejects_the_configured_base_without_reserving_the_feed() {
+        for base in ["USD", "GBP"] {
+            let a = Adapter::deploy_with_base(base);
+            let asset = a.asset(base);
+            a.set_price(1, 100, 10);
+
+            assert_eq!(
+                a.client().try_add_feed(&asset, &a.feed(1)),
+                Err(Ok(Sep40ProxyError::AssetIsBase)),
+            );
+            assert_eq!(a.client().get_feed(&asset), None);
+            assert!(a.sep40().assets().is_empty());
+
+            let btc = a.asset("BTC");
+            a.client().add_feed(&btc, &a.feed(1));
+            assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
+        }
+    }
+
+    #[test]
     fn stores_the_mapping_and_lists_the_asset() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
@@ -180,10 +200,19 @@ mod add_feed {
     }
 
     #[test]
-    fn rejects_a_feed_with_a_non_positive_answer() {
-        let a = Adapter::deploy();
-        assert_unreadable_and_unwritten(&a, |a| a.set_price(1, 0, 10));
-        assert_unreadable_and_unwritten(&a, |a| a.set_price(1, -5, 10));
+    fn accepts_readable_zero_and_negative_prices() {
+        for price in [0, -5, i128::MIN] {
+            let a = Adapter::deploy();
+            let btc = a.map("BTC", 1, price, 10);
+            assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
+            assert_eq!(
+                a.sep40().lastprice(&btc),
+                Some(PriceData {
+                    price,
+                    timestamp: 10
+                })
+            );
+        }
     }
 
     fn assert_unreadable_and_unwritten(a: &Adapter, setup: impl Fn(&Adapter)) {
@@ -206,6 +235,24 @@ mod add_feed {
 
 mod update_feed {
     use super::*;
+
+    #[test]
+    fn accepts_readable_zero_and_negative_prices() {
+        for price in [0, -5, i128::MIN] {
+            let a = Adapter::deploy();
+            let btc = a.map("BTC", 1, 100, 10);
+            a.set_price(2, price, 20);
+            a.client().update_feed(&btc, &a.feed(2));
+            assert_eq!(a.client().get_feed(&btc), Some(a.feed(2)));
+            assert_eq!(
+                a.sep40().lastprice(&btc),
+                Some(PriceData {
+                    price,
+                    timestamp: 20
+                })
+            );
+        }
+    }
 
     #[test]
     fn replaces_the_feed_and_keeps_the_asset_list() {
@@ -399,6 +446,67 @@ mod set_proxy {
                 timestamp: 77
             })
         );
+    }
+}
+
+mod recover_tokens {
+    use super::*;
+    use soroban_sdk::token::{StellarAssetClient, TokenClient};
+
+    #[test]
+    fn owner_recovers_tokens_and_emits_event() {
+        let a = Adapter::deploy();
+        let token = a
+            .env
+            .register_stellar_asset_contract_v2(new_address(&a.env))
+            .address();
+        let destination = new_address(&a.env);
+        StellarAssetClient::new(&a.env, &token).mint(&a.id, &1_000);
+
+        // Explicitly authorize only the owner's recovery call.
+        authorize(
+            &a.env,
+            &a.id,
+            &a.owner,
+            "recover_tokens",
+            (token.clone(), destination.clone(), 600_i128),
+        );
+        a.client().recover_tokens(&token, &destination, &600);
+        a.assert_latest_event(data_feeds_common::TokenRecovered {
+            token: token.clone(),
+            to: destination.clone(),
+            amount: 600,
+        });
+        let client = TokenClient::new(&a.env, &token);
+        assert_eq!(client.balance(&a.id), 400);
+        assert_eq!(client.balance(&destination), 600);
+    }
+
+    #[test]
+    fn non_owner_cannot_recover_tokens() {
+        let a = Adapter::deploy();
+        let token = a
+            .env
+            .register_stellar_asset_contract_v2(new_address(&a.env))
+            .address();
+        let attacker = new_address(&a.env);
+        let destination = new_address(&a.env);
+        StellarAssetClient::new(&a.env, &token).mint(&a.id, &1_000);
+
+        authorize(
+            &a.env,
+            &a.id,
+            &attacker,
+            "recover_tokens",
+            (token.clone(), destination.clone(), 600_i128),
+        );
+        assert!(a
+            .client()
+            .try_recover_tokens(&token, &destination, &600)
+            .is_err());
+        let client = TokenClient::new(&a.env, &token);
+        assert_eq!(client.balance(&a.id), 1_000);
+        assert_eq!(client.balance(&destination), 0);
     }
 }
 

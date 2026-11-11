@@ -91,15 +91,14 @@ fn reads_latest_price_and_follows_new_reports() {
         })
     );
     assert_eq!(s.sep40().lastprice(&btc).unwrap().timestamp, 1_700_000_000);
-    seed_round(&s.env, &s.cache, &s.feed, &s.sender, 250, 1_700_000_010);
-
-    assert_eq!(
-        s.sep40().lastprice(&btc),
-        Some(PriceData {
-            price: 250,
-            timestamp: 1_700_000_010
-        })
-    );
+    for (index, price) in [250, 0, -250, i128::MIN].into_iter().enumerate() {
+        let timestamp = 1_700_000_010 + index as u64;
+        seed_round(&s.env, &s.cache, &s.feed, &s.sender, price, timestamp);
+        assert_eq!(
+            s.sep40().lastprice(&btc),
+            Some(PriceData { price, timestamp }),
+        );
+    }
 }
 
 #[test]

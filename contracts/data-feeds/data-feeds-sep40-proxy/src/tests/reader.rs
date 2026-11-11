@@ -183,7 +183,7 @@ mod lastprice_returns_none {
     }
 
     #[test]
-    fn for_non_positive_and_oversized_answers() {
+    fn for_answers_outside_i128_range() {
         let a = Adapter::deploy();
         let btc = a.asset("BTC");
         a.map_unchecked(&btc, &a.feed(1));
@@ -191,9 +191,6 @@ mod lastprice_returns_none {
         let one = I256::from_i128(&a.env, 1);
 
         let rejected = [
-            ("zero", I256::from_i128(&a.env, 0)),
-            ("minus one", I256::from_i128(&a.env, -1)),
-            ("i128::MIN", I256::from_i128(&a.env, i128::MIN)),
             ("i128::MAX + 1", i128_max.add(&one)),
             (
                 "below i128::MIN",
@@ -215,12 +212,12 @@ mod lastprice_accepts_boundary_answers {
     use super::*;
 
     #[test]
-    fn one_and_i128_max() {
+    fn signed_i128_boundaries_and_zero() {
         let a = Adapter::deploy();
         let btc = a.asset("BTC");
         a.map_unchecked(&btc, &a.feed(1));
 
-        for price in [1, i128::MAX] {
+        for price in [i128::MIN, -1, 0, 1, i128::MAX] {
             a.set_price(1, price, 10);
             assert_eq!(
                 a.sep40().lastprice(&btc),

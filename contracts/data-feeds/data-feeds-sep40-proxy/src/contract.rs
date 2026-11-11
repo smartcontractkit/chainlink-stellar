@@ -1,6 +1,6 @@
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 
-use data_feeds_common::{Upgradeable, Versioned};
+use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use data_feeds_proxy::{DataFeedsProxyReaderClient, DataId};
 use stellar_access::ownable::{self, enforce_owner_auth, Ownable};
 
@@ -28,6 +28,9 @@ impl DataFeedsSep40Proxy {
     pub fn add_feed(env: Env, asset: Asset, data_id: DataId) -> Result<(), Sep40ProxyError> {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
+        if asset == storage::get_base_asset(&env) {
+            return Err(Sep40ProxyError::AssetIsBase);
+        }
         assert_nonzero(&data_id)?;
         if storage::feed_for(&env, &asset).is_some() {
             return Err(Sep40ProxyError::AssetAlreadyMapped);
@@ -150,7 +153,7 @@ fn fetch_latest(env: &Env, data_id: &DataId) -> Option<PriceData> {
         Ok(Ok(round)) => round,
         _ => return None,
     };
-    let price = round.answer.to_i128().filter(|p| *p > 0)?;
+    let price = round.answer.to_i128()?;
     Some(PriceData {
         price,
         timestamp: round.timestamp,
@@ -172,3 +175,6 @@ impl Ownable for DataFeedsSep40Proxy {}
 
 #[contractimpl(contracttrait)]
 impl Upgradeable for DataFeedsSep40Proxy {}
+
+#[contractimpl(contracttrait)]
+impl TokenRecoverable for DataFeedsSep40Proxy {}

@@ -9,4 +9,5 @@ pub enum Sep40ProxyError {
     DataIdInUse = 202,
     InvalidDataId = 203,
     FeedUnreadable = 204,
+    AssetIsBase = 205,
 }

@@ -78,6 +78,7 @@ mod writes {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
         let keys = [
+            DataKey::Assets,
             DataKey::AssetToFeed(btc.clone()),
             DataKey::FeedToAsset(a.feed(1)),
         ];
@@ -114,11 +115,19 @@ mod writes {
     }
 
     #[test]
-    fn update_feed_extends_instance_ttl() {
+    fn update_feed_renews_instance_list_and_mapping_ttls() {
         let a = Adapter::deploy();
         let btc = a.map("BTC", 1, 100, 10);
         a.set_price(2, 100, 10);
+        let full = network_max_ttl(&a.env);
         assert_aged_then_restored(&a, |a| a.client().update_feed(&btc, &a.feed(2)));
+        for key in [
+            DataKey::Assets,
+            DataKey::AssetToFeed(btc),
+            DataKey::FeedToAsset(a.feed(2)),
+        ] {
+            assert_eq!(a.persistent_ttl(&key), full);
+        }
     }
 
     #[test]

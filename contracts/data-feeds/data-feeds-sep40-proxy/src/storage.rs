@@ -79,6 +79,7 @@ pub(crate) fn insert_feed(env: &Env, asset: &Asset, data_id: &DataId) {
 }
 
 pub(crate) fn replace_feed(env: &Env, asset: &Asset, old: &DataId, new: &DataId) {
+    extend_assets_ttl(env);
     if old == new {
         extend_persistent(env, &DataKey::AssetToFeed(asset.clone()));
         extend_persistent(env, &DataKey::FeedToAsset(new.clone()));
@@ -105,8 +106,12 @@ pub(crate) fn delete_feed(env: &Env, asset: &Asset, data_id: &DataId) {
         .remove(&DataKey::FeedToAsset(data_id.clone()));
 }
 
-pub(crate) fn extend_feed_ttl(env: &Env, asset: &Asset, data_id: &DataId) {
+pub(crate) fn extend_assets_ttl(env: &Env) {
     extend_persistent(env, &DataKey::Assets);
+}
+
+pub(crate) fn extend_feed_ttl(env: &Env, asset: &Asset, data_id: &DataId) {
+    extend_assets_ttl(env);
     extend_persistent(env, &DataKey::AssetToFeed(asset.clone()));
     extend_persistent(env, &DataKey::FeedToAsset(data_id.clone()));
 }
