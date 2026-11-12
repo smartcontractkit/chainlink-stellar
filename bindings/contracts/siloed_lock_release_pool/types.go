@@ -1136,35 +1136,6 @@ type ChainRemovedEvent struct {
 // ChainRemovedEventTopic is the event topic identifier.
 const ChainRemovedEventTopic = "pool_ChainRemoved"
 
-// ChainConfiguredEvent represents the ChainConfiguredEvent event.
-// Topics: [pool_ChainConfigured]
-type ChainConfiguredEvent struct {
-	RemoteChainSelector       uint64
-	RemotePoolAddresses       [][]byte
-	RemoteTokenAddress        []byte
-	OutboundRateLimiterConfig RateLimitConfig
-	InboundRateLimiterConfig  RateLimitConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// ChainConfiguredEventTopic is the event topic identifier.
-const ChainConfiguredEventTopic = "pool_ChainConfigured"
-
-// RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
-// Topics: [pool_RemotePoolAdded]
-type RemotePoolAddedEvent struct {
-	RemoteChainSelector uint64
-	RemotePoolAddress   []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RemotePoolAddedEventTopic is the event topic identifier.
-const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
-
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
 // Topics: [pool_FinalityConfigSet]
 type FinalityConfigSetEvent struct {
@@ -1176,32 +1147,6 @@ type FinalityConfigSetEvent struct {
 
 // FinalityConfigSetEventTopic is the event topic identifier.
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
-
-// LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
-// Topics: [pool_LockBoxConfigured]
-type LockBoxConfiguredEvent struct {
-	RemoteChainSelector uint64
-	LockBox             string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// LockBoxConfiguredEventTopic is the event topic identifier.
-const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
-
-// RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
-// Topics: [pool_RemotePoolRemoved]
-type RemotePoolRemovedEvent struct {
-	RemoteChainSelector uint64
-	RemotePoolAddress   []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RemotePoolRemovedEventTopic is the event topic identifier.
-const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
 
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
 // Topics: [pool_FtfInboundConsumed]
@@ -1215,44 +1160,6 @@ type FtfInboundConsumedEvent struct {
 
 // FtfInboundConsumedEventTopic is the event topic identifier.
 const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
-
-// TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
-// Topics: [pool_TokenFeeCfgDeleted]
-type TokenFeeCfgDeletedEvent struct {
-	RemoteChainSelector uint64
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// TokenFeeCfgDeletedEventTopic is the event topic identifier.
-const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
-
-// TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
-// Topics: [pool_TokenFeeCfgUpdated]
-type TokenFeeCfgUpdatedEvent struct {
-	RemoteChainSelector uint64
-	Config              TokenTransferFeeConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// TokenFeeCfgUpdatedEventTopic is the event topic identifier.
-const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
-
-// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
-// Topics: [pool_FtfOutboundConsumed]
-type FtfOutboundConsumedEvent struct {
-	RemoteChainSelector uint64
-	Amount              *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FtfOutboundConsumedEventTopic is the event topic identifier.
-const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
 // Topics: [pool_RateLimitConfigured]
@@ -1307,6 +1214,99 @@ type OutboundRateLimitConsumedEvent struct {
 
 // OutboundRateLimitConsumedEventTopic is the event topic identifier.
 const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
+
+// ChainConfiguredEvent represents the ChainConfiguredEvent event.
+// Topics: [pool_ChainConfigured]
+type ChainConfiguredEvent struct {
+	RemoteChainSelector       uint64
+	RemotePoolAddresses       [][]byte
+	RemoteTokenAddress        []byte
+	OutboundRateLimiterConfig RateLimitConfig
+	InboundRateLimiterConfig  RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainConfiguredEventTopic is the event topic identifier.
+const ChainConfiguredEventTopic = "pool_ChainConfigured"
+
+// RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
+// Topics: [pool_RemotePoolAdded]
+type RemotePoolAddedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolAddedEventTopic is the event topic identifier.
+const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
+
+// LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
+// Topics: [pool_LockBoxConfigured]
+type LockBoxConfiguredEvent struct {
+	RemoteChainSelector uint64
+	LockBox             string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// LockBoxConfiguredEventTopic is the event topic identifier.
+const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
+
+// RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
+// Topics: [pool_RemotePoolRemoved]
+type RemotePoolRemovedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolRemovedEventTopic is the event topic identifier.
+const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
+
+// TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
+// Topics: [pool_TokenFeeCfgDeleted]
+type TokenFeeCfgDeletedEvent struct {
+	RemoteChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgDeletedEventTopic is the event topic identifier.
+const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
+
+// TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
+// Topics: [pool_TokenFeeCfgUpdated]
+type TokenFeeCfgUpdatedEvent struct {
+	RemoteChainSelector uint64
+	Config              TokenTransferFeeConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgUpdatedEventTopic is the event topic identifier.
+const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
+
+// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
+// Topics: [pool_FtfOutboundConsumed]
+type FtfOutboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfOutboundConsumedEventTopic is the event topic identifier.
+const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).

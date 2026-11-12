@@ -97,12 +97,12 @@ strip_wasm_block() {
 # the network's wasm-upload resource limits).
 normalize_attributes() {
   perl -0 -pe '
-    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype(export = false)]/gs;
-    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror(export = false)]/gs;
+    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype]/gs;
+    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror]/gs;
     s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{
       my $args = $1;
       my ($topics) = $args =~ /\btopics\s*=\s*\[([^\]]*)\]/s;
-      "#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } (($topics // "") =~ /"([^"]*)"/g)) . "], export = false)]"
+      "#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } (($topics // "") =~ /"([^"]*)"/g)) . "])]"
     }ges;
   '
 }

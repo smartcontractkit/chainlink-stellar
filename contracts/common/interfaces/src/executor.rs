@@ -57,26 +57,26 @@ pub trait ExecutorInterface {
     ) -> Result<(), CCIPError>;
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> Result<u32, CCIPError>;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DynamicConfig {
     pub allowed_finality_config: u32,
     pub ccv_allowlist_enabled: bool,
     pub fee_aggregator: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RemoteChainConfig {
     pub enabled: bool,
     pub usd_cents_fee: u32,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RemoteChainConfigArgs {
     pub config: RemoteChainConfig,
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -209,46 +209,46 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["exec_CCVAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_CCVAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCVAddedEvent {
     pub ccv: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["exec_ConfigSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_ConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub dynamic_config: DynamicConfig,
 }
-#[soroban_sdk::contractevent(topics = ["exec_CCVRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_CCVRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCVRemovedEvent {
     pub ccv: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["exec_DestChainAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_DestChainAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainAddedEvent {
     pub dest_chain_selector: u64,
     pub config: RemoteChainConfig,
 }
-#[soroban_sdk::contractevent(topics = ["exec_DestChainRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_DestChainRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DestChainRemovedEvent {
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["exec_FeeTokenWithdrawn"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_FeeTokenWithdrawn"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeTokenWithdrawnEvent {
     pub receiver: soroban_sdk::Address,
     pub fee_token: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["exec_CCVAllowlistUpdated"], export = false)]
+#[soroban_sdk::contractevent(topics = ["exec_CCVAllowlistUpdated"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCVAllowlistUpdatedEvent {
     pub enabled: bool,
