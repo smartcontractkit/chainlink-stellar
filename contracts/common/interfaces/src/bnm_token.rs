@@ -69,7 +69,7 @@ pub trait BnmTokenInterface {
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum BnmError {
     AlreadyInitialized = 1,
@@ -84,7 +84,7 @@ pub enum BnmError {
     MinterNotFound = 10,
     CannotRemovePrimaryMinter = 11,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -217,25 +217,25 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["burn"], export = false)]
+#[soroban_sdk::contractevent(topics = ["burn"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BurnEvent {
     pub from: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["drip"], export = false)]
+#[soroban_sdk::contractevent(topics = ["drip"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DripEvent {
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["mint"], export = false)]
+#[soroban_sdk::contractevent(topics = ["mint"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MintEvent {
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["approve"], export = false)]
+#[soroban_sdk::contractevent(topics = ["approve"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ApproveEvent {
     pub from: soroban_sdk::Address,
@@ -243,55 +243,26 @@ pub struct ApproveEvent {
     pub amount: i128,
     pub expiration_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["set_admin"], export = false)]
+#[soroban_sdk::contractevent(topics = ["set_admin"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SetAdminEvent {
     pub admin: soroban_sdk::Address,
     pub new_admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["transfer"], export = false)]
+#[soroban_sdk::contractevent(topics = ["transfer"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TransferEvent {
     pub from: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["set_authorized"], export = false)]
+#[soroban_sdk::contractevent(topics = ["set_authorized"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SetAuthorizedEvent {
     pub id: soroban_sdk::Address,
     pub authorize: bool,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Upgraded {
-    pub new_wasm_hash: soroban_sdk::BytesN<32>,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
