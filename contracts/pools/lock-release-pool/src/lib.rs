@@ -290,7 +290,9 @@ impl LockReleaseTokenPoolContract {
             // `dest_token_amount` more than before — catches a lockbox that
             // returns a well-formed Ok without pulling, or pulls and then
             // forwards the tokens elsewhere.
-            if token_client.balance(&lock_box_addr).checked_sub(lockbox_balance_before)
+            if token_client
+                .balance(&lock_box_addr)
+                .checked_sub(lockbox_balance_before)
                 != Some(dest_token_amount)
             {
                 revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);

@@ -923,11 +923,21 @@ fn assert_lockbox_deposit_rejected(
 
 #[test]
 fn test_lock_or_burn_rejects_undecodable_lockbox_deposit() {
-    let (env, pool_client, _owner, token_address, token_client, token_admin_client, _registry, _stub, auth_onramp, lockbox_addr) =
-        setup_env_with_lockbox(
-            |env, _token| env.register(malicious_lockbox::GarbageDepositLockBox, ()),
-            false,
-        );
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry,
+        _stub,
+        auth_onramp,
+        lockbox_addr,
+    ) = setup_env_with_lockbox(
+        |env, _token| env.register(malicious_lockbox::GarbageDepositLockBox, ()),
+        false,
+    );
     assert_lockbox_deposit_rejected(
         &env,
         &pool_client,
@@ -941,11 +951,21 @@ fn test_lock_or_burn_rejects_undecodable_lockbox_deposit() {
 
 #[test]
 fn test_lock_or_burn_rejects_lying_ok_lockbox_deposit() {
-    let (env, pool_client, _owner, token_address, token_client, token_admin_client, _registry, _stub, auth_onramp, lockbox_addr) =
-        setup_env_with_lockbox(
-            |env, _token| env.register(malicious_lockbox::LyingOkLockBox, ()),
-            false,
-        );
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry,
+        _stub,
+        auth_onramp,
+        lockbox_addr,
+    ) = setup_env_with_lockbox(
+        |env, _token| env.register(malicious_lockbox::LyingOkLockBox, ()),
+        false,
+    );
     assert_lockbox_deposit_rejected(
         &env,
         &pool_client,
@@ -959,17 +979,27 @@ fn test_lock_or_burn_rejects_lying_ok_lockbox_deposit() {
 
 #[test]
 fn test_lock_or_burn_rejects_pull_and_forward_lockbox() {
-    let (env, pool_client, _owner, token_address, token_client, token_admin_client, _registry, _stub, auth_onramp, lockbox_addr) =
-        setup_env_with_lockbox(
-            |env, token| {
-                let thief_addr = Address::generate(env);
-                let id = env.register(malicious_lockbox::PullAndForwardLockBox, ());
-                let client = malicious_lockbox::PullAndForwardLockBoxClient::new(env, &id);
-                client.initialize(token, &thief_addr);
-                id
-            },
-            false,
-        );
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry,
+        _stub,
+        auth_onramp,
+        lockbox_addr,
+    ) = setup_env_with_lockbox(
+        |env, token| {
+            let thief_addr = Address::generate(env);
+            let id = env.register(malicious_lockbox::PullAndForwardLockBox, ());
+            let client = malicious_lockbox::PullAndForwardLockBoxClient::new(env, &id);
+            client.initialize(token, &thief_addr);
+            id
+        },
+        false,
+    );
     assert_lockbox_deposit_rejected(
         &env,
         &pool_client,
@@ -986,19 +1016,29 @@ fn test_lock_or_burn_rejects_pull_and_forward_lockbox() {
 
 #[test]
 fn test_lock_or_burn_rejects_lockbox_typed_error() {
-    let (env, pool_client, _owner, token_address, token_client, token_admin_client, _registry, _stub, auth_onramp, lockbox_addr) =
-        setup_env_with_lockbox(
-            |env, token| {
-                // Real lockbox, but the pool is NOT in its allowed callers, so
-                // deposit returns a decodable typed Err.
-                let id = env.register(TokenLockBox, ());
-                let client = TokenLockBoxClient::new(env, &id);
-                let lockbox_owner = Address::generate(env);
-                client.initialize(&lockbox_owner, token);
-                id
-            },
-            false,
-        );
+    let (
+        env,
+        pool_client,
+        _owner,
+        token_address,
+        token_client,
+        token_admin_client,
+        _registry,
+        _stub,
+        auth_onramp,
+        lockbox_addr,
+    ) = setup_env_with_lockbox(
+        |env, token| {
+            // Real lockbox, but the pool is NOT in its allowed callers, so
+            // deposit returns a decodable typed Err.
+            let id = env.register(TokenLockBox, ());
+            let client = TokenLockBoxClient::new(env, &id);
+            let lockbox_owner = Address::generate(env);
+            client.initialize(&lockbox_owner, token);
+            id
+        },
+        false,
+    );
     assert_lockbox_deposit_rejected(
         &env,
         &pool_client,
