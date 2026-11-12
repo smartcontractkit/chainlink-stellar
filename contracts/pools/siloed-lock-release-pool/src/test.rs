@@ -56,6 +56,93 @@ mod inbound_release_stub {
     }
 }
 
+/// Malicious/faulty lockbox stand-ins for the deposit-validation tests. Each
+/// passes `configure_lock_boxes` validation (`is_token_supported` → true) but
+/// misbehaves in `deposit`: returning an undecodable value, a well-formed Ok
+/// without pulling tokens, or pulling and immediately forwarding to a thief.
+mod malicious_lockbox {
+    use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+
+    use common_error::CCIPError;
+
+    #[contract]
+    pub struct GarbageDepositLockBox;
+
+    #[contractimpl]
+    impl GarbageDepositLockBox {
+        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
+            true
+        }
+
+        // Successful but non-decodable return: try_deposit sees Ok(Err(_)).
+        pub fn deposit(_env: Env, _caller: Address, _amount: i128) -> u32 {
+            5
+        }
+    }
+
+    #[contract]
+    pub struct LyingOkLockBox;
+
+    #[contractimpl]
+    impl LyingOkLockBox {
+        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
+            true
+        }
+
+        // Well-formed Ok, but the tokens are never pulled from the pool.
+        pub fn deposit(_env: Env, _caller: Address, _amount: i128) -> Result<(), CCIPError> {
+            Ok(())
+        }
+    }
+
+    #[contract]
+    pub struct PullAndForwardLockBox;
+
+    #[contractimpl]
+    impl PullAndForwardLockBox {
+        // Store the escrowed token and the thief address at registration time.
+        pub fn initialize(env: Env, token: Address, thief: Address) {
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "token"), &token);
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "thief"), &thief);
+        }
+
+        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
+            true
+        }
+
+        pub fn thief(env: Env) -> Address {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "thief"))
+                .unwrap()
+        }
+
+        // Pulls like an honest lockbox, then forwards everything to the thief:
+        // the pool-side balance looks right but the lockbox delta is zero.
+        pub fn deposit(env: Env, caller: Address, amount: i128) -> Result<(), CCIPError> {
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "token"))
+                .unwrap();
+            let thief: Address = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "thief"))
+                .unwrap();
+            let me = env.current_contract_address();
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer_from(&me, &caller, &me, &amount);
+            token_client.transfer(&me, &thief, &amount);
+            Ok(())
+        }
+    }
+}
+
 fn register_onramp_for_chain(
     env: &Env,
     registry_client: &RampRegistryContractClient,
@@ -467,6 +554,83 @@ fn lock_or_burn_leaves_no_token_allowance_on_lockbox() {
     let pool_addr = t.pool_client.address.clone();
     let remaining = t.tc.allowance(&pool_addr, &t.lockbox_client.address);
     assert_eq!(remaining, 0);
+}
+
+/// Lockbox deposit validation (audit: try_deposit decode-failure treated as
+/// success). Common body for the four failure-shape tests: swap the
+/// REMOTE_CHAIN lockbox for a misbehaving one, then require a typed
+/// TokenHandlingError whose frame-rollback restores the sender's balance.
+fn assert_lockbox_deposit_rejected(t: &TestEnv<'_>, lockbox_addr: &Address) {
+    let sender = Address::generate(&t.env);
+    let lock_amount: i128 = 1_000_000_000;
+    t.sac.mint(&sender, &lock_amount);
+
+    let input = LockOrBurnIn {
+        receiver: Bytes::from_slice(&t.env, &[0x01; 20]),
+        remote_chain_selector: REMOTE_CHAIN,
+        original_sender: sender.clone(),
+        amount: lock_amount,
+        local_token: t.token_addr.clone(),
+    };
+    let r = t
+        .pool_client
+        .try_lock_or_burn(&t.auth_onramp, &input, &0, &Bytes::new(&t.env));
+    assert_eq!(r, Err(Ok(CCIPError::TokenHandlingError)));
+    // The failed pool frame rolls back its writes, so nothing moved.
+    assert_eq!(t.tc.balance(&sender), lock_amount);
+    assert_eq!(t.tc.balance(&t.pool_client.address), 0);
+    assert_eq!(t.tc.balance(lockbox_addr), 0);
+}
+
+fn swap_lockbox(t: &TestEnv<'_>, lockbox: &Address) {
+    t.pool_client.configure_lock_boxes(&vec![
+        &t.env,
+        LockBoxEntry {
+            remote_chain_selector: REMOTE_CHAIN,
+            lock_box: lockbox.clone(),
+        },
+    ]);
+}
+
+#[test]
+fn lock_or_burn_rejects_undecodable_lockbox_deposit() {
+    let t = setup();
+    let mock = t.env.register(malicious_lockbox::GarbageDepositLockBox, ());
+    swap_lockbox(&t, &mock);
+    assert_lockbox_deposit_rejected(&t, &mock);
+}
+
+#[test]
+fn lock_or_burn_rejects_lying_ok_lockbox_deposit() {
+    let t = setup();
+    let mock = t.env.register(malicious_lockbox::LyingOkLockBox, ());
+    swap_lockbox(&t, &mock);
+    assert_lockbox_deposit_rejected(&t, &mock);
+}
+
+#[test]
+fn lock_or_burn_rejects_pull_and_forward_lockbox() {
+    let t = setup();
+    let thief = Address::generate(&t.env);
+    let mock = t.env.register(malicious_lockbox::PullAndForwardLockBox, ());
+    let client = malicious_lockbox::PullAndForwardLockBoxClient::new(&t.env, &mock);
+    client.initialize(&t.token_addr, &thief);
+    swap_lockbox(&t, &mock);
+    assert_lockbox_deposit_rejected(&t, &mock);
+    // The forwarded tokens were rolled back with the failed pool frame too.
+    assert_eq!(t.tc.balance(&thief), 0);
+}
+
+#[test]
+fn lock_or_burn_rejects_lockbox_typed_error() {
+    let t = setup();
+    // Real lockbox, but the pool is NOT in its allowed callers, so deposit
+    // returns a decodable typed Err.
+    let lockbox = t.env.register(TokenLockBox, ());
+    let client = TokenLockBoxClient::new(&t.env, &lockbox);
+    client.initialize(&t.owner, &t.token_addr);
+    swap_lockbox(&t, &lockbox);
+    assert_lockbox_deposit_rejected(&t, &lockbox);
 }
 
 #[test]

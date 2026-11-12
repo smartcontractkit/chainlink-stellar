@@ -273,9 +273,25 @@ impl LockReleaseTokenPoolContract {
                 &dest_token_amount,
                 &allowance_exp,
             );
-            if lb_client
-                .try_deposit(&pool_address, &dest_token_amount)
-                .is_err()
+            // SECURITY: accept only the exact Ok(Ok(())) arm from try_deposit;
+            // a decode failure (Ok(Err(_))), typed callee error (Err(Ok(_))),
+            // or host trap (Err(Err(_))) all fail the deposit (EVM
+            // revert-propagation parity).
+            let lockbox_balance_before = token_client.balance(&lock_box_addr);
+            if !matches!(
+                lb_client.try_deposit(&pool_address, &dest_token_amount),
+                Ok(Ok(()))
+            ) {
+                revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
+                return Err(CCIPError::TokenHandlingError);
+            }
+            // Escrow-landing verification (OffRamp delivery-check parity on
+            // the source side): the lockbox must hold exactly
+            // `dest_token_amount` more than before — catches a lockbox that
+            // returns a well-formed Ok without pulling, or pulls and then
+            // forwards the tokens elsewhere.
+            if token_client.balance(&lock_box_addr).checked_sub(lockbox_balance_before)
+                != Some(dest_token_amount)
             {
                 revoke_pool_allowance_to_lockbox(&env, &pool_token, &pool_address, &lock_box_addr);
                 return Err(CCIPError::TokenHandlingError);
