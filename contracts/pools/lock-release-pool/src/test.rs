@@ -1156,7 +1156,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     let stub_id = env.register(inbound_release_stub::PoolInboundReleaseStub, ());
     let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
 
-    let local_decimals: u32 = 6;
+    let local_decimals: u32 = 7;
     let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
     // The lockbox is fixed at pool `initialize` (EVM `i_lockBox`): stand it up
     // first, then authorize the pool as its sole caller.
@@ -1182,17 +1182,17 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let lockbox_client = wire_lockbox(&env, &pool_client);
 
-    let expected_local: i128 = 1_000_000;
+    let expected_local: i128 = 1_000_000_000;
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &expected_local);
 
-    let remote_decimals: u32 = 9;
+    let remote_decimals: u32 = 10;
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
         original_sender: Bytes::from_slice(&env, &[4u8; 20]),
         remote_chain_selector: remote_chain,
         receiver: receiver.clone(),
-        amount: 1_000_000_000,
+        amount: 1_000_000_000_000,
         local_token: token_address.clone(),
         source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: encode_local_decimals(&env, remote_decimals).unwrap(),
@@ -1228,6 +1228,37 @@ fn test_initialize_rejects_decimals_above_uint8() {
         &owner,
         &token_address,
         &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+        &lock_box,
+    );
+    assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
+}
+
+#[test]
+fn test_initialize_rejects_mismatched_token_decimals() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let pool_id = env.register(LockReleaseTokenPoolContract, ());
+    let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
+    let owner = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_address = token_contract.address();
+    let router = Address::generate(&env);
+    let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
+
+    // SAC tokens are 7 decimals; any other value is rejected against the
+    // token's on-chain decimals (EVM InvalidDecimalArgs). The lockbox arg is
+    // never reached — decimals validation runs first.
+    let lock_box = Address::generate(&env);
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &6u32,
         &router,
         &ramp_registry,
         &rmn_proxy,
@@ -2866,20 +2897,36 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     panic!("expected Upgraded event with new_wasm_hash from contract");
 }
 
-/// Minimal initialized pool: `initialize` only stores its address args — the
-/// one exception is the lockbox, which it cross-calls (`is_token_supported`;
-/// EVM `i_lockBox` constructor validation). The lockbox itself never calls the
-/// token (it just compares its stored token), so a real `TokenLockBox`
-/// registered for a dummy token satisfies the check while every other arg
-/// stays a dummy `Address::generate`.
+/// Token stub exposing only `decimals` — enough for `initialize`'s SEP-41
+/// decimals validation in fixtures that never move tokens.
+mod decimals_only_token {
+    use soroban_sdk::{contract, contractimpl, Env};
+
+    #[contract]
+    pub struct DecimalsOnlyToken;
+
+    #[contractimpl]
+    impl DecimalsOnlyToken {
+        pub fn decimals(_env: Env) -> u32 {
+            18
+        }
+    }
+}
+
+/// Minimal initialized pool: `initialize` stores its address args with two
+/// cross-calls — the lockbox (`is_token_supported`; EVM `i_lockBox` constructor
+/// validation) and the token's `decimals()` (SEP-41 validation), so the token
+/// must be a real contract; a decimals-only stub suffices since the fixture
+/// never moves tokens. The lockbox itself never calls the token (it just
+/// compares its stored token). Every other arg stays a dummy
+/// `Address::generate`.
 fn setup_pool_for_upgrade(env: &Env) -> LockReleaseTokenPoolContractClient<'static> {
     let contract_id = env.register(LockReleaseTokenPoolContract, ());
     let client = LockReleaseTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
-    // The lockbox must hold the SAME token the pool registers — each
-    // `Address::generate` call yields a fresh address, so generating it once
-    // and sharing it is what makes `is_token_supported(token)` true.
-    let token = Address::generate(env);
+    // The lockbox must hold the SAME token the pool registers — the shared
+    // stub address is what makes `is_token_supported(token)` true.
+    let token = env.register(decimals_only_token::DecimalsOnlyToken, ());
     let lockbox_id = env.register(TokenLockBox, ());
     let lockbox = TokenLockBoxClient::new(env, &lockbox_id);
     lockbox.initialize(&owner, &token);

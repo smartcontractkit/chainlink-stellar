@@ -14,6 +14,7 @@ import (
 	lockreleasepoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/lock_release_pool"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	bnmbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/bnm_token"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	tokenlockboxbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_lock_box"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
@@ -28,7 +29,7 @@ import (
 // pool's initialize fixes its lockbox (EVM `i_lockBox` constructor parity) and
 // cross-calls the lockbox's is_token_supported, so the canonical-pool subtests
 // need a real lockbox; the lockbox never calls the token (it only compares its
-// stored address), so a mock tokenID suffices.
+// stored address).
 func deployTestLockBox(ctx context.Context, t *testing.T, deployer *deployment.Deployer, projectRoot, deployerAddr, saltName, tokenID string) string {
 	t.Helper()
 	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "pools_token_lock_box.wasm")
@@ -40,6 +41,27 @@ func deployTestLockBox(ctx context.Context, t *testing.T, deployer *deployment.D
 	lockBoxClient := tokenlockboxbindings.NewTokenLockBoxClient(deployer, contractID)
 	if err := lockBoxClient.Initialize(ctx, deployerAddr, tokenID); err != nil {
 		t.Fatalf("Initialize TokenLockBox (%s): %v", saltName, err)
+	}
+	return contractID
+}
+
+// deployTestBnmToken deploys and initializes a real BnM token (7 decimals).
+// The pool's initialize cross-calls the token's `decimals()` (SEP-41
+// validation, EVM `InvalidDecimalArgs` parity), so pool-initializing subtests
+// need a real token contract — a mock tokenID traps with MissingValue. The
+// router, ramp-registry and RMN-proxy args are only stored at init, so they
+// can stay mocks.
+func deployTestBnmToken(ctx context.Context, t *testing.T, deployer *deployment.Deployer, projectRoot, deployerAddr, saltName string) string {
+	t.Helper()
+	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "bnm_token.wasm")
+	salt := deployment.GenerateDeterministicSalt(deployerAddr, saltName)
+	contractID, err := deployer.DeployContract(ctx, wasmPath, salt)
+	if err != nil {
+		t.Fatalf("Deploy BnmToken (%s): %v", saltName, err)
+	}
+	tokenClient := bnmbindings.NewBnmTokenClient(deployer, contractID)
+	if err := tokenClient.Initialize(ctx, deployerAddr, bnmTokenName, bnmTokenSymbol, bnmTokenDecimals); err != nil {
+		t.Fatalf("Initialize BnmToken (%s): %v", saltName, err)
 	}
 	return contractID
 }
@@ -64,19 +86,18 @@ func TestTokenPool(t *testing.T) {
 		}
 		t.Logf("Pool deployed at: %s", contractID)
 
-		mockToken := helpers.GenerateMockContractID(t, deployerAddr, "pool-test-token")
+		tokenID := deployTestBnmToken(ctx, t, deployer, projectRoot, deployerAddr, "pool-test-token")
 		mockRouter := helpers.GenerateMockContractID(t, deployerAddr, "pool-test-router")
 		mockRampRegistry := helpers.GenerateMockContractID(t, deployerAddr, "pool-test-ramp-registry")
 		mockRmnProxy := helpers.GenerateMockContractID(t, deployerAddr, "pool-test-rmn-proxy")
 		client := tokenpoolbindings.NewTokenPoolClient(deployer, contractID)
 
 		// The pool's initialize fixes its lockbox (EVM `i_lockBox` constructor
-		// parity): deploy a real lockbox for the token first — the lockbox never
-		// calls the token (it just compares its stored address, so the mock token
-		// suffices) — and pass its address into the pool's initialize.
-		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "test-lock-release-pool-lockbox", mockToken)
+		// parity): deploy a real lockbox for the token first and pass its
+		// address into the pool's initialize.
+		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "test-lock-release-pool-lockbox", tokenID)
 		lrClient := lockreleasepoolbindings.NewLockReleasePoolClient(deployer, contractID)
-		if err := lrClient.Initialize(ctx, deployerAddr, mockToken, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
+		if err := lrClient.Initialize(ctx, deployerAddr, tokenID, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
 			t.Fatalf("Initialize pool: %v", err)
 		}
 
@@ -84,11 +105,11 @@ func TestTokenPool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetToken: %v", err)
 		}
-		if gotToken != mockToken {
-			t.Fatalf("token mismatch: want %s, got %s", mockToken, gotToken)
+		if gotToken != tokenID {
+			t.Fatalf("token mismatch: want %s, got %s", tokenID, gotToken)
 		}
 
-		supported, err := client.IsSupportedToken(ctx, mockToken)
+		supported, err := client.IsSupportedToken(ctx, tokenID)
 		if err != nil {
 			t.Fatalf("IsSupportedToken: %v", err)
 		}
@@ -106,18 +127,18 @@ func TestTokenPool(t *testing.T) {
 			t.Fatalf("Deploy pool: %v", err)
 		}
 
-		mockToken := helpers.GenerateMockContractID(t, deployerAddr, "pool-chain-test-token")
+		tokenID := deployTestBnmToken(ctx, t, deployer, projectRoot, deployerAddr, "pool-chain-test-token")
 		mockRouter := helpers.GenerateMockContractID(t, deployerAddr, "pool-chain-test-router")
 		mockRampRegistry := helpers.GenerateMockContractID(t, deployerAddr, "pool-chain-test-ramp-registry")
 		mockRmnProxy := helpers.GenerateMockContractID(t, deployerAddr, "pool-chain-test-rmn-proxy")
 		client := tokenpoolbindings.NewTokenPoolClient(deployer, contractID)
 
 		// Same lockbox-first flow as the deploy subtest above (EVM `i_lockBox`
-		// constructor parity): a real lockbox initialized for the mock token,
+		// constructor parity): a real lockbox initialized for the token,
 		// passed into the pool's initialize.
-		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "test-pool-chain-updates-lockbox", mockToken)
+		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "test-pool-chain-updates-lockbox", tokenID)
 		lrClient := lockreleasepoolbindings.NewLockReleasePoolClient(deployer, contractID)
-		if err := lrClient.Initialize(ctx, deployerAddr, mockToken, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
+		if err := lrClient.Initialize(ctx, deployerAddr, tokenID, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
 			t.Fatalf("Initialize pool: %v", err)
 		}
 
@@ -155,9 +176,9 @@ func TestTokenPool(t *testing.T) {
 		stack := deployFullStack(ctx, t, projectRoot, deployer, deployerAddr, destChain, outboundSalt, false)
 
 		t.Run("registry maps token to pool", func(t *testing.T) {
-			mockToken := helpers.GenerateMockContractID(t, deployerAddr, outboundSalt+"-mock-token")
+			tokenID := deployTestBnmToken(ctx, t, deployer, projectRoot, deployerAddr, outboundSalt+"-token")
 			// Suffix avoids same deployTokenPool WASM salt as SAC pool below (lock-release-pool → ExistingValue).
-			stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt+"-mock-pool", mockToken)
+			stack.deployTokenPool(ctx, t, projectRoot, deployer, deployerAddr, outboundSalt+"-mock-pool", tokenID)
 
 			if stack.TokenAdminRegistryID == "" {
 				t.Fatal("TokenAdminRegistryID not set after deployTokenPool")
@@ -166,7 +187,7 @@ func TestTokenPool(t *testing.T) {
 				t.Fatal("TokenPoolID not set after deployTokenPool")
 			}
 
-			pool, err := stack.TokenAdminRegistryClient.GetPool(ctx, mockToken)
+			pool, err := stack.TokenAdminRegistryClient.GetPool(ctx, tokenID)
 			if err != nil {
 				t.Fatalf("GetPool: %v", err)
 			}

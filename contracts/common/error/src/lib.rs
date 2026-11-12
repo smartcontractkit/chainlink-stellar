@@ -187,7 +187,7 @@ pub enum CCIPError {
     InvalidRemoteChainDecimals = 307,
     /// Local amount conversion overflow (EVM `OverflowDetected` / rate math).
     DecimalAmountOverflow = 308,
-    /// Pool `token_decimals` init argument out of range (must fit `uint8` / EVM `i_tokenDecimals`).
+    /// Pool `token_decimals` init argument out of range or mismatching the token's SEP-41 `decimals()` (EVM `InvalidDecimalArgs`).
     InvalidPoolTokenDecimals = 309,
     /// Token bucket current tokens exceed capacity (EVM `BucketOverfilled`).
     BucketOverfilled = 310,

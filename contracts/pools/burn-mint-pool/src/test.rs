@@ -1074,7 +1074,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
     let (token_address, token_client) = register_bnm_token(&env, &pool_id);
 
-    let local_decimals: u32 = 6;
+    let local_decimals: u32 = 7;
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
@@ -1092,9 +1092,9 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     );
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
 
-    let remote_decimals: u32 = 9;
-    let source_amount: i128 = 1_000_000_000; // 1e9 in 9dp
-    let expected_local: i128 = 1_000_000; // 1e6 in 6dp
+    let remote_decimals: u32 = 10;
+    let source_amount: i128 = 1_000_000_000_000; // 1e12 in 10dp
+    let expected_local: i128 = 1_000_000_000; // 1e9 in 7dp
 
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
@@ -1131,7 +1131,7 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
     let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
     let (token_address, token_client) = register_bnm_token(&env, &pool_id);
 
-    let local_decimals: u32 = 9;
+    let local_decimals: u32 = 7;
     let (router, rmn_proxy, _rmn_remote) = setup_router_with_rmn(&env, &owner);
     pool_client.initialize(
         &owner,
@@ -1149,7 +1149,7 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
     );
     register_offramp_for_chain(&env, &registry_client, &stub_client, remote_chain);
 
-    let remote_decimals: u32 = 6;
+    let remote_decimals: u32 = 4;
     let source_amount: i128 = 1_000_000;
     let expected_local: i128 = 1_000_000_000;
 
@@ -1427,6 +1427,33 @@ fn test_initialize_rejects_decimals_above_uint8() {
         &owner,
         &token_address,
         &256u32,
+        &router,
+        &ramp_registry,
+        &rmn_proxy,
+    );
+    assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
+}
+
+#[test]
+fn test_initialize_rejects_mismatched_token_decimals() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let pool_id = env.register(BurnMintTokenPoolContract, ());
+    let pool_client = BurnMintTokenPoolContractClient::new(&env, &pool_id);
+    let owner = Address::generate(&env);
+    let (token_address, _token_client) = register_bnm_token(&env, &pool_id);
+
+    let router = Address::generate(&env);
+    let ramp_registry = Address::generate(&env);
+    let rmn_proxy = Address::generate(&env);
+
+    // `register_bnm_token` creates a 7-decimal token; any other value is
+    // rejected against the token's on-chain decimals (EVM InvalidDecimalArgs).
+    let r = pool_client.try_initialize(
+        &owner,
+        &token_address,
+        &6u32,
         &router,
         &ramp_registry,
         &rmn_proxy,
@@ -4307,16 +4334,34 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     panic!("expected Upgraded event with new_wasm_hash from contract");
 }
 
-/// Minimal initialized pool: `initialize` only stores its address args (it does
-/// not call into the token/router/ramp/registry/rmn at init), so dummy
-/// `Address::generate` values suffice for an upgrade test.
+/// Token stub exposing only `decimals` — enough for `initialize`'s SEP-41
+/// decimals validation in fixtures that never move tokens.
+mod decimals_only_token {
+    use soroban_sdk::{contract, contractimpl, Env};
+
+    #[contract]
+    pub struct DecimalsOnlyToken;
+
+    #[contractimpl]
+    impl DecimalsOnlyToken {
+        pub fn decimals(_env: Env) -> u32 {
+            18
+        }
+    }
+}
+
+/// Minimal initialized pool: `initialize` stores its address args and
+/// cross-calls the token's `decimals()` (SEP-41 validation), so the token must
+/// be a real contract — a decimals-only stub suffices since the fixture never
+/// moves tokens. Other args stay dummy `Address::generate`.
 fn setup_pool_for_upgrade(env: &Env) -> BurnMintTokenPoolContractClient<'static> {
     let contract_id = env.register(BurnMintTokenPoolContract, ());
     let client = BurnMintTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
+    let token = env.register(decimals_only_token::DecimalsOnlyToken, ());
     client.initialize(
         &owner,
-        &Address::generate(env),
+        &token,
         &18,
         &Address::generate(env),
         &Address::generate(env),

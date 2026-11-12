@@ -259,19 +259,21 @@ func TestAdvancedPoolHooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Deploy pool: %v", err)
 		}
-		mockToken := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-token")
+		tokenID := deployTestBnmToken(ctx, t, deployer, projectRoot, deployerAddr, "aph-pool-token")
 		mockRouter := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-router")
 		mockRampRegistry := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-ramp-registry")
 		mockRmnProxy := helpers.GenerateMockContractID(t, deployerAddr, "aph-pool-rmn-proxy")
 		// The lock-release pool's initialize fixes its lockbox (EVM `i_lockBox`
-		// constructor parity) and cross-calls it, so initialize through the
-		// lock_release_pool binding (7 args, incl. lockBoxID) — not the generic
-		// token_pool binding (6 args, which the WASM rejects with
-		// Func(MismatchingParameterLen)). Same pattern as TestTokenPool: the
-		// lockbox never calls the token, so a mock tokenID suffices.
-		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "aph-wired-pool-lockbox", mockToken)
+		// constructor parity) and cross-calls both the lockbox
+		// (is_token_supported) and the token (`decimals()`, SEP-41 validation),
+		// so initialize through the lock_release_pool binding (7 args, incl.
+		// lockBoxID) — not the generic token_pool binding (6 args, which the
+		// WASM rejects with Func(MismatchingParameterLen)). Same pattern as
+		// TestTokenPool: both lockbox and token are real; router/registry/rmn
+		// stay mocks.
+		lockBoxID := deployTestLockBox(ctx, t, deployer, projectRoot, deployerAddr, "aph-wired-pool-lockbox", tokenID)
 		lrPool := lockreleasepoolbindings.NewLockReleasePoolClient(deployer, poolID)
-		if err := lrPool.Initialize(ctx, deployerAddr, mockToken, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
+		if err := lrPool.Initialize(ctx, deployerAddr, tokenID, 7, mockRouter, mockRampRegistry, mockRmnProxy, lockBoxID); err != nil {
 			t.Fatalf("Initialize pool: %v", err)
 		}
 		pool := tokenpoolbindings.NewTokenPoolClient(deployer, poolID)
@@ -299,7 +301,7 @@ func TestAdvancedPoolHooks(t *testing.T) {
 
 		// The pool's get_required_ccvs must delegate to the hooks and return the
 		// issuer-configured CCV (not a mock), proving the wiring end-to-end.
-		v, err := pool.GetRequiredCcvs(ctx, mockToken, aphRemoteChain, big.NewInt(100), 0, nil, poolOutbound())
+		v, err := pool.GetRequiredCcvs(ctx, tokenID, aphRemoteChain, big.NewInt(100), 0, nil, poolOutbound())
 		if err != nil {
 			t.Fatalf("pool.GetRequiredCcvs: %v", err)
 		}
