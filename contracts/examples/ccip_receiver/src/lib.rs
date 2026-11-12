@@ -16,9 +16,9 @@
 //! - **`get_ccvs_and_finality_config`**: EVM-shaped view combining CCV lists + `allowed_finality_config` for a selector.
 //!   The Stellar OffRamp consults this for **non-token-only** messages (via `try_invoke_contract`, mirroring the EVM
 //!   static-call) to obtain required/optional CCVs + allowed finality, forwarding the message `sender` as the second
-//!   arg (EVM `bytes sender`). A receiver that is not a Wasm contract, or whose consult fails (missing symbol / trap /
-//!   typed error), is rejected up front (`Failure`, retryable) — there is no defaults fallback (Stellar has a single
-//!   receiver version and already rejects non-Wasm receivers at delivery).
+//!   arg (EVM `bytes sender`). A Wasm receiver whose consult fails (missing symbol / trap / typed error) is rejected
+//!   up front (`Failure`, retryable). A non-Wasm receiver is token-only and is never consulted; there is no defaults
+//!   fallback for a failing consult.
 //! - **`get_remote_chain_selectors`**: Bounded enumeration of selectors configured via `enable_remote_chain` (EVM `getRemoteChainSelectors`).
 
 mod events;

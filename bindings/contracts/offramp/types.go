@@ -522,7 +522,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

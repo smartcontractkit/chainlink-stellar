@@ -79,7 +79,7 @@ var ProxyReadErrorMessage = map[int]string{
 }
 
 // CacheSet represents the CacheSet event.
-// Topics: [CacheSet map]
+// Topics: [CacheSet]
 type CacheSet struct {
 	OldCache string
 	NewCache string
@@ -92,7 +92,7 @@ type CacheSet struct {
 const CacheSetTopic = "CacheSet"
 
 // MinDecimalsSet represents the MinDecimalsSet event.
-// Topics: [MinDecimalsSet map]
+// Topics: [MinDecimalsSet]
 type MinDecimalsSet struct {
 	DataId [32]byte
 	Min    uint32
@@ -105,7 +105,7 @@ type MinDecimalsSet struct {
 const MinDecimalsSetTopic = "MinDecimalsSet"
 
 // Upgraded represents the Upgraded event.
-// Topics: [Upgraded map]
+// Topics: [Upgraded]
 type Upgraded struct {
 	NewWasmHash [32]byte
 	// Event metadata
@@ -117,7 +117,7 @@ type Upgraded struct {
 const UpgradedTopic = "Upgraded"
 
 // TokenRecovered represents the TokenRecovered event.
-// Topics: [TokenRecovered map]
+// Topics: [TokenRecovered]
 type TokenRecovered struct {
 	Token  string
 	To     string
@@ -131,7 +131,7 @@ type TokenRecovered struct {
 const TokenRecoveredTopic = "TokenRecovered"
 
 // OwnershipTransfer represents the OwnershipTransfer event.
-// Topics: [ownership_transfer map]
+// Topics: [ownership_transfer]
 type OwnershipTransfer struct {
 	OldOwner        string
 	NewOwner        string
@@ -145,7 +145,7 @@ type OwnershipTransfer struct {
 const OwnershipTransferTopic = "ownership_transfer"
 
 // OwnershipRenounced represents the OwnershipRenounced event.
-// Topics: [ownership_renounced map]
+// Topics: [ownership_renounced]
 type OwnershipRenounced struct {
 	OldOwner string
 	// Event metadata
@@ -157,7 +157,7 @@ type OwnershipRenounced struct {
 const OwnershipRenouncedTopic = "ownership_renounced"
 
 // OwnershipTransferCompleted represents the OwnershipTransferCompleted event.
-// Topics: [ownership_transfer_completed map]
+// Topics: [ownership_transfer_completed]
 type OwnershipTransferCompleted struct {
 	NewOwner string
 	// Event metadata

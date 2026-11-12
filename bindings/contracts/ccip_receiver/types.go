@@ -671,7 +671,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // CcipCcvConfigSetEvent represents the CcipCcvConfigSetEvent event.
-// Topics: [example_CcvCfg map]
+// Topics: [example_CcvCfg]
 type CcipCcvConfigSetEvent struct {
 	SourceChainSelector uint64
 	RequiredLen         uint32
@@ -686,7 +686,7 @@ type CcipCcvConfigSetEvent struct {
 const CcipCcvConfigSetEventTopic = "example_CcvCfg"
 
 // CcipMessageReceivedEvent represents the CcipMessageReceivedEvent event.
-// Topics: [example_CcipMessageReceived map]
+// Topics: [example_CcipMessageReceived]
 type CcipMessageReceivedEvent struct {
 	MessageId           [32]byte
 	SourceChainSelector uint64
@@ -702,7 +702,7 @@ type CcipMessageReceivedEvent struct {
 const CcipMessageReceivedEventTopic = "example_CcipMessageReceived"
 
 // CcipRemoteChainConfiguredEvent represents the CcipRemoteChainConfiguredEvent event.
-// Topics: [example_RemChCfg map]
+// Topics: [example_RemChCfg]
 type CcipRemoteChainConfiguredEvent struct {
 	DestChainSelector     uint64
 	ExtraArgsLen          uint32
@@ -716,7 +716,7 @@ type CcipRemoteChainConfiguredEvent struct {
 const CcipRemoteChainConfiguredEventTopic = "example_RemChCfg"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

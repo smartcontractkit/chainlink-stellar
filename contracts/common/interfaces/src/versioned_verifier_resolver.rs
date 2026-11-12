@@ -6,17 +6,13 @@ pub trait VersionedVerifierResolverInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         fee_aggregator: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_fee_aggregator(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn set_fee_aggregator(
         env: soroban_sdk::Env,
@@ -30,7 +26,6 @@ pub trait VersionedVerifierResolverInterface {
         env: soroban_sdk::Env,
         fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn apply_inbound_impl_updates(
         env: soroban_sdk::Env,
         implementations: soroban_sdk::Vec<InboundImplementationUpdate>,
@@ -55,31 +50,31 @@ pub trait VersionedVerifierResolverInterface {
         env: soroban_sdk::Env,
     ) -> soroban_sdk::Vec<OutboundImplementationArgs>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplementationArgs {
     pub verifier: soroban_sdk::Address,
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplementationArgs {
     pub dest_chain_selector: u64,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplementationUpdate {
     pub verifier: Option<soroban_sdk::Address>,
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplementationUpdate {
     pub dest_chain_selector: u64,
     pub verifier: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -212,34 +207,34 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["vvr_InboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplSetEvent {
     pub version: soroban_sdk::BytesN<4>,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplSetEvent {
     pub dest_chain_selector: u64,
     pub verifier: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_FeeAggregatorSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["vvr_FeeAggregatorSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FeeAggregatorSetEvent {
     pub fee_aggregator: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_InboundImplRemoved", "map"])]
+#[soroban_sdk::contractevent(topics = ["vvr_InboundImplRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct InboundImplRemovedEvent {
     pub version: soroban_sdk::BytesN<4>,
 }
-#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplRemoved", "map"])]
+#[soroban_sdk::contractevent(topics = ["vvr_OutboundImplRemoved"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundImplRemovedEvent {
     pub dest_chain_selector: u64,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,

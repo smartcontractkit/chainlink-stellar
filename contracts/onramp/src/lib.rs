@@ -142,7 +142,7 @@ impl Initializable for OnRampContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for OnRampContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -156,13 +156,25 @@ impl Ownable for OnRampContract {
 #[contractimpl(contracttrait)]
 impl Upgradeable for OnRampContract {}
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl CurseCheckable for OnRampContract {
     const RMN_PROXY: Symbol = RMN_PROXY;
 }
 
 #[contractimpl]
 impl OnRampContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     // ========================================
     // Initialization
     // ========================================
@@ -914,7 +926,11 @@ impl OnRampContract {
             &extra_args,
         )?;
 
-        // Track A: single fee breakdown for this send (Router no longer calls `get_fee` first).
+        // Second fee computation for this send: the Router quotes via `get_fee`
+        // first and pulls exactly that. Only `fee_token_amount >= total_fee` is
+        // enforced (EVM parity, OnRamp.sol:293-299) — a pool varying `get_fee`
+        // between the two calls can strand bounded excess, later swept to the
+        // fee aggregator.
         // Validate fee before any token lock or sequence bump.
         let breakdown = Self::compute_outbound_fee_breakdown(
             &env,

@@ -463,7 +463,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // InboundImplSetEvent represents the InboundImplSetEvent event.
-// Topics: [vvr_InboundImplSet map]
+// Topics: [vvr_InboundImplSet]
 type InboundImplSetEvent struct {
 	Version  [4]byte
 	Verifier string
@@ -476,7 +476,7 @@ type InboundImplSetEvent struct {
 const InboundImplSetEventTopic = "vvr_InboundImplSet"
 
 // OutboundImplSetEvent represents the OutboundImplSetEvent event.
-// Topics: [vvr_OutboundImplSet map]
+// Topics: [vvr_OutboundImplSet]
 type OutboundImplSetEvent struct {
 	DestChainSelector uint64
 	Verifier          string
@@ -489,7 +489,7 @@ type OutboundImplSetEvent struct {
 const OutboundImplSetEventTopic = "vvr_OutboundImplSet"
 
 // FeeAggregatorSetEvent represents the FeeAggregatorSetEvent event.
-// Topics: [vvr_FeeAggregatorSet map]
+// Topics: [vvr_FeeAggregatorSet]
 type FeeAggregatorSetEvent struct {
 	FeeAggregator string
 	// Event metadata
@@ -501,7 +501,7 @@ type FeeAggregatorSetEvent struct {
 const FeeAggregatorSetEventTopic = "vvr_FeeAggregatorSet"
 
 // InboundImplRemovedEvent represents the InboundImplRemovedEvent event.
-// Topics: [vvr_InboundImplRemoved map]
+// Topics: [vvr_InboundImplRemoved]
 type InboundImplRemovedEvent struct {
 	Version [4]byte
 	// Event metadata
@@ -513,7 +513,7 @@ type InboundImplRemovedEvent struct {
 const InboundImplRemovedEventTopic = "vvr_InboundImplRemoved"
 
 // OutboundImplRemovedEvent represents the OutboundImplRemovedEvent event.
-// Topics: [vvr_OutboundImplRemoved map]
+// Topics: [vvr_OutboundImplRemoved]
 type OutboundImplRemovedEvent struct {
 	DestChainSelector uint64
 	// Event metadata
@@ -525,7 +525,7 @@ type OutboundImplRemovedEvent struct {
 const OutboundImplRemovedEventTopic = "vvr_OutboundImplRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

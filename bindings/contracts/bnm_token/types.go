@@ -302,7 +302,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // BurnEvent represents the BurnEvent event.
-// Topics: [burn map]
+// Topics: [burn]
 type BurnEvent struct {
 	From   string
 	Amount *big.Int
@@ -315,7 +315,7 @@ type BurnEvent struct {
 const BurnEventTopic = "burn"
 
 // DripEvent represents the DripEvent event.
-// Topics: [drip map]
+// Topics: [drip]
 type DripEvent struct {
 	To     string
 	Amount *big.Int
@@ -328,7 +328,7 @@ type DripEvent struct {
 const DripEventTopic = "drip"
 
 // MintEvent represents the MintEvent event.
-// Topics: [mint map]
+// Topics: [mint]
 type MintEvent struct {
 	To     string
 	Amount *big.Int
@@ -341,7 +341,7 @@ type MintEvent struct {
 const MintEventTopic = "mint"
 
 // ApproveEvent represents the ApproveEvent event.
-// Topics: [approve map]
+// Topics: [approve]
 type ApproveEvent struct {
 	From             string
 	Spender          string
@@ -356,7 +356,7 @@ type ApproveEvent struct {
 const ApproveEventTopic = "approve"
 
 // SetAdminEvent represents the SetAdminEvent event.
-// Topics: [set_admin map]
+// Topics: [set_admin]
 type SetAdminEvent struct {
 	Admin    string
 	NewAdmin string
@@ -369,7 +369,7 @@ type SetAdminEvent struct {
 const SetAdminEventTopic = "set_admin"
 
 // TransferEvent represents the TransferEvent event.
-// Topics: [transfer map]
+// Topics: [transfer]
 type TransferEvent struct {
 	From   string
 	To     string
@@ -383,7 +383,7 @@ type TransferEvent struct {
 const TransferEventTopic = "transfer"
 
 // SetAuthorizedEvent represents the SetAuthorizedEvent event.
-// Topics: [set_authorized map]
+// Topics: [set_authorized]
 type SetAuthorizedEvent struct {
 	Id        string
 	Authorize bool
@@ -396,7 +396,7 @@ type SetAuthorizedEvent struct {
 const SetAuthorizedEventTopic = "set_authorized"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

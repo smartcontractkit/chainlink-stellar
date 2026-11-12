@@ -272,7 +272,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -285,7 +285,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // DepositEvent represents the DepositEvent event.
-// Topics: [lockbox_Deposit map]
+// Topics: [lockbox_Deposit]
 type DepositEvent struct {
 	Token     string
 	Depositor string
@@ -299,7 +299,7 @@ type DepositEvent struct {
 const DepositEventTopic = "lockbox_Deposit"
 
 // WithdrawalEvent represents the WithdrawalEvent event.
-// Topics: [lockbox_Withdrawal map]
+// Topics: [lockbox_Withdrawal]
 type WithdrawalEvent struct {
 	Token     string
 	Recipient string

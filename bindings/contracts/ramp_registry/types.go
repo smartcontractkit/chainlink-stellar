@@ -205,7 +205,7 @@ func OffRampUpdateFromScVal(val xdr.ScVal) (*OffRampUpdate, error) {
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string

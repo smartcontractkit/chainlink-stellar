@@ -901,7 +901,7 @@ var McmsErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -914,7 +914,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // NewRootEvent represents the NewRootEvent event.
-// Topics: [mcms_NewRoot map]
+// Topics: [mcms_NewRoot]
 type NewRootEvent struct {
 	Root       [32]byte
 	ValidUntil uint32
@@ -928,7 +928,7 @@ type NewRootEvent struct {
 const NewRootEventTopic = "mcms_NewRoot"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [mcms_ConfigSet map]
+// Topics: [mcms_ConfigSet]
 type ConfigSetEvent struct {
 	Config        Config
 	ConfigVersion uint64
@@ -942,7 +942,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "mcms_ConfigSet"
 
 // OpExecutedEvent represents the OpExecutedEvent event.
-// Topics: [mcms_OpExecuted map]
+// Topics: [mcms_OpExecuted]
 type OpExecutedEvent struct {
 	Nonce    uint64
 	Target   string

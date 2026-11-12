@@ -11,7 +11,10 @@ use ccvs_versioned_verifier_resolver::{
     InboundImplementationUpdate, VersionedVerifierResolverContract,
     VersionedVerifierResolverContractClient,
 };
-use common_helpers::finality_codec::{WAIT_FOR_FINALITY_FLAG, WAIT_FOR_SAFE_FLAG};
+use common_helpers::{
+    curse_checkable::CurseCheckable,
+    finality_codec::{WAIT_FOR_FINALITY_FLAG, WAIT_FOR_SAFE_FLAG},
+};
 use common_interfaces::ccip_receiver::CcvsAndFinalityConfig;
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
@@ -24,6 +27,7 @@ use common_message::{
     AnyToStellarMessage, CcipMessageV1, CcipTokenTransferV1, MessageIdCompute, ToBytes,
     MESSAGE_V1_VERSION,
 };
+use common_pool::{calculate_local_amount, encode_local_decimals, parse_remote_decimals};
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 use soroban_sdk::{
@@ -77,16 +81,49 @@ fn test_double_initialize_fails() {
 
 #[test]
 fn test_curse_checkable_init_rejects_reinit() {
-    // `init` is exported via contracttrait: re-pointing the RMN proxy post-initialize
-    // must fail, or any account could install an always-uncursed RMN and disable every
-    // curse check.
+    // Re-pointing the RMN proxy post-initialize must fail even for direct/internal
+    // trait calls, or an always-uncursed RMN could disable every curse check.
     let (env, owner, client) = setup_env();
     let static_config = default_static_config(&env);
     client.initialize(&owner, &static_config);
 
     let attacker_rmn = Address::generate(&env);
-    let r = client.try_init(&attacker_rmn);
-    assert_eq!(r.unwrap_err().unwrap(), CCIPError::AlreadyInitialized);
+    env.as_contract(&client.address, || {
+        let r = <OffRampContract as CurseCheckable>::init(&env, &attacker_rmn);
+        assert_eq!(r.unwrap_err(), CCIPError::AlreadyInitialized);
+    });
+}
+
+#[test]
+fn test_pending_ownership_and_cancel_via_trait() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&new_owner);
+
+    env.as_contract(&client.address, || {
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            Some(new_owner.clone())
+        );
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+
+        <OffRampContract as common_authorization::Ownable>::cancel_ownership_transfer(&env)
+            .unwrap();
+
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            None
+        );
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+    });
 }
 
 #[test]
@@ -829,6 +866,18 @@ impl MockTokenPool {
             .set(&Symbol::new(&env, "skimrel"), &skim);
     }
 
+    pub fn set_report_delivered(env: Env, report_delivered: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "repdel"), &report_delivered);
+    }
+
+    pub fn set_self_receiver_noop(env: Env, self_receiver_noop: bool) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "selfrecv"), &self_receiver_noop);
+    }
+
     pub fn release_or_mint(
         env: Env,
         _caller: Address,
@@ -852,8 +901,22 @@ impl MockTokenPool {
             .instance()
             .get(&Symbol::new(&env, "skimrel"))
             .unwrap_or(0);
-        let deliver = input.amount - skim;
-        if deliver > 0 {
+        let report_delivered: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "repdel"))
+            .unwrap_or(false);
+        let self_receiver_noop: bool = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "selfrecv"))
+            .unwrap_or(false);
+        let local_decimals = soroban_sdk::token::Client::new(&env, &input.local_token).decimals();
+        let remote_decimals = parse_remote_decimals(&input.source_pool_data, local_decimals)?;
+        let local_amount = calculate_local_amount(input.amount, remote_decimals, local_decimals)?;
+        let deliver = local_amount - skim;
+        let self_transfer = self_receiver_noop && input.receiver == env.current_contract_address();
+        if deliver > 0 && !self_transfer {
             soroban_sdk::token::StellarAssetClient::new(&env, &input.local_token)
                 .mint(&input.receiver, &deliver);
         }
@@ -872,7 +935,11 @@ impl MockTokenPool {
             .instance()
             .set(&Symbol::new(&env, "lastrecv"), &input.receiver);
         Ok(ReleaseOrMintOut {
-            destination_amount: input.amount,
+            destination_amount: if report_delivered {
+                deliver
+            } else {
+                local_amount
+            },
         })
     }
 
@@ -1142,7 +1209,7 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
 
     // EVM parity: the zero receiver has no code (OffRamp.sol
     // `_isTokenOnlyTransfer`), so receive gas alone must NOT trigger the
-    // receiver call — without the zero-receiver skip this traps with
+    // receiver call — without the non-Wasm skip this traps with
     // ReceiverDoesNotExist.
     let msg = CcipMessageV1 {
         source_chain_selector: EXEC_TEST_SRC_CHAIN,
@@ -1179,6 +1246,136 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
         pool_client.last_receiver(),
         token_receiver_contract,
         "the pool must release to the separate token receiver"
+    );
+}
+
+/// A receiver with no code is token-only (EVM `_isTokenOnlyTransfer`): tokens go to the
+/// explicit token receiver and the payload is dropped instead of stranding the message.
+#[test]
+fn test_execute_payload_to_non_wasm_receiver_delivers_tokens_token_only() {
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
+
+    // No ledger entry: `executable()` is None, so this receiver has no code.
+    let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
+    let token_receiver_contract = env.register(MockVerifier, ());
+    let (_dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: offramp_address_field_from_contract(&env, &token_receiver_contract),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: sample_onramp_bytes(&env),
+        offramp_address: offramp_address_field_from_contract(&env, &client.address),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: phantom_receiver,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::from_array(&env, b"payload"),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    // The view is the relayer's source of truth: token-only CCVs (lane defaults only).
+    let (required, optional, threshold) = client.get_ccvs_for_message(&encoded);
+    assert_eq!(required.len(), 1);
+    assert_eq!(required.get(0).unwrap(), vvr_id);
+    assert_eq!(optional.len(), 0);
+    assert_eq!(threshold, 0);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(res.is_ok(), "execute must not trap: {:?}", res.err());
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success,
+        "a non-Wasm receiver is token-only on both sides; the payload is dropped"
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(
+        pool_client.last_receiver(),
+        token_receiver_contract,
+        "tokens must go to the explicit token receiver"
+    );
+}
+
+/// The token receiver check still rejects the empty-`token_receiver` fallback when the
+/// message receiver has no code: classification must not mint to an unusable address.
+#[test]
+fn test_execute_payload_to_non_wasm_receiver_empty_token_receiver_records_failure() {
+    let (env, client, _receiver_client, pool_client, vvr_id, _receiver_contract) = setup_l10_lane();
+
+    let phantom_receiver = Bytes::from_array(&env, &[0xABu8; 32]);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: Bytes::from_array(&env, &[0xBBu8; 32]),
+        token_receiver: Bytes::new(&env),
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = CcipMessageV1 {
+        source_chain_selector: EXEC_TEST_SRC_CHAIN,
+        dest_chain_selector: EXEC_TEST_DEST_CHAIN,
+        sequence_number: 1,
+        execution_gas_limit: 0,
+        ccip_receive_gas_limit: 0,
+        finality: 0,
+        ccv_and_executor_hash: BytesN::from_array(&env, &[0u8; 32]),
+        onramp_address: sample_onramp_bytes(&env),
+        offramp_address: offramp_address_field_from_contract(&env, &client.address),
+        sender: Bytes::from_array(&env, &[2u8; 20]),
+        receiver: phantom_receiver,
+        dest_blob: Bytes::new(&env),
+        token_transfer: token_transfer.to_bytes(&env).unwrap(),
+        data: Bytes::from_array(&env, b"payload"),
+    };
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "execute must record a Failure, not trap: {:?}",
+        res.err()
+    );
+    // Read the event before any other client call: `env.events()` only holds the
+    // most recent top-level invocation.
+    let code = last_execution_error_code(&env, &client.address);
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Failure
+    );
+    assert_eq!(code, CCIPError::ReceiverDoesNotExist as u32);
+    assert_eq!(
+        pool_client.release_count(),
+        0,
+        "nothing may be minted to a token receiver that cannot control it"
     );
 }
 
@@ -1243,13 +1440,9 @@ fn test_execute_token_receiver_without_deployed_contract_records_failure() {
 }
 
 #[test]
-// The token-only zero-receiver exception is granted only to the canonical
-// 32-byte zero address. The decoder does not enforce the receiver length, so
-// an empty or short all-zero receiver carrying data or receive gas must NOT
-// be classified token-only (which would skip receiver validation and delivery
-// and record Success without delivery) — it must fail receiver decoding
-// (InvalidReceiverLength, the same rejection `get_ccvs_for_message` applies,
-// EVM InvalidEVMAddress parity) and record a retryable Failure.
+// The token-only exception needs a decodable 32-byte receiver, so a malformed
+// zero receiver carrying data or receive gas fails decoding (InvalidReceiverLength,
+// EVM InvalidEVMAddress parity) and records a retryable Failure.
 fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1729,6 +1922,271 @@ fn test_execute_pool_underdelivery_traps_and_is_retriable() {
         100,
         "the receiver's balance delta equals the reported destination amount"
     );
+}
+
+#[test]
+fn test_execute_pool_zero_delivery_zero_report_traps() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_skim_release(&100);
+    pool_client.set_report_delivered(&true);
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a pool that delivers and reports 0 must trap the whole execute tx: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "no Success without actual token delivery"
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0,
+        "nothing was delivered"
+    );
+
+    pool_client.set_skim_release(&0);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "resubmission after the pool is fixed must succeed: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        100
+    );
+}
+
+#[test]
+fn test_execute_pool_as_own_token_receiver_checks_signed_amount() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    pool_client.set_self_receiver_noop(&true);
+    pool_client.set_skim_release(&100);
+    pool_client.set_report_delivered(&true);
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+    let pool_field = offramp_address_field_from_contract(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: pool_field,
+        extra_data: Bytes::new(&env),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "a pool receiver's report must match the signed message amount: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&pool_client.address),
+        0
+    );
+
+    pool_client.set_skim_release(&0);
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a matching report must allow the zero-delta self-transfer: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(receiver_client.receive_count(), 1);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&pool_client.address),
+        0,
+        "the self-transfer moved nothing"
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0,
+        "the message receiver holds no tokens: the pool was the token receiver"
+    );
+}
+
+#[test]
+fn test_execute_token_transfer_remote_decimals_conversion_passes() {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[16..32].copy_from_slice(&1_000_000_000_000_000_000u128.to_be_bytes());
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: encode_local_decimals(&env, 18u32).unwrap(),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::new(&env),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_ok(),
+        "a correct release across a decimals change must not trap: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Success
+    );
+    assert_eq!(pool_client.release_count(), 1);
+    assert_eq!(
+        receiver_client.receive_count(),
+        0,
+        "token-only message skips routing"
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        10_000_000,
+        "the delivered amount is the wire amount converted to local decimals"
+    );
+}
+
+fn assert_decimal_conversion_traps_and_stays_untouched(amount_bytes: [u8; 32], extra_data: &[u8]) {
+    let (env, client, receiver_client, pool_client, vvr_id, receiver_contract) = setup_l10_lane();
+
+    let (dest_token, dest_token_wire) = setup_dest_token(&env, &pool_client.address);
+
+    let token_transfer = CcipTokenTransferV1 {
+        version: MESSAGE_V1_VERSION,
+        amount: BytesN::from_array(&env, &amount_bytes),
+        source_pool_address: Bytes::from_array(&env, &[0x11u8; 20]),
+        source_token_address: Bytes::from_array(&env, &[0x22u8; 20]),
+        dest_token_address: dest_token_wire,
+        token_receiver: Bytes::new(&env), // empty ⇒ fallback to message.receiver
+        extra_data: Bytes::from_slice(&env, extra_data),
+    };
+
+    let msg = l10_message(
+        &env,
+        &client.address,
+        &receiver_contract,
+        token_transfer.to_bytes(&env).unwrap(),
+        Bytes::from_array(&env, b"payload"),
+    );
+    let encoded = msg.to_bytes(&env).unwrap();
+    let message_id = CcipMessageV1::compute_message_id_from_bytes(&env, &encoded);
+
+    let ccvs = vec![&env, vvr_id.clone()];
+    let verifier_results = vec![&env, Bytes::new(&env)];
+
+    let res = client.try_execute(&encoded, &ccvs, &verifier_results, &0u32);
+    assert!(
+        res.is_err(),
+        "decimal conversion failure must trap the whole execute tx: {:?}",
+        res
+    );
+    assert_eq!(
+        client.get_execution_state(&message_id),
+        MessageExecutionState::Untouched,
+        "a decimal conversion failure must not record Failure"
+    );
+    assert_eq!(pool_client.release_count(), 0);
+    assert_eq!(receiver_client.receive_count(), 0);
+    assert_eq!(
+        soroban_sdk::token::Client::new(&env, &dest_token).balance(&receiver_contract),
+        0
+    );
+}
+
+#[test]
+fn test_execute_bad_remote_decimals_traps_and_stays_untouched() {
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[31] = 100;
+    assert_decimal_conversion_traps_and_stays_untouched(amount_bytes, &[0u8; 31]);
+}
+
+#[test]
+fn test_execute_decimal_amount_overflow_traps_and_stays_untouched() {
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[16..32].copy_from_slice(&i128::MAX.to_be_bytes());
+    assert_decimal_conversion_traps_and_stays_untouched(amount_bytes, &[0u8; 32]);
 }
 
 // ============================================================

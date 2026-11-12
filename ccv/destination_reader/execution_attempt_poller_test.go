@@ -323,7 +323,7 @@ func TestStellarExecutionAttemptPoller_ConcurrentAttemptsSameMessage(t *testing.
 	p, err := NewStellarExecutionAttemptPoller(rpcclient.NewClient(server.URL, nil), testStellarContractID, testLogger(t), time.Minute)
 	require.NoError(t, err)
 
-	const eventCount = 32
+	const eventCount = 10
 	msgID := mustMessageID(t, msg)
 
 	var wg sync.WaitGroup

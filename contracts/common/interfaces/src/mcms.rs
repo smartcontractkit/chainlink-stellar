@@ -8,7 +8,6 @@ pub trait McmsInterface {
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
     fn get_root(env: soroban_sdk::Env) -> Result<(soroban_sdk::BytesN<32>, u32), McmsError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn set_root(
         env: soroban_sdk::Env,
         root: soroban_sdk::BytesN<32>,
@@ -18,7 +17,6 @@ pub trait McmsInterface {
         signatures: SignatureVec,
     ) -> Result<(), McmsError>;
     fn get_config(env: soroban_sdk::Env) -> Result<Config, McmsError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -38,7 +36,6 @@ pub trait McmsInterface {
         clear_root: bool,
     ) -> Result<(), McmsError>;
     fn get_op_count(env: soroban_sdk::Env) -> Result<u64, McmsError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn extend_all_ttls(env: soroban_sdk::Env) -> Result<(), McmsError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn chain_network_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, McmsError>;
@@ -57,28 +54,28 @@ pub trait McmsInterface {
     ) -> Result<(), McmsError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Config {
     pub group_parents: soroban_sdk::BytesN<32>,
     pub group_quorums: soroban_sdk::BytesN<32>,
     pub signers: soroban_sdk::Vec<Signer>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Signer {
     pub addr: soroban_sdk::BytesN<32>,
     pub group: u32,
     pub index: u32,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Signature {
     pub r: soroban_sdk::BytesN<32>,
     pub s: soroban_sdk::BytesN<32>,
     pub v: u32,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StellarOp {
     pub args_xdr: soroban_sdk::Bytes,
@@ -89,27 +86,27 @@ pub struct StellarOp {
     pub nonce: u64,
     pub target: soroban_sdk::Address,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MerkleProof {
     pub inner: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SignatureVec {
     pub inner: soroban_sdk::Vec<Signature>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SignerGroups {
     pub inner: soroban_sdk::Vec<u32>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SignerAddresses {
     pub inner: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StellarRootMetadata {
     pub config_version: u64,
@@ -120,7 +117,7 @@ pub struct StellarRootMetadata {
     pub post_op_count: u64,
     pub pre_op_count: u64,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -253,7 +250,7 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum McmsError {
     NotInitialized = 1,
@@ -301,27 +298,27 @@ pub enum McmsError {
     InvalidArgsXdr = 60,
     ConfigVersionOverflow = 61,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_NewRoot", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_NewRoot"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NewRootEvent {
     pub root: soroban_sdk::BytesN<32>,
     pub valid_until: u32,
     pub metadata: StellarRootMetadata,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_ConfigSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_ConfigSet"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub config: Config,
     pub config_version: u64,
     pub is_root_cleared: bool,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_OpExecuted", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_OpExecuted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OpExecutedEvent {
     pub nonce: u64,

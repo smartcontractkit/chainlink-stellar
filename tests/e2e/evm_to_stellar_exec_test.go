@@ -2,7 +2,6 @@ package e2e_tests
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"testing"
@@ -354,25 +353,10 @@ func TestEVMToStellarExecutionCursedSource(t *testing.T) {
 	})
 }
 
-// TestEVMToStellarExecutionInvalidReceiver validates that sending a CCIP message
-// from EVM to Stellar with a receiver address that does not correspond to a
-// deployed Wasm contract results in an ExecutionStateFailure on the Stellar
-// OffRamp. The Stellar OffRamp checks `receiver.executable()` and returns
-// CCIPError::ReceiverDoesNotExist (error code 114) when the address has no
-// ledger entry.
-//
-// Contracts must be compiled before running:
-//
-//	make build
-//
-// Start the devenv from the chainlink-stellar root:
-//
-//	CTF_CONFIGS=tests/env/env-stellar-evm.toml go run ./tests/testutils/cmd/devenv
-//
-// Once the devenv is running, run the test:
-//
-//	go test -v -timeout 10m ./tests/e2e/... -run TestEVMToStellarExecutionInvalidReceiver
-func TestEVMToStellarExecutionInvalidReceiver(t *testing.T) {
+// TestEVMToStellarExecutionNonWasmReceiver proves a payload to an undeployed
+// receiver is token-only: the payload is dropped and execution succeeds.
+// Needs `make build` and the devenv; run with -run TestEVMToStellarExecutionNonWasmReceiver.
+func TestEVMToStellarExecutionNonWasmReceiver(t *testing.T) {
 	configOutputPath := "../env/env-stellar-evm-out.toml"
 
 	stellarChainID := chainsel.STELLAR_LOCALNET.ChainID
@@ -391,12 +375,12 @@ func TestEVMToStellarExecutionInvalidReceiver(t *testing.T) {
 	stellarChain := env.Chains[stellarDetails.ChainSelector]
 	require.NotNil(t, stellarChain, "Stellar chain not found in chains map")
 
-	t.Run("evm_to_stellar_invalid_receiver", func(t *testing.T) {
+	t.Run("evm_to_stellar_non_wasm_receiver", func(t *testing.T) {
 		// Build a 32-byte receiver that is syntactically valid but does not
 		// correspond to any deployed contract on the Stellar localnet.
 		var fakeReceiver [32]byte
 		copy(fakeReceiver[:], []byte("INVALID_RECEIVER_NO_CONTRACT____"))
-		l.Info().Str("fakeReceiver", hex.EncodeToString(fakeReceiver[:])).Msg("Using fake Stellar receiver address")
+		l.Info().Str("fakeReceiver", hex.EncodeToString(fakeReceiver[:])).Msg("Using undeployed Stellar receiver address")
 
 		seqNo, err := evmChain.GetExpectedNextSequenceNumber(ctx, stellarDetails.ChainSelector)
 		require.NoError(t, err)
@@ -412,10 +396,10 @@ func TestEVMToStellarExecutionInvalidReceiver(t *testing.T) {
 			},
 			messageV3Version,
 		)
-		require.NoError(t, err, "EVM send should succeed — receiver validation happens on the destination")
+		require.NoError(t, err, "EVM send should succeed; the receiver is classified on the destination")
 		l.Info().
 			Str("messageID", hex.EncodeToString(sendResult.MessageID[:])).
-			Msg("CCIP message sent from EVM with invalid Stellar receiver")
+			Msg("CCIP message sent from EVM with an undeployed Stellar receiver")
 
 		sentEvent, err := evmChain.ConfirmSendOnSource(ctx, stellarDetails.ChainSelector, cciptestinterfaces.MessageEventKey{SeqNum: seqNo}, evmSentTimeout)
 		require.NoError(t, err)
@@ -444,29 +428,21 @@ func TestEVMToStellarExecutionInvalidReceiver(t *testing.T) {
 			Str("messageID", hex.EncodeToString(messageID[:])).
 			Msg("Message verified and aggregated successfully (receiver validity not checked here)")
 
-		// Wait for execution on the Stellar OffRamp — expect Failure.
+		// The undeployed receiver has no code, so the message is token-only.
 		execEvent, err := stellarChain.ConfirmExecOnDest(t.Context(), evmDetails.ChainSelector, cciptestinterfaces.MessageEventKey{SeqNum: seqNo}, execTimeout)
-		require.NoError(t, err, "should receive an execution event even for failed execution")
+		require.NoError(t, err, "should receive an execution event")
 		require.Equalf(
 			t,
-			cciptestinterfaces.ExecutionStateFailure,
+			cciptestinterfaces.ExecutionStateSuccess,
 			execEvent.Event.State,
-			"execution should fail because the receiver does not exist on Stellar, return data: %x",
+			"execution should succeed for an undeployed receiver, return data: %x",
 			execEvent.Event.ReturnData,
 		)
-
-		// Verify the return data contains the ReceiverDoesNotExist error code (114).
-		const ccipErrorReceiverDoesNotExist uint32 = 114
-		require.GreaterOrEqual(t, len(execEvent.Event.ReturnData), 4, "return data should contain at least 4 bytes for error code")
-		errorCode := binary.BigEndian.Uint32(execEvent.Event.ReturnData[:4])
-		require.Equal(t, ccipErrorReceiverDoesNotExist, errorCode,
-			"return data should encode CCIPError::ReceiverDoesNotExist (114)")
 
 		l.Info().
 			Str("messageID", hex.EncodeToString(messageID[:])).
 			Uint64("seqNo", seqNo).
-			Uint32("errorCode", errorCode).
-			Msg("Execution failed as expected with ReceiverDoesNotExist error")
+			Msg("Execution succeeded and the payload was dropped for an undeployed receiver")
 	})
 }
 

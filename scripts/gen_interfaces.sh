@@ -4,13 +4,13 @@
 # For each contract, runs `stellar contract bindings rust` and post-processes the
 # output:
 #   1. strip_wasm_block        - remove the WASM const block (interfaces don't need it)
-#   2. normalize_attributes    - collapse CLI-version differences: stellar-cli 25.x
-#                                emits `contracttype(export = false)` while 28.x+ emits
-#                                plain `contracttype`; both are normalized to the plain
-#                                form so local and CI output agree. soroban-sdk 29
-#                                removed the `export` parameter entirely — spec export
-#                                is now determined by reachability from the contract
-#                                boundary (functions, events, errors).
+#   2. normalize_attributes    - collapse CLI-version differences: normalize contract
+#                                types/errors/events to `export = false`, preserving only
+#                                event topics and discarding newer CLIs' data_format field.
+#                                export = false is required: without it every type/event
+#                                in this crate embeds spec entries into the wasm of every
+#                                contract linking common-interfaces, inflating contract
+#                                wasm past network upload limits.
 #   3. strip_duplicate_auth_events - drop auth_OwnerTransferred (conflicts with the
 #                                contract-specific OwnershipTransferredEvent)
 #   4. prune_interface         - dedup trait fns and type/event definitions, drop
@@ -87,17 +87,23 @@ strip_wasm_block() {
   sed -e '/^pub const WASM/,/^);$/d'
 }
 
-# Normalize attribute forms across stellar-cli versions to the canonical plain
-# form. CLI 25.x emits `export = false` natively; CLI 28.x+ omits it, and
-# soroban-sdk 29 removed the `export` parameter entirely (spec export is now
-# determined by reachability from the contract boundary, and stellar-cli shakes
-# unreachable spec entries out of the wasm at build time). Strip any `export`
-# argument so the output compiles on SDK 29 regardless of the generating CLI.
+# Normalize attribute forms across stellar-cli versions to the canonical
+# `export = false` form. For events, extract only the topics list: newer CLIs
+# also emit data_format = "map" or "single-value", which must not become an
+# event topic when normalizing to the SDK's older canonical representation. The
+# interfaces crate is only ever linked into other contracts, never deployed
+# itself, and export = false keeps its types/events out of dependent contracts'
+# wasm specs (otherwise every contract embedding common-interfaces balloons past
+# the network's wasm-upload resource limits).
 normalize_attributes() {
   perl -0 -pe '
-    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype]/gs;
-    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror]/gs;
-    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{"#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } ($1 =~ /"([^"]*)"/g)) . "])]"}ges;
+    s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype(export = false)]/gs;
+    s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror(export = false)]/gs;
+    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{
+      my $args = $1;
+      my ($topics) = $args =~ /\btopics\s*=\s*\[([^\]]*)\]/s;
+      "#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } (($topics // "") =~ /"([^"]*)"/g)) . "], export = false)]"
+    }ges;
   '
 }
 

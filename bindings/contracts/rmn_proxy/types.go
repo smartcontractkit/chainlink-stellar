@@ -268,7 +268,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -281,7 +281,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // RmnSetEvent represents the RmnSetEvent event.
-// Topics: [rmn_proxy_RmnSet map]
+// Topics: [rmn_proxy_RmnSet]
 type RmnSetEvent struct {
 	Rmn string
 	// Event metadata

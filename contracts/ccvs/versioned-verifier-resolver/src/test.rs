@@ -40,7 +40,7 @@ fn test_initialize() {
 
     env.as_contract(&client.address, || {
         assert_eq!(
-            VersionedVerifierResolverContract::owner(&env).unwrap(),
+            <VersionedVerifierResolverContract as Ownable>::owner(&env).unwrap(),
             owner
         );
     });

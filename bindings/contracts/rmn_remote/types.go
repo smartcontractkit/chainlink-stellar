@@ -2,7 +2,7 @@
 package rmn_remote
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
+// Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -14,7 +14,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved map]
+// Topics: [auth_CallerRemoved]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -26,7 +26,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -39,7 +39,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // CursedEvent represents the CursedEvent event.
-// Topics: [rmn_Cursed map]
+// Topics: [rmn_Cursed]
 type CursedEvent struct {
 	Subjects [][16]byte
 	// Event metadata
@@ -51,7 +51,7 @@ type CursedEvent struct {
 const CursedEventTopic = "rmn_Cursed"
 
 // UncursedEvent represents the UncursedEvent event.
-// Topics: [rmn_Uncursed map]
+// Topics: [rmn_Uncursed]
 type UncursedEvent struct {
 	Subjects [][16]byte
 	// Event metadata
