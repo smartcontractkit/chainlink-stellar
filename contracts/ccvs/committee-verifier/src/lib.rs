@@ -3,9 +3,7 @@
 mod events;
 pub mod types;
 
-use common_authorization::allowlist::{
-    AllowListEntry, AllowListHooks, AllowListUpdate, AllowListable,
-};
+use common_authorization::allowlist::{AllowListHooks, AllowListUpdate, AllowListable};
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
@@ -71,7 +69,7 @@ impl Initializable for CommitteeVerifierContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for CommitteeVerifierContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -85,7 +83,7 @@ impl CurseCheckable for CommitteeVerifierContract {
     const RMN_PROXY: Symbol = RMN_PROXY;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl AllowListable for CommitteeVerifierContract {
     const ALLOW_LIST: Symbol = ALLOWLIST;
 }
@@ -176,6 +174,18 @@ impl SignatureQuorum for CommitteeVerifierContract {}
 
 #[contractimpl]
 impl CommitteeVerifierContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     fn load_verifier_version_tag(env: &Env) -> Result<BytesN<4>, CCIPError> {
         env.storage()
             .instance()
@@ -235,6 +245,14 @@ impl CommitteeVerifierContract {
     // ========================================
     // Core verifier methods
     // ========================================
+
+    pub fn apply_allowlist_updates(
+        env: Env,
+        caller: Address,
+        updates: Vec<AllowListUpdate>,
+    ) -> Result<(), CCIPError> {
+        <Self as AllowListable>::apply_allowlist_updates(&env, &caller, &updates)
+    }
 
     /// Source-side hook that checks sender permissions and returns version tag.
     ///

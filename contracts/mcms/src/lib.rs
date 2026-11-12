@@ -53,7 +53,7 @@ impl Initializable for McmsContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for McmsContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -64,6 +64,29 @@ impl Upgradeable for McmsContract {}
 
 #[contractimpl]
 impl McmsContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
+    /// Return the pending owner. Required by the MCMS Stellar SDK configurer and inspector.
+    pub fn get_pending_owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::get_pending_owner(&env)
+    }
+
+    /// Cancel a pending ownership transfer as the current owner.
+    /// Required by the MCMS Stellar SDK configurer.
+    pub fn cancel_ownership_transfer(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::cancel_ownership_transfer(&env)
+    }
+
     /// Initialize MCMS atomically with owner, Stellar network id (32-byte passphrase hash per
     /// `chain-selectors`), the initial signer configuration, and an immutable instance label.
     /// Applying the config here means no deployer needs temporary ownership for `set_config`.

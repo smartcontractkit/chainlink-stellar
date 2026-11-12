@@ -4,14 +4,13 @@
 # For each contract, runs `stellar contract bindings rust` and post-processes the
 # output:
 #   1. strip_wasm_block        - remove the WASM const block (interfaces don't need it)
-#   2. normalize_attributes    - collapse CLI-version differences: stellar-cli 25.x
-#                                emits `contracttype(export = false)` while 28.x emits
-#                                plain `contracttype`; both are normalized to the
-#                                `export = false` form so local and CI (pinned 25.1.0)
-#                                output agree. export = false is required: without it
-#                                every type/event in this crate embeds spec entries into
-#                                the wasm of every contract linking common-interfaces,
-#                                inflating contract wasm past network upload limits.
+#   2. normalize_attributes    - collapse CLI-version differences: normalize contract
+#                                types/errors/events to `export = false`, preserving only
+#                                event topics and discarding newer CLIs' data_format field.
+#                                export = false is required: without it every type/event
+#                                in this crate embeds spec entries into the wasm of every
+#                                contract linking common-interfaces, inflating contract
+#                                wasm past network upload limits.
 #   3. strip_duplicate_auth_events - drop auth_OwnerTransferred (conflicts with the
 #                                contract-specific OwnershipTransferredEvent)
 #   4. prune_interface         - dedup trait fns and type/event definitions, drop
@@ -88,7 +87,9 @@ strip_wasm_block() {
 }
 
 # Normalize attribute forms across stellar-cli versions to the canonical
-# `export = false` form. CLI 25.x emits it natively; CLI 28.x omits it. The
+# `export = false` form. For events, extract only the topics list: newer CLIs
+# also emit data_format = "map" or "single-value", which must not become an
+# event topic when normalizing to the SDK's older canonical representation. The
 # interfaces crate is only ever linked into other contracts, never deployed
 # itself, and export = false keeps its types/events out of dependent contracts'
 # wasm specs (otherwise every contract embedding common-interfaces balloons past
@@ -97,7 +98,11 @@ normalize_attributes() {
   perl -0 -pe '
     s/#\[\s*soroban_sdk::contracttype\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracttype(export = false)]/gs;
     s/#\[\s*soroban_sdk::contracterror\s*(?:\(\s*export\s*=\s*false\s*\))?\s*\]/#[soroban_sdk::contracterror(export = false)]/gs;
-    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{"#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } ($1 =~ /"([^"]*)"/g)) . "], export = false)]"}ges;
+    s{#\[\s*soroban_sdk::contractevent\s*\(([^)]*)\)\s*\]}{
+      my $args = $1;
+      my ($topics) = $args =~ /\btopics\s*=\s*\[([^\]]*)\]/s;
+      "#[soroban_sdk::contractevent(topics = [" . join(", ", map { "\"$_\"" } (($topics // "") =~ /"([^"]*)"/g)) . "], export = false)]"
+    }ges;
   '
 }
 

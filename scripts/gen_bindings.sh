@@ -51,15 +51,15 @@ CONTRACTS=(
   # a harmless no-op, but it isn't needed.
   # readonly_fns: the SAC read entrypoints (name/symbol/decimals/admin/balance/
   # allowance/authorized/type_and_version) plus the owner/minter reads
-  # (owner/is_owner/get_minters/get_pending_owner) must simulate, not submit —
-  # the name heuristic only catches `balance`/`owner`. include_void_fns: the
-  # SAC write entrypoints plus `drip` and `mint_as` are void (`()`), so they're
-  # omitted unless explicitly listed (the Ownable and add/remove_minter fns
-  # return Result, not void, so they are generated regardless).
-  "bnm_token|BnmToken|bnm_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version,owner,is_owner,get_minters,get_pending_owner|burn,drip,mint,mint_as,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
+  # (owner/get_minters) must simulate, not submit — the name heuristic only
+  # catches `balance`/`owner`. include_void_fns: the SAC write entrypoints plus
+  # `drip` and `mint_as` are void (`()`), so they're omitted unless explicitly
+  # listed (the Ownable and add/remove_minter fns return Result, not void, so
+  # they are generated regardless).
+  "bnm_token|BnmToken|bnm_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version,owner,get_minters|burn,drip,mint,mint_as,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
   # link_token: same as bnm_token minus drip — LINK has no local faucet (mint
   # is admin-only, i.e. the burn-mint pool on inbound bridge messages).
-  "link_token|LinkToken|link_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version,owner,is_owner,get_minters,get_pending_owner|burn,mint,mint_as,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
+  "link_token|LinkToken|link_token|0||name,symbol,decimals,admin,balance,allowance,authorized,type_and_version,owner,get_minters|burn,mint,mint_as,approve,clawback,transfer,burn_from,set_admin,transfer_from,set_authorized,trust"
   "token_pool|TokenPool|token_pool|0"
   "token_lock_box|TokenLockBox|token_lock_box|0"
   "siloed_lock_release_pool|SiloedLockReleasePool|siloed_lock_release_pool|0"

@@ -137,9 +137,8 @@ fn test_double_initialize_fails() {
 
 #[test]
 fn test_curse_checkable_init_rejects_reinit() {
-    // `init` is exported via contracttrait: re-pointing the RMN proxy post-initialize
-    // must fail, or any account could install an always-uncursed RMN and disable every
-    // curse check.
+    // Re-pointing the RMN proxy post-initialize must fail even for direct/internal
+    // trait calls, or an always-uncursed RMN could disable every curse check.
     let env = Env::default();
     env.mock_all_auths();
 
@@ -152,8 +151,10 @@ fn test_curse_checkable_init_rejects_reinit() {
     client.initialize(&owner, &static_config, &dynamic_config);
 
     let attacker_rmn = Address::generate(&env);
-    let r = client.try_init(&attacker_rmn);
-    assert_eq!(r.unwrap_err().unwrap(), CCIPError::AlreadyInitialized);
+    env.as_contract(&contract_id, || {
+        let r = <OnRampContract as CurseCheckable>::init(&env, &attacker_rmn);
+        assert_eq!(r.unwrap_err(), CCIPError::AlreadyInitialized);
+    });
 }
 
 #[test]
@@ -257,13 +258,25 @@ fn test_transfer_ownership() {
     // Transfer ownership
     let new_owner = Address::generate(&env);
     client.transfer_ownership(&new_owner);
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            <OnRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            Some(new_owner.clone())
+        );
+    });
 
     // Accept ownership (this mocks authorization from the new owner)
     client.accept_ownership();
 
     // Verify new owner
     let stored_owner = client.owner();
-    assert_eq!(stored_owner, Some(new_owner));
+    assert_eq!(stored_owner, Some(new_owner.clone()));
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            <OnRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            None
+        );
+    });
 }
 
 // Real, committed Wasm fixture (built once, checked into data-feeds-common) that

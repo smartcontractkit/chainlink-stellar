@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/stellar/go-stellar-sdk/keypair"
 
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
@@ -187,17 +186,6 @@ func TestOffRamp(t *testing.T) {
 		t.Logf("Static config verified: chain_selector=%d", cfg.ChainSelector)
 	})
 
-	t.Run("is not cursed initially", func(t *testing.T) {
-		cursed, err := offrampClient.IsCursed(ctx)
-		if err != nil {
-			t.Fatalf("Failed to check IsCursed: %v", err)
-		}
-		if cursed {
-			t.Fatal("OffRamp should not be cursed initially")
-		}
-		t.Log("OffRamp is not cursed (as expected)")
-	})
-
 	// ========================================
 	// Source Chain Configuration
 	// ========================================
@@ -265,45 +253,6 @@ func TestOffRamp(t *testing.T) {
 	// "get execution state after successful execute" is covered by
 	// TestOffRampExecute (the "get execution state after successful execute"
 	// subtest), which runs against the full stack where a real execute succeeds.
-
-	// ========================================
-	// Ownership
-	// ========================================
-
-	t.Run("transfer ownership", func(t *testing.T) {
-		newOwnerKP, err := keypair.Random()
-		if err != nil {
-			t.Fatalf("Failed to generate new owner keypair: %v", err)
-		}
-
-		err = offrampClient.TransferOwnership(ctx, newOwnerKP.Address())
-		if err != nil {
-			t.Fatalf("TransferOwnership failed: %v", err)
-		}
-
-		pending, err := offrampClient.GetPendingOwner(ctx)
-		if err != nil {
-			t.Fatalf("GetPendingOwner failed: %v", err)
-		}
-		if pending == nil || *pending != newOwnerKP.Address() {
-			t.Fatalf("PendingOwner mismatch: expected %s, got %v", newOwnerKP.Address(), pending)
-		}
-		t.Logf("Ownership transfer initiated to %s", newOwnerKP.Address())
-
-		err = offrampClient.CancelOwnershipTransfer(ctx)
-		if err != nil {
-			t.Fatalf("CancelOwnershipTransfer failed: %v", err)
-		}
-
-		owner, err := offrampClient.Owner(ctx)
-		if err != nil {
-			t.Fatalf("Owner check after cancel failed: %v", err)
-		}
-		if owner == nil || *owner != deployerKP.Address() {
-			t.Fatalf("Owner should still be original deployer after cancel, got %v", owner)
-		}
-		t.Log("Ownership transfer cancelled; original owner retained")
-	})
 }
 
 // TestOffRampExecute exercises the full execute path using a complete contract stack
