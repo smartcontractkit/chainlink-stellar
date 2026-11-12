@@ -14,22 +14,18 @@ pub trait ExecutorInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         max_ccvs_per_msg: u32,
         dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_dest_chains(
         env: soroban_sdk::Env,
     ) -> Result<soroban_sdk::Vec<RemoteChainConfigArgs>, CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_allowed_ccvs(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
     fn set_dynamic_config(
         env: soroban_sdk::Env,
@@ -59,7 +55,6 @@ pub trait ExecutorInterface {
         ccvs_to_add: soroban_sdk::Vec<soroban_sdk::Address>,
         ccv_allowlist_enabled: bool,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> Result<u32, CCIPError>;
 }
 #[soroban_sdk::contracttype(export = false)]

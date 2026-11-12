@@ -14,8 +14,6 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -25,21 +23,14 @@ pub trait CommitteeVerifierInterface {
         version_tag: soroban_sdk::BytesN<4>,
     ) -> Result<(), CCIPError>;
     fn version_tag(env: soroban_sdk::Env) -> soroban_sdk::BytesN<4>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
-    fn init_allowlist(
-        env: soroban_sdk::Env,
-        initial_allowlist: soroban_sdk::Map<u64, soroban_sdk::Vec<soroban_sdk::Address>>,
-    );
     fn verify_message(
         env: soroban_sdk::Env,
         source_chain_selector: u64,
         message_hash: soroban_sdk::BytesN<32>,
         verifier_results: soroban_sdk::Bytes,
     ) -> Result<(), CCIPError>;
-    fn is_in_allowlist(env: soroban_sdk::Env, key: u64, addr: soroban_sdk::Address) -> bool;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_dynamic_config(env: soroban_sdk::Env) -> Result<DynamicConfig, CCIPError>;
     fn set_dynamic_config(
         env: soroban_sdk::Env,
@@ -58,7 +49,6 @@ pub trait CommitteeVerifierInterface {
         fee_token_amount: i128,
         verifier_args: soroban_sdk::Bytes,
     ) -> Result<soroban_sdk::Bytes, CCIPError>;
-    fn get_allowlist_entry(env: soroban_sdk::Env, key: u64) -> Option<AllowListEntry>;
     fn withdraw_fee_tokens(
         env: soroban_sdk::Env,
         fee_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
@@ -67,12 +57,6 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         source_chain_selector: u64,
     ) -> Result<SignatureQuorumConfig, CCIPError>;
-    fn is_allowlist_enabled(env: soroban_sdk::Env, key: u64) -> bool;
-    fn require_in_allowlist(
-        env: soroban_sdk::Env,
-        key: u64,
-        address: soroban_sdk::Address,
-    ) -> Result<(), CCIPError>;
     fn get_storage_locations(
         env: soroban_sdk::Env,
     ) -> Result<soroban_sdk::Vec<soroban_sdk::Bytes>, CCIPError>;
@@ -94,7 +78,6 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         new_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> Result<u32, CCIPError>;
     fn get_storage_locations_admin(
         env: soroban_sdk::Env,
@@ -145,12 +128,6 @@ pub struct SignatureQuorumConfig {
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
     pub source_chain_selector: u64,
     pub threshold: u32,
-}
-#[soroban_sdk::contracttype(export = false)]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AllowListEntry {
-    pub allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub allowlist_enabled: bool,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

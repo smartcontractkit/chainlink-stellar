@@ -25,7 +25,6 @@ pub trait BnmTokenInterface {
     );
     fn clawback(env: soroban_sdk::Env, from: soroban_sdk::Address, amount: i128);
     fn decimals(env: soroban_sdk::Env) -> u32;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn transfer(
         env: soroban_sdk::Env,
         from: soroban_sdk::Address,
@@ -46,7 +45,6 @@ pub trait BnmTokenInterface {
     fn set_admin(env: soroban_sdk::Env, new_admin: soroban_sdk::Address);
     fn add_minter(env: soroban_sdk::Env, minter: soroban_sdk::Address) -> Result<(), BnmError>;
     fn authorized(env: soroban_sdk::Env, id: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         admin: soroban_sdk::Address,
@@ -56,7 +54,6 @@ pub trait BnmTokenInterface {
     ) -> Result<(), BnmError>;
     fn get_minters(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn remove_minter(env: soroban_sdk::Env, minter: soroban_sdk::Address) -> Result<(), BnmError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn transfer_from(
         env: soroban_sdk::Env,
         spender: soroban_sdk::Address,
@@ -67,12 +64,10 @@ pub trait BnmTokenInterface {
     fn set_authorized(env: soroban_sdk::Env, id: soroban_sdk::Address, authorize: bool);
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn transfer_ownership(
         env: soroban_sdk::Env,
         new_owner: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
 #[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]

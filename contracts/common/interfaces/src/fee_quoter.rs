@@ -8,15 +8,12 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         static_config: StaticConfig,
         authorized_callers: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn update_prices(
         env: soroban_sdk::Env,
         updater: soroban_sdk::Address,
@@ -40,7 +37,6 @@ pub trait FeeQuoterInterface {
         tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<soroban_sdk::Vec<TimestampedPrice>, CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_static_config(env: soroban_sdk::Env) -> Result<StaticConfig, CCIPError>;
     fn remove_fee_tokens(
         env: soroban_sdk::Env,
@@ -93,7 +89,6 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<TimestampedPrice, CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_validated_token_price(
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,

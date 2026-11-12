@@ -13,10 +13,8 @@ pub trait LockReleasePoolInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn get_token(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_router(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -38,7 +36,6 @@ pub trait LockReleasePoolInterface {
     ) -> Result<LockOrBurnOut, CCIPError>;
     fn get_fee_admin(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn set_fee_admin(
         env: soroban_sdk::Env,
         fee_admin: soroban_sdk::Address,
@@ -64,7 +61,6 @@ pub trait LockReleasePoolInterface {
         remote_chain_selector: u64,
     ) -> Result<soroban_sdk::Bytes, CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_ramp_registry(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_required_ccvs(
         env: soroban_sdk::Env,
@@ -126,7 +122,6 @@ pub trait LockReleasePoolInterface {
         env: soroban_sdk::Env,
         hooks: soroban_sdk::Address,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn remove_advanced_pool_hooks(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_allowed_finality_config(env: soroban_sdk::Env) -> u32;
     fn set_allowed_finality_config(

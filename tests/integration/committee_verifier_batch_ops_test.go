@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
@@ -25,8 +26,8 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
-	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	_ "github.com/smartcontractkit/chainlink-stellar/deployment/adapters" // registers the adapter under test
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/changesets"
@@ -278,11 +279,11 @@ func TestCommitteeVerifierBatchOps(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, ops, "allowlist admin executes directly, no proposal")
 
-		entry, err := verifier.GetAllowlistEntry(ctx, allowKey)
-		require.NoError(t, err)
-		require.NotNil(t, entry)
-		require.True(t, entry.AllowlistEnabled)
-		require.ElementsMatch(t, added, entry.Allowlist)
+		// Both added senders must pass the production allowlist gate.
+		for _, sender := range added {
+			_, err = verifier.ForwardToVerifier(ctx, allowKey, sender, [32]byte{}, verifierID, big.NewInt(0), nil)
+			require.NoError(t, err, "allowlisted sender %s must pass forward_to_verifier", sender)
+		}
 
 		// Clear the allowlist admin through the timelock owner so the next update must
 		// be owner-authorized — the proposal path.
@@ -315,11 +316,11 @@ func TestCommitteeVerifierBatchOps(t *testing.T) {
 
 		execute(t, tx, 4)
 
-		entry, err = verifier.GetAllowlistEntry(ctx, allowKey)
-		require.NoError(t, err)
-		require.NotNil(t, entry)
-		require.True(t, entry.AllowlistEnabled)
-		require.Empty(t, entry.Allowlist)
+		// The owner-authorized removal must be visible through the same gate.
+		for _, sender := range added {
+			_, err = verifier.ForwardToVerifier(ctx, allowKey, sender, [32]byte{}, verifierID, big.NewInt(0), nil)
+			require.ErrorContains(t, err, "Error(Contract, #6)", "removed sender %s must be rejected", sender)
+		}
 	})
 }
 
