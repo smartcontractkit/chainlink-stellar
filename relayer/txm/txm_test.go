@@ -1263,6 +1263,71 @@ func TestStellarTxm_maybeRetry_ReturnsFalseWhenBroadcastChannelIsFull(t *testing
 	close(bmock.unblock) // Unblock sim so the test can shut down the txm.
 }
 
+// Audit: when the infra-retry re-enqueue in retryGetClientOrFail finds the
+// broadcast channel full, the tx used to be neither re-enqueued nor marked
+// Failed — leaving it Pending forever (never in the unconfirmed set, so
+// confirmLoop cannot recover it; pruneLoop only evicts terminal txs), wedging
+// its idempotency key and blocking EnqueueAndWait. It must terminalize.
+func TestStellarTxm_retryGetClientOrFail_ChannelFullFailsTx(t *testing.T) {
+	t.Parallel()
+	cfg := config.TxManagerConfig{
+		BroadcastChanSize:         ptr(uint(1)),
+		SubmitRetryDelay:          clconfig.MustNewDuration(10 * time.Millisecond),
+		MaxGetClientRetryAttempts: ptr(uint64(2)),
+	}
+	txm, err := New(logger.Test(t), &mockKeystore{}, cfg, newTestGetClient(&mockRPCClient{}), chainsel.STELLAR_TESTNET.ChainID)
+	require.NoError(t, err)
+
+	// Fill the single-slot broadcast channel; with no started loops nothing
+	// drains it, so the victim's re-enqueue below finds it full.
+	_, err = txm.Enqueue(t.Context(), TxRequest{FromAddress: testAddress, Operations: []txnbuild.Operation{testInvokeNoopOp()}})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(txm.broadcastChan), "precondition: broadcast channel full")
+
+	// The victim: registered like a real enqueued tx, Pending with an open Done.
+	victim := &StellarTx{
+		ID:        "victim",
+		Timestamp: time.Now(),
+		Status:    commontypes.Pending,
+		Done:      make(chan struct{}),
+	}
+	txm.transactionsMapLock.Lock()
+	txm.transactions[victim.ID] = victim
+	txm.transactionsMapLock.Unlock()
+
+	txm.retryGetClientOrFail(t.Context(), victim, logger.Test(t))
+
+	assert.Equal(t, uint64(1), victim.InfraAttempts.Load(), "one infra attempt before the drop")
+	assert.Equal(t, commontypes.Failed, mustGetStatus(t, txm, victim.ID),
+		"channel-full infra retry must terminalize, not strand Pending")
+	victim.mu.RLock()
+	resultCode := victim.ResultCode
+	victim.mu.RUnlock()
+	assert.Equal(t, string(ErrorReasonClientUnavailable), resultCode,
+		"the Failed result must carry the reason to EnqueueAndWait callers")
+
+	select {
+	case <-victim.Done:
+	default:
+		t.Fatal("victim.Done must be closed so EnqueueAndWait waiters unblock")
+	}
+
+	// Background pruning is enabled (default PruneInterval), so the terminal
+	// entry is retained until pruned — but it is terminal now, so prune CAN
+	// evict it, unlike a Pending entry.
+	txm.transactionsMapLock.RLock()
+	_, exists := txm.transactions[victim.ID]
+	txm.transactionsMapLock.RUnlock()
+	assert.True(t, exists, "with PruneInterval > 0 the terminal entry is retained for the prune loop")
+}
+
+func mustGetStatus(t *testing.T, txm *StellarTxm, id string) commontypes.TransactionStatus {
+	t.Helper()
+	st, err := txm.GetStatus(id)
+	require.NoError(t, err)
+	return st
+}
+
 func buildSuccessTransactionResultXDR(t *testing.T, fee int64) string {
 	t.Helper()
 	inner, err := xdr.NewTransactionResultResult(xdr.TransactionResultCodeTxSuccess, []xdr.OperationResult{})

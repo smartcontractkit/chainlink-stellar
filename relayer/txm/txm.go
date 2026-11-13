@@ -1383,6 +1383,13 @@ func (s *StellarTxm) retryGetClientOrFail(ctx context.Context, tx *StellarTx, ct
 		default:
 			ctxLogger.Errorw("broadcast channel full, cannot re-enqueue after getClient failure",
 				"infraAttempts", attempts)
+			// Without terminalizing here the tx stays Pending forever: it never
+			// enters the unconfirmed set, so confirmLoop cannot recover it and
+			// pruneLoop only evicts terminal txs.
+			tx.mu.Lock()
+			tx.ResultCode = string(ErrorReasonClientUnavailable)
+			tx.mu.Unlock()
+			s.markTxFailed(ctx, tx, ErrorReasonClientUnavailable)
 			s.metrics.IncrementDroppedTxs(ctx, DropReasonChannelFullNewRejected)
 		}
 		return
