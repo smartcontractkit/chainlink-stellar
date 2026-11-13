@@ -180,7 +180,7 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 	}
 
 	var events []protocolrpc.EventInfo
-	prevCursor := ""
+	var prevCursor *protocolrpc.Cursor
 	pages := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -206,7 +206,7 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 			events = append(events, e)
 		}
 
-		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 || resp.Cursor == prevCursor {
+		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 {
 			break
 		}
 
@@ -214,10 +214,16 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse events continuation cursor %q: %w", resp.Cursor, err)
 		}
+		// A cursor that does not advance is a server contract violation;
+		// error rather than silently end the scan mid-range (mirrors
+		// destinationreader.GetEventsInRange).
+		if prevCursor != nil && cursor.Cmp(*prevCursor) <= 0 {
+			return nil, fmt.Errorf("events cursor %q did not advance; refusing to loop on the same page", resp.Cursor)
+		}
 		if cursor.Ledger > toLedger {
 			break
 		}
-		prevCursor = resp.Cursor
+		prevCursor = &cursor
 		req = protocolrpc.GetEventsRequest{
 			Filters:    filters,
 			Pagination: &protocolrpc.PaginationOptions{Cursor: &cursor},
