@@ -1911,6 +1911,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stellar-contract-utils"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7544eeaa142491d17d60d575c2178ce9ad22385499906878ee89d9302875c390"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "stellar-governance"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50965473ab8c29bd2f873697fe872ac807ccbee83f6604dc46d5209ef6d09a6b"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "stellar-strkey"
 version = "0.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1929,6 +1947,17 @@ dependencies = [
  "crate-git-revision",
  "data-encoding",
  "heapless",
+]
+
+[[package]]
+name = "stellar-tokens"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c69421f52f418e0ebd343a6046aea3a3d1a4b0544debdf88780173d88c9d9b"
+dependencies = [
+ "soroban-sdk",
+ "stellar-contract-utils",
+ "stellar-governance",
 ]
 
 [[package]]
@@ -2044,6 +2073,17 @@ dependencies = [
  "common-guard",
  "common-interfaces",
  "soroban-sdk",
+]
+
+[[package]]
+name = "token-pool-proxy"
+version = "0.0.0"
+dependencies = [
+ "common-authorization",
+ "common-error",
+ "common-guard",
+ "soroban-sdk",
+ "stellar-tokens",
 ]
 
 [[package]]

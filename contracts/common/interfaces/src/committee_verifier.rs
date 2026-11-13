@@ -261,6 +261,7 @@ pub enum CCIPError {
     InvalidTokenTransferFeeConfig = 321,
     InvalidTransferFeeBps = 322,
     InvalidAllowListRequest = 323,
+    MintAllowanceExceeded = 324,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
@@ -270,91 +271,91 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_ConfigSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_ConfigSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub dynamic_config: DynamicConfig,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_FinalityConfigSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_FinalityConfigSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FinalityConfigSetEvent {
     pub allowed_finality: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_SignatureConfigSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_SignatureConfigSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SignatureConfigSetEvent {
     pub source_chain_selector: u64,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
     pub threshold: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_RemoteChainConfigSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_RemoteChainConfigSet", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RemoteChainConfigSetEvent {
     pub remote_chain_selector: u64,
     pub router: Option<soroban_sdk::Address>,
     pub allowlist_enabled: bool,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListSendersAddedEvent {
     pub dest_chain_selector: u64,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListStateChanged"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_AllowListStateChanged", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListStateChangedEvent {
     pub dest_chain_selector: u64,
     pub allowlist_enabled: bool,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_AllowListSendersRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListSendersRemovedEvent {
     pub dest_chain_selector: u64,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferred"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferred", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StorageAdminTransferredEvent {
     pub from: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferReq"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_StorageAdminTransferReq", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StorageAdminTransferReqEvent {
     pub from: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ccv_StorageLocationsUpdated"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ccv_StorageLocationsUpdated", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StorageLocationsUpdatedEvent {
     pub old_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
     pub new_locations: soroban_sdk::Vec<soroban_sdk::Bytes>,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,

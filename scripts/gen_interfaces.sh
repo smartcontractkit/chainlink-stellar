@@ -70,6 +70,7 @@ CONTRACTS=(
   "bnm_token|bnm_token|BnmToken|0|"
   "link_token|link_token|LinkToken|0|"
   "pools_token_lock_box|token_lock_box|TokenLockBox|0|auth_,lockbox_"
+  "token_pool_proxy|token_pool_proxy|TokenPoolProxy|0|auth_,tpproxy_"
   "pools_siloed_lock_release_pool|siloed_lock_release_pool|SiloedLockReleasePool|0|auth_,pool_"
   "pools_advanced_pool_hooks|advanced_pool_hooks|AdvancedPoolHooks|0|auth_,aph_"
   "pools_advanced_pool_hooks_extractor|advanced_pool_hooks_extractor|AdvancedPoolHooksExtractor|0|"

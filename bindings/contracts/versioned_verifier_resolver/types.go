@@ -319,6 +319,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -452,6 +453,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -463,7 +465,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // InboundImplSetEvent represents the InboundImplSetEvent event.
-// Topics: [vvr_InboundImplSet]
+// Topics: [vvr_InboundImplSet map]
 type InboundImplSetEvent struct {
 	Version  [4]byte
 	Verifier string
@@ -476,7 +478,7 @@ type InboundImplSetEvent struct {
 const InboundImplSetEventTopic = "vvr_InboundImplSet"
 
 // OutboundImplSetEvent represents the OutboundImplSetEvent event.
-// Topics: [vvr_OutboundImplSet]
+// Topics: [vvr_OutboundImplSet map]
 type OutboundImplSetEvent struct {
 	DestChainSelector uint64
 	Verifier          string
@@ -489,7 +491,7 @@ type OutboundImplSetEvent struct {
 const OutboundImplSetEventTopic = "vvr_OutboundImplSet"
 
 // FeeAggregatorSetEvent represents the FeeAggregatorSetEvent event.
-// Topics: [vvr_FeeAggregatorSet]
+// Topics: [vvr_FeeAggregatorSet map]
 type FeeAggregatorSetEvent struct {
 	FeeAggregator string
 	// Event metadata
@@ -501,7 +503,7 @@ type FeeAggregatorSetEvent struct {
 const FeeAggregatorSetEventTopic = "vvr_FeeAggregatorSet"
 
 // InboundImplRemovedEvent represents the InboundImplRemovedEvent event.
-// Topics: [vvr_InboundImplRemoved]
+// Topics: [vvr_InboundImplRemoved map]
 type InboundImplRemovedEvent struct {
 	Version [4]byte
 	// Event metadata
@@ -513,7 +515,7 @@ type InboundImplRemovedEvent struct {
 const InboundImplRemovedEventTopic = "vvr_InboundImplRemoved"
 
 // OutboundImplRemovedEvent represents the OutboundImplRemovedEvent event.
-// Topics: [vvr_OutboundImplRemoved]
+// Topics: [vvr_OutboundImplRemoved map]
 type OutboundImplRemovedEvent struct {
 	DestChainSelector uint64
 	// Event metadata
@@ -525,7 +527,7 @@ type OutboundImplRemovedEvent struct {
 const OutboundImplRemovedEventTopic = "vvr_OutboundImplRemoved"
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
+// Topics: [auth_RoleGranted map]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -539,7 +541,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "auth_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
+// Topics: [auth_RoleRevoked map]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -553,7 +555,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "auth_RoleRevoked"
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
+// Topics: [auth_CallerAdded map]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -565,7 +567,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
+// Topics: [auth_CallerRemoved map]
 type AuthorizedCallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -577,7 +579,7 @@ type AuthorizedCallerRemovedEvent struct {
 const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart]
+// Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
