@@ -62,6 +62,12 @@ type factory struct {
 	// is forwarded to destinationreader.New so the execution-attempt poller's
 	// look-back window matches the executor's retry budget.
 	attemptCacheExpiration time.Duration
+
+	// networkVerify checks at SetKeystore time that the Soroban RPC endpoint
+	// serves the configured network (see network_verify.go). NewFactory
+	// installs the real verifier; hand-crafted test factories leave it nil,
+	// which skips the check.
+	networkVerify networkVerifyFunc
 }
 
 // GetAccessor implements chainaccess.AccessorFactory.
@@ -107,6 +113,7 @@ func (f *factory) GetAccessor(ctx context.Context, chainSelector protocol.ChainS
 		destCfg:                stellarDestConfig,
 		hasDest:                hasDest,
 		attemptCacheExpiration: f.attemptCacheExpiration,
+		networkVerify:          f.networkVerify,
 	}
 
 	// Pre-validate reader-side config now so SourceReader() can return a
@@ -147,6 +154,7 @@ func NewFactory(
 		readerConfig:           readerConfig,
 		destConfig:             destConfig,
 		attemptCacheExpiration: attemptCacheExpiration,
+		networkVerify:          defaultNetworkVerify,
 	}
 }
 
@@ -170,6 +178,10 @@ type accessor struct {
 	destCfg                destinationConfig
 	hasDest                bool
 	attemptCacheExpiration time.Duration
+
+	// networkVerify is copied from the factory in GetAccessor; nil skips the
+	// endpoint identity check (see network_verify.go).
+	networkVerify networkVerifyFunc
 
 	// mu guards the lazy-built fields below; SetKeystore may be invoked
 	// concurrently with reader / transmitter accessors in pathological cases.
@@ -219,6 +231,31 @@ func (a *accessor) SetKeystore(ctx context.Context, ks keystore.Keystore) error 
 			Str("chain_selector", a.strSelector).
 			Msg("stellar accessor: SetKeystore called with nil keystore; keystore-backed components will not be constructed")
 		return nil
+	}
+
+	// Fail fast when the endpoint serves a different network than the
+	// accessor is configured for. Unreachable endpoints are skipped after
+	// retries (transient, like the disconnections tolerated below); a
+	// definitive mismatch is immutable configuration, so every keystore-backed
+	// component is disabled with a single root cause instead of waiting for
+	// silent no-observations (reader path) or per-transaction signature
+	// rejections (transmitter path).
+	if a.networkVerify != nil && a.readerCfg.SorobanRPCURL != "" && a.readerCfg.NetworkPassphrase != "" {
+		if err := a.networkVerify(ctx, a.readerCfg, a.chainSelector, a.zlggr); err != nil {
+			e := fmt.Errorf("soroban rpc endpoint failed network identity check: %w", err)
+			a.zlggr.Error().
+				Err(err).
+				Str("chain_selector", a.strSelector).
+				Msg("stellar accessor: network identity check failed")
+			if a.hasReader {
+				a.sourceReaderErr = e
+			}
+			if a.hasDest {
+				a.destReaderErr = e
+				a.contractTransmitterErr = e
+			}
+			return nil
+		}
 	}
 
 	keyName := a.destCfg.keyName
