@@ -239,7 +239,7 @@ pub struct StellarToAnyMessage {
     pub receiver: Bytes,
     /// Arbitrary data payload to deliver
     pub data: Bytes,
-    /// Tokens to transfer (max 1 in CCIP 1.7)
+    /// Tokens to transfer (max 1 in CCIP 2.0)
     pub token_amounts: Vec<TokenAmount>,
     /// Fee token address
     pub fee_token: Address,
@@ -316,7 +316,7 @@ pub struct AnyToStellarMessage {
 // CCIP MessageV1 Canonical Format
 // ============================================================
 //
-// These types implement the chain-agnostic CCIP v1.7 canonical message
+// These types implement the chain-agnostic CCIP v2.0 canonical message
 // encoding, matching the protocol.Message.Encode() and
 // protocol.TokenTransfer.Encode() formats used by offchain services.
 //
@@ -324,11 +324,11 @@ pub struct AnyToStellarMessage {
 // routing metadata, then calls compute_message_id() to derive the
 // deterministic message ID that matches the offchain computation.
 
-/// Current message format version for CCIP v1.7.
+/// Current message format version for CCIP v2.0.
 pub const MESSAGE_V1_VERSION: u8 = 1;
 
 /// Fixed framing size of a `CcipMessageV1` excluding any variable-length field
-/// content. The wire layout is the chain-agnostic CCIP v1.7 format, byte-for-byte
+/// content. The wire layout is the chain-agnostic CCIP v2.0 format, byte-for-byte
 /// identical to EVM `MessageV1Codec.MESSAGE_V1_BASE_SIZE`:
 ///   1 (version) + 8 (sourceChain) + 8 (destChain) + 8 (msgNum) +
 ///   4 (executionGasLimit) + 4 (ccipReceiveGasLimit) + 4 (finality) +
@@ -403,7 +403,7 @@ pub const TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE: u32 =
 // `Address::to_xdr` fields.
 const _: () = assert!(TOKEN_TRANSFER_V1_STELLAR_SOURCE_BASE_SIZE == 119);
 
-/// Canonical token transfer encoding for CCIP v1.7.
+/// Canonical token transfer encoding for CCIP v2.0.
 ///
 /// Matches protocol.TokenTransfer.Encode() byte layout:
 ///   version(1) | amount(32) | src_pool(1+N) | src_token(1+N) |
@@ -692,7 +692,7 @@ impl CcipMessageV1 {
 // ============================================================
 
 /// A simple cursor-based reader over `Bytes` for decoding the canonical
-/// CCIP v1.7 wire format. All reads advance the cursor and return
+/// CCIP v2.0 wire format. All reads advance the cursor and return
 /// `MessageDecodingError` on underflow.
 struct ByteReader<'a> {
     data: &'a Bytes,
