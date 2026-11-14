@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -137,4 +138,55 @@ func TestResolve_StellarTimeoutDefaults(t *testing.T) {
 	assert.Equal(t, int64(300), *cfg.TxTimeoutSecs, "5 min wall-clock fallback")
 	assert.Equal(t, uint(3), *cfg.MaxRestoreAttempts, "max restore attempts")
 	assert.Equal(t, uint(3), *cfg.MaxSimulateAttempts, "max simulate attempts")
+}
+
+func TestResolve_MaxCumulativeFeeStaysZeroForPerRequestDerive(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{}
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "unset stays 0 so the TXM can derive per request")
+
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "a second Resolve, as in New after SetDefaults, keeps 0")
+
+	cfg = TxManagerConfig{MaxCumulativeFee: ptr(int64(0))}
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee)
+
+	cfg = TxManagerConfig{MaxCumulativeFee: ptr(int64(-1))}
+	cfg.Resolve()
+	assert.Equal(t, int64(0), *cfg.MaxCumulativeFee, "a negative value means derive, same as 0")
+}
+
+func TestResolve_MaxCumulativeFeeExplicitValueSurvives(t *testing.T) {
+	t.Parallel()
+
+	cfg := TxManagerConfig{MaxCumulativeFee: ptr(int64(50_000))}
+	cfg.Resolve()
+
+	assert.Equal(t, int64(50_000), *cfg.MaxCumulativeFee)
+}
+
+func TestDeriveMaxCumulativeFee(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(2_000_000_000)*(5+2), *DeriveMaxCumulativeFee(2_000_000_000, 5),
+		"derived as resource cap * (MaxTxRetryAttempts + 2)")
+	assert.Equal(t, int64(1_000)*(3+2), *DeriveMaxCumulativeFee(1_000, 3))
+}
+
+func TestDeriveMaxCumulativeFee_SaturatesInsteadOfOverflowing(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(math.MaxInt64), *DeriveMaxCumulativeFee(math.MaxInt64, 5))
+	assert.Equal(t, int64(math.MaxInt64), *DeriveMaxCumulativeFee(1, math.MaxUint64-1),
+		"an attempt count near MaxUint64 must saturate, not wrap")
+}
+
+func TestDeriveMaxCumulativeFee_DisabledWithoutResourceCap(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(0), *DeriveMaxCumulativeFee(0, 5),
+		"with no resource cap there is nothing to derive, so the budget stays disabled")
 }

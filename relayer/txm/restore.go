@@ -79,6 +79,12 @@ func (s *StellarTxm) handleRestore(
 		return fmt.Errorf("failed to encode signed restore transaction: %w", err)
 	}
 
+	// One envelope is resubmitted on every restore attempt, so its fee is reserved once
+	// and only settled or released once the envelope's fate is known.
+	if err := tx.budget.reserve(seq, localHash, inclusionFee+resourceFee); err != nil {
+		return fmt.Errorf("restore fee budget: %w", err)
+	}
+
 	s.metrics.IncrementRestore(ctx, RestoreOutcomeInitiated)
 
 	var lastErr error
@@ -111,6 +117,8 @@ func (s *StellarTxm) handleRestore(
 				}
 				continue
 			}
+			// The envelope is in a ledger either way: settle to the fee actually charged.
+			settleRestoreFee(tx, localHash, resp.ResultXDR)
 			if resp.Status == protocolrpc.TransactionStatusSuccess {
 				s.metrics.IncrementRestore(ctx, RestoreOutcomeSuccess)
 				ctxLogger.Infow("restore transaction confirmed", "seq", seq, "hash", localHash)
@@ -131,6 +139,8 @@ func (s *StellarTxm) handleRestore(
 			continue
 
 		case stellarcore.TXStatusError:
+			// Rejected envelopes never land, so their reservation is freed.
+			tx.budget.release(localHash)
 			s.metrics.IncrementRestore(ctx, RestoreOutcomeFailed)
 			if submitResult.ErrorResultXDR != "" {
 				return fmt.Errorf("restore transaction rejected: %s", submitResult.ErrorResultXDR)
@@ -148,6 +158,16 @@ func (s *StellarTxm) handleRestore(
 		return fmt.Errorf("restore attempts exhausted: %w", lastErr)
 	}
 	return fmt.Errorf("restore attempts exhausted")
+}
+
+// settleRestoreFee charges the budget with the fee the ledger actually took.
+// An undecodable result leaves the reservation in place: the fee was still charged.
+func settleRestoreFee(tx *StellarTx, hash, resultXDR string) {
+	var txResult xdr.TransactionResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &txResult); err != nil {
+		return
+	}
+	tx.budget.settle(hash, int64(txResult.FeeCharged))
 }
 
 func (s *StellarTxm) sleepBeforeRestoreRetry(ctx context.Context) bool {
