@@ -164,6 +164,7 @@ pub enum CCIPError {
     /// transaction reverts instead of rewriting the state and re-emitting the event
     /// (EVM `OffRamp.NoStateProgressMade`; INV-EXEC-7).
     NoStateProgressMade = 119,
+    CCVLengthTooLarge = 120,
 
     // ============================================================
     // TokenAdminRegistry errors
