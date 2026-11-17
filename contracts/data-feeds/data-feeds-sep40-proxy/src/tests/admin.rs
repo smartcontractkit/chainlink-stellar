@@ -442,11 +442,11 @@ mod set_proxy {
         let a = Adapter::deploy();
         let second = new_address(&a.env);
         a.client().set_proxy(&second);
-        assert_eq!(a.client().get_proxy(), second);
         a.assert_latest_event(ProxySet {
             old_proxy: a.mock.clone(),
-            new_proxy: second,
+            new_proxy: second.clone(),
         });
+        assert_eq!(a.client().get_proxy(), second);
     }
 
     #[test]
