@@ -422,7 +422,107 @@ mod remove_feed {
 }
 
 mod set_proxy {
+    use super::super::mock_proxy::{MalformedLatestRound, MissingLatestRound};
     use super::*;
+
+    fn assert_rejected(a: &Adapter, candidate: &Address) {
+        let before = data_feeds_common::test_utils::events(&a.env, &a.id);
+        assert_eq!(
+            a.client().try_set_proxy(candidate),
+            Err(Ok(Sep40ProxyError::FeedUnreadable))
+        );
+        assert_eq!(data_feeds_common::test_utils::events(&a.env, &a.id), before);
+        assert_eq!(a.client().get_proxy(), a.mock);
+        assert_eq!(a.sep40().lastprice(&a.asset("BTC")).unwrap().price, 100);
+        assert_eq!(a.sep40().lastprice(&a.asset("ETH")).unwrap().price, 200);
+    }
+
+    #[test]
+    fn switches_with_no_mapped_assets() {
+        let a = Adapter::deploy();
+        let second = new_address(&a.env);
+        a.client().set_proxy(&second);
+        assert_eq!(a.client().get_proxy(), second);
+        a.assert_latest_event(ProxySet {
+            old_proxy: a.mock.clone(),
+            new_proxy: second,
+        });
+    }
+
+    #[test]
+    fn validates_all_feeds_at_eighteen_decimals_and_accepts_signed_boundaries() {
+        let a = Adapter::deploy();
+        let second = a.env.register(MockProxy, ());
+        let candidate = MockProxyClient::new(&a.env, &second);
+        for (index, price) in [i128::MIN, -1, 0, 1, i128::MAX].into_iter().enumerate() {
+            let tag = index as u8 + 1;
+            let asset = Asset::Stellar(new_address(&a.env));
+            a.set_price(tag, 100, 10);
+            a.client().add_feed(&asset, &a.feed(tag));
+            candidate.set_round(&a.feed(tag), &a.round(I256::from_i128(&a.env, price), 77));
+        }
+
+        a.client().set_proxy(&second);
+
+        assert_eq!(candidate.last_decimals(), Some(DECIMALS));
+        for (asset, price) in a
+            .sep40()
+            .assets()
+            .iter()
+            .zip([i128::MIN, -1, 0, 1, i128::MAX])
+        {
+            assert_eq!(
+                a.sep40().lastprice(&asset),
+                Some(PriceData {
+                    price,
+                    timestamp: 77
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_switch_if_any_feed_is_unreadable() {
+        for mode in 0..7 {
+            let a = Adapter::deploy();
+            a.map("BTC", 1, 100, 10);
+            a.map("ETH", 2, 200, 20);
+            let second = a.env.register(MockProxy, ());
+            let candidate = MockProxyClient::new(&a.env, &second);
+            candidate.set_round(&a.feed(1), &a.round(I256::from_i128(&a.env, 999), 77));
+            match mode {
+                0 => {} // The second feed is missing.
+                1 => candidate.set_frozen(&a.feed(2)),
+                2 => candidate.set_error(&a.feed(2), &ProxyReadError::NoDataPresent),
+                3 => candidate.set_error(&a.feed(2), &ProxyReadError::InvalidDecimals),
+                4 => candidate.set_error(&a.feed(2), &ProxyReadError::RoundsToZero),
+                _ => {
+                    let one = I256::from_i128(&a.env, 1);
+                    let answer = if mode == 5 {
+                        I256::from_i128(&a.env, i128::MAX).add(&one)
+                    } else {
+                        I256::from_i128(&a.env, i128::MIN).sub(&one)
+                    };
+                    candidate.set_round(&a.feed(2), &a.round(answer, 77));
+                }
+            }
+            assert_rejected(&a, &second);
+        }
+    }
+
+    #[test]
+    fn rejects_incompatible_addresses() {
+        let a = Adapter::deploy();
+        a.map("BTC", 1, 100, 10);
+        a.map("ETH", 2, 200, 20);
+        for candidate in [
+            new_address(&a.env),
+            a.env.register(MissingLatestRound, ()),
+            a.env.register(MalformedLatestRound, ()),
+        ] {
+            assert_rejected(&a, &candidate);
+        }
+    }
 
     #[test]
     fn reads_follow_the_new_proxy() {

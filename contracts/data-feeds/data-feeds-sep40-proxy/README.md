@@ -31,6 +31,8 @@ The adapter cannot check what currency a feed is quoted in. Only map feeds quote
 
 Ownership renunciation is disabled: `renounce_ownership` always aborts with `OwnershipRenunciationDisabled`, preserving access to administration and recovery. Change the owner using the two-step ownership transfer.
 
+`set_proxy` checks that every mapped feed is readable through the candidate proxy at 18 decimals before switching. If any check fails, it returns `FeedUnreadable`, keeps the existing proxy, and emits no `ProxySet` event. With no mapped assets, the switch requires no feed checks. Validation cost grows with the number of mapped assets, and an unavailable feed on the candidate blocks the switch. Readability does not verify trading-pair or quote-currency identity; the owner must verify those separately.
+
 The owner can recover tokens accidentally sent to the adapter using `recover_tokens(token, to, amount)`. Recovery transfers the requested amount from the adapter to the destination and emits `TokenRecovered`.
 
 ## Tests

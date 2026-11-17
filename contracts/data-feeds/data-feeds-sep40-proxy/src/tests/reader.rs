@@ -247,8 +247,9 @@ mod unsupported_in_v1 {
 }
 
 fn assert_invalid_proxy_is_handled(a: &Adapter, proxy: &Address) {
-    let btc = a.map("BTC", 1, 100, 10);
     a.client().set_proxy(proxy);
+    let btc = a.asset("BTC");
+    a.map_unchecked(&btc, &a.feed(1));
 
     assert_eq!(a.sep40().lastprice(&btc), None);
 

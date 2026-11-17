@@ -79,9 +79,14 @@ impl DataFeedsSep40Proxy {
         Ok(())
     }
 
-    pub fn set_proxy(env: Env, proxy: Address) {
+    pub fn set_proxy(env: Env, proxy: Address) -> Result<(), Sep40ProxyError> {
         enforce_owner_auth(&env);
         storage::extend_ttl(&env);
+        for asset in storage::assets(&env).iter() {
+            let data_id = storage::feed_for(&env, &asset).ok_or(Sep40ProxyError::AssetNotMapped)?;
+            assert_readable_from(&env, &proxy, &data_id)?;
+        }
+
         let old_proxy = storage::get_proxy(&env);
         storage::set_proxy(&env, &proxy);
         ProxySet {
@@ -89,6 +94,7 @@ impl DataFeedsSep40Proxy {
             new_proxy: proxy,
         }
         .publish(&env);
+        Ok(())
     }
 
     pub fn get_proxy(env: Env) -> Address {
@@ -144,13 +150,25 @@ fn assert_nonzero(data_id: &DataId) -> Result<(), Sep40ProxyError> {
 }
 
 fn assert_readable(env: &Env, data_id: &DataId) -> Result<(), Sep40ProxyError> {
-    fetch_latest(env, data_id)
+    assert_readable_from(env, &storage::get_proxy(env), data_id)
+}
+
+fn assert_readable_from(
+    env: &Env,
+    proxy: &Address,
+    data_id: &DataId,
+) -> Result<(), Sep40ProxyError> {
+    fetch_latest_from(env, proxy, data_id)
         .map(|_| ())
         .ok_or(Sep40ProxyError::FeedUnreadable)
 }
 
 fn fetch_latest(env: &Env, data_id: &DataId) -> Option<PriceData> {
-    let proxy = DataFeedsProxyReaderClient::new(env, &storage::get_proxy(env));
+    fetch_latest_from(env, &storage::get_proxy(env), data_id)
+}
+
+fn fetch_latest_from(env: &Env, proxy: &Address, data_id: &DataId) -> Option<PriceData> {
+    let proxy = DataFeedsProxyReaderClient::new(env, proxy);
     let round = match proxy.try_latest_round(data_id, &DECIMALS) {
         Ok(Ok(round)) => round,
         _ => return None,
