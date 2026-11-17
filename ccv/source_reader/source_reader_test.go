@@ -503,6 +503,35 @@ func TestFetchMessageSentEventsPagination(t *testing.T) {
 		assert.Nil(t, events)
 		assert.Contains(t, err.Error(), "continuation cursor")
 	})
+
+	t.Run("errors on a non-advancing cursor instead of silently truncating", func(t *testing.T) {
+		reader, mockClient := newReader(t)
+
+		cursor1 := protocolrpc.Cursor{Ledger: 150, Tx: 1, Op: 0, Event: 0}.String()
+		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
+
+		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
+			return req.Pagination == nil
+		})).Return(
+			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: cursor1},
+			nil,
+		).Once()
+
+		// Server contract violation: the same cursor returns with a fresh
+		// page. Treating it as end-of-results would silently drop everything
+		// past this page while the caller advances the range.
+		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
+			return req.Pagination != nil
+		})).Return(
+			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: cursor1},
+			nil,
+		).Once()
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
+		require.Error(t, err, "a non-advancing cursor must error, not silently truncate the range")
+		assert.Nil(t, events)
+		assert.Contains(t, err.Error(), "did not advance")
+	})
 }
 
 func TestToBytes32(t *testing.T) {
