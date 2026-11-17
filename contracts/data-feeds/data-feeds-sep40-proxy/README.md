@@ -29,6 +29,8 @@ The adapter cannot check what currency a feed is quoted in. Only map feeds quote
 
 `add_feed`, `update_feed`, `remove_feed`, `set_proxy`, plus two-step ownership, `upgrade`, and `recover_tokens`. A data id can be mapped to at most one asset. `add_feed` rejects the configured base asset with `AssetIsBase`. `add_feed` and `update_feed` require the feed to be readable at call time; genuine zero and negative prices are readable.
 
+Ownership renunciation is disabled: `renounce_ownership` always aborts with `OwnershipRenunciationDisabled`, preserving access to administration and recovery. Change the owner using the two-step ownership transfer.
+
 The owner can recover tokens accidentally sent to the adapter using `recover_tokens(token, to, amount)`. Recovery transfers the requested amount from the adapter to the destination and emits `TokenRecovered`.
 
 ## Tests

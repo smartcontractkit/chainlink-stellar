@@ -1,4 +1,6 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, Address, BytesN, Env, String, Symbol, Vec,
+};
 
 use data_feeds_common::{TokenRecoverable, Upgradeable, Versioned};
 use data_feeds_proxy::{DataFeedsProxyReaderClient, DataId};
@@ -171,7 +173,11 @@ impl Versioned for DataFeedsSep40Proxy {
 }
 
 #[contractimpl(contracttrait)]
-impl Ownable for DataFeedsSep40Proxy {}
+impl Ownable for DataFeedsSep40Proxy {
+    fn renounce_ownership(env: &Env) {
+        panic_with_error!(env, Sep40ProxyError::OwnershipRenunciationDisabled);
+    }
+}
 
 #[contractimpl(contracttrait)]
 impl Upgradeable for DataFeedsSep40Proxy {}

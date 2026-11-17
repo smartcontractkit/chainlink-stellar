@@ -513,6 +513,46 @@ mod recover_tokens {
 mod ownership {
     use super::*;
 
+    #[test]
+    fn owner_cannot_renounce_and_retains_admin_access() {
+        let a = Adapter::deploy();
+
+        assert_eq!(
+            a.client().try_renounce_ownership(),
+            Err(Ok(Sep40ProxyError::OwnershipRenunciationDisabled.into()))
+        );
+        assert_eq!(a.client().get_owner(), Some(a.owner.clone()));
+
+        let btc = a.map("BTC", 1, 100, 10);
+        assert_eq!(a.client().get_feed(&btc), Some(a.feed(1)));
+    }
+
+    #[test]
+    fn rejected_renunciation_preserves_pending_transfer() {
+        let a = Adapter::deploy();
+        let next = new_address(&a.env);
+        propose(&a, &next);
+
+        assert_eq!(
+            a.client().try_renounce_ownership(),
+            Err(Ok(Sep40ProxyError::OwnershipRenunciationDisabled.into()))
+        );
+        assert_eq!(a.client().get_owner(), Some(a.owner.clone()));
+
+        a.client().accept_ownership();
+        assert_eq!(a.client().get_owner(), Some(next.clone()));
+
+        a.set_price(1, 100, 10);
+        authorize(
+            &a.env,
+            &a.id,
+            &next,
+            "add_feed",
+            (a.asset("BTC"), a.feed(1)),
+        );
+        a.client().add_feed(&a.asset("BTC"), &a.feed(1));
+    }
+
     fn propose(a: &Adapter, new_owner: &Address) {
         let until = a.env.ledger().sequence() + 100;
         a.client().transfer_ownership(new_owner, &until);

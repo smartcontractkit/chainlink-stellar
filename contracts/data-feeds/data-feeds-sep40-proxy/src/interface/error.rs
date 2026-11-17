@@ -10,4 +10,5 @@ pub enum Sep40ProxyError {
     InvalidDataId = 203,
     FeedUnreadable = 204,
     AssetIsBase = 205,
+    OwnershipRenunciationDisabled = 206,
 }
