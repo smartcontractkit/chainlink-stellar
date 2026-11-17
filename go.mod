@@ -197,7 +197,7 @@ require (
 	github.com/smartcontractkit/freeport v0.1.3-0.20250828155247-add56fa28aad // indirect
 	github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342 // indirect
 	github.com/smartcontractkit/wsrpc v0.8.5-0.20250502134807-c57d3d995945 // indirect
-	github.com/stellar/go-stellar-sdk v0.8.0 // indirect
+	github.com/stellar/go-stellar-sdk v0.9.0 // indirect
 	github.com/stellar/go-xdr v0.0.0-20260806060815-dc590f17552a // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/supranational/blst v0.3.16 // indirect

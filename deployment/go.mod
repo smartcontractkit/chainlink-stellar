@@ -16,7 +16,7 @@ require (
 	github.com/smartcontractkit/chainlink-protos/job-distributor v0.20.0
 	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
 	github.com/smartcontractkit/mcms v0.56.1
-	github.com/stellar/go-stellar-sdk v0.8.0
+	github.com/stellar/go-stellar-sdk v0.9.0
 	github.com/stretchr/testify v1.12.1
 )
 

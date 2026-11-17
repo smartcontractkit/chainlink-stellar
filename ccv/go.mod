@@ -16,7 +16,7 @@ require (
 	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
 	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-stellar/relayer v0.0.0-00010101000000-000000000000
-	github.com/stellar/go-stellar-sdk v0.8.0
+	github.com/stellar/go-stellar-sdk v0.9.0
 	github.com/stretchr/testify v1.12.1
 )
 

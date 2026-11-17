@@ -307,3 +307,15 @@ func TestContractAddressWireBytes(t *testing.T) {
 	_, err = ContractIDFromWireBytes(raw)
 	require.ErrorContains(t, err, "expected 40-byte address wire envelope")
 }
+
+func TestSymbolToScValView(t *testing.T) {
+	view, err := SymbolToScValView("transfer")
+	require.NoError(t, err)
+
+	// Round-trip: the view must decode back to the symbol ScVal.
+	var got xdr.ScVal
+	require.NoError(t, xdr.SafeUnmarshal(view, &got))
+	sym, ok := got.GetSym()
+	require.True(t, ok)
+	require.Equal(t, xdr.ScSymbol("transfer"), sym)
+}

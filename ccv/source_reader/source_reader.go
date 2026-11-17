@@ -121,7 +121,10 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 	}
 
 	// Build topic filter for CCIPMessageSent event
-	topicScVal := scval.SymbolToScValPtr(s.ccipMessageSentTopic)
+	topicScVal, err := scval.SymbolToScValView(s.ccipMessageSentTopic)
+	if err != nil {
+		return nil, fmt.Errorf("encode topic symbol %q: %w", s.ccipMessageSentTopic, err)
+	}
 
 	events, err := s.fetchAllEvents(ctx, fromLedger, toLedger, topicScVal)
 	if err != nil {
@@ -157,7 +160,7 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 // range is fully consumed. Any failure mid-pagination returns an error rather
 // than a partial result, so callers never advance past silently dropped
 // MessageSent events.
-func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal *xdr.ScVal) ([]protocolrpc.EventInfo, error) {
+func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal xdr.ScValView) ([]protocolrpc.EventInfo, error) {
 	// Use wildcard to match events with additional topics
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 	filters := []protocolrpc.EventFilter{

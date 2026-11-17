@@ -639,6 +639,12 @@ func SymbolToScValPtr(sym string) *xdr.ScVal {
 	}
 }
 
+// SymbolToScValView returns a symbol ScVal as raw XDR bytes, the form SDK
+// v0.9+ SegmentFilter.ScVal (ScValView) expects.
+func SymbolToScValView(sym string) (xdr.ScValView, error) {
+	return SymbolToScValPtr(sym).MarshalBinary()
+}
+
 // HexToContractStrkey converts a 0x-prefixed hex string (32-byte contract ID)
 // to a Stellar contract strkey (C...).
 func HexToContractStrkey(hexAddr string) (string, error) {
