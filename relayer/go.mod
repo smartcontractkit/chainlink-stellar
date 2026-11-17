@@ -133,3 +133,5 @@ require (
 // gogo/protobuf generate tag is incompatible with newer protobuf; chainlink-common
 // transitively pulls it, so mirror the root module's replace.
 replace github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
+
+replace github.com/smartcontractkit/chainlink-stellar/bindings => ../bindings
