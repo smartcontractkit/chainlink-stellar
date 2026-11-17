@@ -850,6 +850,8 @@ const (
 	McmsErrorInvalidMultisig                              = 59
 	McmsErrorInvalidArgsXdr                               = 60
 	McmsErrorConfigVersionOverflow                        = 61
+	McmsErrorNonCanonicalSignerAddress                    = 62
+	McmsErrorZeroAddressSigner                            = 63
 )
 
 // McmsErrorMessage returns a human-readable message for error codes.
@@ -898,6 +900,8 @@ var McmsErrorMessage = map[int]string{
 	59: "invalid multisig",
 	60: "invalid args xdr",
 	61: "config version overflow",
+	62: "non canonical signer address",
+	63: "zero address signer",
 }
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.

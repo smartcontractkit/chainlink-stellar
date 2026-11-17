@@ -18,7 +18,7 @@ use soroban_sdk::{
 };
 
 use crate::constants::{ENCODING_VERSION, LEDGER_THRESHOLD};
-use crate::crypto::{cmp_bytes32, efficient_hash_pair};
+use crate::crypto::{cmp_bytes32, efficient_hash_pair, recover_eth_address_vrs};
 use crate::encoding::{
     eth_signed_message_hash_32, hash_root_metadata, hash_set_root_inner, hash_stellar_op,
 };
@@ -1830,4 +1830,285 @@ fn test_extend_contract_ttls_via_own_execute_aborts() {
         Err(Ok(McmsError::CallAborted))
     );
     assert_eq!(client.get_op_count(), 0);
+}
+
+// ===========================================================================
+// Signer encoding validation (audit finding, 2026-11): configured signers
+// must be canonical EVM identities — 12 leading zero bytes plus a nonzero
+// 20-byte address, the only form signature recovery can produce. Enforcing
+// canonicality also makes strictly-increasing imply 20-byte (logical)
+// uniqueness, and unreachable signers can no longer be counted toward
+// quorums. EVM gets these guarantees structurally from its 20-byte type;
+// the Soroban BytesN<32> port must enforce them.
+// ===========================================================================
+
+/// [0x01 * 12 | tail]: a 20-byte address encoded with a non-canonical
+/// (nonzero) 12-byte prefix. Sorts after the canonical [0x00 * 12 | tail]
+/// form, so canonical-then-variant satisfies strictly-increasing.
+fn noncanonical_variant(env: &Env, tail: &[u8; 20]) -> BytesN<32> {
+    let mut a = [0u8; 32];
+    a[..12].copy_from_slice(&[0x01u8; 12]);
+    a[12..].copy_from_slice(tail);
+    BytesN::from_array(env, &a)
+}
+
+/// [0x00 * 12 | tail]: a canonical encoding helper for hand-built addresses.
+fn canonical_addr(env: &Env, tail: &[u8; 20]) -> BytesN<32> {
+    let mut a = [0u8; 32];
+    a[12..].copy_from_slice(tail);
+    BytesN::from_array(env, &a)
+}
+
+fn address_tail(addr: &BytesN<32>) -> [u8; 20] {
+    let a = addr.to_array();
+    let mut tail = [0u8; 20];
+    tail.copy_from_slice(&a[12..]);
+    tail
+}
+
+/// The bricking argument rests on this property: recovered identities always
+/// carry 12 leading zero bytes, so a configured key with a nonzero prefix can
+/// never be matched by any signature.
+#[test]
+fn test_recover_eth_address_vrs_always_left_zero_padded() {
+    let env = Env::default();
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    let digest = BytesN::from_array(&env, &[0x42u8; 32]);
+    let (sig64, recid) = sk
+        .sign_prehash_recoverable(digest.to_array().as_slice())
+        .expect("secp256k1 sign");
+    let b = sig64.to_bytes();
+    let r = BytesN::from_array(&env, b[..32].try_into().unwrap());
+    let s = BytesN::from_array(&env, b[32..].try_into().unwrap());
+    let v = 27u32 + recid.to_byte() as u32;
+
+    let recovered = recover_eth_address_vrs(&env, &digest, v, &r, &s).unwrap();
+    let arr = recovered.to_array();
+    assert!(
+        arr[..12].iter().all(|&x| x == 0),
+        "recovered identity must be left-zero-padded"
+    );
+    assert_eq!(recovered, padded_eth_address(&env, &sk));
+}
+
+/// A signer whose top 12 bytes are nonzero can never be matched by signature
+/// recovery (recovered identities are always left-zero-padded) — reject it at
+/// config time instead of storing an unreachable identity.
+#[test]
+fn test_set_config_rejects_noncanonical_signer_encoding() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &chain);
+
+    let malformed = noncanonical_variant(&env, &[0x11u8; 20]);
+    assert!(matches!(
+        client.try_set_config(
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [malformed]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &false,
+        ),
+        Err(Ok(McmsError::NonCanonicalSignerAddress))
+    ));
+    // The rejected config must not bump the version or replace the live one.
+    assert_eq!(client.get_config_version(), 1);
+}
+
+/// No ECDSA signature recovers to the zero address, so a zero signer is an
+/// unreachable identity that could still be counted toward a quorum.
+#[test]
+fn test_set_config_rejects_zero_address_signer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &chain);
+
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    assert!(matches!(
+        client.try_set_config(
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [zero]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &false,
+        ),
+        Err(Ok(McmsError::ZeroAddressSigner))
+    ));
+    assert_eq!(client.get_config_version(), 1);
+}
+
+/// Two entries sharing the same 20-byte tail (one canonical, one
+/// 0x01-prefixed variant) are one logical identity — the group must not
+/// count them as two voters. Canonicality enforcement subsumes this: the
+/// variant is rejected outright.
+#[test]
+fn test_set_config_rejects_logical_duplicate_signers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &chain);
+
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    let canonical = padded_eth_address(&env, &sk);
+    let variant = noncanonical_variant(&env, &address_tail(&canonical));
+
+    assert!(matches!(
+        client.try_set_config(
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [canonical, variant]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32, 0u32]),
+            },
+            &two_of_two_group0_quorum(&env),
+            &all_zero_parents(&env),
+            &false,
+        ),
+        Err(Ok(McmsError::NonCanonicalSignerAddress))
+    ));
+    assert_eq!(client.get_config_version(), 1);
+}
+
+/// Exact 32-byte duplicates are already rejected (strictly-increasing) —
+/// pins the enforced half of uniqueness so a fix does not regress it.
+#[test]
+fn test_set_config_rejects_exact_duplicate_signers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &chain);
+
+    let s = signer_a(&env);
+    assert!(matches!(
+        client.try_set_config(
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [s.clone(), s]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32, 0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &false,
+        ),
+        Err(Ok(McmsError::SignersAddressesMustBeStrictlyIncreasing))
+    ));
+}
+
+/// Descending signer order is rejected — the other enforced half. Uses two
+/// canonical addresses so only the ordering rule is exercised.
+#[test]
+fn test_set_config_rejects_descending_signers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+    initialize_default(&env, &client, &owner, &chain);
+
+    let hi = canonical_addr(&env, &[0x02u8; 20]);
+    let lo = canonical_addr(&env, &[0x01u8; 20]);
+    assert!(matches!(
+        client.try_set_config(
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [hi, lo]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32, 0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &false,
+        ),
+        Err(Ok(McmsError::SignersAddressesMustBeStrictlyIncreasing))
+    ));
+}
+
+/// initialize applies the config atomically and shares apply_config, so the
+/// same canonicality rule must gate the initial config: a non-canonical
+/// encoding cannot slip in at deployment time. The failed initialize must
+//  leave the contract uninitialized.
+#[test]
+fn test_initialize_rejects_noncanonical_signer_encoding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+
+    let sk = SigningKey::from_slice(&ANVIL_SK_0).unwrap();
+    let configured = noncanonical_variant(&env, &address_tail(&padded_eth_address(&env, &sk)));
+    assert!(matches!(
+        client.try_initialize(
+            &owner,
+            &chain,
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [configured]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &test_label(&env),
+        ),
+        Err(Ok(McmsError::NonCanonicalSignerAddress))
+    ));
+
+    // The failed initialize rolled back: the contract is still fresh.
+    assert!(matches!(
+        client.try_get_config(),
+        Err(Ok(McmsError::NotInitialized))
+    ));
+}
+
+/// The zero address cannot enter through initialize either.
+#[test]
+fn test_initialize_rejects_zero_address_signer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let chain = zero_chain_id(&env);
+    let client = register_client(&env);
+
+    assert!(matches!(
+        client.try_initialize(
+            &owner,
+            &chain,
+            &SignerAddresses {
+                inner: SorobanVec::from_array(&env, [BytesN::from_array(&env, &[0u8; 32])]),
+            },
+            &SignerGroups {
+                inner: SorobanVec::from_array(&env, [0u32]),
+            },
+            &one_of_one_quorum(&env),
+            &all_zero_parents(&env),
+            &test_label(&env),
+        ),
+        Err(Ok(McmsError::ZeroAddressSigner))
+    ));
+    assert!(matches!(
+        client.try_get_config(),
+        Err(Ok(McmsError::NotInitialized))
+    ));
 }

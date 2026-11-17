@@ -297,6 +297,8 @@ pub enum McmsError {
     InvalidMultisig = 59,
     InvalidArgsXdr = 60,
     ConfigVersionOverflow = 61,
+    NonCanonicalSignerAddress = 62,
+    ZeroAddressSigner = 63,
 }
 #[soroban_sdk::contractevent(topics = ["auth_RoleGranted"], export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

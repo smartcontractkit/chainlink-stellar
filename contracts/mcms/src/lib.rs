@@ -500,6 +500,20 @@ fn apply_config(
     let mut i = 0u32;
     while i < len {
         let addr = signer_addresses.get(i).unwrap();
+        // Configured signers must be canonical EVM identities: 12 leading
+        // zero bytes plus a nonzero 20-byte address — the only form
+        // signature recovery can produce, so anything else is an unreachable
+        // identity that could still be counted toward quorums. Enforcing
+        // canonicality also makes strictly-increasing imply 20-byte (logical)
+        // uniqueness. EVM gets both guarantees structurally from its 20-byte
+        // address type; this port must check them.
+        let arr = addr.to_array();
+        if arr[..12].iter().any(|&b| b != 0) {
+            return Err(McmsError::NonCanonicalSignerAddress);
+        }
+        if arr[12..].iter().all(|&b| b == 0) {
+            return Err(McmsError::ZeroAddressSigner);
+        }
         if let Some(ref p) = prev {
             if cmp_bytes32(p, &addr) >= 0 {
                 return Err(McmsError::SignersAddressesMustBeStrictlyIncreasing);

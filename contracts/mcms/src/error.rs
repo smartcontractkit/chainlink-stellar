@@ -55,6 +55,11 @@ pub enum McmsError {
     InvalidMultisig = 59,
     InvalidArgsXdr = 60,
     ConfigVersionOverflow = 61,
+    /// Signer address is not the canonical 12-zero-byte-padded encoding of a
+    /// 20-byte EVM address — it can never match a recovered identity.
+    NonCanonicalSignerAddress = 62,
+    /// Signer address is the all-zero address — no signature recovers to it.
+    ZeroAddressSigner = 63,
 }
 
 impl From<common_error::CCIPError> for McmsError {
