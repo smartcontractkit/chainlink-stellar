@@ -57,6 +57,9 @@ pub const DEFAULT_VERIFIER_VERSION_TAG: [u8; 4] = [0xe9, 0xa0, 0x5a, 0x20];
 const VERIFIER_VERSION_BYTES: u32 = 4;
 const SIGNATURE_LENGTH_BYTES: u32 = 2;
 
+/// EVM parity: CommitteeVerifier.sol caps thresholds at 255 (uint8 threshold).
+const MAX_THRESHOLD: u32 = 255;
+
 // ============================================================
 // Contract
 // ============================================================
@@ -144,6 +147,11 @@ impl SignatureConfigManager for CommitteeVerifierContract {
     fn validate_config(_env: &Env, config: &SignatureConfig) -> Result<(), Self::Error> {
         let threshold = config.verification.threshold();
         if threshold == 0 || threshold > config.signers.len() {
+            return Err(CCIPError::InvalidSignatureThreshold);
+        }
+        // EVM parity: uint8 threshold cap. Also stays within the wire format
+        // (u16 payload length / 64-byte sigs = 1023 max).
+        if threshold > MAX_THRESHOLD {
             return Err(CCIPError::InvalidSignatureThreshold);
         }
 

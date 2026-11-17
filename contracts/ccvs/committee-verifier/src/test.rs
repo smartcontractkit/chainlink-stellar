@@ -16,6 +16,7 @@ use crate::types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
 use crate::{
     CommitteeVerifierContract, CommitteeVerifierContractClient, DEFAULT_VERIFIER_VERSION_TAG,
 };
+use common_error::CCIPError;
 use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
 
@@ -1668,4 +1669,72 @@ fn test_upgrade_by_non_owner_rejected() {
     // Caller is not the owner and the owner does not authorize -> reject before
     // the executable is touched.
     client.upgrade(&hash);
+}
+
+// ============================================================
+// SignatureQuorum — threshold bound (EVM parity)
+// ============================================================
+
+/// Strictly-ascending canonical addresses; validation checks ordering only.
+fn synthetic_signers(env: &Env, count: u32) -> SorobanVec<BytesN<32>> {
+    let mut out = SorobanVec::new(env);
+    let mut i = 0u32;
+    while i < count {
+        let mut a = [0u8; 32];
+        a[28..].copy_from_slice(&i.to_be_bytes());
+        out.push_back(BytesN::from_array(env, &a));
+        i += 1;
+    }
+    out
+}
+
+fn threshold_config(env: &Env, threshold: u32, signers: u32) -> SignatureConfig {
+    SignatureConfig {
+        signers: synthetic_signers(env, signers),
+        verification: SignatureVerificationConfig::Threshold(threshold),
+    }
+}
+
+/// EVM caps thresholds at 255 (uint8); Soroban matches.
+#[test]
+fn test_validate_config_rejects_threshold_above_255() {
+    let env = Env::default();
+    env.budget().reset_unlimited();
+
+    let cfg = threshold_config(&env, 256, 256);
+    assert!(matches!(
+        <CommitteeVerifierContract as SignatureConfigManager>::validate_config(&env, &cfg),
+        Err(CCIPError::InvalidSignatureThreshold)
+    ));
+}
+
+/// 255-of-255 is the largest satisfiable config and must stay valid.
+#[test]
+fn test_validate_config_accepts_threshold_at_255() {
+    let env = Env::default();
+    env.budget().reset_unlimited();
+
+    let cfg = threshold_config(&env, 255, 255);
+    assert!(matches!(
+        <CommitteeVerifierContract as SignatureConfigManager>::validate_config(&env, &cfg),
+        Ok(())
+    ));
+}
+
+/// The rejection surfaces through the owner entrypoint.
+#[test]
+fn test_apply_signature_configs_rejects_threshold_above_255() {
+    let (env, client, ..) = setup();
+
+    let source_chain: u64 = 300;
+    let cfg = SignatureQuorumConfig {
+        source_chain_selector: source_chain,
+        threshold: 256,
+        signers: synthetic_signers(&env, 256),
+    };
+
+    assert!(matches!(
+        client.try_apply_signature_configs(&vec![&env], &vec![&env, cfg]),
+        Err(Ok(CCIPError::InvalidSignatureThreshold))
+    ));
 }
