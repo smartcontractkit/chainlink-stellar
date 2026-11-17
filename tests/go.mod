@@ -22,7 +22,7 @@ require (
 	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
 	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261117200342-4b174ca569ff
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.9
-	github.com/smartcontractkit/mcms v0.56.2-0.20261117210409-91b7a1f2c786
+	github.com/smartcontractkit/mcms v0.56.2-0.20261117223558-6f1f7fbb647b
 	github.com/stellar/go-stellar-sdk v0.9.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0

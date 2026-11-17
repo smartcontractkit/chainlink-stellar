@@ -1269,8 +1269,8 @@ github.com/smartcontractkit/grpc-proxy v0.0.0-20240830132753-a7e17fec5ab7 h1:12i
 github.com/smartcontractkit/grpc-proxy v0.0.0-20240830132753-a7e17fec5ab7/go.mod h1:FX7/bVdoep147QQhsOPkYsPEXhGZjeYx6lBSaSXtZOA=
 github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342 h1:pEcgcjTGA83MzpqbTbyIg9AJrOs62s77SooDdJGIg9w=
 github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342/go.mod h1:5JPtsRwjugpyfsdEALC4RopfvohqK/G+3DHaR8uv+Bc=
-github.com/smartcontractkit/mcms v0.56.2-0.20261117210409-91b7a1f2c786 h1:OIjoHPfFRWuPe2sin6wCy17F4DsZbEoC5mo3SldZm9Y=
-github.com/smartcontractkit/mcms v0.56.2-0.20261117210409-91b7a1f2c786/go.mod h1:Id9ecM+kqsRQhj0KZ4OjCCgJrQyB7Jqv55KkqDQ+kVI=
+github.com/smartcontractkit/mcms v0.56.2-0.20261117223558-6f1f7fbb647b h1:8YINA/ucyZVQrUxoH8Gg+h7ouZZFPTAKlpWrMIYJrMM=
+github.com/smartcontractkit/mcms v0.56.2-0.20261117223558-6f1f7fbb647b/go.mod h1:Id9ecM+kqsRQhj0KZ4OjCCgJrQyB7Jqv55KkqDQ+kVI=
 github.com/smartcontractkit/wsrpc v0.8.5-0.20250502134807-c57d3d995945 h1:zxcODLrFytOKmAd8ty8S/XK6WcIEJEgRBaL7sY/7l4Y=
 github.com/smartcontractkit/wsrpc v0.8.5-0.20250502134807-c57d3d995945/go.mod h1:m3pdp17i4bD50XgktkzWetcV5yaLsi7Gunbv4ZgN6qg=
 github.com/sony/gobreaker/v2 v2.4.0 h1:g2KJRW1Ubty3+ZOcSEUN7K+REQJdN6yo6XvaML+jptg=
