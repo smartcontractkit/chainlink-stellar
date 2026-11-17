@@ -192,8 +192,8 @@ require (
 	github.com/smartcontractkit/chainlink-protos/node-platform v0.0.0-20260709145319-7782fb89eb16 // indirect
 	github.com/smartcontractkit/chainlink-protos/orchestrator v0.11.0 // indirect
 	github.com/smartcontractkit/chainlink-protos/svr v1.3.0 // indirect
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632 // indirect
-	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000 // indirect
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261117200342-4b174ca569ff // indirect
+	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261117200342-4b174ca569ff // indirect
 	github.com/smartcontractkit/freeport v0.1.3-0.20250828155247-add56fa28aad // indirect
 	github.com/smartcontractkit/libocr v0.0.0-20260810200708-618b5bf7f342 // indirect
 	github.com/smartcontractkit/wsrpc v0.8.5-0.20250502134807-c57d3d995945 // indirect
