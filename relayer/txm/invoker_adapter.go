@@ -145,7 +145,11 @@ func (a *InvokerAdapter) GetEvents(ctx context.Context, contractID string, start
 
 	var topicFilter protocolrpc.TopicFilter
 	for _, topic := range topics {
-		topicFilter = append(topicFilter, protocolrpc.SegmentFilter{ScVal: scval.SymbolToScValPtr(topic)})
+		v, err := scval.SymbolToScValView(topic)
+		if err != nil {
+			return nil, fmt.Errorf("encode topic symbol %q: %w", topic, err)
+		}
+		topicFilter = append(topicFilter, protocolrpc.SegmentFilter{ScVal: v})
 	}
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 	topicFilter = append(topicFilter, protocolrpc.SegmentFilter{Wildcard: &zeroOrMore})

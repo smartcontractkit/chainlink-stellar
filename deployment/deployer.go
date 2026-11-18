@@ -1384,9 +1384,13 @@ func extractReturnValue(meta *xdr.TransactionMeta) (*xdr.ScVal, error) {
 func (d *Deployer) GetEvents(ctx context.Context, contractID string, startLedger uint32, topics []string) ([]protocolrpc.EventInfo, error) {
 	// Build topic filter following the exact pattern from source_reader.go
 	// First topic is the symbol, rest use wildcard
-	var topicScVals []*xdr.ScVal
+	topicScVals := make([]xdr.ScValView, 0, len(topics))
 	for _, topic := range topics {
-		topicScVals = append(topicScVals, scval.SymbolToScValPtr(topic))
+		v, err := scval.SymbolToScValView(topic)
+		if err != nil {
+			return nil, fmt.Errorf("encode topic symbol %q: %w", topic, err)
+		}
+		topicScVals = append(topicScVals, v)
 	}
 
 	// Use wildcard to match any remaining topics

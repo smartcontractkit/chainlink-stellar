@@ -18,12 +18,12 @@ require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20260915214759-02f2214d5823
 	github.com/smartcontractkit/chainlink-common/keystore v1.3.1-0.20260903141829-ef07b52a737d
 	github.com/smartcontractkit/chainlink-deployments-framework v0.123.4-0.20260924110352-f78730763e23
-	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20260930174906-8fac26710632
+	github.com/smartcontractkit/chainlink-stellar/bindings v0.0.0-20261117200342-4b174ca569ff
 	github.com/smartcontractkit/chainlink-stellar/ccv v0.0.0-00010101000000-000000000000
-	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-00010101000000-000000000000
+	github.com/smartcontractkit/chainlink-stellar/deployment v0.0.0-20261117200342-4b174ca569ff
 	github.com/smartcontractkit/chainlink-testing-framework/framework v0.16.9
-	github.com/smartcontractkit/mcms v0.56.1
-	github.com/stellar/go-stellar-sdk v0.8.0
+	github.com/smartcontractkit/mcms v0.56.2-0.20261117223558-6f1f7fbb647b
+	github.com/stellar/go-stellar-sdk v0.9.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	google.golang.org/grpc v1.83.2

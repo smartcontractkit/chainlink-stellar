@@ -3,12 +3,12 @@ module github.com/smartcontractkit/chainlink-stellar/capabilities
 // Kept deliberately small: this module is imported by cre-cli for
 // `cre workflow simulate`. Pin chainlink-common no newer than cre-cli's so
 // importing it never forces a chainlink-common bump there.
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/smartcontractkit/chainlink-common v0.11.2-0.20261008201732-71faaf9334d7
 	github.com/smartcontractkit/chainlink-protos/cre/go v0.0.0-20260804191526-b7a850ae7648
-	github.com/stellar/go-stellar-sdk v0.8.0
+	github.com/stellar/go-stellar-sdk v0.9.0
 	github.com/stretchr/testify v1.12.1
 )
 
