@@ -19,8 +19,12 @@
 //   - Scenario 8: the same D+M lane, but the user SUPPLIES a CCV ⇒ merged =
 //     user list verbatim (mandated deduped in, defaults NOT expanded onto a
 //     non-empty user list — EVM only substitutes defaults for an EMPTY list).
-//   - Scenario 9: lane with mandated == default (same address in both roles)
-//     ⇒ merged contains that CCV exactly once (cross-role dedup).
+//     This is also the reachable cross-role dedup case (user CCV == mandated
+//     CCV appears once).
+//   - Scenario 9 (boundary): mandated overlapping default is NOT a legal lane —
+//     config validation rejects D ∩ M ≠ ∅ with InvalidConfig #52 (H-11 /
+//     INV-CFG-7, EVM _validateDefaultAndMandatedCCVs parity), so default↔
+//     mandated dedup is unreachable from config.
 //
 // Receipt layout for a data-only message is [CCV_0..CCV_N, Executor, Network],
 // issuers in merge order, so index-equality assertions pin the ordering.
@@ -29,6 +33,8 @@ package integration
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,18 +175,6 @@ func TestOnRampMandatedLaneCcvMerge(t *testing.T) {
 		}
 	}
 
-	// countIssuer counts occurrences of an issuer across all receipts — the
-	// cross-role dedup assertion (scenario 9).
-	countIssuer := func(rcpts []onrampbindings.Receipt, issuer string) int {
-		n := 0
-		for _, r := range rcpts {
-			if r.Issuer == issuer {
-				n++
-			}
-		}
-		return n
-	}
-
 	// ------------------------------------------------------------------
 	// Scenario 3: pristine lane (D=[vvrID], M=nil), empty user CCVs.
 	// ------------------------------------------------------------------
@@ -229,21 +223,42 @@ func TestOnRampMandatedLaneCcvMerge(t *testing.T) {
 	t.Run("user-supplied CCV keeps defaults out and dedups the mandate", func(t *testing.T) {
 		rcpts := sendDataOnly(t, []string{ccvB})
 		assertCcvs(t, rcpts, []string{ccvB})
-		if countIssuer(rcpts, vvrID) != 0 {
+		if contains(receiptIssuers(rcpts), vvrID) {
 			t.Errorf("defaults must NOT be folded onto a non-empty user list, got %v", receiptIssuers(rcpts))
 		}
 	})
 
 	// ------------------------------------------------------------------
-	// Scenario 9: mandated == default (same VVR in both roles). The merged list
-	// contains it exactly once — cross-role dedup.
+	// Scenario 9 (corrected): mandated == default is NOT a legal lane —
+	// `DestChainConfigArgs::validate` rejects any CCV present in BOTH the
+	// default and lane-mandated sets (H-11 / INV-CFG-7, EVM
+	// `CCVConfigValidation._validateDefaultAndMandatedCCVs` parity), reverting
+	// InvalidConfig #52. The config layer therefore guarantees D ∩ M = ∅, so
+	// the merge-level default↔mandated dedup is unreachable from config; the
+	// reachable cross-role dedup (user ↔ mandated) is covered by scenario 8.
 	// ------------------------------------------------------------------
-	reapplyLane([]string{vvrID})
-	t.Run("mandated equal to default dedups to a single CCV", func(t *testing.T) {
-		rcpts := sendDataOnly(t, nil)
-		assertCcvs(t, rcpts, []string{vvrID})
-		if n := countIssuer(rcpts, vvrID); n != 1 {
-			t.Errorf("vvrID must appear exactly once across receipts, got %d: %v", n, receiptIssuers(rcpts))
+	t.Run("mandated overlapping default is rejected as invalid config (#52)", func(t *testing.T) {
+		offRampEVM := make([]byte, 20)
+		err := wire.OnRampClient.ApplyDestChainConfigUpdates(ctx, []onrampbindings.DestChainConfigArgs{{
+			DestChainSelector:         remoteDestChain,
+			Router:                    stack.RouterID,
+			AddressBytesLength:        20,
+			TokenReceiverAllowed:      true,
+			MessageNetworkFeeUsdCents: 50,
+			TokenNetworkFeeUsdCents:   100,
+			BaseExecutionGasCost:      200_000,
+			DefaultExecutor:           executorID,
+			ExecutionFeeUsdCents:      25,
+			LaneMandatedCcvs:          []string{vvrID}, // same CCV as DefaultCcvs
+			DefaultCcvs:               []string{vvrID},
+			OffRamp:                   offRampEVM,
+		}})
+		if err == nil {
+			t.Fatal("ApplyDestChainConfigUpdates with mandated ∩ default ≠ ∅ must revert")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "Error(Contract") || !strings.Contains(msg, fmt.Sprintf("#%d", onrampbindings.CCIPErrorInvalidConfig)) {
+			t.Fatalf("want InvalidConfig Error(Contract, #%d), got: %v", onrampbindings.CCIPErrorInvalidConfig, err)
 		}
 	})
 }
