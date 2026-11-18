@@ -2712,24 +2712,23 @@ fn test_forward_from_router_empty_user_ccvs_keeps_defaults_with_mandated() {
     let stored = lane
         .onramp_client
         .get_dest_chain_config(&lane.evm_chain_selector);
-    lane.onramp_client
-        .apply_dest_chain_config_updates(&vec![
-            env,
-            OnrampDestChainConfigArgs {
-                dest_chain_selector: lane.evm_chain_selector,
-                router: stored.router.clone(),
-                address_bytes_length: 20,
-                token_receiver_allowed: true,
-                message_network_fee_usd_cents: 50,
-                token_network_fee_usd_cents: 100,
-                base_execution_gas_cost: 200_000,
-                execution_fee_usd_cents: 25,
-                default_executor: stored.default_executor.clone(),
-                lane_mandated_ccvs: vec![env, mandated_ccv.clone()],
-                default_ccvs: stored.default_ccvs.clone(),
-                off_ramp: stored.off_ramp.clone(),
-            },
-        ]);
+    lane.onramp_client.apply_dest_chain_config_updates(&vec![
+        env,
+        OnrampDestChainConfigArgs {
+            dest_chain_selector: lane.evm_chain_selector,
+            router: stored.router.clone(),
+            address_bytes_length: 20,
+            token_receiver_allowed: true,
+            message_network_fee_usd_cents: 50,
+            token_network_fee_usd_cents: 100,
+            base_execution_gas_cost: 200_000,
+            execution_fee_usd_cents: 25,
+            default_executor: stored.default_executor.clone(),
+            lane_mandated_ccvs: vec![env, mandated_ccv.clone()],
+            default_ccvs: stored.default_ccvs.clone(),
+            off_ramp: stored.off_ramp.clone(),
+        },
+    ]);
 
     // Read the committed-set inputs BEFORE sending — any contract call after
     // `ccip_send` clears the event view. Expected: [default_ccv, mandated_ccv].
@@ -2738,11 +2737,8 @@ fn test_forward_from_router_empty_user_ccvs_keeps_defaults_with_mandated() {
         .get_dest_chain_config(&lane.evm_chain_selector);
     let mut expected_ccvs = stored.default_ccvs.clone();
     expected_ccvs.push_back(mandated_ccv.clone());
-    let expected_hash = CcipMessageV1::compute_ccv_and_executor_hash(
-        env,
-        &expected_ccvs,
-        &stored.default_executor,
-    );
+    let expected_hash =
+        CcipMessageV1::compute_ccv_and_executor_hash(env, &expected_ccvs, &stored.default_executor);
 
     // Data message (non-token-only), empty user CCVs, default-executor sentinel
     // (resolved to the lane default before hashing).
