@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"sync"
 	"time"
 
 	cldfstellar "github.com/smartcontractkit/chainlink-deployments-framework/chain/stellar"
@@ -192,6 +193,15 @@ type Deployer struct {
 	rpcClient         stellarRPCClient
 	networkPassphrase string
 	signer            TxSigner
+	// submitMu serializes every transaction's full lifecycle — sequence fetch
+	// through on-ledger confirmation — so concurrent callers sharing the
+	// signing account can never build envelopes with the same sequence.
+	// The sequence only advances on ledger inclusion, so the lock must be
+	// held until the transaction reaches a terminal state (confirmed,
+	// terminally failed, or timed out past MaxTime, after which the sequence
+	// is provably unconsumed). Read-only paths (simulations, ledger reads)
+	// do not take it.
+	submitMu sync.Mutex
 	// accountSequence tracks the current on-chain sequence number.
 	accountSequence int64
 	// autoRestore controls automatic RestoreFootprint handling for expired
@@ -305,6 +315,9 @@ func (d *Deployer) UploadContractWASMBytes(ctx context.Context, wasmBytes []byte
 
 // uploadWASM uploads WASM code to the network and returns the code hash.
 func (d *Deployer) uploadWASM(ctx context.Context, wasmBytes []byte) (xdr.Hash, error) {
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	// Get source account
 	sourceAccount, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -374,6 +387,9 @@ func buildCreateContractHostFunction(pubKey256 xdr.Uint256, wasmHash xdr.Hash, s
 
 // createContractInstance creates a new contract instance from uploaded WASM code.
 func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	// Get source account
 	sourceAccount, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -412,6 +428,9 @@ func (d *Deployer) createContractInstance(ctx context.Context, wasmHash xdr.Hash
 
 // InvokeContract invokes a contract function and returns the result.
 func (d *Deployer) InvokeContract(ctx context.Context, contractID string, functionName string, args []xdr.ScVal) (*xdr.ScVal, error) {
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	// Get source account
 	sourceAccount, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -527,8 +546,11 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 	}
 
 	// If the simulation indicates expired persistent ledger entries, restore
-	// them first, then re-simulate so the read returns fresh data.
+	// them first, then re-simulate so the read returns fresh data. The restore
+	// is a write, so it takes the same submission lock as every other write.
 	if d.autoRestore && simResult.RestorePreamble != nil {
+		d.submitMu.Lock()
+		defer d.submitMu.Unlock()
 		if err := d.restoreFootprint(ctx, *simResult.RestorePreamble); err != nil {
 			return nil, fmt.Errorf("failed to restore expired ledger entries: %w", err)
 		}
@@ -610,8 +632,9 @@ func (d *Deployer) SimulateContract(ctx context.Context, contractID string, func
 }
 
 // getSourceAccount fetches the current account sequence from the network.
-// Every write path waits for confirmation before returning, so the ledger
-// read always stays in sync.
+// Write paths must hold submitMu before calling it: the read is only safe
+// against same-process collisions when no sibling transaction is between
+// its own fetch and confirmation.
 func (d *Deployer) getSourceAccount(ctx context.Context) (*txnbuild.SimpleAccount, error) {
 	accountKey := xdr.LedgerKey{
 		Type: xdr.LedgerEntryTypeAccount,
@@ -690,9 +713,10 @@ func (d *Deployer) buildAndSubmitTransaction(ctx context.Context, sourceAccount 
 		}
 		var rle *resourceLimitExceededError
 		var ifr *insufficientFeeRejectedError
+		var bse *badSeqRejectedError
 		var soe *serverOverloadedError
 		var tto *transactionTimedOutError
-		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == submitMaxAttempts {
+		if (!errors.As(err, &rle) && !errors.As(err, &ifr) && !errors.As(err, &bse) && !errors.As(err, &soe) && !errors.As(err, &tto)) || attempt == submitMaxAttempts {
 			return nil, "", err
 		}
 		// Resource inflation answers a budget-exceeded failure, and the flag is
@@ -865,6 +889,18 @@ func (d *Deployer) signSubmitAndWait(ctx context.Context, tx *txnbuild.Transacti
 					resultXDR: submitResult.ErrorResultXDR,
 				}
 			}
+			// txBadSeq: the sequence moved between our fetch and submission.
+			// In-process siblings are serialized by submitMu, so this means an
+			// out-of-process writer (another replica, a manual ops tx) consumed
+			// a sequence from the same account. Retryable — never executed, so
+			// re-fetching the on-chain sequence and resubmitting is safe.
+			if isTxBadSeq(submitResult.ErrorResultXDR) {
+				return nil, "", &badSeqRejectedError{
+					label:       label,
+					resultXDR:   submitResult.ErrorResultXDR,
+					diagnostics: submitResult.DiagnosticEventsXDR,
+				}
+			}
 			return nil, "", fmt.Errorf("%stransaction rejected: %v (diagnostics: %v)", label, submitResult.ErrorResultXDR, submitResult.DiagnosticEventsXDR)
 		}
 		return nil, "", fmt.Errorf("%stransaction rejected with status ERROR", label)
@@ -964,6 +1000,20 @@ func (e *insufficientFeeRejectedError) Error() string {
 	return fmt.Sprintf("%stransaction rejected (txInsufficientFee): %v", e.label, e.resultXDR)
 }
 
+// badSeqRejectedError marks a transaction rejected at inclusion with
+// txBadSeq: the signing account's on-chain sequence moved between our fetch
+// and submission (an out-of-process writer; in-process writes are serialized
+// by submitMu). Never executed, hence retryable after a fresh sequence read.
+type badSeqRejectedError struct {
+	label       string
+	resultXDR   string
+	diagnostics []string
+}
+
+func (e *badSeqRejectedError) Error() string {
+	return fmt.Sprintf("%stransaction rejected (txBadSeq): %v (diagnostics: %v)", e.label, e.resultXDR, e.diagnostics)
+}
+
 // serverOverloadedError marks a transaction the node refused outright with
 // TRY_AGAIN_LATER (full queue): never executed, no sequence consumed — safe
 // to resubmit after a short backoff.
@@ -1002,6 +1052,19 @@ func isTxInsufficientFee(resultXDR string) bool {
 		return false
 	}
 	return result.Result.Code == xdr.TransactionResultCodeTxInsufficientFee
+}
+
+// isTxBadSeq reports whether resultXDR is a transaction result the network
+// rejected with txBadSeq.
+func isTxBadSeq(resultXDR string) bool {
+	if resultXDR == "" {
+		return false
+	}
+	var result xdr.TransactionResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
+		return false
+	}
+	return result.Result.Code == xdr.TransactionResultCodeTxBadSeq
 }
 
 // isInvokeHostFunctionResourceLimitExceeded reports whether resultXDR is a
@@ -1493,6 +1556,9 @@ func (d *Deployer) NativeAccountState(ctx context.Context, rawAccountKey []byte)
 // operation (e.g. ChangeTrust, Payment). Classic ops cannot be simulated via
 // the Soroban RPC, so this submits directly.
 func (d *Deployer) SubmitClassicOperation(ctx context.Context, op txnbuild.Operation) error {
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	src, err := d.getSourceAccount(ctx)
 	if err != nil {
 		return fmt.Errorf("load source account: %w", err)
@@ -1564,6 +1630,9 @@ func (d *Deployer) DeploySACToken(ctx context.Context, asset xdr.Asset) (string,
 	} else if !errors.Is(err, ErrLedgerEntryNotFound) {
 		return "", fmt.Errorf("check existing SAC: %w", err)
 	}
+
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
 
 	src, err := d.getSourceAccount(ctx)
 	if err != nil {
@@ -1667,6 +1736,9 @@ func (d *Deployer) SendNativePayment(ctx context.Context, destinationStrkey stri
 	if _, err := xdr.AddressToAccountId(destinationStrkey); err != nil {
 		return fmt.Errorf("invalid destination account: %w", err)
 	}
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	src, err := d.getSourceAccount(ctx)
 	if err != nil {
 		return fmt.Errorf("load source account: %w", err)
