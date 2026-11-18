@@ -3,7 +3,9 @@
 mod events;
 pub mod types;
 
-use common_authorization::allowlist::{AllowListHooks, AllowListUpdate, AllowListable};
+use common_authorization::allowlist::{
+    set_allowlist_enabled, AllowListHooks, AllowListUpdate, AllowListable,
+};
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
 use common_guard::initializable::Initializable;
@@ -465,6 +467,13 @@ impl CommitteeVerifierContract {
         for update in remote_chain_config_args.iter() {
             update.validate()?;
 
+            // EVM parity: the flag goes into the same stored slot that enforcement reads.
+            set_allowlist_enabled::<Self>(
+                &env,
+                update.remote_chain_selector,
+                update.allowlist_enabled,
+            );
+
             remote_chains.set(update.remote_chain_selector, update.clone());
 
             events::RemoteChainConfigSetEvent {
@@ -491,9 +500,13 @@ impl CommitteeVerifierContract {
             .get(&REMOTE_CHAINS)
             .unwrap_or(Map::new(&env));
 
-        remote_chains
+        let mut cfg = remote_chains
             .get(remote_chain_selector)
-            .ok_or(CCIPError::RemoteChainNotSupported)
+            .ok_or(CCIPError::RemoteChainNotSupported)?;
+        // ALLOW_LIST is the enforced copy; return it so this getter cannot report a stale flag.
+        cfg.allowlist_enabled =
+            <Self as AllowListable>::is_allowlist_enabled(&env, remote_chain_selector);
+        Ok(cfg)
     }
 
     /// EVM-equivalent fee quote shape.
