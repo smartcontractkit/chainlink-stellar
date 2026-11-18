@@ -163,6 +163,12 @@ func (d *Deployer) SimulateExtendTTL(ctx context.Context, keys []xdr.LedgerKey, 
 // extendTo ledgers from the current ledger, restoring archived entries first
 // when auto-restore is enabled, and returns each key's live-until ledger.
 func (d *Deployer) extendTTL(ctx context.Context, keys []xdr.LedgerKey, extendTo uint32) ([]uint32, error) {
+	// This is a write path: hold the submission lock for the whole cycle
+	// (sequence fetch inside simulateExtend through confirmation), like every
+	// other write on this account.
+	d.submitMu.Lock()
+	defer d.submitMu.Unlock()
+
 	deadline := time.Now().Add(d.txnTimeBound)
 	seq, sim, err := d.simulateExtend(ctx, keys, extendTo, deadline)
 	if err != nil {
