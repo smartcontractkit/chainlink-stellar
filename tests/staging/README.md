@@ -172,3 +172,52 @@ go test -v -count=1 -timeout 45m ./staging/... -run TestStagingEVMToStellar   # 
 ```
 
 Each send costs real testnet fees, so run a single test with `-run` when iterating.
+
+## CI (ephemeral senders)
+
+`.github/workflows/test-staging.yaml` runs this suite against the shared testnet
+lane on `workflow_dispatch` (works from a PR branch) and nightly on `main` as an
+environment-drift canary. It never runs per-PR: real fees, a shared deployed
+environment (exact receiver-balance assertions, a global OnRamp message
+counter), and ~15-45 min runtimes.
+
+CI uses **ephemeral senders** (`STAGING_EPHEMERAL=true`): every test generates a
+fresh, zero-privilege sender key instead of using a long-lived funded secret.
+Funding sources:
+
+| Need | Source | Permissionless? |
+| --- | --- | --- |
+| XLM (Stellar network fees) | public testnet Friendbot | yes |
+| BnM transfer token | the token's `drip` faucet | yes |
+| Fee token (FEE SAC) | **deterministic FEE issuer** — the fee token is the devenv "FEE" classic-asset SAC (deployed by `sac_devenv_token.go`); its issuer key is derived from the *public* network passphrase via a recipe committed in this repo, so anyone can fund it and dispense FEE (ChangeTrust + issuer Payment). Not a secret — a testnet fund-token dispenser. | n/a (no secret) |
+| Sepolia ETH | **EVM treasury key** — Sepolia's public faucets are captcha/rate-limited and CI-hostile | no |
+
+The FEE issuer holds no privilege in the environment whatsoever — it can only
+issue the test fund token. The EVM treasury (used only when the EVM → Stellar
+direction is enabled) is likewise a plain holder of testnet ETH; its worst-case
+leak is "someone drains our testnet assets." The only CI secret today is
+`STAGING_EVM_RPC_URL` (a Sepolia provider URL, logged host-only); deployment
+addresses live as repository variables.
+
+**Sepolia ETH is not abandoned**: an ephemeral EVM sender sweeps its leftover
+ETH back to the treasury after the test (`sweepEphemeralETH`, registered via
+`t.Cleanup` — best-effort, never fails the finished test, skipped below a
+0.001 ETH dust threshold).
+
+**Current CI scope: Stellar → EVM only.** The workflow's `-run` regex excludes
+the EVM → Stellar direction for now, so CI needs no EVM treasury at all. The
+EVM direction requires the EVM treasury key and its ephemeral Sepolia sender —
+enable it later by widening the regex and adding the
+`STAGING_EVM_TREASURY_PRIVATE_KEY` secret.
+
+Ephemeral-mode env vars (see `staging.env.example`): `STAGING_EPHEMERAL` and
+`STAGING_FEE_TOKEN_FUND_WHOLE` (default 10 whole fee tokens) are all the
+Stellar side needs. `STAGING_STELLAR_TREASURY_SECRET` is an OPTIONAL fallback
+for environments whose fee token is not the devenv FEE SAC (a treasury key
+holding that token), and `STAGING_EVM_TREASURY_PRIVATE_KEY` /
+`STAGING_EVM_FUND_ETH` (default 0.1 ETH) apply to the EVM direction.
+
+Known limitation: `TestStagingEVMToStellarTokenTransfer` **skips** in ephemeral
+mode — the Sepolia `stgBnM` token has no faucet and cannot be pre-funded for a
+generated key, so that test needs a non-ephemeral run with a persistent EVM
+sender that already holds the token (see Prerequisites #3).

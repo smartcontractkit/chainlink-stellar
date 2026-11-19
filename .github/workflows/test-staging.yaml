@@ -1,0 +1,102 @@
+name: Staging Tests (testnet)
+
+# Runs tests/staging against the already-deployed shared testnet lane
+# (Stellar testnet → Sepolia) in EPHEMERAL mode: every test generates a
+# fresh zero-privilege sender key, funded with XLM from the public testnet
+# Friendbot and fee tokens from the DETERMINISTIC FEE issuer — the staging
+# fee token is the devenv "FEE" SAC whose issuer key is derived from the
+# public network passphrase (deployment/ccip/sac_devenv_token.go's committed
+# recipe; verified to match the deployed token). No key or secret exists on
+# the Stellar side at all.
+#
+# Stellar → EVM direction ONLY for now (test regex below). The EVM → Stellar
+# direction needs an ephemeral Sepolia ETH sender funded by an EVM treasury;
+# that machinery exists (tests/staging ephemeral mode + a post-test ETH
+# sweep back to the treasury) but is deliberately deferred — enable it by
+# widening the -run regex and adding the STAGING_EVM_TREASURY_PRIVATE_KEY
+# secret when ready.
+#
+# NOT PR-triggered on purpose: real testnet fees per run, a shared deployed
+# environment (exact receiver-balance assertions, a global OnRamp message
+# counter), and ~15-45 min runtimes. Use `workflow_dispatch` (works from a
+# PR branch too) to validate a specific change against staging; the nightly
+# schedule acts as a canary for drift between the deployed environment and
+# the current bindings (e.g. Router ABI changes → MismatchingParameterLen,
+# the STAGING_ROUTER_LEGACY_FEE_ARG situation).
+#
+# One-time setup:
+#   1. Secrets (environment `staging`, restricted to main + reviewers — the
+#      repo is public): STAGING_EVM_RPC_URL, a Sepolia provider URL if the
+#      public RPC is rate-limited (logged host-only). This is the ONLY secret.
+#   2. Variables (non-secret, public testnet artifacts): STAGING_STELLAR_ROUTER,
+#      STAGING_STELLAR_CCVS, STAGING_EVM_RECEIVER, optionally STAGING_EVM_OFFRAMP.
+#      Defaults for everything else (fee token, pools, selectors, RPC URLs,
+#      passphrase) come from tests/staging/staging.env.example values and the
+#      Go code's built-in defaults.
+
+on:
+  workflow_dispatch:
+    inputs:
+      legacy_fee_arg:
+        description: "STAGING_ROUTER_LEGACY_FEE_ARG (true for pre-bbc2d2b4 Routers)"
+        type: boolean
+        default: true
+  schedule:
+    # Nightly env-drift canary; off-round minute to spread load.
+    - cron: "17 5 * * *"
+
+# Serialize globally: concurrent runs share the lane's message counter and
+# the deployed receivers' balances (exact-delta assertions), and the same
+# treasuries. Never cancel mid-run — a half-sent batch leaves unattributed
+# on-chain state.
+concurrency:
+  group: staging-tests
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  test-staging:
+    name: Staging Tests (testnet, ephemeral senders)
+    # Latency-bound (Sepolia finality waits), not CPU-bound.
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Ephemeral mode. Addresses that are public testnet artifacts are
+      # defaulted here (from tests/staging/staging.env.example); deployment-
+      # specific ones come from repo variables; the only secret is the EVM
+      # RPC provider URL. Stellar → EVM direction only (see header); the
+      # EVM-direction env (ETH treasury key, Stellar receiver/offramp) is
+      # intentionally absent.
+      - name: Run staging tests (Stellar → EVM)
+        env:
+          STAGING_EPHEMERAL: "true"
+          STAGING_ROUTER_LEGACY_FEE_ARG: ${{ inputs.legacy_fee_arg || 'true' }}
+          STAGING_STELLAR_ROUTER: ${{ vars.STAGING_STELLAR_ROUTER }}
+          STAGING_STELLAR_CCVS: ${{ vars.STAGING_STELLAR_CCVS }}
+          STAGING_STELLAR_FEE_TOKEN: CDFAZQDPCAIC7ZAK22ZT66N3HM3AXNMUAKOTPASEEKM5O4VZKIEUJJDV
+          STAGING_EVM_RPC_URL: ${{ secrets.STAGING_EVM_RPC_URL }}
+          STAGING_EVM_RECEIVER: ${{ vars.STAGING_EVM_RECEIVER }}
+          STAGING_EVM_ROUTER: "0x140ce0d34f9eaa4b475a0184d47fc71dcb67c8d9"
+          STAGING_EVM_OFFRAMP: ${{ vars.STAGING_EVM_OFFRAMP }}
+          STAGING_STELLAR_TOKEN: CDJXOQB6QNN2SZMKCKVF2QMDP2YR5WG54R4EJKHHJKABAN4CWNBAVQ2A
+          STAGING_STELLAR_TOKEN_POOL: CBGEPJNRH5MCA5QWMBXLMYVIK6QFR3MBWVS7KJQ26BZ3DZANXXHPXEMT
+          STAGING_EVM_TOKEN: "0x52627841876bbf1839dfeC397901bc85b0da8030"
+          STAGING_EVM_TOKEN_POOL: "0x76e359670262a1E21B917017Ab87D9372476d2b0"
+        run: cd tests && go test -v -count=1 -timeout 45m ./staging/... -run 'TestStagingStellarToEVM'
+
+      # No teardown, no artifacts: nothing is deployed or started — the
+      # shared environment stays as it is. Ephemeral Stellar senders'
+      # leftover XLM/LINK dust is abandoned by design; ephemeral EVM senders
+      # (when that direction is enabled) sweep their leftover ETH back to
+      # the treasury via t.Cleanup (see helpers_test.go sweepEphemeralETH).
