@@ -35,6 +35,10 @@ name: Staging Tests (testnet)
 #      Go code's built-in defaults.
 
 on:
+  # TEMPORARY: run on every push to see the workflow working end-to-end.
+  # Real testnet fees per push — remove this block (keep workflow_dispatch +
+  # schedule) once the first green run is confirmed.
+  push:
   workflow_dispatch:
     inputs:
       legacy_fee_arg:
