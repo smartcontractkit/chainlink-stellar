@@ -17,11 +17,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"go.opentelemetry.io/otel/attribute"
 
 	commonCap "github.com/smartcontractkit/chainlink-common/pkg/capabilities"
 	caperrors "github.com/smartcontractkit/chainlink-common/pkg/capabilities/errors"
 	stellarcap "github.com/smartcontractkit/chainlink-common/pkg/capabilities/v2/chain-capabilities/stellar"
 	stellarserver "github.com/smartcontractkit/chainlink-common/pkg/capabilities/v2/chain-capabilities/stellar/server"
+	capmon "github.com/smartcontractkit/chainlink-common/pkg/capabilities/v2/monitoring"
 	"github.com/smartcontractkit/chainlink-common/pkg/logger"
 	"github.com/smartcontractkit/chainlink-common/pkg/types/core"
 )
@@ -259,6 +261,17 @@ func (c *FakeStellarChain) Description() string {
 	return "Fake Stellar chain capability for workflow simulation"
 }
 func (c *FakeStellarChain) Ready() error { return nil }
+
+// MonitoringContext satisfies the generated stellarserver.ClientCapability
+// interface. Simulation does not emit OTel metrics, so MetricsAttributes is a
+// no-op; the logger is wired through for capability lifecycle logging.
+func (c *FakeStellarChain) MonitoringContext() capmon.MonitoringContext {
+	return capmon.MonitoringContext{
+		Logger:            c.lggr,
+		MetricsAttributes: func() []attribute.KeyValue { return nil },
+	}
+}
+
 func (c *FakeStellarChain) Initialise(context.Context, core.StandardCapabilitiesDependencies) error {
 	return nil
 }
