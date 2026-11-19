@@ -204,11 +204,14 @@ ETH back to the treasury after the test (`sweepEphemeralETH`, registered via
 `t.Cleanup` — best-effort, never fails the finished test, skipped below a
 0.001 ETH dust threshold).
 
-**Current CI scope: Stellar → EVM only.** The workflow's `-run` regex excludes
-the EVM → Stellar direction for now, so CI needs no EVM treasury at all. The
-EVM direction requires the EVM treasury key and its ephemeral Sepolia sender —
-enable it later by widening the regex and adding the
-`STAGING_EVM_TREASURY_PRIVATE_KEY` secret.
+**CI scope: both directions.** The EVM → Stellar direction uses an ephemeral
+Sepolia sender funded by the zero-privilege ETH treasury (secret
+`STAGING_EVM_TREASURY_PRIVATE_KEY`), whose leftover ETH sweeps back after
+every test — the treasury's net consumption is only the ephemeral senders'
+gas. `TestStagingEVMToStellarTokenTransfer` skips in ephemeral mode: the
+Sepolia `stgBnM` token has no faucet and cannot be pre-funded for a generated
+key, so it needs a non-ephemeral run with a persistent EVM sender that
+already holds the token (see Prerequisites #3).
 
 Ephemeral-mode env vars (see `staging.env.example`): `STAGING_EPHEMERAL` and
 `STAGING_FEE_TOKEN_FUND_WHOLE` (default 10 whole fee tokens) are all the
