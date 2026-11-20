@@ -39,7 +39,7 @@ use soroban_sdk::{contractclient, contracttype, Address, Bytes, Symbol};
 /// - `context` (EVM `bytes`) -> [`Bytes`]: side-channel passed alongside
 ///   (preflight: `token_args`; postflight: `offchain_token_data`). The extractor
 ///   skips it, as on EVM.
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Payload {
     pub selector: Symbol,
@@ -55,7 +55,7 @@ pub struct Payload {
 /// carrier is a tagged union: the engine carries it without inspection, each
 /// target's extractor downcasts its own variant. Today only pool hooks is
 /// defined; future target families add variants.
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PolicyData {
     PoolHooks(PoolHooksPayloadData),
@@ -68,7 +68,7 @@ pub enum PolicyData {
 /// [`Symbol`] denoting the parameter, and `value` as a typed [`PolicyValue`]
 /// (no raw-bytes encode/decode round-trip — the extractor emits the value in
 /// its native type, the policy matches on it).
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Parameter {
     pub name: Symbol,
@@ -80,7 +80,7 @@ pub struct Parameter {
 /// Variants cover the value types the pool-hooks extractor emits: sender / token
 /// (`Address`), amounts (`I128`), chain selector (`U64`), finality config
 /// (`U32`), and raw byte fields (`Bytes` — receiver, source pool address/data).
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PolicyValue {
     Address(Address),
@@ -95,7 +95,7 @@ pub enum PolicyValue {
 /// A policy that wants to reject MUST revert (Stellar: return `Err` / abort),
 /// so `None` / `Continue` mean "did not reject; keep going" and `Allowed` means
 /// "explicitly allow and stop the chain".
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyResult {
     None,

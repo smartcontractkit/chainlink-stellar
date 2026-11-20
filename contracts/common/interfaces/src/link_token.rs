@@ -73,7 +73,7 @@ pub trait LinkTokenInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -207,7 +207,7 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum LinkError {
     AlreadyInitialized = 1,
@@ -222,54 +222,54 @@ pub enum LinkError {
     MinterNotFound = 10,
     CannotRemovePrimaryMinter = 11,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["Upgraded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleGrantedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RoleRevokedEvent {
     pub role: soroban_sdk::Symbol,
     pub account: soroban_sdk::Address,
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["burn", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["burn", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BurnEvent {
     pub from: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["mint", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["mint", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MintEvent {
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["approve", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["approve", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ApproveEvent {
     pub from: soroban_sdk::Address,
@@ -277,20 +277,20 @@ pub struct ApproveEvent {
     pub amount: i128,
     pub expiration_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["set_admin", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["set_admin", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SetAdminEvent {
     pub admin: soroban_sdk::Address,
     pub new_admin: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["transfer", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["transfer", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TransferEvent {
     pub from: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["set_authorized", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["set_authorized", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SetAuthorizedEvent {
     pub id: soroban_sdk::Address,

@@ -64,18 +64,18 @@ pub trait TokenPoolProxyInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallerConfig {
     pub mint_allowance: Option<i128>,
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallerUpdate {
     pub caller: soroban_sdk::Address,
     pub mint_allowance: Option<i128>,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CCIPError {
     NotInitialized = 1,
@@ -209,20 +209,20 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tpproxy_Burned", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["tpproxy_Burned", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BurnedEvent {
     pub caller: soroban_sdk::Address,
     pub from: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["tpproxy_Minted", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["tpproxy_Minted", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MintedEvent {
     pub caller: soroban_sdk::Address,
@@ -230,18 +230,18 @@ pub struct MintedEvent {
     pub amount: i128,
     pub remaining_allowance: Option<i128>,
 }
-#[soroban_sdk::contractevent(topics = ["tpproxy_CallerRemoved", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["tpproxy_CallerRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["tpproxy_CallerUpdated", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["tpproxy_CallerUpdated", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CallerUpdatedEvent {
     pub caller: soroban_sdk::Address,
     pub mint_allowance: Option<i128>,
 }
-#[soroban_sdk::contractevent(topics = ["tpproxy_AssetAdminChanged", "map"], export = false)]
+#[soroban_sdk::contractevent(topics = ["tpproxy_AssetAdminChanged", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AssetAdminChangedEvent {
     pub new_admin: soroban_sdk::Address,
