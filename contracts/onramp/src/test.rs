@@ -711,21 +711,47 @@ fn test_merge_ccv_lists_deduplication() {
 }
 
 #[test]
-fn test_merge_ccv_lists_lane_only_no_fallback() {
+fn test_merge_ccv_lists_empty_user_seeds_defaults_with_mandated() {
+    // EVM `_resolveUserOrDefaultCCVs` (OnRamp.sol:802-810): empty user list ⇒ lane
+    // defaults, mandated merged on top (OnRamp.sol:272). Regression: mandated
+    // non-empty must NOT suppress defaults — the destination offramp requires
+    // them for receivers without a CCV policy (`RequiredCCVMissing` otherwise).
     let env = Env::default();
+    let default_ccv = Address::generate(&env);
     let lane_ccv = Address::generate(&env);
 
     let user: Vec<Address> = Vec::new(&env);
     let user_args: Vec<Bytes> = Vec::new(&env);
     let lane = vec![&env, lane_ccv.clone()];
-    let defaults = vec![&env, Address::generate(&env)];
+    let defaults = vec![&env, default_ccv.clone()];
+
+    let (merged, args) =
+        OnRampContract::merge_ccv_lists_with_ccv_args(&env, &user, &user_args, &lane, &defaults)
+            .unwrap();
+    assert_eq!(merged.len(), 2);
+    assert_eq!(args.len(), 2);
+    assert_eq!(merged.get(0), Some(default_ccv));
+    assert_eq!(merged.get(1), Some(lane_ccv));
+}
+
+#[test]
+fn test_merge_ccv_lists_empty_user_dedups_mandated_against_defaults() {
+    // A mandated CCV that is also a lane default appears once (EVM
+    // `_mergeCCVLists` dedups mandated against the user-or-default list).
+    let env = Env::default();
+    let shared = Address::generate(&env);
+
+    let user: Vec<Address> = Vec::new(&env);
+    let user_args: Vec<Bytes> = Vec::new(&env);
+    let lane = vec![&env, shared.clone()];
+    let defaults = vec![&env, shared.clone()];
 
     let (merged, args) =
         OnRampContract::merge_ccv_lists_with_ccv_args(&env, &user, &user_args, &lane, &defaults)
             .unwrap();
     assert_eq!(merged.len(), 1);
     assert_eq!(args.len(), 1);
-    assert_eq!(merged.get(0), Some(lane_ccv));
+    assert_eq!(merged.get(0), Some(shared));
 }
 
 #[test]
@@ -2663,6 +2689,86 @@ fn test_forward_from_router_empty_pool_falls_back_to_defaults() {
          ccv_and_executor_hash must equal hash(default_ccvs, default_executor), not \
          hash of an empty CCV set"
     );
+}
+
+/// Regression (validated CCV-merge finding): on a lane with BOTH `default_ccvs`
+/// and `lane_mandated_ccvs`, a non-token-only message with EMPTY user CCVs must
+/// commit defaults + mandated — EVM `_resolveUserOrDefaultCCVs` (OnRamp.sol:802-810)
+/// resolves defaults on user-list emptiness alone, `_mergeCCVLists` (OnRamp.sol:272)
+/// merges mandated on top. The pre-fix code committed mandated alone; the
+/// destination offramp folds defaults into the REQUIRED set for receivers without
+/// a CCV policy and reverts `RequiredCCVMissing` — permanently stuck messages.
+#[test]
+fn test_forward_from_router_empty_user_ccvs_keeps_defaults_with_mandated() {
+    let lane = setup_data_only_lane(25, 0);
+    let env = &lane.env;
+
+    // Add a mandated CCV: a real fee-charging VVR (the OnRamp calls `get_fee` on
+    // every merged CCV), distinct from the lane default CCV. `mock_all_auths` is
+    // on, so a throwaway owner suffices.
+    let owner = Address::generate(env);
+    let mandated_ccv = deploy_default_ccv_resolver(env, &owner, lane.evm_chain_selector);
+
+    let stored = lane
+        .onramp_client
+        .get_dest_chain_config(&lane.evm_chain_selector);
+    lane.onramp_client.apply_dest_chain_config_updates(&vec![
+        env,
+        OnrampDestChainConfigArgs {
+            dest_chain_selector: lane.evm_chain_selector,
+            router: stored.router.clone(),
+            address_bytes_length: 20,
+            token_receiver_allowed: true,
+            message_network_fee_usd_cents: 50,
+            token_network_fee_usd_cents: 100,
+            base_execution_gas_cost: 200_000,
+            execution_fee_usd_cents: 25,
+            default_executor: stored.default_executor.clone(),
+            lane_mandated_ccvs: vec![env, mandated_ccv.clone()],
+            default_ccvs: stored.default_ccvs.clone(),
+            off_ramp: stored.off_ramp.clone(),
+        },
+    ]);
+
+    // Read the committed-set inputs BEFORE sending — any contract call after
+    // `ccip_send` clears the event view. Expected: [default_ccv, mandated_ccv].
+    let stored = lane
+        .onramp_client
+        .get_dest_chain_config(&lane.evm_chain_selector);
+    let mut expected_ccvs = stored.default_ccvs.clone();
+    expected_ccvs.push_back(mandated_ccv.clone());
+    let expected_hash =
+        CcipMessageV1::compute_ccv_and_executor_hash(env, &expected_ccvs, &stored.default_executor);
+
+    // Data message (non-token-only), empty user CCVs, default-executor sentinel
+    // (resolved to the lane default before hashing).
+    let extra_args = GenericExtraArgsV3 {
+        gas_limit: 0,
+        block_confirmations: 0,
+        ccvs: Vec::new(env),
+        ccv_args: Vec::new(env),
+        executor: GenericExtraArgsV3::use_default_executor_address(env),
+        executor_args: Bytes::new(env),
+        token_receiver: Bytes::new(env),
+        token_args: Bytes::new(env),
+    };
+    let (receipts, encoded) = lane.send_data_only_full(extra_args);
+
+    let decoded = CcipMessageV1::from_bytes(env, &encoded).expect("decode encoded message");
+    assert_eq!(
+        decoded.ccv_and_executor_hash, expected_hash,
+        "empty user CCVs on a mandated lane must still commit the lane defaults — \
+         hash must equal hash([default_ccv, mandated_ccv], default_executor)"
+    );
+
+    // Data-only receipt layout [CCV_0..CCV_N, Executor, NetworkFee]: one CCV
+    // receipt per committed CCV, issuers in merge order.
+    assert_eq!(receipts.len(), 4, "expected [D, M, Executor, NetworkFee]");
+    assert_eq!(
+        receipts.get(0).unwrap().issuer,
+        stored.default_ccvs.get(0).unwrap()
+    );
+    assert_eq!(receipts.get(1).unwrap().issuer, mandated_ccv);
 }
 
 /// M-13 / INV-SRC-12 over-trigger guard: the `include_defaults || ccvs.is_empty()`

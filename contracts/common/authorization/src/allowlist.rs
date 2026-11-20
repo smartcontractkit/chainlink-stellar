@@ -319,3 +319,22 @@ pub fn require_in_allowlist_authorized<T: AllowListable>(
     }
     Ok(())
 }
+
+/// Writes `enabled` into `ALLOW_LIST`, keeping stored senders, so a config-path flag shares the
+/// slot enforcement reads (EVM `_setRemoteChainConfig` parity). Free function: not an entrypoint.
+pub fn set_allowlist_enabled<T: AllowListable>(env: &Env, key: u64, enabled: bool) {
+    let mut data: Map<u64, AllowListEntry> = env
+        .storage()
+        .instance()
+        .get(&T::ALLOW_LIST)
+        .unwrap_or(Map::new(env));
+
+    let mut entry = data.get(key).unwrap_or(AllowListEntry {
+        allowlist_enabled: enabled,
+        allowlist: Vec::new(env),
+    });
+    entry.allowlist_enabled = enabled;
+    data.set(key, entry);
+
+    env.storage().instance().set(&T::ALLOW_LIST, &data);
+}

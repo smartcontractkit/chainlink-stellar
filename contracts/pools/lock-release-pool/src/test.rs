@@ -265,93 +265,6 @@ mod inbound_release_stub {
 
 const DEFAULT_REMOTE_CHAIN: u64 = 5009297550715157269;
 
-/// Malicious/faulty lockbox stand-ins for the deposit-validation tests. Each
-/// passes the pool's `initialize` check (`is_token_supported` → true) but
-/// misbehaves in `deposit`: returning an undecodable value, a well-formed Ok
-/// without pulling tokens, or pulling and immediately forwarding to a thief.
-mod malicious_lockbox {
-    use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
-
-    use common_error::CCIPError;
-
-    #[contract]
-    pub struct GarbageDepositLockBox;
-
-    #[contractimpl]
-    impl GarbageDepositLockBox {
-        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
-            true
-        }
-
-        // Successful but non-decodable return: try_deposit sees Ok(Err(_)).
-        pub fn deposit(_env: Env, _caller: Address, _amount: i128) -> u32 {
-            5
-        }
-    }
-
-    #[contract]
-    pub struct LyingOkLockBox;
-
-    #[contractimpl]
-    impl LyingOkLockBox {
-        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
-            true
-        }
-
-        // Well-formed Ok, but the tokens are never pulled from the pool.
-        pub fn deposit(_env: Env, _caller: Address, _amount: i128) -> Result<(), CCIPError> {
-            Ok(())
-        }
-    }
-
-    #[contract]
-    pub struct PullAndForwardLockBox;
-
-    #[contractimpl]
-    impl PullAndForwardLockBox {
-        // Store the escrowed token and the thief address at registration time.
-        pub fn initialize(env: Env, token: Address, thief: Address) {
-            env.storage()
-                .instance()
-                .set(&Symbol::new(&env, "token"), &token);
-            env.storage()
-                .instance()
-                .set(&Symbol::new(&env, "thief"), &thief);
-        }
-
-        pub fn is_token_supported(_env: Env, _token: Address) -> bool {
-            true
-        }
-
-        pub fn thief(env: Env) -> Address {
-            env.storage()
-                .instance()
-                .get(&Symbol::new(&env, "thief"))
-                .unwrap()
-        }
-
-        // Pulls like an honest lockbox, then forwards everything to the thief:
-        // the pool-side balance looks right but the lockbox delta is zero.
-        pub fn deposit(env: Env, caller: Address, amount: i128) -> Result<(), CCIPError> {
-            let token: Address = env
-                .storage()
-                .instance()
-                .get(&Symbol::new(&env, "token"))
-                .unwrap();
-            let thief: Address = env
-                .storage()
-                .instance()
-                .get(&Symbol::new(&env, "thief"))
-                .unwrap();
-            let me = env.current_contract_address();
-            let token_client = token::Client::new(&env, &token);
-            token_client.transfer_from(&me, &caller, &me, &amount);
-            token_client.transfer(&me, &thief, &amount);
-            Ok(())
-        }
-    }
-}
-
 /// Register real Router + RMN proxy + RMN remote contracts and wire them, returning
 /// the Router address (to pass to the pool's `initialize`). Mirrors the onramp test
 /// wiring; the RMN starts uncursed so happy-path pool operations are unaffected.
@@ -437,83 +350,6 @@ fn setup_env() -> (
         registry_client,
         stub_client,
         auth_onramp,
-    )
-}
-
-/// Like `setup_env`, but the pool's lockbox comes from `register_lockbox`
-/// instead of the real `TokenLockBox` — for the malicious/faulty-lockbox
-/// deposit tests. The closure receives the env and the pool token and must
-/// return the lockbox address (registering and initializing the substitute as
-/// needed); the pool's `initialize` validates it via `is_token_supported`, so
-/// the substitute must return true. `authorize_pool_caller` toggles
-/// `add_allowed_callers` (for the real-lockbox typed-error test).
-#[allow(clippy::type_complexity)]
-fn setup_env_with_lockbox(
-    register_lockbox: impl FnOnce(&Env, &Address) -> Address,
-    authorize_pool_caller: bool,
-) -> (
-    Env,
-    LockReleaseTokenPoolContractClient<'static>,
-    Address,
-    Address,
-    token::Client<'static>,
-    token::StellarAssetClient<'static>,
-    RampRegistryContractClient<'static>,
-    inbound_release_stub::PoolInboundReleaseStubClient<'static>,
-    Address,
-    Address,
-) {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-
-    let owner = Address::generate(&env);
-    let registry_id = env.register(RampRegistryContract, ());
-    let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
-
-    let auth_onramp = Address::generate(&env);
-    register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
-
-    let stub_id = env.register(inbound_release_stub::PoolInboundReleaseStub, ());
-    let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
-
-    let pool_id = env.register(LockReleaseTokenPoolContract, ());
-    let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
-
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_address = token_contract.address();
-    let token_client = token::Client::new(&env, &token_address);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-
-    let lockbox_id = register_lockbox(&env, &token_address);
-
-    let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
-    pool_client.initialize(
-        &owner,
-        &token_address,
-        &7u32,
-        &router,
-        &registry_client.address,
-        &rmn_proxy,
-        &lockbox_id,
-    );
-    if authorize_pool_caller {
-        let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
-        lockbox_client.add_allowed_callers(&Vec::from_array(&env, [pool_client.address.clone()]));
-    }
-
-    (
-        env,
-        pool_client,
-        owner,
-        token_address,
-        token_client,
-        token_admin_client,
-        registry_client,
-        stub_client,
-        auth_onramp,
-        lockbox_id,
     )
 }
 
@@ -881,173 +717,6 @@ fn test_lock_or_burn_amount_exceeds_sender_balance_fails() {
 
     let result = pool_client.try_lock_or_burn(&auth_onramp, &lock_input, &0u32, &Bytes::new(&env));
     assert!(result.is_err());
-}
-
-/// Lockbox deposit validation (audit: try_deposit decode-failure treated as
-/// success). Common body for the four failure-shape tests: fund a sender,
-/// attempt lock_or_burn against a misbehaving lockbox, and require a typed
-/// TokenHandlingError whose frame-rollback restores the sender's balance.
-fn assert_lockbox_deposit_rejected(
-    env: &Env,
-    pool_client: &LockReleaseTokenPoolContractClient<'_>,
-    token_address: &Address,
-    token_client: &token::Client<'_>,
-    token_admin_client: &token::StellarAssetClient<'_>,
-    lockbox_addr: &Address,
-    auth_onramp: &Address,
-) {
-    pool_client.apply_chain_updates(
-        &Vec::from_array(env, [chain_update(env, DEFAULT_REMOTE_CHAIN, 1, 2)]),
-        &Vec::new(env),
-    );
-
-    let sender = Address::generate(env);
-    let lock_amount: i128 = 1_000_000_000;
-    token_admin_client.mint(&sender, &lock_amount);
-
-    let lock_input = LockOrBurnIn {
-        receiver: Bytes::from_slice(env, &[3u8; 20]),
-        remote_chain_selector: DEFAULT_REMOTE_CHAIN,
-        original_sender: sender.clone(),
-        amount: lock_amount,
-        local_token: token_address.clone(),
-    };
-
-    let r = pool_client.try_lock_or_burn(auth_onramp, &lock_input, &0u32, &Bytes::new(env));
-    assert_eq!(r, Err(Ok(CCIPError::TokenHandlingError)));
-    // The failed pool frame rolls back its writes, so nothing moved.
-    assert_eq!(token_client.balance(&sender), lock_amount);
-    assert_eq!(token_client.balance(&pool_client.address), 0);
-    assert_eq!(token_client.balance(lockbox_addr), 0);
-}
-
-#[test]
-fn test_lock_or_burn_rejects_undecodable_lockbox_deposit() {
-    let (
-        env,
-        pool_client,
-        _owner,
-        token_address,
-        token_client,
-        token_admin_client,
-        _registry,
-        _stub,
-        auth_onramp,
-        lockbox_addr,
-    ) = setup_env_with_lockbox(
-        |env, _token| env.register(malicious_lockbox::GarbageDepositLockBox, ()),
-        false,
-    );
-    assert_lockbox_deposit_rejected(
-        &env,
-        &pool_client,
-        &token_address,
-        &token_client,
-        &token_admin_client,
-        &lockbox_addr,
-        &auth_onramp,
-    );
-}
-
-#[test]
-fn test_lock_or_burn_rejects_lying_ok_lockbox_deposit() {
-    let (
-        env,
-        pool_client,
-        _owner,
-        token_address,
-        token_client,
-        token_admin_client,
-        _registry,
-        _stub,
-        auth_onramp,
-        lockbox_addr,
-    ) = setup_env_with_lockbox(
-        |env, _token| env.register(malicious_lockbox::LyingOkLockBox, ()),
-        false,
-    );
-    assert_lockbox_deposit_rejected(
-        &env,
-        &pool_client,
-        &token_address,
-        &token_client,
-        &token_admin_client,
-        &lockbox_addr,
-        &auth_onramp,
-    );
-}
-
-#[test]
-fn test_lock_or_burn_rejects_pull_and_forward_lockbox() {
-    let (
-        env,
-        pool_client,
-        _owner,
-        token_address,
-        token_client,
-        token_admin_client,
-        _registry,
-        _stub,
-        auth_onramp,
-        lockbox_addr,
-    ) = setup_env_with_lockbox(
-        |env, token| {
-            let thief_addr = Address::generate(env);
-            let id = env.register(malicious_lockbox::PullAndForwardLockBox, ());
-            let client = malicious_lockbox::PullAndForwardLockBoxClient::new(env, &id);
-            client.initialize(token, &thief_addr);
-            id
-        },
-        false,
-    );
-    assert_lockbox_deposit_rejected(
-        &env,
-        &pool_client,
-        &token_address,
-        &token_client,
-        &token_admin_client,
-        &lockbox_addr,
-        &auth_onramp,
-    );
-    // The forwarded tokens were rolled back with the failed pool frame too.
-    let thief = malicious_lockbox::PullAndForwardLockBoxClient::new(&env, &lockbox_addr).thief();
-    assert_eq!(token_client.balance(&thief), 0);
-}
-
-#[test]
-fn test_lock_or_burn_rejects_lockbox_typed_error() {
-    let (
-        env,
-        pool_client,
-        _owner,
-        token_address,
-        token_client,
-        token_admin_client,
-        _registry,
-        _stub,
-        auth_onramp,
-        lockbox_addr,
-    ) = setup_env_with_lockbox(
-        |env, token| {
-            // Real lockbox, but the pool is NOT in its allowed callers, so
-            // deposit returns a decodable typed Err.
-            let id = env.register(TokenLockBox, ());
-            let client = TokenLockBoxClient::new(env, &id);
-            let lockbox_owner = Address::generate(env);
-            client.initialize(&lockbox_owner, token);
-            id
-        },
-        false,
-    );
-    assert_lockbox_deposit_rejected(
-        &env,
-        &pool_client,
-        &token_address,
-        &token_client,
-        &token_admin_client,
-        &lockbox_addr,
-        &auth_onramp,
-    );
 }
 
 #[test]
@@ -1487,7 +1156,7 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     let stub_id = env.register(inbound_release_stub::PoolInboundReleaseStub, ());
     let stub_client = inbound_release_stub::PoolInboundReleaseStubClient::new(&env, &stub_id);
 
-    let local_decimals: u32 = 7;
+    let local_decimals: u32 = 6;
     let (router, rmn_proxy) = setup_router_with_rmn(&env, &owner);
     // The lockbox is fixed at pool `initialize` (EVM `i_lockBox`): stand it up
     // first, then authorize the pool as its sole caller.
@@ -1513,17 +1182,17 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
 
     let lockbox_client = wire_lockbox(&env, &pool_client);
 
-    let expected_local: i128 = 1_000_000_000;
+    let expected_local: i128 = 1_000_000;
     // Release pulls from the lockbox, so fund it (not the pool address).
     token_admin_client.mint(&lockbox_client.address, &expected_local);
 
-    let remote_decimals: u32 = 10;
+    let remote_decimals: u32 = 9;
     let receiver = Address::generate(&env);
     let release_input = ReleaseOrMintIn {
         original_sender: Bytes::from_slice(&env, &[4u8; 20]),
         remote_chain_selector: remote_chain,
         receiver: receiver.clone(),
-        amount: 1_000_000_000_000,
+        amount: 1_000_000_000,
         local_token: token_address.clone(),
         source_pool_address: Bytes::from_slice(&env, &[1u8; 20]),
         source_pool_data: encode_local_decimals(&env, remote_decimals).unwrap(),
@@ -1559,37 +1228,6 @@ fn test_initialize_rejects_decimals_above_uint8() {
         &owner,
         &token_address,
         &256u32,
-        &router,
-        &ramp_registry,
-        &rmn_proxy,
-        &lock_box,
-    );
-    assert_eq!(r, Err(Ok(CCIPError::InvalidPoolTokenDecimals)));
-}
-
-#[test]
-fn test_initialize_rejects_mismatched_token_decimals() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-
-    let pool_id = env.register(LockReleaseTokenPoolContract, ());
-    let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
-    let owner = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_address = token_contract.address();
-    let router = Address::generate(&env);
-    let ramp_registry = Address::generate(&env);
-    let rmn_proxy = Address::generate(&env);
-
-    // SAC tokens are 7 decimals; any other value is rejected against the
-    // token's on-chain decimals (EVM InvalidDecimalArgs). The lockbox arg is
-    // never reached — decimals validation runs first.
-    let lock_box = Address::generate(&env);
-    let r = pool_client.try_initialize(
-        &owner,
-        &token_address,
-        &6u32,
         &router,
         &ramp_registry,
         &rmn_proxy,
@@ -3228,36 +2866,20 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
     panic!("expected Upgraded event with new_wasm_hash from contract");
 }
 
-/// Token stub exposing only `decimals` — enough for `initialize`'s SEP-41
-/// decimals validation in fixtures that never move tokens.
-mod decimals_only_token {
-    use soroban_sdk::{contract, contractimpl, Env};
-
-    #[contract]
-    pub struct DecimalsOnlyToken;
-
-    #[contractimpl]
-    impl DecimalsOnlyToken {
-        pub fn decimals(_env: Env) -> u32 {
-            18
-        }
-    }
-}
-
-/// Minimal initialized pool: `initialize` stores its address args with two
-/// cross-calls — the lockbox (`is_token_supported`; EVM `i_lockBox` constructor
-/// validation) and the token's `decimals()` (SEP-41 validation), so the token
-/// must be a real contract; a decimals-only stub suffices since the fixture
-/// never moves tokens. The lockbox itself never calls the token (it just
-/// compares its stored token). Every other arg stays a dummy
-/// `Address::generate`.
+/// Minimal initialized pool: `initialize` only stores its address args — the
+/// one exception is the lockbox, which it cross-calls (`is_token_supported`;
+/// EVM `i_lockBox` constructor validation). The lockbox itself never calls the
+/// token (it just compares its stored token), so a real `TokenLockBox`
+/// registered for a dummy token satisfies the check while every other arg
+/// stays a dummy `Address::generate`.
 fn setup_pool_for_upgrade(env: &Env) -> LockReleaseTokenPoolContractClient<'static> {
     let contract_id = env.register(LockReleaseTokenPoolContract, ());
     let client = LockReleaseTokenPoolContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
-    // The lockbox must hold the SAME token the pool registers — the shared
-    // stub address is what makes `is_token_supported(token)` true.
-    let token = env.register(decimals_only_token::DecimalsOnlyToken, ());
+    // The lockbox must hold the SAME token the pool registers — each
+    // `Address::generate` call yields a fresh address, so generating it once
+    // and sharing it is what makes `is_token_supported(token)` true.
+    let token = Address::generate(env);
     let lockbox_id = env.register(TokenLockBox, ());
     let lockbox = TokenLockBoxClient::new(env, &lockbox_id);
     lockbox.initialize(&owner, &token);

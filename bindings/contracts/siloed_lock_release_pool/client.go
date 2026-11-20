@@ -797,294 +797,6 @@ func (c *SiloedLockReleasePoolClient) GetCurrentRateLimiterState(ctx context.Con
 	return RateLimiterStateFromScVal(*result)
 }
 
-// WaitForRoleGrantedEvent waits for a RoleGrantedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForRoleGrantedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleGrantedEvent) bool) (*RoleGrantedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleGrantedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseRoleGrantedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseRoleGrantedEvent(e protocolrpc.EventInfo) (*RoleGrantedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleGrantedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			v, err := scval.SymbolFromScVal(entry.Val)
-			if err == nil {
-				result.Role = v
-			}
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForRoleRevokedEvent waits for a RoleRevokedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForRoleRevokedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RoleRevokedEvent) bool) (*RoleRevokedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RoleRevokedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseRoleRevokedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseRoleRevokedEvent(e protocolrpc.EventInfo) (*RoleRevokedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RoleRevokedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "role":
-			v, err := scval.SymbolFromScVal(entry.Val)
-			if err == nil {
-				result.Role = v
-			}
-		case "account":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Account = v
-			}
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerAddedEvent waits for a AuthorizedCallerAddedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForAuthorizedCallerAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerAddedEvent) bool) (*AuthorizedCallerAddedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerAddedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseAuthorizedCallerAddedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseAuthorizedCallerAddedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerAddedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerAddedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForAuthorizedCallerRemovedEvent waits for a AuthorizedCallerRemovedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForAuthorizedCallerRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*AuthorizedCallerRemovedEvent) bool) (*AuthorizedCallerRemovedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{AuthorizedCallerRemovedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseAuthorizedCallerRemovedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseAuthorizedCallerRemovedEvent(e protocolrpc.EventInfo) (*AuthorizedCallerRemovedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &AuthorizedCallerRemovedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "caller":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Caller = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
 // WaitForOwnershipTransferStartedEvent waits for a OwnershipTransferStartedEvent event.
 func (c *SiloedLockReleasePoolClient) WaitForOwnershipTransferStartedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*OwnershipTransferStartedEvent) bool) (*OwnershipTransferStartedEvent, error) {
 	startTime := time.Now()
@@ -1150,304 +862,6 @@ func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
 				result.NewOwner = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForBurnedEvent waits for a BurnedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForBurnedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*BurnedEvent) bool) (*BurnedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{BurnedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseBurnedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseBurnedEvent(e protocolrpc.EventInfo) (*BurnedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &BurnedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForLockedEvent waits for a LockedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForLockedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockedEvent) bool) (*LockedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseLockedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseLockedEvent(e protocolrpc.EventInfo) (*LockedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &LockedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForMintedEvent waits for a MintedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForMintedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*MintedEvent) bool) (*MintedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{MintedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseMintedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseMintedEvent(e protocolrpc.EventInfo) (*MintedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &MintedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "recipient":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Recipient = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForReleasedEvent waits for a ReleasedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForReleasedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReleasedEvent) bool) (*ReleasedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ReleasedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseReleasedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseReleasedEvent(e protocolrpc.EventInfo) (*ReleasedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &ReleasedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "recipient":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Recipient = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
 			}
 		}
 	}
@@ -2468,6 +1882,155 @@ func ParseOutboundRateLimitConsumedEvent(e protocolrpc.EventInfo) (*OutboundRate
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err == nil {
 				result.RemoteChainSelector = v
+			}
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.Amount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForLockedEvent waits for a LockedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForLockedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockedEvent) bool) (*LockedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseLockedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseLockedEvent(e protocolrpc.EventInfo) (*LockedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &LockedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.Amount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForReleasedEvent waits for a ReleasedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForReleasedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReleasedEvent) bool) (*ReleasedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ReleasedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseReleasedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseReleasedEvent(e protocolrpc.EventInfo) (*ReleasedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &ReleasedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Sender = v
+			}
+		case "recipient":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.Recipient = v
 			}
 		case "amount":
 			v, err := scval.I128FromScVal(entry.Val)

@@ -1009,11 +1009,176 @@ fn test_allowlist_disable_existing_entry_updates_flag() {
 }
 
 #[test]
+fn test_remote_chain_cfg_enable_drives_enforcement() {
+    let (env, client, owner, ..) = setup();
+
+    let dest_chain: u64 = 12345;
+    let listed = Address::generate(&env);
+    let unlisted = Address::generate(&env);
+    let message_id = BytesN::from_array(&env, &[0u8; 32]);
+    let fee_token = Address::generate(&env);
+    let verifier_args = Bytes::new(&env);
+
+    let mut remote_config = default_remote_chain_config(&env, dest_chain);
+    remote_config.allowlist_enabled = true;
+    client.apply_remote_chain_cfg_updates(&vec![&env, remote_config]);
+
+    assert!(
+        stored_allowlist_entry(&env, &client.address, dest_chain)
+            .unwrap()
+            .allowlist_enabled
+    );
+    assert!(
+        client
+            .get_remote_chain_config(&dest_chain)
+            .allowlist_enabled
+    );
+    assert_eq!(
+        client
+            .try_forward_to_verifier(
+                &dest_chain,
+                &unlisted,
+                &message_id,
+                &fee_token,
+                &0,
+                &verifier_args,
+            )
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::CallerNotAuthorized
+    );
+
+    client.apply_allowlist_updates(
+        &owner,
+        &allowlist_update(
+            &env,
+            dest_chain,
+            true,
+            vec![&env, listed.clone()],
+            vec![&env],
+        ),
+    );
+    client.forward_to_verifier(
+        &dest_chain,
+        &listed,
+        &message_id,
+        &fee_token,
+        &0,
+        &verifier_args,
+    );
+}
+
+#[test]
+fn test_remote_chain_cfg_disable_reopens_lane() {
+    let (env, client, owner, ..) = setup();
+
+    let dest_chain: u64 = 12345;
+    let listed = Address::generate(&env);
+    let unlisted = Address::generate(&env);
+    let message_id = BytesN::from_array(&env, &[0u8; 32]);
+    let fee_token = Address::generate(&env);
+    let verifier_args = Bytes::new(&env);
+
+    client.apply_allowlist_updates(
+        &owner,
+        &allowlist_update(
+            &env,
+            dest_chain,
+            true,
+            vec![&env, listed.clone()],
+            vec![&env],
+        ),
+    );
+
+    let mut remote_config = default_remote_chain_config(&env, dest_chain);
+    remote_config.allowlist_enabled = false;
+    client.apply_remote_chain_cfg_updates(&vec![&env, remote_config]);
+
+    assert!(
+        !stored_allowlist_entry(&env, &client.address, dest_chain)
+            .unwrap()
+            .allowlist_enabled
+    );
+    assert!(
+        !client
+            .get_remote_chain_config(&dest_chain)
+            .allowlist_enabled
+    );
+    client.forward_to_verifier(
+        &dest_chain,
+        &unlisted,
+        &message_id,
+        &fee_token,
+        &0,
+        &verifier_args,
+    );
+}
+
+#[test]
+fn test_remote_chain_cfg_flag_keeps_existing_senders() {
+    let (env, client, owner, ..) = setup();
+
+    let dest_chain: u64 = 12345;
+    let listed = Address::generate(&env);
+    let unlisted = Address::generate(&env);
+    let message_id = BytesN::from_array(&env, &[0u8; 32]);
+    let fee_token = Address::generate(&env);
+    let verifier_args = Bytes::new(&env);
+
+    client.apply_allowlist_updates(
+        &owner,
+        &allowlist_update(
+            &env,
+            dest_chain,
+            true,
+            vec![&env, listed.clone()],
+            vec![&env],
+        ),
+    );
+
+    let mut remote_config = default_remote_chain_config(&env, dest_chain);
+    remote_config.allowlist_enabled = false;
+    client.apply_remote_chain_cfg_updates(&vec![&env, remote_config.clone()]);
+
+    remote_config.allowlist_enabled = true;
+    client.apply_remote_chain_cfg_updates(&vec![&env, remote_config]);
+
+    assert_eq!(
+        stored_allowlist_entry(&env, &client.address, dest_chain)
+            .unwrap()
+            .allowlist
+            .len(),
+        1
+    );
+    client.forward_to_verifier(
+        &dest_chain,
+        &listed,
+        &message_id,
+        &fee_token,
+        &0,
+        &verifier_args,
+    );
+    assert_eq!(
+        client
+            .try_forward_to_verifier(
+                &dest_chain,
+                &unlisted,
+                &message_id,
+                &fee_token,
+                &0,
+                &verifier_args,
+            )
+            .unwrap_err()
+            .unwrap(),
+        CCIPError::CallerNotAuthorized
+    );
+}
+
+#[test]
 fn test_allowlist_removal_only_update_applies_on_disabled_chain() {
     // EVM applies removals regardless of the enabled flag (BaseVerifier.sol:264-270),
     // so a removal-only update on a disabled chain must not error.
     let (env, client, owner, ..) = setup();
-
     let dest_chain: u64 = 12345;
     let sender = Address::generate(&env);
 

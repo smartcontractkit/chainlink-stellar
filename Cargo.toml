@@ -28,13 +28,14 @@ members = [
   "contracts/cre/test/rejecting_receiver",
   "contracts/bnm-token",
   "contracts/link-token",
+  "contracts/token-pool-proxy",
   "contracts/common/*",
 ]
 
 [workspace.dependencies]
-soroban-sdk = "26.0.0"
-stellar-strkey = "0.0.16"
-sha3 = "0.10"
+soroban-sdk = "30.0.0-rc.1"
+stellar-strkey = "1.0.0"
+sha3 = "0.12.0"
 k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 common-message = { path = "contracts/common/message" }
 common-guard = { path = "contracts/common/guard" }

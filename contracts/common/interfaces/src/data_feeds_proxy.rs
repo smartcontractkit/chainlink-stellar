@@ -51,58 +51,58 @@ pub trait DataFeedsProxyInterface {
         live_until_ledger: u32,
     );
 }
-#[soroban_sdk::contracttype(export = false)]
+#[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Round {
     pub answer: soroban_sdk::I256,
     pub round_id: u64,
     pub timestamp: u64,
 }
-#[soroban_sdk::contracterror(export = false)]
+#[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProxyReadError {
     NoDataPresent = 50,
     InvalidDecimals = 51,
     RoundsToZero = 52,
 }
-#[soroban_sdk::contractevent(topics = ["CacheSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["CacheSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CacheSet {
     pub old_cache: soroban_sdk::Address,
     pub new_cache: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["MinDecimalsSet"], export = false)]
+#[soroban_sdk::contractevent(topics = ["MinDecimalsSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MinDecimalsSet {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
     pub min: u32,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded"], export = false)]
+#[soroban_sdk::contractevent(topics = ["Upgraded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["TokenRecovered"], export = false)]
+#[soroban_sdk::contractevent(topics = ["TokenRecovered"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenRecovered {
     pub token: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransfer {
     pub old_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
     pub live_until_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_renounced"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_renounced"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipRenounced {
     pub old_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"], export = false)]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferCompleted {
     pub new_owner: soroban_sdk::Address,

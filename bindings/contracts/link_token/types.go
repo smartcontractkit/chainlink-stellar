@@ -128,6 +128,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -261,6 +262,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -300,70 +302,6 @@ var LinkErrorMessage = map[int]string{
 	10: "minter not found",
 	11: "cannot remove primary minter",
 }
-
-// Upgraded represents the Upgraded event.
-// Topics: [Upgraded]
-type Upgraded struct {
-	NewWasmHash [32]byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// UpgradedTopic is the event topic identifier.
-const UpgradedTopic = "Upgraded"
-
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
 // Topics: [auth_OwnerTransferStart]
