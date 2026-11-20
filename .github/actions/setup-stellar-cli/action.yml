@@ -10,11 +10,11 @@ inputs:
   version:
     description: stellar-cli version
     required: false
-    default: "28.0.0"
+    default: "30.0.1"
   shasum:
     description: SHA256 of the release tarball for the requested version
     required: false
-    default: "207544486734fccb4df1afc4a7745478f9f1e21688b2f9506f0ef36f60ce3fdc"
+    default: "48c70074020e09af0a3ebbd2bf62d53c9aec47935e49a112d3cd90fb4e37658f"
 
 runs:
   using: composite

@@ -213,10 +213,7 @@ func getContractEvents(
 	contractID, topic string,
 	startLedger uint32,
 ) ([]protocolrpc.EventInfo, error) {
-	topicScVal, err := scval.SymbolToScValView(topic)
-	if err != nil {
-		return nil, fmt.Errorf("encode topic symbol %q: %w", topic, err)
-	}
+	topicScVal := scval.SymbolToScValPtr(topic)
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 
 	filters := []protocolrpc.EventFilter{

@@ -21,13 +21,9 @@ const eventsPageLimit = 100
 // with cursors; without it a busy window (e.g. a backfill over a shared
 // OffRamp) would silently drop every matching event past the first page.
 func GetEventsInRange(ctx context.Context, rpcClient *rpcclient.Client, contractID string, fromLedger, toLedger uint32, topics []string) ([]protocolrpc.EventInfo, error) {
-	topicScVals := make([]xdr.ScValView, 0, len(topics))
+	var topicScVals []*xdr.ScVal
 	for _, topic := range topics {
-		v, err := scval.SymbolToScValView(topic)
-		if err != nil {
-			return nil, fmt.Errorf("encode topic symbol %q: %w", topic, err)
-		}
-		topicScVals = append(topicScVals, v)
+		topicScVals = append(topicScVals, scval.SymbolToScValPtr(topic))
 	}
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 	topicFilter := protocolrpc.TopicFilter{}

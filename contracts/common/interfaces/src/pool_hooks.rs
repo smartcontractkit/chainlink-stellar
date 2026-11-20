@@ -31,7 +31,7 @@ use soroban_sdk::contracttype;
 /// `token_args` / `offchain_token_data` are deliberately NOT carried here: on
 /// EVM they travel as `Payload.context` (the side-channel the extractor skips),
 /// and Stellar mirrors that split.
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PoolHooksPayloadData {
     /// EVM `preflightCheck(lockOrBurnIn, requestedFinalityConfig, tokenArgs[=context], amountPostFee)`.
@@ -41,7 +41,7 @@ pub enum PoolHooksPayloadData {
 }
 
 /// Args carried for a `preflight_check` policy run.
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreflightPayload {
     pub lock_or_burn_in: LockOrBurnIn,
@@ -51,7 +51,7 @@ pub struct PreflightPayload {
 }
 
 /// Args carried for a `postflight_check` policy run.
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostflightPayload {
     pub release_or_mint_in: ReleaseOrMintIn,

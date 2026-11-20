@@ -121,10 +121,7 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 	}
 
 	// Build topic filter for CCIPMessageSent event
-	topicScVal, err := scval.SymbolToScValView(s.ccipMessageSentTopic)
-	if err != nil {
-		return nil, fmt.Errorf("encode topic symbol %q: %w", s.ccipMessageSentTopic, err)
-	}
+	topicScVal := scval.SymbolToScValPtr(s.ccipMessageSentTopic)
 
 	events, err := s.fetchAllEvents(ctx, fromLedger, toLedger, topicScVal)
 	if err != nil {
@@ -160,7 +157,7 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 // range is fully consumed. Any failure mid-pagination returns an error rather
 // than a partial result, so callers never advance past silently dropped
 // MessageSent events.
-func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal xdr.ScValView) ([]protocolrpc.EventInfo, error) {
+func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal *xdr.ScVal) ([]protocolrpc.EventInfo, error) {
 	// Use wildcard to match events with additional topics
 	zeroOrMore := protocolrpc.WildCardZeroOrMore
 	filters := []protocolrpc.EventFilter{
@@ -183,7 +180,7 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 	}
 
 	var events []protocolrpc.EventInfo
-	var prevCursor *protocolrpc.Cursor
+	prevCursor := ""
 	pages := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -209,7 +206,7 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 			events = append(events, e)
 		}
 
-		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 {
+		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 || resp.Cursor == prevCursor {
 			break
 		}
 
@@ -217,16 +214,10 @@ func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger 
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse events continuation cursor %q: %w", resp.Cursor, err)
 		}
-		// A cursor that does not advance is a server contract violation;
-		// error rather than silently end the scan mid-range (mirrors
-		// destinationreader.GetEventsInRange).
-		if prevCursor != nil && cursor.Cmp(*prevCursor) <= 0 {
-			return nil, fmt.Errorf("events cursor %q did not advance; refusing to loop on the same page", resp.Cursor)
-		}
 		if cursor.Ledger > toLedger {
 			break
 		}
-		prevCursor = &cursor
+		prevCursor = resp.Cursor
 		req = protocolrpc.GetEventsRequest{
 			Filters:    filters,
 			Pagination: &protocolrpc.PaginationOptions{Cursor: &cursor},

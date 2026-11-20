@@ -3,7 +3,7 @@ module github.com/smartcontractkit/chainlink-stellar/bindings
 go 1.27.3
 
 require (
-	github.com/stellar/go-stellar-sdk v0.9.0
+	github.com/stellar/go-stellar-sdk v0.8.0
 	github.com/stretchr/testify v1.11.1
 )
 

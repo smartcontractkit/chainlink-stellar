@@ -288,13 +288,9 @@ func convertTopicFilterFromDomain(topic stellartypes.TopicFilter) (protocol.Topi
 			if err != nil {
 				return nil, fmt.Errorf("segments[%d]: value: %w", i, err)
 			}
-			raw, err := value.MarshalBinary()
-			if err != nil {
-				return nil, fmt.Errorf("segments[%d]: encode scval: %w", i, err)
-			}
 
 			segments[i] = protocol.SegmentFilter{
-				ScVal: raw,
+				ScVal: &value,
 			}
 		}
 	}

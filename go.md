@@ -412,9 +412,11 @@ flowchart LR
 	click chainlink-stellar/bindings href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/capabilities --> chainlink-common
 	click chainlink-stellar/capabilities href "https://github.com/smartcontractkit/chainlink-stellar"
+	chainlink-stellar/ccv --> chainlink-stellar/deployment
 	chainlink-stellar/ccv --> chainlink-stellar/relayer
 	click chainlink-stellar/ccv href "https://github.com/smartcontractkit/chainlink-stellar"
-	chainlink-stellar/deployment
+	chainlink-stellar/deployment --> chainlink-ccv
+	chainlink-stellar/deployment --> chainlink-ccv/deployment
 	click chainlink-stellar/deployment href "https://github.com/smartcontractkit/chainlink-stellar"
 	chainlink-stellar/relayer --> chainlink-common/pkg/monitoring
 	chainlink-stellar/relayer --> chainlink-framework/multinode
@@ -454,6 +456,7 @@ flowchart LR
 	click chainlink-tron/relayer href "https://github.com/smartcontractkit/chainlink-tron"
 	chainlink/deployment --> ccip-contract-examples/chains/evm
 	chainlink/deployment --> chainlink-ccip/ccv/chains/evm
+	chainlink/deployment --> chainlink-ccv
 	chainlink/deployment --> chainlink-evm/contracts/cre/gobindings
 	chainlink/deployment --> chainlink-sui/deployment
 	chainlink/deployment --> chainlink-testing-framework/parrot
@@ -497,12 +500,9 @@ flowchart LR
 	mcms --> chainlink-canton/contracts/v2
 	mcms --> chainlink-ccip/chains/solana
 	mcms --> chainlink-ccip/deployment
-	mcms --> chainlink-ccv
-	mcms --> chainlink-ccv/deployment
 	mcms --> chainlink-deployments-framework
 	mcms --> chainlink-protos/job-distributor
-	mcms --> chainlink-stellar/bindings
-	mcms --> chainlink-stellar/deployment
+	mcms --> chainlink-stellar
 	mcms --> chainlink-sui
 	mcms --> chainlink-ton
 	click mcms href "https://github.com/smartcontractkit/mcms"
