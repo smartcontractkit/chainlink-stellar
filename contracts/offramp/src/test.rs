@@ -557,6 +557,28 @@ fn test_execute_ccv_length_mismatch() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #107)")]
+fn test_execute_ccv_too_large() {
+    let (env, client) = setup_initialized_offramp_for_execute();
+
+    let router = Address::generate(&env);
+    let default_ccv = Address::generate(&env);
+    let onramp = sample_onramp_bytes(&env);
+    apply_source_lane(&env, &client, router, default_ccv, onramp.clone(), true);
+
+    let msg = valid_execute_message(&env, &client.address, onramp);
+    let encoded = msg.to_bytes(&env).unwrap();
+
+    let mut ccvs = Vec::new(&env);
+    // create too many CCVs (more than `MAX_CCV_COUNT`)
+    for _ in 0..129 {
+        ccvs.push_back(Address::generate(&env));
+    }
+    let verifier_results = Vec::new(&env);
+    client.execute(&encoded, &ccvs, &verifier_results, &0u32);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #110)")]
 fn test_execute_gas_limit_override_too_low() {
     let (env, client) = setup_initialized_offramp_for_execute();
