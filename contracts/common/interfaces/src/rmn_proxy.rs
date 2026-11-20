@@ -160,30 +160,6 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {

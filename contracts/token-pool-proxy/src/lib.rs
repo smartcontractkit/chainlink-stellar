@@ -15,10 +15,13 @@
 //!
 //! ## Pattern
 //!
-//! This contract is the standard Stellar "SAC admin wrapper" (OpenZeppelin
-//! `stellar_tokens::fungible::sac_admin_wrapper`: the issuer calls `sac.set_admin(proxy)`,
-//! and the proxy exposes the [`SACAdminWrapper`] ABI — each privileged function takes an
-//! extra `operator` argument naming the address that authorizes the call.
+//! This contract is the standard Stellar "SAC admin wrapper": the issuer calls
+//! `sac.set_admin(proxy)`, and the proxy exposes the same ABI as OpenZeppelin's
+//! `stellar_tokens::fungible::sac_admin_wrapper::SACAdminWrapper` — each
+//! privileged function takes an extra `operator` argument naming the address
+//! that authorizes the call. It talks to the SAC directly through
+//! [`StellarAssetClient`] rather than depending on the OZ crate, which pins a
+//! different `soroban-sdk` major version.
 //!
 //! - **Owner** ([`Ownable`], two-step transfer): manages the caller allowlist
 //!   and gates `set_admin` / `set_authorized` / `clawback`.
@@ -39,9 +42,10 @@
 mod events;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short,
+    token::{StellarAssetClient, TokenClient},
+    Address, BytesN, Env, String, Symbol, Vec,
 };
-use stellar_tokens::fungible::sac_admin_wrapper::{self, SACAdminWrapper};
 
 use common_authorization::{Ownable, Upgradeable};
 use common_error::CCIPError;
@@ -60,6 +64,8 @@ const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
 /// Listing index of allowlisted callers (instance storage). Membership itself
 /// is the presence of a [`DataKey::Caller`] entry.
 const CALLERS: Symbol = symbol_short!("CALLERS");
+/// The SAC this proxy administers (instance storage).
+const ASSET: Symbol = symbol_short!("ASSET");
 
 /// Persistent-entry TTL threshold (~7 days at 5s ledgers), matching MCMS.
 const LEDGER_THRESHOLD: u32 = 120_960;
@@ -113,26 +119,44 @@ impl Ownable for TokenPoolProxy {
 #[contractimpl(contracttrait)]
 impl Upgradeable for TokenPoolProxy {}
 
-/// The OpenZeppelin SAC admin ABI. Methods return `()` (fixed by the trait),
-/// so failures panic with a typed [`CCIPError`] (the `bnm-token` SAC-ABI style).
 #[contractimpl]
-impl SACAdminWrapper for TokenPoolProxy {
+impl TokenPoolProxy {
+    /// One-time setup. `owner` governs the allowlist and SAC admin functions;
+    /// `asset` is the SAC this proxy administers.
+    ///
+    /// Does not require the proxy to already be the SAC admin: the issuer runs
+    /// `sac.set_admin(proxy)` after deployment, and mints fail until it does.
+    pub fn initialize(env: Env, owner: Address, asset: Address) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_not_initialized(&env)?;
+        <Self as Initializable>::init(&env)?;
+        <Self as Ownable>::init_owner(&env, &owner)?;
+        env.storage().instance().set(&ASSET, &asset);
+        env.storage()
+            .instance()
+            .set(&CALLERS, &Vec::<Address>::new(&env));
+        Ok(())
+    }
+
+    /// IMPORTANT: some of the methods below were taken from the SAC Admin ABI
+    /// by OpenZeppelin (https://docs.openzeppelin.com/stellar-contracts/tokens/fungible/sac-admin-wrapper)
+    /// as it does not yet support SDK v30.
+
     /// Moves the asset's SAC admin role from this proxy to `new_admin`
     /// (owner-only; `operator` must be the owner). This is the migration
     /// escape hatch — after it, this proxy can no longer mint.
     ///
     /// The SAC does **not** validate `new_admin`; a wrong address permanently
     /// loses SAC administration.
-    fn set_admin(e: Env, new_admin: Address, operator: Address) {
+    pub fn set_admin(e: Env, new_admin: Address, operator: Address) {
         require_owner_operator(&e, &operator);
-        sac_admin_wrapper::set_admin(&e, &new_admin);
+        asset_client(&e).set_admin(&new_admin);
         AssetAdminChangedEvent { new_admin }.publish(&e);
     }
 
     /// Forwards SAC `set_authorized` (owner-only; `operator` must be the owner).
-    fn set_authorized(e: Env, id: Address, authorize: bool, operator: Address) {
+    pub fn set_authorized(e: Env, id: Address, authorize: bool, operator: Address) {
         require_owner_operator(&e, &operator);
-        sac_admin_wrapper::set_authorized(&e, &id, authorize);
+        asset_client(&e).set_authorized(&id, &authorize);
     }
 
     /// Mints `amount` of the asset to `to` on behalf of the allowlisted
@@ -147,7 +171,7 @@ impl SACAdminWrapper for TokenPoolProxy {
     /// * `CallerNotAuthorized` — `operator` is not allowlisted
     /// * `MintAllowanceExceeded` — `amount` exceeds the remaining allowance
     /// * host auth error — `operator` did not authorize this invocation
-    fn mint(e: Env, to: Address, amount: i128, operator: Address) {
+    pub fn mint(e: Env, to: Address, amount: i128, operator: Address) {
         unwrap_or_panic(&e, <Self as Initializable>::require_initialized(&e));
         if amount <= 0 {
             e.panic_with_error(CCIPError::InvalidTokenAmount);
@@ -174,7 +198,7 @@ impl SACAdminWrapper for TokenPoolProxy {
             None => None,
         };
 
-        sac_admin_wrapper::mint(&e, &to, amount);
+        asset_client(&e).mint(&to, &amount);
 
         MintedEvent {
             caller: operator,
@@ -187,28 +211,9 @@ impl SACAdminWrapper for TokenPoolProxy {
 
     /// Forwards SAC `clawback` (owner-only; `operator` must be the owner).
     /// Only works if the asset has clawback enabled.
-    fn clawback(e: Env, from: Address, amount: i128, operator: Address) {
+    pub fn clawback(e: Env, from: Address, amount: i128, operator: Address) {
         require_owner_operator(&e, &operator);
-        sac_admin_wrapper::clawback(&e, &from, amount);
-    }
-}
-
-#[contractimpl]
-impl TokenPoolProxy {
-    /// One-time setup. `owner` governs the allowlist and SAC admin functions;
-    /// `asset` is the SAC this proxy administers.
-    ///
-    /// Does not require the proxy to already be the SAC admin: the issuer runs
-    /// `sac.set_admin(proxy)` after deployment, and mints fail until it does.
-    pub fn initialize(env: Env, owner: Address, asset: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-        <Self as Initializable>::init(&env)?;
-        <Self as Ownable>::init_owner(&env, &owner)?;
-        sac_admin_wrapper::set_sac_address(&env, &asset);
-        env.storage()
-            .instance()
-            .set(&CALLERS, &Vec::<Address>::new(&env));
-        Ok(())
+        asset_client(&e).clawback(&from, &amount);
     }
 
     /// Burns `amount` of the asset from `from` on behalf of the allowlisted
@@ -229,7 +234,7 @@ impl TokenPoolProxy {
         }
         require_allowed_caller(&env, &operator)?;
 
-        sac_admin_wrapper::get_sac_client(&env).burn(&from, &amount);
+        TokenClient::new(&env, &read_asset(&env)).burn(&from, &amount);
 
         BurnedEvent {
             caller: operator,
@@ -316,7 +321,7 @@ impl TokenPoolProxy {
     /// The SAC this proxy administers.
     pub fn get_asset(env: Env) -> Result<Address, CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        Ok(sac_admin_wrapper::get_sac_address(&env))
+        Ok(read_asset(&env))
     }
 
     pub fn type_and_version(env: Env) -> String {
@@ -371,6 +376,19 @@ fn write_caller(env: &Env, caller: &Address, config: &CallerConfig) {
     env.storage()
         .persistent()
         .extend_ttl(&key, LEDGER_THRESHOLD, env.storage().max_ttl());
+}
+
+/// Address of the administered SAC. Only called after `require_initialized`,
+/// which guarantees `initialize` stored it.
+fn read_asset(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&ASSET)
+        .unwrap_or_else(|| env.panic_with_error(CCIPError::NotInitialized))
+}
+
+fn asset_client(env: &Env) -> StellarAssetClient<'_> {
+    StellarAssetClient::new(env, &read_asset(env))
 }
 
 fn load_callers(env: &Env) -> Vec<Address> {

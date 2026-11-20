@@ -49,20 +49,6 @@ pub trait RmnRemoteInterface {
     ) -> Result<(), CCIPError>;
     fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {

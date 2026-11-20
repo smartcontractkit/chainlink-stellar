@@ -87,36 +87,29 @@ pub trait AdvancedPoolHooksInterface {
 }
 #[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct PoolRequiredCCVs {
-    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
-    pub include_defaults: bool,
-}
-#[soroban_sdk::contracttype]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LockOrBurnIn {
-    pub receiver: soroban_sdk::Bytes,
-    pub remote_chain_selector: u64,
-    pub original_sender: soroban_sdk::Address,
     pub amount: i128,
     pub local_token: soroban_sdk::Address,
+    pub original_sender: soroban_sdk::Address,
+    pub receiver: soroban_sdk::Bytes,
+    pub remote_chain_selector: u64,
 }
 #[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReleaseOrMintIn {
-    pub original_sender: soroban_sdk::Bytes,
-    pub remote_chain_selector: u64,
-    pub receiver: soroban_sdk::Address,
-    /// Source-denominated amount (EVM `sourceDenominatedAmount`).
     pub amount: i128,
     pub local_token: soroban_sdk::Address,
+    pub original_sender: soroban_sdk::Bytes,
+    pub receiver: soroban_sdk::Address,
+    pub remote_chain_selector: u64,
     pub source_pool_address: soroban_sdk::Bytes,
     pub source_pool_data: soroban_sdk::Bytes,
 }
 #[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum MessageDirection {
-    Outbound,
-    Inbound,
+pub struct PoolRequiredCCVs {
+    pub ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+    pub include_defaults: bool,
 }
 #[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -138,6 +131,12 @@ pub struct CCVConfigArg {
     pub remote_chain_selector: u64,
     pub threshold_inbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
     pub threshold_outbound_ccvs: soroban_sdk::Vec<soroban_sdk::Address>,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum MessageDirection {
+    Outbound,
+    Inbound,
 }
 #[soroban_sdk::contracterror]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -273,30 +272,6 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
@@ -328,6 +303,16 @@ pub struct ThresholdAmountSetEvent {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PolicyEngineAttachedEvent {
     pub policy_engine: Option<soroban_sdk::Address>,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
+    pub caller: soroban_sdk::Address,
 }
 #[soroban_sdk::contractevent(topics = ["aph_PolicyEngineDetachFailed", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

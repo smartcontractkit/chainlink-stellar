@@ -9,23 +9,133 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// PreflightPayload represents the PreflightPayload struct from the contract.
+type PreflightPayload struct {
+	AmountPostFee     *big.Int
+	LockOrBurnIn      LockOrBurnIn
+	RequestedFinality uint32
+}
+
+// ToScVal converts PreflightPayload to an xdr.ScVal for contract calls.
+func (s PreflightPayload) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"amount_post_fee":    scval.I128ToScVal(s.AmountPostFee),
+		"lock_or_burn_in":    scval.MustToScVal((s.LockOrBurnIn).ToScVal()),
+		"requested_finality": scval.Uint32ToScVal(s.RequestedFinality),
+	})
+}
+
+// PreflightPayloadFromScVal parses an xdr.ScVal into PreflightPayload.
+func PreflightPayloadFromScVal(val xdr.ScVal) (*PreflightPayload, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PreflightPayload{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "amount_post_fee":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("amount_post_fee: %w", err)
+			}
+			result.AmountPostFee = v
+		case "lock_or_burn_in":
+			v, err := LockOrBurnInFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("lock_or_burn_in: %w", err)
+			}
+			result.LockOrBurnIn = *v
+		case "requested_finality":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("requested_finality is not u32")
+			}
+			result.RequestedFinality = uint32(v)
+		}
+	}
+
+	return result, nil
+}
+
+// PostflightPayload represents the PostflightPayload struct from the contract.
+type PostflightPayload struct {
+	LocalAmount       *big.Int
+	ReleaseOrMintIn   ReleaseOrMintIn
+	RequestedFinality uint32
+}
+
+// ToScVal converts PostflightPayload to an xdr.ScVal for contract calls.
+func (s PostflightPayload) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"local_amount":       scval.I128ToScVal(s.LocalAmount),
+		"release_or_mint_in": scval.MustToScVal((s.ReleaseOrMintIn).ToScVal()),
+		"requested_finality": scval.Uint32ToScVal(s.RequestedFinality),
+	})
+}
+
+// PostflightPayloadFromScVal parses an xdr.ScVal into PostflightPayload.
+func PostflightPayloadFromScVal(val xdr.ScVal) (*PostflightPayload, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &PostflightPayload{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "local_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("local_amount: %w", err)
+			}
+			result.LocalAmount = v
+		case "release_or_mint_in":
+			v, err := ReleaseOrMintInFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("release_or_mint_in: %w", err)
+			}
+			result.ReleaseOrMintIn = *v
+		case "requested_finality":
+			v, ok := entry.Val.GetU32()
+			if !ok {
+				return nil, fmt.Errorf("requested_finality is not u32")
+			}
+			result.RequestedFinality = uint32(v)
+		}
+	}
+
+	return result, nil
+}
+
 // LockOrBurnIn represents the LockOrBurnIn struct from the contract.
 type LockOrBurnIn struct {
-	Receiver            []byte
-	RemoteChainSelector uint64
-	OriginalSender      string
 	Amount              *big.Int
 	LocalToken          string
+	OriginalSender      string
+	Receiver            []byte
+	RemoteChainSelector uint64
 }
 
 // ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
 func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"receiver":              scval.BytesToScVal(s.Receiver),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
-		"original_sender":       scval.AddressToScVal(s.OriginalSender),
 		"amount":                scval.I128ToScVal(s.Amount),
 		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"original_sender":       scval.AddressToScVal(s.OriginalSender),
+		"receiver":              scval.BytesToScVal(s.Receiver),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
 	})
 }
 
@@ -44,24 +154,6 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 		}
 
 		switch string(key) {
-		case "receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("receiver is not bytes")
-			}
-			result.Receiver = []byte(v)
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
-			}
-			result.RemoteChainSelector = v
-		case "original_sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("original_sender: %w", err)
-			}
-			result.OriginalSender = v
 		case "amount":
 			v, err := scval.I128FromScVal(entry.Val)
 			if err != nil {
@@ -74,6 +166,24 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 				return nil, fmt.Errorf("local_token: %w", err)
 			}
 			result.LocalToken = v
+		case "original_sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("original_sender: %w", err)
+			}
+			result.OriginalSender = v
+		case "receiver":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("receiver is not bytes")
+			}
+			result.Receiver = []byte(v)
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
 		}
 	}
 
@@ -82,11 +192,11 @@ func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
 
 // ReleaseOrMintIn represents the ReleaseOrMintIn struct from the contract.
 type ReleaseOrMintIn struct {
-	OriginalSender      []byte
-	RemoteChainSelector uint64
-	Receiver            string
 	Amount              *big.Int
 	LocalToken          string
+	OriginalSender      []byte
+	Receiver            string
+	RemoteChainSelector uint64
 	SourcePoolAddress   []byte
 	SourcePoolData      []byte
 }
@@ -94,11 +204,11 @@ type ReleaseOrMintIn struct {
 // ToScVal converts ReleaseOrMintIn to an xdr.ScVal for contract calls.
 func (s ReleaseOrMintIn) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"original_sender":       scval.BytesToScVal(s.OriginalSender),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
-		"receiver":              scval.AddressToScVal(s.Receiver),
 		"amount":                scval.I128ToScVal(s.Amount),
 		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"original_sender":       scval.BytesToScVal(s.OriginalSender),
+		"receiver":              scval.AddressToScVal(s.Receiver),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
 		"source_pool_address":   scval.BytesToScVal(s.SourcePoolAddress),
 		"source_pool_data":      scval.BytesToScVal(s.SourcePoolData),
 	})
@@ -119,24 +229,6 @@ func ReleaseOrMintInFromScVal(val xdr.ScVal) (*ReleaseOrMintIn, error) {
 		}
 
 		switch string(key) {
-		case "original_sender":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("original_sender is not bytes")
-			}
-			result.OriginalSender = []byte(v)
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
-			}
-			result.RemoteChainSelector = v
-		case "receiver":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("receiver: %w", err)
-			}
-			result.Receiver = v
 		case "amount":
 			v, err := scval.I128FromScVal(entry.Val)
 			if err != nil {
@@ -149,6 +241,24 @@ func ReleaseOrMintInFromScVal(val xdr.ScVal) (*ReleaseOrMintIn, error) {
 				return nil, fmt.Errorf("local_token: %w", err)
 			}
 			result.LocalToken = v
+		case "original_sender":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("original_sender is not bytes")
+			}
+			result.OriginalSender = []byte(v)
+		case "receiver":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("receiver: %w", err)
+			}
+			result.Receiver = v
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
 		case "source_pool_address":
 			v, ok := entry.Val.GetBytes()
 			if !ok {
@@ -167,131 +277,21 @@ func ReleaseOrMintInFromScVal(val xdr.ScVal) (*ReleaseOrMintIn, error) {
 	return result, nil
 }
 
-// PreflightPayload represents the PreflightPayload struct from the contract.
-type PreflightPayload struct {
-	LockOrBurnIn      LockOrBurnIn
-	RequestedFinality uint32
-	AmountPostFee     *big.Int
-}
-
-// ToScVal converts PreflightPayload to an xdr.ScVal for contract calls.
-func (s PreflightPayload) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"lock_or_burn_in":    scval.MustToScVal((s.LockOrBurnIn).ToScVal()),
-		"requested_finality": scval.Uint32ToScVal(s.RequestedFinality),
-		"amount_post_fee":    scval.I128ToScVal(s.AmountPostFee),
-	})
-}
-
-// PreflightPayloadFromScVal parses an xdr.ScVal into PreflightPayload.
-func PreflightPayloadFromScVal(val xdr.ScVal) (*PreflightPayload, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &PreflightPayload{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "lock_or_burn_in":
-			v, err := LockOrBurnInFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("lock_or_burn_in: %w", err)
-			}
-			result.LockOrBurnIn = *v
-		case "requested_finality":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("requested_finality is not u32")
-			}
-			result.RequestedFinality = uint32(v)
-		case "amount_post_fee":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("amount_post_fee: %w", err)
-			}
-			result.AmountPostFee = v
-		}
-	}
-
-	return result, nil
-}
-
-// PostflightPayload represents the PostflightPayload struct from the contract.
-type PostflightPayload struct {
-	ReleaseOrMintIn   ReleaseOrMintIn
-	LocalAmount       *big.Int
-	RequestedFinality uint32
-}
-
-// ToScVal converts PostflightPayload to an xdr.ScVal for contract calls.
-func (s PostflightPayload) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"release_or_mint_in": scval.MustToScVal((s.ReleaseOrMintIn).ToScVal()),
-		"local_amount":       scval.I128ToScVal(s.LocalAmount),
-		"requested_finality": scval.Uint32ToScVal(s.RequestedFinality),
-	})
-}
-
-// PostflightPayloadFromScVal parses an xdr.ScVal into PostflightPayload.
-func PostflightPayloadFromScVal(val xdr.ScVal) (*PostflightPayload, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &PostflightPayload{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "release_or_mint_in":
-			v, err := ReleaseOrMintInFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("release_or_mint_in: %w", err)
-			}
-			result.ReleaseOrMintIn = *v
-		case "local_amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("local_amount: %w", err)
-			}
-			result.LocalAmount = v
-		case "requested_finality":
-			v, ok := entry.Val.GetU32()
-			if !ok {
-				return nil, fmt.Errorf("requested_finality is not u32")
-			}
-			result.RequestedFinality = uint32(v)
-		}
-	}
-
-	return result, nil
-}
-
 // Payload represents the Payload struct from the contract.
 type Payload struct {
+	Context  []byte
+	Data     PolicyData
 	Selector string
 	Sender   string
-	Data     PolicyData
-	Context  []byte
 }
 
 // ToScVal converts Payload to an xdr.ScVal for contract calls.
 func (s Payload) ToScVal() (xdr.ScVal, error) {
 	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"context":  scval.BytesToScVal(s.Context),
+		"data":     scval.MustToScVal((s.Data).ToScVal()),
 		"selector": scval.SymbolToScVal(s.Selector),
 		"sender":   scval.AddressToScVal(s.Sender),
-		"data":     scval.MustToScVal((s.Data).ToScVal()),
-		"context":  scval.BytesToScVal(s.Context),
 	})
 }
 
@@ -310,6 +310,18 @@ func PayloadFromScVal(val xdr.ScVal) (*Payload, error) {
 		}
 
 		switch string(key) {
+		case "context":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("context is not bytes")
+			}
+			result.Context = []byte(v)
+		case "data":
+			v, err := PolicyDataFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("data: %w", err)
+			}
+			result.Data = v
 		case "selector":
 			v, err := scval.SymbolFromScVal(entry.Val)
 			if err != nil {
@@ -322,18 +334,6 @@ func PayloadFromScVal(val xdr.ScVal) (*Payload, error) {
 				return nil, fmt.Errorf("sender: %w", err)
 			}
 			result.Sender = v
-		case "data":
-			v, err := PolicyDataFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("data: %w", err)
-			}
-			result.Data = v
-		case "context":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("context is not bytes")
-			}
-			result.Context = []byte(v)
 		}
 	}
 

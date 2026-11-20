@@ -1086,58 +1086,6 @@ var CCIPErrorMessage = map[int]string{
 	808: "zero address not allowed",
 }
 
-// RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [auth_RoleGranted map]
-type RoleGrantedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleGrantedEventTopic is the event topic identifier.
-const RoleGrantedEventTopic = "auth_RoleGranted"
-
-// RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [auth_RoleRevoked map]
-type RoleRevokedEvent struct {
-	Role    string
-	Account string
-	Sender  string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RoleRevokedEventTopic is the event topic identifier.
-const RoleRevokedEventTopic = "auth_RoleRevoked"
-
-// AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
-type AuthorizedCallerAddedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerAddedEventTopic is the event topic identifier.
-const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
-
-// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
-// Topics: [auth_CallerRemoved map]
-type AuthorizedCallerRemovedEvent struct {
-	Caller string
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// AuthorizedCallerRemovedEventTopic is the event topic identifier.
-const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
-
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
 // Topics: [auth_OwnerTransferStart map]
 type OwnershipTransferStartedEvent struct {
@@ -1150,60 +1098,6 @@ type OwnershipTransferStartedEvent struct {
 
 // OwnershipTransferStartedEventTopic is the event topic identifier.
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
-
-// BurnedEvent represents the BurnedEvent event.
-// Topics: [pool_Burned map]
-type BurnedEvent struct {
-	Sender string
-	Amount *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// BurnedEventTopic is the event topic identifier.
-const BurnedEventTopic = "pool_Burned"
-
-// LockedEvent represents the LockedEvent event.
-// Topics: [pool_Locked map]
-type LockedEvent struct {
-	Sender string
-	Amount *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// LockedEventTopic is the event topic identifier.
-const LockedEventTopic = "pool_Locked"
-
-// MintedEvent represents the MintedEvent event.
-// Topics: [pool_Minted map]
-type MintedEvent struct {
-	Sender    string
-	Recipient string
-	Amount    *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// MintedEventTopic is the event topic identifier.
-const MintedEventTopic = "pool_Minted"
-
-// ReleasedEvent represents the ReleasedEvent event.
-// Topics: [pool_Released map]
-type ReleasedEvent struct {
-	Sender    string
-	Recipient string
-	Amount    *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// ReleasedEventTopic is the event topic identifier.
-const ReleasedEventTopic = "pool_Released"
 
 // ChainRemovedEvent represents the ChainRemovedEvent event.
 // Topics: [pool_ChainRemoved map]
@@ -1388,6 +1282,33 @@ type OutboundRateLimitConsumedEvent struct {
 
 // OutboundRateLimitConsumedEventTopic is the event topic identifier.
 const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
+
+// LockedEvent represents the LockedEvent event.
+// Topics: [pool_Locked map]
+type LockedEvent struct {
+	Sender string
+	Amount *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// LockedEventTopic is the event topic identifier.
+const LockedEventTopic = "pool_Locked"
+
+// ReleasedEvent represents the ReleasedEvent event.
+// Topics: [pool_Released map]
+type ReleasedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ReleasedEventTopic is the event topic identifier.
+const ReleasedEventTopic = "pool_Released"
 
 // MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).

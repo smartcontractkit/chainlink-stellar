@@ -398,61 +398,11 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_RoleGranted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleGrantedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_RoleRevoked", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct RoleRevokedEvent {
-    pub role: soroban_sdk::Symbol,
-    pub account: soroban_sdk::Address,
-    pub sender: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerAddedEvent {
-    pub caller: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct AuthorizedCallerRemovedEvent {
-    pub caller: soroban_sdk::Address,
-}
 #[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
-}
-#[soroban_sdk::contractevent(topics = ["pool_Burned", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct BurnedEvent {
-    pub sender: soroban_sdk::Address,
-    pub amount: i128,
-}
-#[soroban_sdk::contractevent(topics = ["pool_Locked", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct LockedEvent {
-    pub sender: soroban_sdk::Address,
-    pub amount: i128,
-}
-#[soroban_sdk::contractevent(topics = ["pool_Minted", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct MintedEvent {
-    pub sender: soroban_sdk::Address,
-    pub recipient: soroban_sdk::Address,
-    pub amount: i128,
-}
-#[soroban_sdk::contractevent(topics = ["pool_Released", "map"])]
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ReleasedEvent {
-    pub sender: soroban_sdk::Address,
-    pub recipient: soroban_sdk::Address,
-    pub amount: i128,
 }
 #[soroban_sdk::contractevent(topics = ["pool_ChainRemoved", "map"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -538,5 +488,18 @@ pub struct InboundRateLimitConsumedEvent {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutboundRateLimitConsumedEvent {
     pub remote_chain_selector: u64,
+    pub amount: i128,
+}
+#[soroban_sdk::contractevent(topics = ["pool_Locked", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct LockedEvent {
+    pub sender: soroban_sdk::Address,
+    pub amount: i128,
+}
+#[soroban_sdk::contractevent(topics = ["pool_Released", "map"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ReleasedEvent {
+    pub sender: soroban_sdk::Address,
+    pub recipient: soroban_sdk::Address,
     pub amount: i128,
 }

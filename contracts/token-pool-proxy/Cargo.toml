@@ -10,7 +10,6 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true }
-stellar-tokens = { workspace = true }
 common-authorization = { workspace = true }
 common-error = { workspace = true }
 common-guard = { workspace = true }
