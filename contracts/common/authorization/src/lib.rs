@@ -90,7 +90,7 @@ impl AuthorizedCallers {
     }
 
     /// Add authorized callers.
-    /// Requires owner authorization.
+    /// Requires owner authorization from the given `Ownable` implementation.
     ///
     /// # Arguments
     /// * `env` - The environment
@@ -103,43 +103,17 @@ impl AuthorizedCallers {
     /// # Panics
     ///
     /// If the owner did not authorize this invocation (`require_auth`).
-    pub fn add_callers(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
+    pub fn add_callers<O: Ownable>(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
-        DefaultOwnable::require_owner(env)?;
-
-        let mut authorized: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AUTH_CALLERS)
-            .unwrap_or(Vec::new(env));
-
-        for caller in callers.iter() {
-            // Check if already authorized
-            let mut found = false;
-            for existing in authorized.iter() {
-                if existing == caller {
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                authorized.push_back(caller.clone());
-                AuthorizedCallerAddedEvent {
-                    caller: caller.clone(),
-                }
-                .publish(env);
-            }
-        }
-
-        env.storage().instance().set(&AUTH_CALLERS, &authorized);
+        O::require_owner(env)?;
+        Self::apply_caller_updates_unchecked(env, Vec::new(env), callers);
         Ok(())
     }
 
     /// Remove authorized callers.
-    /// Requires owner authorization.
+    /// Requires owner authorization from the given `Ownable` implementation.
     ///
     /// # Arguments
     /// * `env` - The environment
@@ -152,23 +126,62 @@ impl AuthorizedCallers {
     /// # Panics
     ///
     /// If the owner did not authorize this invocation (`require_auth`).
-    pub fn remove_callers(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
+    pub fn remove_callers<O: Ownable>(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
         if !Self::is_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
-        DefaultOwnable::require_owner(env)?;
+        O::require_owner(env)?;
+        Self::apply_caller_updates_unchecked(env, callers, Vec::new(env));
+        Ok(())
+    }
 
+    /// Batch update of the authorized-callers set: removals applied first, then
+    /// adds (EVM `_applyAuthorizedCallerUpdates` order). Requires owner
+    /// authorization from the given `Ownable` implementation, checked **once**
+    /// for the whole batch (Soroban panics with `Error(Auth, ExistingValue)`
+    /// if `require_auth` is called twice on the same address in one
+    /// invocation, so contracts must not compose `add_callers` and
+    /// `remove_callers` in a single entrypoint — use this instead).
+    ///
+    /// Duplicate adds collapse (no-op); removals of absent callers are no-ops.
+    /// An address present in both lists ends up authorized (removal runs
+    /// first). `AuthorizedCallerAddedEvent`/`AuthorizedCallerRemovedEvent` fire
+    /// only for entries actually added/removed.
+    ///
+    /// # Errors
+    /// * `FeatureNotEnabled` - AuthorizedCallers not initialized
+    /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
+    ///
+    /// # Panics
+    ///
+    /// If the owner did not authorize this invocation (`require_auth`).
+    pub fn apply_caller_updates<O: Ownable>(
+        env: &Env,
+        remove: Vec<Address>,
+        add: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        if !Self::is_enabled(env) {
+            return Err(CCIPError::FeatureNotEnabled);
+        }
+        O::require_owner(env)?;
+        Self::apply_caller_updates_unchecked(env, remove, add);
+        Ok(())
+    }
+
+    /// Set-mutation core shared by the owner-gated entrypoints. Callers must
+    /// have already enforced authorization.
+    fn apply_caller_updates_unchecked(env: &Env, remove: Vec<Address>, add: Vec<Address>) {
         let authorized: Vec<Address> = env
             .storage()
             .instance()
             .get(&AUTH_CALLERS)
             .unwrap_or(Vec::new(env));
 
+        // Removals first (EVM `_applyAuthorizedCallerUpdates` order).
         let mut new_authorized: Vec<Address> = Vec::new(env);
-
         for existing in authorized.iter() {
             let mut should_remove = false;
-            for to_remove in callers.iter() {
+            for to_remove in remove.iter() {
                 if existing == to_remove {
                     should_remove = true;
                     AuthorizedCallerRemovedEvent {
@@ -183,8 +196,26 @@ impl AuthorizedCallers {
             }
         }
 
+        // Then adds; duplicates collapse.
+        for caller in add.iter() {
+            let mut found = false;
+            for existing in new_authorized.iter() {
+                if existing == caller {
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                new_authorized.push_back(caller.clone());
+                AuthorizedCallerAddedEvent {
+                    caller: caller.clone(),
+                }
+                .publish(env);
+            }
+        }
+
         env.storage().instance().set(&AUTH_CALLERS, &new_authorized);
-        Ok(())
     }
 
     /// Get all authorized callers.

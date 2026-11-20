@@ -57,11 +57,11 @@ impl TestAuthContract {
     }
 
     pub fn add_callers(env: Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        AuthorizedCallers::add_callers(&env, callers)
+        AuthorizedCallers::add_callers::<DefaultOwnable>(&env, callers)
     }
 
     pub fn remove_callers(env: Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        AuthorizedCallers::remove_callers(&env, callers)
+        AuthorizedCallers::remove_callers::<DefaultOwnable>(&env, callers)
     }
 
     pub fn get_callers(env: Env) -> Vec<Address> {

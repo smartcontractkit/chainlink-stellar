@@ -6,7 +6,7 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger},
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    vec, Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::{
     DestChainConfig, DestChainConfigArgs, GasPriceUpdate, PriceUpdates, StaticConfig,
@@ -99,9 +99,9 @@ fn test_initialize() {
     );
 
     // Verify authorized callers
-    // let callers = client.get_authorized_callers();
-    // assert_eq!(callers.len(), 1);
-    // assert_eq!(callers.get(0).unwrap(), price_updater);
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers.get(0).unwrap(), price_updater);
 }
 
 #[test]
@@ -1192,4 +1192,109 @@ fn test_upgrade_by_non_owner_rejected() {
     // Caller is not the owner and the owner does not authorize -> reject before
     // the executable is touched.
     client.upgrade(&hash);
+}
+
+#[test]
+fn test_apply_authorized_callers_updates_add_and_remove() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // Initial set contains only the seeded updater
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers.get(0).unwrap(), price_updater);
+
+    // Owner adds a new updater
+    let new_updater = Address::generate(&env);
+    client.apply_authorized_callers_updates(&vec![&env, new_updater.clone()], &Vec::new(&env));
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 2);
+
+    // The new updater can push prices
+    let price_updates = PriceUpdates {
+        token_price_updates: Vec::new(&env),
+        gas_price_updates: Vec::new(&env),
+    };
+    client.update_prices(&new_updater, &price_updates);
+
+    // Owner removes the original updater
+    client.apply_authorized_callers_updates(&Vec::new(&env), &vec![&env, price_updater.clone()]);
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers.get(0).unwrap(), new_updater);
+
+    // The removed updater can no longer push prices
+    let err = client
+        .try_update_prices(&price_updater, &price_updates)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::CallerNotAuthorized);
+}
+
+#[test]
+fn test_apply_authorized_callers_updates_duplicate_add_is_noop() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // Re-adding an existing caller is a no-op
+    client.apply_authorized_callers_updates(&vec![&env, price_updater.clone()], &Vec::new(&env));
+    assert_eq!(client.get_authorized_callers().len(), 1);
+
+    // Removing an absent caller is a no-op
+    let absent = Address::generate(&env);
+    client.apply_authorized_callers_updates(&Vec::new(&env), &vec![&env, absent]);
+    assert_eq!(client.get_authorized_callers().len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_apply_authorized_callers_updates_rejects_non_owner() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    // No `mock_all_auths`: nobody signs, so `require_owner` fails.
+    let owner = Address::generate(&env);
+    let link_token = Address::generate(&env);
+    let price_updater = Address::generate(&env);
+    let contract_id = env.register(FeeQuoterContract, ());
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater);
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    let intruder = Address::generate(&env);
+    client.apply_authorized_callers_updates(&vec![&env, intruder], &Vec::new(&env));
+}
+
+#[test]
+fn test_authorized_callers_survive_ownership_transfer() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater);
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // Transfer ownership (two-step)
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&new_owner);
+    client.accept_ownership();
+
+    // The new owner manages the updater set under the same OWNER key
+    let rotated = Address::generate(&env);
+    client.apply_authorized_callers_updates(&vec![&env, rotated.clone()], &Vec::new(&env));
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 2);
+    assert!(callers.contains(&rotated));
 }
