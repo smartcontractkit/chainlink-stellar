@@ -85,7 +85,7 @@ const (
 	envEphemeral         = "STAGING_EPHEMERAL"                // optional: true enables ephemeral senders
 	envStellarTreasury   = "STAGING_STELLAR_TREASURY_SECRET"  // required in ephemeral mode: S... seed of a key holding the fee token
 	envFriendbotURL      = "STAGING_FRIENDBOT_URL"            // default: public testnet Friendbot
-	envFeeTokenFundWhole = "STAGING_FEE_TOKEN_FUND_WHOLE"     // default: 10, whole fee-token units transferred to the ephemeral sender
+	envFeeTokenFundWhole = "STAGING_FEE_TOKEN_FUND_WHOLE"     // default: 1000, whole fee tokens to the ephemeral sender (one data message quotes ~50; 1000 matches the deploy's own sender-funding convention — 10 underfunded it and ccip_send failed with the SAC error surfaced as Contract #10)
 	envEVMTreasuryKey    = "STAGING_EVM_TREASURY_PRIVATE_KEY" // required in ephemeral mode for EVM tests: hex key holding Sepolia ETH
 	envEVMFundETH        = "STAGING_EVM_FUND_ETH"             // default: 0.1 ETH transferred to the ephemeral EVM sender
 )
@@ -183,7 +183,7 @@ func loadStagingConfig(t *testing.T) *stagingConfig {
 		FeeTokenID:          mustContractID(t, envStellarFeeToken, feeToken),
 		Ephemeral:           ephemeral,
 		FriendbotURL:        envOr(envFriendbotURL, "https://friendbot.stellar.org"),
-		FeeFundWhole:        int64(mustUint(t, envFeeTokenFundWhole, 10)),
+		FeeFundWhole:        int64(mustUint(t, envFeeTokenFundWhole, 1000)),
 		SourceChainSelector: mustUint(t, envSourceChainSel, chainsel.STELLAR_TESTNET.Selector),
 		DestChainSelector:   mustUint(t, envDestChainSel, chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector),
 		EVMGasLimit:         uint32(mustUintBits(t, envEVMGasLimit, defaultEVMGasLimit, 32)),
