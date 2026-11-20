@@ -412,6 +412,24 @@ func I128ToScVal(v *big.Int) xdr.ScVal {
 	}
 }
 
+// OptionalI128ToScVal encodes a Soroban Option<i128>.
+// nil maps to ScvVoid (Option::None), non-nil maps to ScvI128 (Option::Some).
+func OptionalI128ToScVal(v *big.Int) xdr.ScVal {
+	if v == nil {
+		return VoidScVal()
+	}
+	return I128ToScVal(v)
+}
+
+// OptionalI128FromScVal decodes a Soroban Option<i128>.
+// ScvVoid returns nil (Option::None), ScvI128 returns the value (Option::Some).
+func OptionalI128FromScVal(val xdr.ScVal) (*big.Int, error) {
+	if val.Type == xdr.ScValTypeScvVoid {
+		return nil, nil
+	}
+	return I128FromScVal(val)
+}
+
 // U128 represents a Soroban u128 value. It wraps xdr.UInt128Parts and implements ToScVal
 // for use in generated struct serialization.
 type U128 xdr.UInt128Parts

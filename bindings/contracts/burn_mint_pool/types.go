@@ -9,116 +9,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// LockOrBurnIn represents the LockOrBurnIn struct from the contract.
-type LockOrBurnIn struct {
-	Amount              *big.Int
-	LocalToken          string
-	OriginalSender      string
-	Receiver            []byte
-	RemoteChainSelector uint64
-}
-
-// ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
-func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"amount":                scval.I128ToScVal(s.Amount),
-		"local_token":           scval.AddressToScVal(s.LocalToken),
-		"original_sender":       scval.AddressToScVal(s.OriginalSender),
-		"receiver":              scval.BytesToScVal(s.Receiver),
-		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
-	})
-}
-
-// LockOrBurnInFromScVal parses an xdr.ScVal into LockOrBurnIn.
-func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &LockOrBurnIn{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("amount: %w", err)
-			}
-			result.Amount = v
-		case "local_token":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("local_token: %w", err)
-			}
-			result.LocalToken = v
-		case "original_sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("original_sender: %w", err)
-			}
-			result.OriginalSender = v
-		case "receiver":
-			v, ok := entry.Val.GetBytes()
-			if !ok {
-				return nil, fmt.Errorf("receiver is not bytes")
-			}
-			result.Receiver = []byte(v)
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("remote_chain_selector: %w", err)
-			}
-			result.RemoteChainSelector = v
-		}
-	}
-
-	return result, nil
-}
-
-// ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
-type ReleaseOrMintOut struct {
-	DestinationAmount *big.Int
-}
-
-// ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.
-func (s ReleaseOrMintOut) ToScVal() (xdr.ScVal, error) {
-	return scval.BuildStructScVal(map[string]xdr.ScVal{
-		"destination_amount": scval.I128ToScVal(s.DestinationAmount),
-	})
-}
-
-// ReleaseOrMintOutFromScVal parses an xdr.ScVal into ReleaseOrMintOut.
-func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
-	scMap, ok := val.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("not a map type")
-	}
-
-	result := &ReleaseOrMintOut{}
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "destination_amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err != nil {
-				return nil, fmt.Errorf("destination_amount: %w", err)
-			}
-			result.DestinationAmount = v
-		}
-	}
-
-	return result, nil
-}
-
 // ChainUpdate represents the ChainUpdate struct from the contract.
 type ChainUpdate struct {
 	InboundRateLimiterConfig  RateLimitConfig
@@ -262,6 +152,77 @@ func TokenBucketFromScVal(val xdr.ScVal) (*TokenBucket, error) {
 				return nil, fmt.Errorf("tokens: %w", err)
 			}
 			result.Tokens = v
+		}
+	}
+
+	return result, nil
+}
+
+// LockOrBurnIn represents the LockOrBurnIn struct from the contract.
+type LockOrBurnIn struct {
+	Amount              *big.Int
+	LocalToken          string
+	OriginalSender      string
+	Receiver            []byte
+	RemoteChainSelector uint64
+}
+
+// ToScVal converts LockOrBurnIn to an xdr.ScVal for contract calls.
+func (s LockOrBurnIn) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"amount":                scval.I128ToScVal(s.Amount),
+		"local_token":           scval.AddressToScVal(s.LocalToken),
+		"original_sender":       scval.AddressToScVal(s.OriginalSender),
+		"receiver":              scval.BytesToScVal(s.Receiver),
+		"remote_chain_selector": scval.Uint64ToScVal(s.RemoteChainSelector),
+	})
+}
+
+// LockOrBurnInFromScVal parses an xdr.ScVal into LockOrBurnIn.
+func LockOrBurnInFromScVal(val xdr.ScVal) (*LockOrBurnIn, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &LockOrBurnIn{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("amount: %w", err)
+			}
+			result.Amount = v
+		case "local_token":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("local_token: %w", err)
+			}
+			result.LocalToken = v
+		case "original_sender":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("original_sender: %w", err)
+			}
+			result.OriginalSender = v
+		case "receiver":
+			v, ok := entry.Val.GetBytes()
+			if !ok {
+				return nil, fmt.Errorf("receiver is not bytes")
+			}
+			result.Receiver = []byte(v)
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("remote_chain_selector: %w", err)
+			}
+			result.RemoteChainSelector = v
 		}
 	}
 
@@ -637,6 +598,45 @@ func RateLimiterStateFromScVal(val xdr.ScVal) (*RateLimiterState, error) {
 	return result, nil
 }
 
+// ReleaseOrMintOut represents the ReleaseOrMintOut struct from the contract.
+type ReleaseOrMintOut struct {
+	DestinationAmount *big.Int
+}
+
+// ToScVal converts ReleaseOrMintOut to an xdr.ScVal for contract calls.
+func (s ReleaseOrMintOut) ToScVal() (xdr.ScVal, error) {
+	return scval.BuildStructScVal(map[string]xdr.ScVal{
+		"destination_amount": scval.I128ToScVal(s.DestinationAmount),
+	})
+}
+
+// ReleaseOrMintOutFromScVal parses an xdr.ScVal into ReleaseOrMintOut.
+func ReleaseOrMintOutFromScVal(val xdr.ScVal) (*ReleaseOrMintOut, error) {
+	scMap, ok := val.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("not a map type")
+	}
+
+	result := &ReleaseOrMintOut{}
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "destination_amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err != nil {
+				return nil, fmt.Errorf("destination_amount: %w", err)
+			}
+			result.DestinationAmount = v
+		}
+	}
+
+	return result, nil
+}
+
 // TokenTransferFeeConfig represents the TokenTransferFeeConfig struct from the contract.
 type TokenTransferFeeConfig struct {
 	DestBytesOverhead          uint32
@@ -894,6 +894,7 @@ const (
 	CCIPErrorInvalidTokenTransferFeeConfig       = 321
 	CCIPErrorInvalidTransferFeeBps               = 322
 	CCIPErrorInvalidAllowListRequest             = 323
+	CCIPErrorMintAllowanceExceeded               = 324
 	CCIPErrorInvalidFeeCalculation               = 801
 	CCIPErrorInvalidFeeTokenConversion           = 802
 	CCIPErrorZeroFeeAggregatorNotAllowed         = 803
@@ -1027,6 +1028,7 @@ var CCIPErrorMessage = map[int]string{
 	321: "invalid token transfer fee config",
 	322: "invalid transfer fee bps",
 	323: "invalid allow list request",
+	324: "mint allowance exceeded",
 	801: "invalid fee calculation",
 	802: "invalid fee token conversion",
 	803: "zero fee aggregator not allowed",
@@ -1050,6 +1052,33 @@ type OwnershipTransferStartedEvent struct {
 // OwnershipTransferStartedEventTopic is the event topic identifier.
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
+// BurnedEvent represents the BurnedEvent event.
+// Topics: [pool_Burned]
+type BurnedEvent struct {
+	Sender string
+	Amount *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// BurnedEventTopic is the event topic identifier.
+const BurnedEventTopic = "pool_Burned"
+
+// MintedEvent represents the MintedEvent event.
+// Topics: [pool_Minted]
+type MintedEvent struct {
+	Sender    string
+	Recipient string
+	Amount    *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// MintedEventTopic is the event topic identifier.
+const MintedEventTopic = "pool_Minted"
+
 // ChainRemovedEvent represents the ChainRemovedEvent event.
 // Topics: [pool_ChainRemoved]
 type ChainRemovedEvent struct {
@@ -1061,6 +1090,35 @@ type ChainRemovedEvent struct {
 
 // ChainRemovedEventTopic is the event topic identifier.
 const ChainRemovedEventTopic = "pool_ChainRemoved"
+
+// ChainConfiguredEvent represents the ChainConfiguredEvent event.
+// Topics: [pool_ChainConfigured]
+type ChainConfiguredEvent struct {
+	RemoteChainSelector       uint64
+	RemotePoolAddresses       [][]byte
+	RemoteTokenAddress        []byte
+	OutboundRateLimiterConfig RateLimitConfig
+	InboundRateLimiterConfig  RateLimitConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// ChainConfiguredEventTopic is the event topic identifier.
+const ChainConfiguredEventTopic = "pool_ChainConfigured"
+
+// RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
+// Topics: [pool_RemotePoolAdded]
+type RemotePoolAddedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolAddedEventTopic is the event topic identifier.
+const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
 
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
 // Topics: [pool_FinalityConfigSet]
@@ -1074,6 +1132,19 @@ type FinalityConfigSetEvent struct {
 // FinalityConfigSetEventTopic is the event topic identifier.
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
 
+// RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
+// Topics: [pool_RemotePoolRemoved]
+type RemotePoolRemovedEvent struct {
+	RemoteChainSelector uint64
+	RemotePoolAddress   []byte
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// RemotePoolRemovedEventTopic is the event topic identifier.
+const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
+
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
 // Topics: [pool_FtfInboundConsumed]
 type FtfInboundConsumedEvent struct {
@@ -1086,6 +1157,44 @@ type FtfInboundConsumedEvent struct {
 
 // FtfInboundConsumedEventTopic is the event topic identifier.
 const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
+
+// TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
+// Topics: [pool_TokenFeeCfgDeleted]
+type TokenFeeCfgDeletedEvent struct {
+	RemoteChainSelector uint64
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgDeletedEventTopic is the event topic identifier.
+const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
+
+// TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
+// Topics: [pool_TokenFeeCfgUpdated]
+type TokenFeeCfgUpdatedEvent struct {
+	RemoteChainSelector uint64
+	Config              TokenTransferFeeConfig
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// TokenFeeCfgUpdatedEventTopic is the event topic identifier.
+const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
+
+// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
+// Topics: [pool_FtfOutboundConsumed]
+type FtfOutboundConsumedEvent struct {
+	RemoteChainSelector uint64
+	Amount              *big.Int
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// FtfOutboundConsumedEventTopic is the event topic identifier.
+const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
 // Topics: [pool_RateLimitConfigured]
@@ -1140,113 +1249,6 @@ type OutboundRateLimitConsumedEvent struct {
 
 // OutboundRateLimitConsumedEventTopic is the event topic identifier.
 const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
-
-// BurnedEvent represents the BurnedEvent event.
-// Topics: [pool_Burned]
-type BurnedEvent struct {
-	Sender string
-	Amount *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// BurnedEventTopic is the event topic identifier.
-const BurnedEventTopic = "pool_Burned"
-
-// MintedEvent represents the MintedEvent event.
-// Topics: [pool_Minted]
-type MintedEvent struct {
-	Sender    string
-	Recipient string
-	Amount    *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// MintedEventTopic is the event topic identifier.
-const MintedEventTopic = "pool_Minted"
-
-// ChainConfiguredEvent represents the ChainConfiguredEvent event.
-// Topics: [pool_ChainConfigured]
-type ChainConfiguredEvent struct {
-	RemoteChainSelector       uint64
-	RemotePoolAddresses       [][]byte
-	RemoteTokenAddress        []byte
-	OutboundRateLimiterConfig RateLimitConfig
-	InboundRateLimiterConfig  RateLimitConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// ChainConfiguredEventTopic is the event topic identifier.
-const ChainConfiguredEventTopic = "pool_ChainConfigured"
-
-// RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
-// Topics: [pool_RemotePoolAdded]
-type RemotePoolAddedEvent struct {
-	RemoteChainSelector uint64
-	RemotePoolAddress   []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RemotePoolAddedEventTopic is the event topic identifier.
-const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
-
-// RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
-// Topics: [pool_RemotePoolRemoved]
-type RemotePoolRemovedEvent struct {
-	RemoteChainSelector uint64
-	RemotePoolAddress   []byte
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// RemotePoolRemovedEventTopic is the event topic identifier.
-const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
-
-// TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
-// Topics: [pool_TokenFeeCfgDeleted]
-type TokenFeeCfgDeletedEvent struct {
-	RemoteChainSelector uint64
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// TokenFeeCfgDeletedEventTopic is the event topic identifier.
-const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
-
-// TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
-// Topics: [pool_TokenFeeCfgUpdated]
-type TokenFeeCfgUpdatedEvent struct {
-	RemoteChainSelector uint64
-	Config              TokenTransferFeeConfig
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// TokenFeeCfgUpdatedEventTopic is the event topic identifier.
-const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
-
-// FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
-// Topics: [pool_FtfOutboundConsumed]
-type FtfOutboundConsumedEvent struct {
-	RemoteChainSelector uint64
-	Amount              *big.Int
-	// Event metadata
-	Ledger uint32
-	TxHash string
-}
-
-// FtfOutboundConsumedEventTopic is the event topic identifier.
-const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // MessageDirection is a Soroban discriminated-union (#[contracttype] enum with payload(s)).
 // Wire format: ScVal::Vec([ScVal::Symbol(<VariantName>), <payload fields...>]).

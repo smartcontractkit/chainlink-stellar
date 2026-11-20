@@ -869,155 +869,6 @@ func ParseOwnershipTransferStartedEvent(e protocolrpc.EventInfo) (*OwnershipTran
 	return result, nil
 }
 
-// WaitForLockedEvent waits for a LockedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForLockedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockedEvent) bool) (*LockedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseLockedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseLockedEvent(e protocolrpc.EventInfo) (*LockedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &LockedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForReleasedEvent waits for a ReleasedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForReleasedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReleasedEvent) bool) (*ReleasedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ReleasedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseReleasedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseReleasedEvent(e protocolrpc.EventInfo) (*ReleasedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &ReleasedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "sender":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Sender = v
-			}
-		case "recipient":
-			v, err := scval.AddressFromScVal(entry.Val)
-			if err == nil {
-				result.Recipient = v
-			}
-		case "amount":
-			v, err := scval.I128FromScVal(entry.Val)
-			if err == nil {
-				result.Amount = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
 // WaitForChainRemovedEvent waits for a ChainRemovedEvent event.
 func (c *SiloedLockReleasePoolClient) WaitForChainRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ChainRemovedEvent) bool) (*ChainRemovedEvent, error) {
 	startTime := time.Now()
@@ -1078,6 +929,172 @@ func ParseChainRemovedEvent(e protocolrpc.EventInfo) (*ChainRemovedEvent, error)
 			v, err := scval.Uint64FromScVal(entry.Val)
 			if err == nil {
 				result.RemoteChainSelector = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForChainConfiguredEvent waits for a ChainConfiguredEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForChainConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ChainConfiguredEvent) bool) (*ChainConfiguredEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ChainConfiguredEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseChainConfiguredEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &ChainConfiguredEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "remote_pool_addresses":
+			vec, ok := entry.Val.GetVec()
+			if ok && vec != nil {
+				parsed := make([][]byte, len(*vec))
+				for i, item := range *vec {
+					v, ok := item.GetBytes()
+					if ok {
+						parsed[i] = []byte(v)
+					}
+				}
+				result.RemotePoolAddresses = parsed
+			}
+		case "remote_token_address":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.RemoteTokenAddress = []byte(v)
+			}
+		case "outbound_rate_limiter_config":
+			v, err := RateLimitConfigFromScVal(entry.Val)
+			if err == nil {
+				result.OutboundRateLimiterConfig = *v
+			}
+		case "inbound_rate_limiter_config":
+			v, err := RateLimitConfigFromScVal(entry.Val)
+			if err == nil {
+				result.InboundRateLimiterConfig = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRemotePoolAddedEvent waits for a RemotePoolAddedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForRemotePoolAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolAddedEvent) bool) (*RemotePoolAddedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolAddedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRemotePoolAddedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRemotePoolAddedEvent(e protocolrpc.EventInfo) (*RemotePoolAddedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RemotePoolAddedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "remote_pool_address":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.RemotePoolAddress = []byte(v)
 			}
 		}
 	}
@@ -1152,6 +1169,150 @@ func ParseFinalityConfigSetEvent(e protocolrpc.EventInfo) (*FinalityConfigSetEve
 	return result, nil
 }
 
+// WaitForLockBoxConfiguredEvent waits for a LockBoxConfiguredEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForLockBoxConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockBoxConfiguredEvent) bool) (*LockBoxConfiguredEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockBoxConfiguredEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseLockBoxConfiguredEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseLockBoxConfiguredEvent(e protocolrpc.EventInfo) (*LockBoxConfiguredEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &LockBoxConfiguredEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "lock_box":
+			v, err := scval.AddressFromScVal(entry.Val)
+			if err == nil {
+				result.LockBox = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForRemotePoolRemovedEvent waits for a RemotePoolRemovedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForRemotePoolRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolRemovedEvent) bool) (*RemotePoolRemovedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolRemovedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseRemotePoolRemovedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseRemotePoolRemovedEvent(e protocolrpc.EventInfo) (*RemotePoolRemovedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &RemotePoolRemovedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "remote_pool_address":
+			v, ok := entry.Val.GetBytes()
+			if ok {
+				result.RemotePoolAddress = []byte(v)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // WaitForFtfInboundConsumedEvent waits for a FtfInboundConsumedEvent event.
 func (c *SiloedLockReleasePoolClient) WaitForFtfInboundConsumedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FtfInboundConsumedEvent) bool) (*FtfInboundConsumedEvent, error) {
 	startTime := time.Now()
@@ -1197,6 +1358,217 @@ func ParseFtfInboundConsumedEvent(e protocolrpc.EventInfo) (*FtfInboundConsumedE
 	}
 
 	result := &FtfInboundConsumedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.Amount = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForTokenFeeCfgDeletedEvent waits for a TokenFeeCfgDeletedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgDeletedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgDeletedEvent) bool) (*TokenFeeCfgDeletedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgDeletedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseTokenFeeCfgDeletedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseTokenFeeCfgDeletedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgDeletedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &TokenFeeCfgDeletedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForTokenFeeCfgUpdatedEvent waits for a TokenFeeCfgUpdatedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgUpdatedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgUpdatedEvent) bool) (*TokenFeeCfgUpdatedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgUpdatedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseTokenFeeCfgUpdatedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseTokenFeeCfgUpdatedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgUpdatedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &TokenFeeCfgUpdatedEvent{
+		Ledger: uint32(e.Ledger),
+		TxHash: e.TransactionHash,
+	}
+
+	for _, entry := range *scMap {
+		key, ok := entry.Key.GetSym()
+		if !ok {
+			continue
+		}
+
+		switch string(key) {
+		case "remote_chain_selector":
+			v, err := scval.Uint64FromScVal(entry.Val)
+			if err == nil {
+				result.RemoteChainSelector = v
+			}
+		case "config":
+			v, err := TokenTransferFeeConfigFromScVal(entry.Val)
+			if err == nil {
+				result.Config = *v
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// WaitForFtfOutboundConsumedEvent waits for a FtfOutboundConsumedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForFtfOutboundConsumedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FtfOutboundConsumedEvent) bool) (*FtfOutboundConsumedEvent, error) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Since(startTime) > timeout {
+				return nil, fmt.Errorf("timeout waiting for event")
+			}
+
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FtfOutboundConsumedEventTopic})
+			if err != nil {
+				continue
+			}
+
+			for _, e := range events {
+				parsed, err := ParseFtfOutboundConsumedEvent(e)
+				if err != nil {
+					continue
+				}
+				if filter == nil || filter(parsed) {
+					return parsed, nil
+				}
+			}
+		}
+	}
+}
+
+func ParseFtfOutboundConsumedEvent(e protocolrpc.EventInfo) (*FtfOutboundConsumedEvent, error) {
+	var eventVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
+		return nil, fmt.Errorf("failed to decode event: %w", err)
+	}
+
+	scMap, ok := eventVal.GetMap()
+	if !ok || scMap == nil {
+		return nil, fmt.Errorf("event is not a map")
+	}
+
+	result := &FtfOutboundConsumedEvent{
 		Ledger: uint32(e.Ledger),
 		TxHash: e.TransactionHash,
 	}
@@ -1522,8 +1894,8 @@ func ParseOutboundRateLimitConsumedEvent(e protocolrpc.EventInfo) (*OutboundRate
 	return result, nil
 }
 
-// WaitForChainConfiguredEvent waits for a ChainConfiguredEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForChainConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ChainConfiguredEvent) bool) (*ChainConfiguredEvent, error) {
+// WaitForLockedEvent waits for a LockedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForLockedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockedEvent) bool) (*LockedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1537,13 +1909,13 @@ func (c *SiloedLockReleasePoolClient) WaitForChainConfiguredEvent(ctx context.Co
 				return nil, fmt.Errorf("timeout waiting for event")
 			}
 
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ChainConfiguredEventTopic})
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockedEventTopic})
 			if err != nil {
 				continue
 			}
 
 			for _, e := range events {
-				parsed, err := ParseChainConfiguredEvent(e)
+				parsed, err := ParseLockedEvent(e)
 				if err != nil {
 					continue
 				}
@@ -1555,7 +1927,7 @@ func (c *SiloedLockReleasePoolClient) WaitForChainConfiguredEvent(ctx context.Co
 	}
 }
 
-func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, error) {
+func ParseLockedEvent(e protocolrpc.EventInfo) (*LockedEvent, error) {
 	var eventVal xdr.ScVal
 	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
 		return nil, fmt.Errorf("failed to decode event: %w", err)
@@ -1566,7 +1938,7 @@ func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, 
 		return nil, fmt.Errorf("event is not a map")
 	}
 
-	result := &ChainConfiguredEvent{
+	result := &LockedEvent{
 		Ledger: uint32(e.Ledger),
 		TxHash: e.TransactionHash,
 	}
@@ -1578,181 +1950,15 @@ func ParseChainConfiguredEvent(e protocolrpc.EventInfo) (*ChainConfiguredEvent, 
 		}
 
 		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		case "remote_pool_addresses":
-			vec, ok := entry.Val.GetVec()
-			if ok && vec != nil {
-				parsed := make([][]byte, len(*vec))
-				for i, item := range *vec {
-					v, ok := item.GetBytes()
-					if ok {
-						parsed[i] = []byte(v)
-					}
-				}
-				result.RemotePoolAddresses = parsed
-			}
-		case "remote_token_address":
-			v, ok := entry.Val.GetBytes()
-			if ok {
-				result.RemoteTokenAddress = []byte(v)
-			}
-		case "outbound_rate_limiter_config":
-			v, err := RateLimitConfigFromScVal(entry.Val)
-			if err == nil {
-				result.OutboundRateLimiterConfig = *v
-			}
-		case "inbound_rate_limiter_config":
-			v, err := RateLimitConfigFromScVal(entry.Val)
-			if err == nil {
-				result.InboundRateLimiterConfig = *v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForRemotePoolAddedEvent waits for a RemotePoolAddedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForRemotePoolAddedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolAddedEvent) bool) (*RemotePoolAddedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolAddedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseRemotePoolAddedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseRemotePoolAddedEvent(e protocolrpc.EventInfo) (*RemotePoolAddedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &RemotePoolAddedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		case "remote_pool_address":
-			v, ok := entry.Val.GetBytes()
-			if ok {
-				result.RemotePoolAddress = []byte(v)
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForLockBoxConfiguredEvent waits for a LockBoxConfiguredEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForLockBoxConfiguredEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*LockBoxConfiguredEvent) bool) (*LockBoxConfiguredEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{LockBoxConfiguredEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseLockBoxConfiguredEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseLockBoxConfiguredEvent(e protocolrpc.EventInfo) (*LockBoxConfiguredEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &LockBoxConfiguredEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		case "lock_box":
+		case "sender":
 			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
-				result.LockBox = v
+				result.Sender = v
+			}
+		case "amount":
+			v, err := scval.I128FromScVal(entry.Val)
+			if err == nil {
+				result.Amount = v
 			}
 		}
 	}
@@ -1760,8 +1966,8 @@ func ParseLockBoxConfiguredEvent(e protocolrpc.EventInfo) (*LockBoxConfiguredEve
 	return result, nil
 }
 
-// WaitForRemotePoolRemovedEvent waits for a RemotePoolRemovedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForRemotePoolRemovedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*RemotePoolRemovedEvent) bool) (*RemotePoolRemovedEvent, error) {
+// WaitForReleasedEvent waits for a ReleasedEvent event.
+func (c *SiloedLockReleasePoolClient) WaitForReleasedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*ReleasedEvent) bool) (*ReleasedEvent, error) {
 	startTime := time.Now()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -1775,13 +1981,13 @@ func (c *SiloedLockReleasePoolClient) WaitForRemotePoolRemovedEvent(ctx context.
 				return nil, fmt.Errorf("timeout waiting for event")
 			}
 
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{RemotePoolRemovedEventTopic})
+			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{ReleasedEventTopic})
 			if err != nil {
 				continue
 			}
 
 			for _, e := range events {
-				parsed, err := ParseRemotePoolRemovedEvent(e)
+				parsed, err := ParseReleasedEvent(e)
 				if err != nil {
 					continue
 				}
@@ -1793,7 +1999,7 @@ func (c *SiloedLockReleasePoolClient) WaitForRemotePoolRemovedEvent(ctx context.
 	}
 }
 
-func ParseRemotePoolRemovedEvent(e protocolrpc.EventInfo) (*RemotePoolRemovedEvent, error) {
+func ParseReleasedEvent(e protocolrpc.EventInfo) (*ReleasedEvent, error) {
 	var eventVal xdr.ScVal
 	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
 		return nil, fmt.Errorf("failed to decode event: %w", err)
@@ -1804,7 +2010,7 @@ func ParseRemotePoolRemovedEvent(e protocolrpc.EventInfo) (*RemotePoolRemovedEve
 		return nil, fmt.Errorf("event is not a map")
 	}
 
-	result := &RemotePoolRemovedEvent{
+	result := &ReleasedEvent{
 		Ledger: uint32(e.Ledger),
 		TxHash: e.TransactionHash,
 	}
@@ -1816,221 +2022,15 @@ func ParseRemotePoolRemovedEvent(e protocolrpc.EventInfo) (*RemotePoolRemovedEve
 		}
 
 		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
+		case "sender":
+			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
-				result.RemoteChainSelector = v
+				result.Sender = v
 			}
-		case "remote_pool_address":
-			v, ok := entry.Val.GetBytes()
-			if ok {
-				result.RemotePoolAddress = []byte(v)
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForTokenFeeCfgDeletedEvent waits for a TokenFeeCfgDeletedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgDeletedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgDeletedEvent) bool) (*TokenFeeCfgDeletedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgDeletedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseTokenFeeCfgDeletedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseTokenFeeCfgDeletedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgDeletedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &TokenFeeCfgDeletedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
+		case "recipient":
+			v, err := scval.AddressFromScVal(entry.Val)
 			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForTokenFeeCfgUpdatedEvent waits for a TokenFeeCfgUpdatedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForTokenFeeCfgUpdatedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*TokenFeeCfgUpdatedEvent) bool) (*TokenFeeCfgUpdatedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{TokenFeeCfgUpdatedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseTokenFeeCfgUpdatedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseTokenFeeCfgUpdatedEvent(e protocolrpc.EventInfo) (*TokenFeeCfgUpdatedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &TokenFeeCfgUpdatedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
-			}
-		case "config":
-			v, err := TokenTransferFeeConfigFromScVal(entry.Val)
-			if err == nil {
-				result.Config = *v
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// WaitForFtfOutboundConsumedEvent waits for a FtfOutboundConsumedEvent event.
-func (c *SiloedLockReleasePoolClient) WaitForFtfOutboundConsumedEvent(ctx context.Context, startLedger uint32, timeout time.Duration, filter func(*FtfOutboundConsumedEvent) bool) (*FtfOutboundConsumedEvent, error) {
-	startTime := time.Now()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Since(startTime) > timeout {
-				return nil, fmt.Errorf("timeout waiting for event")
-			}
-
-			events, err := c.invoker.GetEvents(ctx, c.contractID, startLedger, []string{FtfOutboundConsumedEventTopic})
-			if err != nil {
-				continue
-			}
-
-			for _, e := range events {
-				parsed, err := ParseFtfOutboundConsumedEvent(e)
-				if err != nil {
-					continue
-				}
-				if filter == nil || filter(parsed) {
-					return parsed, nil
-				}
-			}
-		}
-	}
-}
-
-func ParseFtfOutboundConsumedEvent(e protocolrpc.EventInfo) (*FtfOutboundConsumedEvent, error) {
-	var eventVal xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(e.ValueXDR, &eventVal); err != nil {
-		return nil, fmt.Errorf("failed to decode event: %w", err)
-	}
-
-	scMap, ok := eventVal.GetMap()
-	if !ok || scMap == nil {
-		return nil, fmt.Errorf("event is not a map")
-	}
-
-	result := &FtfOutboundConsumedEvent{
-		Ledger: uint32(e.Ledger),
-		TxHash: e.TransactionHash,
-	}
-
-	for _, entry := range *scMap {
-		key, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-
-		switch string(key) {
-		case "remote_chain_selector":
-			v, err := scval.Uint64FromScVal(entry.Val)
-			if err == nil {
-				result.RemoteChainSelector = v
+				result.Recipient = v
 			}
 		case "amount":
 			v, err := scval.I128FromScVal(entry.Val)

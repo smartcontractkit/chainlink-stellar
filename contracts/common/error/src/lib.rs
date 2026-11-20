@@ -226,6 +226,9 @@ pub enum CCIPError {
     /// Allowlist update adds senders while setting `allowlistEnabled = false`
     /// (EVM `BaseVerifier.InvalidAllowListRequest`).
     InvalidAllowListRequest = 323,
+    /// Token pool proxy: mint `amount` exceeds the caller's remaining mint allowance
+    /// (Circle FiatToken `minterAllowance` semantics).
+    MintAllowanceExceeded = 324,
 
     // ============================================================
     // Calculation errors

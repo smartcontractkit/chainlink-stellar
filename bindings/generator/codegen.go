@@ -239,6 +239,12 @@ func generateFromScValField(b *strings.Builder, f Field, target string) {
 		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", f.Name))
 		b.WriteString("\t\t\t}\n")
 		b.WriteString(fmt.Sprintf("\t\t\t%s = v\n", target))
+	case isOptionalI128(f.Type):
+		b.WriteString("\t\t\tv, err := scval.OptionalI128FromScVal(entry.Val)\n")
+		b.WriteString("\t\t\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", f.Name))
+		b.WriteString("\t\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t\t%s = v\n", target))
 	case strings.HasPrefix(f.Type, "soroban_sdk::BytesN<"):
 		n := extractBytesNSize(f.Type)
 		b.WriteString(fmt.Sprintf("\t\t\tv, err := scval.Bytes%dFromScVal(entry.Val)\n", n))
@@ -663,6 +669,10 @@ func rustTypeToGo(rustType string) string {
 		if inner == "soroban_sdk::Address" {
 			return "*string"
 		}
+		// i128 is already a nil-able *big.Int; nil = None (not **big.Int).
+		if inner == "i128" {
+			return "*big.Int"
+		}
 		// Option<Struct> -> *Struct
 		innerType := rustTypeToGo(inner)
 		return "*" + innerType
@@ -681,6 +691,15 @@ func rustTypeToGo(rustType string) string {
 
 	// Assume it's a struct name
 	return extractStructName(rustType)
+}
+
+// isOptionalI128 reports whether rustType is Option<i128>.
+func isOptionalI128(rustType string) bool {
+	if !strings.HasPrefix(rustType, "Option<") {
+		return false
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(rustType, "Option<"), ">")
+	return strings.TrimSpace(inner) == "i128"
 }
 
 func extractVecInnerType(vecType string) string {
@@ -735,6 +754,9 @@ func getToScValConverter(rustType, expr string) string {
 
 	if strings.HasPrefix(rustType, "Option<") && strings.Contains(rustType, "soroban_sdk::Address") {
 		return fmt.Sprintf("scval.OptionalAddressToScVal(%s)", expr)
+	}
+	if isOptionalI128(rustType) {
+		return fmt.Sprintf("scval.OptionalI128ToScVal(%s)", expr)
 	}
 
 	if strings.HasPrefix(rustType, "soroban_sdk::BytesN<") {

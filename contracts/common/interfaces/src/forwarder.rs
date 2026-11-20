@@ -215,6 +215,7 @@ pub enum CCIPError {
     InvalidTokenTransferFeeConfig = 321,
     InvalidTransferFeeBps = 322,
     InvalidAllowListRequest = 323,
+    MintAllowanceExceeded = 324,
     InvalidFeeCalculation = 801,
     InvalidFeeTokenConversion = 802,
     ZeroFeeAggregatorNotAllowed = 803,
