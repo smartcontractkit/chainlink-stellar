@@ -70,7 +70,7 @@ jobs:
     name: Staging Tests (testnet, ephemeral senders)
     # Latency-bound (Sepolia finality waits), not CPU-bound.
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 25
     environment: staging
     steps:
       - name: Checkout
@@ -94,6 +94,14 @@ jobs:
       - name: Run staging tests (both directions)
         env:
           STAGING_EPHEMERAL: "true"
+          # FTF: request FinalityWaitForSafe (0x00010000) on EVM→Stellar sends —
+          # verifiers sign at the Ethereum safe head (~1-2 min) instead of two
+          # Sepolia epochs (~13 min). Requires the env to admit it: EVM-side CV
+          # + executor allowed-finality configs, and the Stellar receiver's
+          # enable_remote_chain allowed_finality_config=65536 (README). Set 0
+          # to fall back to full finality (and raise the timeouts — the suite
+          # then needs ~35m).
+          STAGING_EVM_FINALITY: "65536"
           # 3-arg ccip_send: the deployed staging Router was redeployed to the
           # post-bbc2d2b4 ABI (verified 2026-11-20 by direct simulation — the
           # legacy 4-arg call aborts with MismatchingParameterLen wrapped in
@@ -124,7 +132,7 @@ jobs:
           STAGING_EVM_OFFRAMP: "0x48c903a26A0b5bDA0F5C8d700810377694FED265"
           STAGING_EVM_TOKEN: "0x52627841876bbf1839dfeC397901bc85b0da8030"
           STAGING_EVM_TOKEN_POOL: "0x76e359670262a1E21B917017Ab87D9372476d2b0"
-        run: cd tests && go test -v -count=1 -timeout 45m ./staging/... -run 'TestStagingStellarToEVM|TestStagingEVMToStellar'
+        run: cd tests && go test -v -count=1 -timeout 20m ./staging/... -run 'TestStagingStellarToEVM|TestStagingEVMToStellar'
 
       # No teardown, no artifacts: nothing is deployed or started — the
       # shared environment stays as it is. Ephemeral Stellar senders'

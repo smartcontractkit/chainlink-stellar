@@ -65,6 +65,7 @@ const (
 	envStellarReceiver     = "STAGING_STELLAR_RECEIVER"       // required: C... (or 0x 32-byte hex) contract implementing ccip_receive
 	envStellarOffRamp      = "STAGING_STELLAR_OFFRAMP"        // optional: C... OffRamp; resolved via Router.get_offramps when unset
 	envStellarGasLimit     = "STAGING_STELLAR_GAS_LIMIT"      // default: 200000 (gasLimit in the EVM extra args)
+	envEVMFinality         = "STAGING_EVM_FINALITY"           // default: 0 (full finality); 65536 = 0x00010000 FinalityWaitForSafe (FTF — see README)
 	envStellarExecTimeout  = "STAGING_STELLAR_EXEC_TIMEOUT"   // default: 30m
 	envEVMSentEventTimeout = "STAGING_EVM_SENT_TIMEOUT"       // default: 5m (ccipSend inclusion on the EVM chain)
 
@@ -259,6 +260,14 @@ type evmToStellarConfig struct {
 	EVMTreasury  *ecdsa.PrivateKey // nil outside ephemeral mode
 	EVMFundETH   *big.Int          // wei transferred from the treasury to the ephemeral sender
 
+	// EVMFinality is the requested finality for EVM→Stellar messages
+	// (protocol.Finality encoding): 0 = wait for full finality;
+	// 65536 = FinalityWaitForSafe — verifiers sign at the Ethereum safe head
+	// (~1-2 min) instead of two Sepolia epochs (~13 min). Must be admitted by
+	// the EVM-side CV/executor configs and the Stellar receiver's
+	// allowed_finality_config (README "Fast transfer finality").
+	EVMFinality uint32
+
 	StellarRPCURL     string
 	NetworkPassphrase string
 	// StellarAccount only signs read-only simulations (Router/OffRamp/receiver views);
@@ -331,6 +340,7 @@ func loadEVMToStellarConfig(t *testing.T) *evmToStellarConfig {
 		StellarChainSelector: mustUint(t, envSourceChainSel, chainsel.STELLAR_TESTNET.Selector),
 		EVMChainSelector:     mustUint(t, envDestChainSel, chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector),
 		StellarGasLimit:      uint32(mustUintBits(t, envStellarGasLimit, defaultStellarGasLimit, 32)),
+		EVMFinality:          uint32(mustUintBits(t, envEVMFinality, 0, 32)),
 		BatchSize:            int(mustUint(t, envSendBatchSize, 3)),
 		EVMSentTimeout:       mustDuration(t, envEVMSentEventTimeout, 5*time.Minute),
 		ExecTimeout:          mustDuration(t, envStellarExecTimeout, 30*time.Minute),

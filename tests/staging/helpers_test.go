@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/rs/zerolog"
+	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -767,7 +768,14 @@ func (e *evmToStellarEnv) feeTokenLabel() string {
 // while Stellar CCV/executor addresses are 32 bytes.
 func (e *evmToStellarEnv) buildMessage(t *testing.T, data []byte) evmrouter.ClientEVM2AnyMessage {
 	t.Helper()
-	extraArgs, err := devenvevm.NewV3ExtraArgs(0, e.cfg.StellarGasLimit, "", nil, nil, nil, nil)
+	// STAGING_EVM_FINALITY: 0 = full finality (default); 65536 (0x00010000) =
+	// FinalityWaitForSafe — the verifiers sign at the Ethereum safe head
+	// (~1-2 min) instead of waiting two Sepolia epochs (~13 min). The request
+	// must be admitted along the whole finality opt-in matrix: the EVM-side
+	// CV and executor allowed-finality configs, and (for data messages) the
+	// Stellar receiver's enable_remote_chain allowed_finality_config — see
+	// README "Fast transfer finality".
+	extraArgs, err := devenvevm.NewV3ExtraArgs(protocol.Finality(e.cfg.EVMFinality), e.cfg.StellarGasLimit, "", nil, nil, nil, nil)
 	require.NoError(t, err, "encode GenericExtraArgsV3")
 	return evmrouter.ClientEVM2AnyMessage{
 		Receiver:  e.receiverBytes,

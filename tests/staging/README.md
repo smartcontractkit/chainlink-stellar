@@ -224,3 +224,36 @@ Known limitation: `TestStagingEVMToStellarTokenTransfer` **skips** in ephemeral
 mode — the Sepolia `stgBnM` token has no faucet and cannot be pre-funded for a
 generated key, so that test needs a non-ephemeral run with a persistent EVM
 sender that already holds the token (see Prerequisites #3).
+
+## Fast transfer finality (EVM → Stellar)
+
+By default a message waits for full Sepolia finality (~two epochs ≈ 13 min)
+before the verifiers sign. `STAGING_EVM_FINALITY` sets the requested finality
+on EVM→Stellar sends using the `protocol.Finality` encoding:
+
+- `0` — full finality (default, safest)
+- `65536` (`0x00010000`) — `FinalityWaitForSafe`: verifiers sign once the
+  source block reaches the Ethereum `safe` head (~1-2 min)
+
+A fast request must be admitted all along the finality opt-in matrix —
+otherwise the send is rejected (`InvalidRequestedFinality`) at fee-quote or the
+message fails execution (error 315). The env owner must configure:
+
+1. **EVM-side committee verifier**: allowed-finality config admitting
+   `WaitForSafe` (the devenv uses `{WaitForSafe: true, BlockDepth: 1}`).
+2. **EVM-side executor**: its allowed-finality config (consulted at
+   `get_fee`).
+3. **Stellar receiver** (for data messages): `enable_remote_chain` with
+   `allowed_finality_config = 65536`:
+   ```sh
+   stellar contract invoke --id <receiver> --source-account <owner> --network testnet -- \
+     enable_remote_chain --caller <owner> --dest_chain_selector 16015286601757825753 \
+     --extra_args 01 --allowed_finality_config 65536
+   ```
+4. **Stellar token pool** (for token transfers): `set_allowed_finality_config`
+   (owner-only) admitting the request.
+
+CI sets `STAGING_EVM_FINALITY=65536` (see the workflow). Note the
+`onramp_2_0_*` event topics the watchers scan: the deployed OnRamp/OffRamp
+must be the current 2.0 builds (a 1.7-era OnRamp emits `onramp_1_7_*` topics
+and the watchers will not see its events).
