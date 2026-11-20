@@ -621,7 +621,7 @@ impl FeeQuoterContract {
         // Validate the message using common-message validation
         message.validate()?;
 
-        // Only 1 token per message in CCIP v1.7
+        // Only 1 token per message in CCIP v2.0
         if message.token_amounts.len() > 1 {
             return Err(CCIPError::UnsupportedNumberOfTokens);
         }
