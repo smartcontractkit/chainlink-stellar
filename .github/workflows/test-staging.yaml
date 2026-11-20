@@ -33,10 +33,12 @@ name: Staging Tests (testnet)
 #      after every run, so its net consumption is just the ephemeral
 #      senders' gas. This is the ONLY setup step: every address below is a
 #      public testnet artifact hardcoded from the chainlink-deployments
-#      staging_testnet_stellar datastore, and the EVM RPC is the keyless
-#      PublicNode Sepolia endpoint (live-verified: chainId + the suite's
-#      only eth_getLogs call is address-filtered, which its free tier
-#      requires; swap in a provider URL as a secret if rate limits bite).
+#      staging_testnet_stellar datastore, and the EVM RPC defaults to
+#      Tenderly's keyless public Sepolia gateway (chainId + getLogs +
+#      sendRawTransaction verified live; PublicNode's Sepolia endpoint reads
+#      fine but propagates submitted transactions ~minutes late — do not use
+#      it for sends). Optionally set STAGING_EVM_RPC_URL as a secret to
+#      override with a provider URL (Alchemy/Infura free tier).
 
 on:
   # TEMPORARY: run on every push to see the workflow working end-to-end.
@@ -102,7 +104,14 @@ jobs:
           STAGING_STELLAR_FEE_TOKEN: CDFAZQDPCAIC7ZAK22ZT66N3HM3AXNMUAKOTPASEEKM5O4VZKIEUJJDV
           STAGING_STELLAR_TOKEN: CDJXOQB6QNN2SZMKCKVF2QMDP2YR5WG54R4EJKHHJKABAN4CWNBAVQ2A
           STAGING_STELLAR_TOKEN_POOL: CBGEPJNRH5MCA5QWMBXLMYVIK6QFR3MBWVS7KJQ26BZ3DZANXXHPXEMT
-          STAGING_EVM_RPC_URL: https://ethereum-sepolia-rpc.publicnode.com # keyless public Sepolia; swap for a secret provider URL if rate-limited
+          # PublicNode's Sepolia endpoint was live-verified for reads but its
+          # eth_sendRawTransaction propagates extremely slowly (transfers with
+          # 1-gwei tips took ~9 minutes to mine — two CI rounds of evidence),
+          # so the default is Tenderly's public Sepolia gateway (send pipeline
+          # verified live). Set STAGING_EVM_RPC_URL as a secret to override
+          # with any provider URL (Alchemy/Infura free tier) if this also
+          # misbehaves.
+          STAGING_EVM_RPC_URL: ${{ secrets.STAGING_EVM_RPC_URL || 'https://gateway.tenderly.co/public/sepolia' }}
           STAGING_EVM_TREASURY_PRIVATE_KEY: ${{ secrets.STAGING_EVM_TREASURY_PRIVATE_KEY }}
           STAGING_EVM_RECEIVER: "0xcf55123F4f256c719F86d695F16D40a2855ce0DF"
           STAGING_EVM_ROUTER: "0x140Ce0d34F9eaA4B475a0184D47fc71DcB67C8D9"

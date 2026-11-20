@@ -101,7 +101,10 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 		require.NoError(t, err, "Router.get_onramp(%d)", cfg.DestChainSelector)
 	}
 
-	contractIDs := []string{cfg.RouterID, onRampID, cfg.FeeTokenID}
+	// NOTE: cfg.FeeTokenID is deliberately NOT in this list — the FEE token is
+	// a classic-asset SAC, not a WASM contract instance, so ContractWasmHash
+	// rejects it; its code entry is the protocol-pinned built-in, always live.
+	contractIDs := []string{cfg.RouterID, onRampID}
 	contractIDs = append(contractIDs, cfg.CCVs...)
 	if cfg.Executor != "" {
 		contractIDs = append(contractIDs, cfg.Executor)
