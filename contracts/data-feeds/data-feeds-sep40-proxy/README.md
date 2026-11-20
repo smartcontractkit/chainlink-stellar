@@ -1,0 +1,57 @@
+# Chainlink Data Feeds SEP-40 Adapter
+
+A [SEP-40](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0040.md) price-feed adapter over the Chainlink Data Feeds proxy on Stellar. Existing SEP-40 consumers can read Chainlink prices without code changes.
+
+## Scope (v1)
+
+| SEP-40 method | Behaviour |
+|---|---|
+| `base()` | `Asset::Other(<base_symbol>)`, for example `Other("USD")` or `Other("GBP")` |
+| `assets()` | Mapped assets, in insertion order |
+| `decimals()` | `18` (constant; the proxy is always asked for 18) |
+| `resolution()` | `1` |
+| `lastprice(asset)` | Latest round from the proxy, or `None` |
+| `price(asset, ts)` / `prices(asset, n)` | `None` (history is not supported in v1) |
+
+`lastprice` accepts the full signed `i128` range, including genuine zero and negative prices. It returns `None` rather than failing when the asset is unmapped, the proxy returns an error, the feed is frozen, or the answer does not fit in `i128`. The timestamp is the proxy's, unchanged.
+
+The adapter does not reject stale or future-dated rounds and has no `max_age` setting. Consumers must validate timestamps on every price they use.
+
+A genuine zero price is distinct from a nonzero answer lost through precision reduction. If the upstream proxy reports `RoundsToZero`, the adapter returns `None`. The adapter currently requests 18 decimals, matching the cache precision, so this path performs no precision reduction. Consumers are responsible for deciding whether a zero or negative price is suitable for their application.
+
+Submitted `lastprice` calls extend the instance, asset-list, and requested mapping TTLs. Simulated calls do not persist these extensions. Updating a feed renews the asset-list and mapping TTLs, including when the data ID is unchanged.
+
+## Deployment
+
+See the [deployment guide](DEPLOYMENT.md) to build, deploy, map feeds, and verify prices.
+
+The constructor is `__constructor(owner: Address, proxy: Address, base_symbol: Symbol)`. `base_symbol` is the quote currency, passed as a plain symbol such as `USD`, `GBP` or `EUR` (letters, digits and `_`, at most 32 characters). It is stored as `Asset::Other(base_symbol)` and cannot be changed after deployment. One adapter has one base, so a deployment that needs several quote currencies needs several adapters.
+
+The constructor stores the supplied proxy without validating it and starts with no mapped assets. Successful deployment does not establish that the proxy or feeds are usable.
+
+The adapter cannot check what currency a feed is quoted in. Only map feeds quoted in the base: a `GBP` adapter should only be given `X/GBP` feeds.
+
+Mappings associate `Asset::Other(symbol)` or `Asset::Stellar(token_contract_address)` with a nonzero 32-byte feed ID (`BytesN<32>`). Each asset has one mapping, and each feed ID can belong to at most one asset. `get_feed(asset)` returns the mapped ID or `None`; `get_proxy()` returns the configured upstream proxy.
+
+## Admin (owner only)
+
+`add_feed`, `update_feed`, `remove_feed`, `set_proxy`, plus two-step ownership, `upgrade`, and `recover_tokens`. `add_feed` rejects the configured base asset with `AssetIsBase`. `add_feed` and `update_feed` require the feed to be readable at call time; genuine zero and negative prices are readable. An unchanged ID passed to `update_feed` still undergoes readability validation.
+
+Ownership renunciation is disabled: `renounce_ownership` always aborts with `OwnershipRenunciationDisabled`, preserving access to administration and recovery. Change the owner using the two-step ownership transfer.
+
+`set_proxy` checks that every mapped feed is readable through the candidate proxy at 18 decimals before switching. An unreadable candidate feed returns `FeedUnreadable`; a missing mapping for a listed asset returns `AssetNotMapped`. Either failure preserves the existing proxy and emits no `ProxySet` event. With no mapped assets, the switch requires no feed checks. Validation cost grows with the number of mapped assets, and an unavailable feed on the candidate blocks the switch. Readability does not verify trading-pair or quote-currency identity; the owner must verify those separately.
+
+The owner can recover tokens accidentally sent to the adapter using `recover_tokens(token, to, amount)`. Recovery transfers the requested amount from the adapter to the destination and emits `TokenRecovered`.
+
+## Tests
+
+```sh
+cd contracts/data-feeds
+cargo test -p data-feeds-sep40-proxy
+```
+
+`src/tests/conformance.rs` pins the XDR encoding of `Asset` and `PriceData`. The SEP-40 types are declared locally because the Script3 `sep-40-oracle` crate pins a different `soroban-sdk` major version.
+
+## Maintenance
+
+If this adapter is taken over by a customer, the customer is responsible for its maintenance, including upgrades and the feed mapping.
