@@ -1,6 +1,8 @@
 package config
 
 import (
+	"math"
+
 	clconfig "github.com/smartcontractkit/chainlink-common/pkg/config"
 )
 
@@ -54,6 +56,12 @@ type TxManagerConfig struct {
 	ResourceFeeBuffer *int64   `toml:"ResourceFeeBuffer"`
 	RestoreFeeBuffer  *int64   `toml:"RestoreFeeBuffer"`
 	MaxResourceFee    *int64   `toml:"MaxResourceFee"`
+	// MaxCumulativeFee caps the total fee (inclusion plus resource) one enqueued
+	// transaction may burn across all broadcast and restore attempts.
+	// Above zero it is a hard cap for every request. Zero derives a cap per request:
+	// its resource fee cap (the request's own when set, otherwise MaxResourceFee)
+	// * (MaxTxRetryAttempts + 2). The derived cap leaves out the inclusion fee.
+	MaxCumulativeFee *int64 `toml:"MaxCumulativeFee"`
 	// FeeStatsPollInterval controls how often GetFeeStats is called to refresh
 	// Soroban inclusion fee percentiles in the feeTracker; back-to-back broadcasts reuse values.
 	// Zero disables reuse (every inclusion-fee decision calls GetFeeStats).
@@ -169,6 +177,11 @@ func (c *TxManagerConfig) Resolve() {
 	if c.MaxRestoreAttempts == nil {
 		c.MaxRestoreAttempts = ptr(*d.MaxRestoreAttempts)
 	}
+	// Stays 0 rather than resolving to a derived value: the TXM derives per request,
+	// and must be able to tell that apart from an explicit cap.
+	if c.MaxCumulativeFee == nil || *c.MaxCumulativeFee < 0 {
+		c.MaxCumulativeFee = ptr(int64(0))
+	}
 	if c.PruneInterval == nil {
 		v := *d.PruneInterval
 		c.PruneInterval = &v
@@ -179,6 +192,23 @@ func (c *TxManagerConfig) Resolve() {
 	}
 	c.SimulationTerminalHints = mergeSimulationHintLists(builtinSimulationTerminalHints, c.SimulationTerminalHints)
 	c.SimulationRetryableHints = mergeSimulationHintLists(builtinSimulationRetryableHints, c.SimulationRetryableHints)
+}
+
+// DeriveMaxCumulativeFee returns the default cap for one request: its resource fee
+// cap times the first broadcast, every retry and one restore. Saturates at MaxInt64
+// instead of overflowing; a non-positive resource cap disables it.
+func DeriveMaxCumulativeFee(maxResourceFee int64, maxTxRetryAttempts uint64) *int64 {
+	if maxResourceFee <= 0 {
+		return ptr(int64(0))
+	}
+	if maxTxRetryAttempts > math.MaxUint64-2 {
+		return ptr(int64(math.MaxInt64))
+	}
+	attempts := maxTxRetryAttempts + 2
+	if uint64(maxResourceFee) > uint64(math.MaxInt64)/attempts {
+		return ptr(int64(math.MaxInt64))
+	}
+	return ptr(maxResourceFee * int64(attempts))
 }
 
 // mergeSimulationHintLists returns built-in hints followed by any extra hints
