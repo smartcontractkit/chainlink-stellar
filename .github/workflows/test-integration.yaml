@@ -36,7 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         # The five -run regexes partition all tests except TestMain:
-        # ramps = 9, router-rmn-cv = 7, governance-changesets = 7,
+        # ramps = 10, router-rmn-cv = 7, governance-changesets = 7,
         # pools-hooks = 10, token-pool = 3.
         include:
           - shard: ramps
