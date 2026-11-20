@@ -40,7 +40,9 @@ import (
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	rampregistrybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ramp_registry"
+	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
@@ -99,10 +101,35 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 		require.NoError(t, err, "Router.get_onramp(%d)", cfg.DestChainSelector)
 	}
 
-	contractIDs := []string{cfg.RouterID, onRampID}
+	contractIDs := []string{cfg.RouterID, onRampID, cfg.FeeTokenID}
 	contractIDs = append(contractIDs, cfg.CCVs...)
 	if cfg.Executor != "" {
 		contractIDs = append(contractIDs, cfg.Executor)
+	}
+
+	// The send path cross-calls beyond the front doors: OnRamp → FeeQuoter
+	// (pricing), RMN proxy (curse gate), TokenAdminRegistry (token path), and
+	// each CCV resolves to its verifier implementation (VVR → CommitteeVerifier).
+	// An archived WASM among those makes the RPC re-upload it into every
+	// simulation footprint and ccip_send fails with Error(WasmVm, UnexpectedSize)
+	// even though get_fee (pure simulation) succeeded (see README "Setup").
+	// Read the wiring from the OnRamp itself and extend ALL of it.
+	onRampClient := onrampbindings.NewOnRampClient(deployer, onRampID)
+	staticCfg, err := onRampClient.GetStaticConfig(ctx)
+	require.NoError(t, err, "OnRamp get_static_config")
+	dynCfg, err := onRampClient.GetDynamicConfig(ctx)
+	require.NoError(t, err, "OnRamp get_dynamic_config")
+	contractIDs = append(contractIDs, staticCfg.RmnProxy, staticCfg.TokenAdminRegistry, dynCfg.FeeQuoter)
+	// The RMN proxy delegates to the RMN remote — extend it too (same
+	// archived-WASM failure class).
+	rmnRemote, rmnErr := rmnproxybindings.NewRmnProxyClient(deployer, staticCfg.RmnProxy).GetRmn(ctx)
+	require.NoError(t, rmnErr, "RMN proxy get_rmn")
+	contractIDs = append(contractIDs, rmnRemote)
+	for _, ccv := range cfg.CCVs {
+		impl, implErr := vvrbindings.NewVersionedVerifierResolverClient(deployer, ccv).
+			GetOutboundImplementation(ctx, cfg.DestChainSelector, []byte{})
+		require.NoErrorf(t, implErr, "resolve CCV %s outbound impl for dest %d", ccv, cfg.DestChainSelector)
+		contractIDs = append(contractIDs, impl)
 	}
 	extendContractTTLs(t, ctx, deployer, &l, contractIDs...)
 
@@ -552,6 +579,47 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 	return env
 }
 
+// promptTxPricing returns EIP-1559 tip/feeCap values that guarantee prompt
+// inclusion. Sepolia's base fee is currently ~tens of wei, so a LEGACY tx at
+// SuggestGasPrice (≈18 wei) sits only ~1 wei above it and strands in the
+// mempool whenever the base fee ticks up — observed live: the treasury
+// transfers mined ~30 minutes after submission, long after the tests' 2-minute
+// budgets. A 1-gwei tip dominates Sepolia's tip market and costs a 21k-gas
+// transfer ≈0.000021 ETH; feeCap = 2×baseFee+tip keeps the tx valid even if
+// the base fee doubles while it waits.
+type promptPricing struct{ tip, feeCap *big.Int }
+
+func promptTxPricing(t *testing.T, ctx context.Context, client *ethclient.Client) (promptPricing, error) {
+	t.Helper()
+	head, err := client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return promptPricing{}, fmt.Errorf("latest header: %w", err)
+	}
+	if head.BaseFee == nil {
+		return promptPricing{}, fmt.Errorf("chain has no EIP-1559 base fee (head %s)", head.Number)
+	}
+	tip := big.NewInt(1_000_000_000) // 1 gwei
+	feeCap := new(big.Int).Mul(head.BaseFee, big.NewInt(2))
+	feeCap = feeCap.Add(feeCap, tip)
+	return promptPricing{tip: tip, feeCap: feeCap}, nil
+}
+
+// promptTransferTxData assembles a prompt-inclusion 21k-gas transfer.
+func promptTransferTxData(t *testing.T, ctx context.Context, client *ethclient.Client,
+	from, to common.Address, value *big.Int, nonce uint64) types.TxData {
+	t.Helper()
+	pricing, err := promptTxPricing(t, ctx, client)
+	require.NoError(t, err)
+	return &types.DynamicFeeTx{
+		Nonce:     nonce,
+		To:        &to,
+		Value:     value,
+		Gas:       21_000,
+		GasTipCap: pricing.tip,
+		GasFeeCap: pricing.feeCap,
+	}
+}
+
 // fundEphemeralEVMSender sends cfg.EVMFundETH wei from the low-privilege
 // Sepolia treasury (a plain holder of testnet ETH — Sepolia has no
 // CI-friendly faucet) to the config-generated EVM sender, then waits for the
@@ -570,15 +638,8 @@ func fundEphemeralEVMSender(t *testing.T, ctx context.Context, cfg *evmToStellar
 
 	nonce, err := client.PendingNonceAt(ctx, from)
 	require.NoError(t, err, "treasury nonce")
-	gasPrice, err := client.SuggestGasPrice(ctx)
-	require.NoError(t, err, "suggest gas price")
-	signed, err := types.SignNewTx(cfg.EVMTreasury, types.LatestSignerForChainID(chainID), &types.LegacyTx{
-		Nonce:    nonce,
-		To:       &to,
-		Value:    cfg.EVMFundETH,
-		Gas:      21_000,
-		GasPrice: gasPrice,
-	})
+	signed, err := types.SignNewTx(cfg.EVMTreasury, types.LatestSignerForChainID(chainID),
+		promptTransferTxData(t, ctx, client, from, to, cfg.EVMFundETH, nonce))
 	require.NoError(t, err, "sign treasury ETH transfer")
 	err = client.SendTransaction(ctx, signed)
 	require.NoError(t, err, "send treasury ETH transfer")
@@ -628,15 +689,16 @@ func sweepEphemeralETH(t *testing.T, cfg *evmToStellarConfig) {
 		t.Logf("sweep: ephemeral sender balance: %v", err)
 		return
 	}
-	gasPrice, err := client.SuggestGasPrice(ctx)
+	pricing, err := promptTxPricing(t, ctx, client)
 	if err != nil {
-		t.Logf("sweep: suggest gas price: %v", err)
+		t.Logf("sweep: %v", err)
 		return
 	}
-	// Reserve 2× the actual 21k-gas fee: the fixed legacy gasPrice makes the
-	// real fee exactly 21000×gasPrice, the extra margin just stays behind as
-	// dust on the ephemeral key.
-	fee := new(big.Int).Mul(gasPrice, big.NewInt(2*21_000))
+	// Reserve the worst-case 21k-gas fee (feeCap) plus margin; the real fee is
+	// 21000×(baseFee+tip) at inclusion, the difference stays behind as dust on
+	// the ephemeral key.
+	fee := new(big.Int).Add(pricing.feeCap, pricing.tip)
+	fee.Mul(fee, big.NewInt(21_000))
 	net := new(big.Int).Sub(balance, fee)
 	if net.Sign() <= 0 || net.Cmp(big.NewInt(1_000_000_000_000_000)) < 0 { // < 0.001 ETH
 		t.Logf("sweep: ephemeral sender holds %s wei, below the 0.001 ETH threshold — skipping sweep", balance.String())
@@ -653,12 +715,13 @@ func sweepEphemeralETH(t *testing.T, cfg *evmToStellarConfig) {
 		t.Logf("sweep: ephemeral sender nonce: %v", err)
 		return
 	}
-	signed, err := types.SignNewTx(cfg.EVMSender, types.LatestSignerForChainID(chainID), &types.LegacyTx{
-		Nonce:    nonce,
-		To:       &to,
-		Value:    net,
-		Gas:      21_000,
-		GasPrice: gasPrice,
+	signed, err := types.SignNewTx(cfg.EVMSender, types.LatestSignerForChainID(chainID), &types.DynamicFeeTx{
+		Nonce:     nonce,
+		To:        &to,
+		Value:     net,
+		Gas:       21_000,
+		GasTipCap: pricing.tip,
+		GasFeeCap: pricing.feeCap,
 	})
 	if err != nil {
 		t.Logf("sweep: sign: %v", err)
