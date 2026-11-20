@@ -14,7 +14,7 @@ inputs:
   shasum:
     description: SHA256 of the release tarball for the requested version
     required: false
-    default: "145785bb4bfd9711a7af1b4cf13a38ae31034421401a5fed061be35baf01373a"
+    default: "48c70074020e09af0a3ebbd2bf62d53c9aec47935e49a112d3cd90fb4e37658f"
 
 runs:
   using: composite
