@@ -32,21 +32,6 @@ func (c *OnRampClient) ContractID() string {
 	return c.contractID
 }
 
-// Init calls the init function on the contract.
-func (c *OnRampClient) Init(ctx context.Context, rmnProxy string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(rmnProxy),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init", args)
-	if err != nil {
-		return fmt.Errorf("failed to call init: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // Owner calls the owner function on the contract.
 func (c *OnRampClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -105,63 +90,6 @@ func (c *OnRampClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error 
 	return nil
 }
 
-// IsOwner calls the is_owner function on the contract.
-func (c *OnRampClient) IsOwner(ctx context.Context, addr string) (bool, error) {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(addr),
-	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_owner: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_owner")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
-// IsCursed calls the is_cursed function on the contract.
-func (c *OnRampClient) IsCursed(ctx context.Context) (bool, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_cursed", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_cursed: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_cursed")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
-// InitOwner calls the init_owner function on the contract.
-func (c *OnRampClient) InitOwner(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call init_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // Initialize calls the initialize function on the contract.
 func (c *OnRampClient) Initialize(ctx context.Context, owner string, staticConfig StaticConfig, dynamicConfig DynamicConfig) error {
 	args := []xdr.ScVal{
@@ -177,26 +105,6 @@ func (c *OnRampClient) Initialize(ctx context.Context, owner string, staticConfi
 
 	_ = result // void return
 	return nil
-}
-
-// RequireOwner calls the require_owner function on the contract.
-func (c *OnRampClient) RequireOwner(ctx context.Context) (string, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call require_owner: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from require_owner")
-	}
-
-	v, err := scval.AddressFromScVal(*result)
-	if err != nil {
-		return "", err
-	}
-	return v, nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.
@@ -228,26 +136,6 @@ func (c *OnRampClient) TypeAndVersion(ctx context.Context) (string, error) {
 	return scval.StringFromScVal(*result)
 }
 
-// GetPendingOwner calls the get_pending_owner function on the contract.
-func (c *OnRampClient) GetPendingOwner(ctx context.Context) (*string, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_pending_owner: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_pending_owner")
-	}
-
-	v, err := scval.OptionalAddressFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
 // GetStaticConfig calls the get_static_config function on the contract.
 func (c *OnRampClient) GetStaticConfig(ctx context.Context) (*StaticConfig, error) {
 	args := []xdr.ScVal{}
@@ -264,28 +152,6 @@ func (c *OnRampClient) GetStaticConfig(ctx context.Context) (*StaticConfig, erro
 	return StaticConfigFromScVal(*result)
 }
 
-// IsSubjectCursed calls the is_subject_cursed function on the contract.
-func (c *OnRampClient) IsSubjectCursed(ctx context.Context, subject [16]byte) (bool, error) {
-	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(subject),
-	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_subject_cursed", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_subject_cursed: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_subject_cursed")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
 // GetDynamicConfig calls the get_dynamic_config function on the contract.
 func (c *OnRampClient) GetDynamicConfig(ctx context.Context) (*DynamicConfig, error) {
 	args := []xdr.ScVal{}
@@ -300,19 +166,6 @@ func (c *OnRampClient) GetDynamicConfig(ctx context.Context) (*DynamicConfig, er
 	}
 
 	return DynamicConfigFromScVal(*result)
-}
-
-// RequireNotCursed calls the require_not_cursed function on the contract.
-func (c *OnRampClient) RequireNotCursed(ctx context.Context) error {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_not_cursed", args)
-	if err != nil {
-		return fmt.Errorf("failed to call require_not_cursed: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // SetDynamicConfig calls the set_dynamic_config function on the contract.
@@ -425,34 +278,6 @@ func (c *OnRampClient) GetPoolBySourceToken(ctx context.Context, sourceToken str
 	return v, nil
 }
 
-// RequireChainNotCursed calls the require_chain_not_cursed function on the contract.
-func (c *OnRampClient) RequireChainNotCursed(ctx context.Context, chainSelector uint64) error {
-	args := []xdr.ScVal{
-		scval.Uint64ToScVal(chainSelector),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_chain_not_cursed", args)
-	if err != nil {
-		return fmt.Errorf("failed to call require_chain_not_cursed: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
-func (c *OnRampClient) CancelOwnershipTransfer(ctx context.Context) error {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
-	if err != nil {
-		return fmt.Errorf("failed to call cancel_ownership_transfer: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // GetAllDestChainConfigs calls the get_all_dest_chain_configs function on the contract.
 func (c *OnRampClient) GetAllDestChainConfigs(ctx context.Context) ([]uint64, []DestChainConfig, error) {
 	args := []xdr.ScVal{}
@@ -501,21 +326,6 @@ func (c *OnRampClient) GetAllDestChainConfigs(ctx context.Context) ([]uint64, []
 	}
 
 	return v0, v1, nil
-}
-
-// RequireSubjectNotCursed calls the require_subject_not_cursed function on the contract.
-func (c *OnRampClient) RequireSubjectNotCursed(ctx context.Context, subject [16]byte) error {
-	args := []xdr.ScVal{
-		scval.Bytes16ToScVal(subject),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_subject_not_cursed", args)
-	if err != nil {
-		return fmt.Errorf("failed to call require_subject_not_cursed: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // ApplyDestChainConfigUpdates calls the apply_dest_chain_config_updates function on the contract.

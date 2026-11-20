@@ -4,6 +4,7 @@ extern crate alloc;
 
 use super::*;
 use alloc::vec::Vec as HostVec;
+use common_authorization::allowlist::{AllowListEntry, AllowListable};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
 use soroban_sdk::{
@@ -583,21 +584,34 @@ fn test_storage_locations_admin_two_step_transfer() {
 // ============================================================
 
 #[test]
-#[ignore]
 fn test_transfer_ownership() {
     let (env, client, owner, ..) = setup();
 
     let new_owner = Address::generate(&env);
-    let _ = <CommitteeVerifierContract as common_authorization::Ownable>::transfer_ownership(
-        &env, &new_owner,
-    );
-
+    client.transfer_ownership(&new_owner);
     env.as_contract(&client.address, || {
-        assert_eq!(CommitteeVerifierContract::owner(&env).unwrap(), owner); // Pending, not yet accepted
-        let _ =
-            <CommitteeVerifierContract as common_authorization::Ownable>::accept_ownership(&env);
-        assert_eq!(CommitteeVerifierContract::owner(&env).unwrap(), new_owner);
+        assert_eq!(
+            <CommitteeVerifierContract as common_authorization::Ownable>::get_pending_owner(&env),
+            Some(new_owner.clone())
+        );
+        assert_eq!(
+            <CommitteeVerifierContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+
+        <CommitteeVerifierContract as common_authorization::Ownable>::cancel_ownership_transfer(
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            <CommitteeVerifierContract as common_authorization::Ownable>::get_pending_owner(&env),
+            None
+        );
     });
+
+    client.transfer_ownership(&new_owner);
+    client.accept_ownership();
+    assert_eq!(client.owner(), Some(new_owner));
 }
 
 // ============================================================
@@ -719,6 +733,16 @@ fn allowlist_senders(env: &Env, contract: &Address, name: &str) -> HostVec<Addre
         .collect()
 }
 
+fn stored_allowlist_entry(
+    env: &Env,
+    contract: &Address,
+    dest_chain: u64,
+) -> Option<AllowListEntry> {
+    env.as_contract(contract, || {
+        <CommitteeVerifierContract as AllowListable>::get_allowlist_entry(env, dest_chain)
+    })
+}
+
 fn allowlist_update(
     env: &Env,
     dest_chain: u64,
@@ -764,7 +788,7 @@ fn test_allowlist_adds_rejected_when_update_disables_enabled_chain() {
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::InvalidAllowListRequest);
 
     // State unchanged: still enabled, sender not listed.
-    let entry = client.get_allowlist_entry(&dest_chain).unwrap();
+    let entry = stored_allowlist_entry(&env, &client.address, dest_chain).unwrap();
     assert!(entry.allowlist_enabled);
     assert!(!entry.allowlist.contains(&sender));
 }
@@ -912,8 +936,7 @@ fn test_allowlist_disable_existing_entry_updates_flag() {
         &allowlist_update(&env, dest_chain, true, vec![&env], vec![&env]),
     );
     assert!(
-        client
-            .get_allowlist_entry(&dest_chain)
+        stored_allowlist_entry(&env, &client.address, dest_chain)
             .unwrap()
             .allowlist_enabled
     );
@@ -938,14 +961,13 @@ fn test_allowlist_disable_existing_entry_updates_flag() {
         &allowlist_update(&env, dest_chain, false, vec![&env], vec![&env]),
     );
     // `env.events()` reflects only the most recent top-level call, so read it
-    // before the `get_allowlist_entry` call below.
+    // before the direct trait storage read below.
     assert_eq!(
         allowlist_state_changed_flags(&env, &client.address),
         [false]
     );
     assert!(
-        !client
-            .get_allowlist_entry(&dest_chain)
+        !stored_allowlist_entry(&env, &client.address, dest_chain)
             .unwrap()
             .allowlist_enabled
     );
@@ -966,8 +988,7 @@ fn test_allowlist_disable_existing_entry_updates_flag() {
     );
     assert_eq!(allowlist_state_changed_flags(&env, &client.address), [true]);
     assert!(
-        client
-            .get_allowlist_entry(&dest_chain)
+        stored_allowlist_entry(&env, &client.address, dest_chain)
             .unwrap()
             .allowlist_enabled
     );
@@ -1034,7 +1055,7 @@ fn test_allowlist_removal_only_update_applies_on_disabled_chain() {
         ],
     );
 
-    let entry = client.get_allowlist_entry(&dest_chain).unwrap();
+    let entry = stored_allowlist_entry(&env, &client.address, dest_chain).unwrap();
     assert!(!entry.allowlist_enabled);
     assert!(!entry.allowlist.contains(&sender));
 }
@@ -1058,7 +1079,7 @@ fn test_allowlist_disable_never_set_chain_is_noop() {
         ],
     );
 
-    assert!(client.get_allowlist_entry(&12345).is_none());
+    assert!(stored_allowlist_entry(&env, &client.address, 12345).is_none());
 }
 
 #[test]
@@ -1079,8 +1100,7 @@ fn test_allowlist_admin_can_apply_updates() {
         &allowlist_update(&env, dest_chain, true, vec![&env], vec![&env]),
     );
     assert!(
-        client
-            .get_allowlist_entry(&dest_chain)
+        stored_allowlist_entry(&env, &client.address, dest_chain)
             .unwrap()
             .allowlist_enabled
     );
@@ -1091,8 +1111,7 @@ fn test_allowlist_admin_can_apply_updates() {
         &allowlist_update(&env, dest_chain, false, vec![&env], vec![&env]),
     );
     assert!(
-        !client
-            .get_allowlist_entry(&dest_chain)
+        !stored_allowlist_entry(&env, &client.address, dest_chain)
             .unwrap()
             .allowlist_enabled
     );
@@ -1115,7 +1134,7 @@ fn test_apply_allowlist_updates_rejects_unauthorized_caller() {
         &allowlist_update(&env, 12345, true, vec![&env], vec![&env]),
     );
     assert_eq!(r.unwrap_err().unwrap(), CCIPError::CallerNotAuthorized);
-    assert!(client.get_allowlist_entry(&12345).is_none());
+    assert!(stored_allowlist_entry(&env, &client.address, 12345).is_none());
 }
 
 // ============================================================

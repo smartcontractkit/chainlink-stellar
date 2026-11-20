@@ -8,7 +8,6 @@ pub trait McmsInterface {
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
     fn get_root(env: soroban_sdk::Env) -> Result<(soroban_sdk::BytesN<32>, u32), McmsError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
     fn set_root(
         env: soroban_sdk::Env,
         root: soroban_sdk::BytesN<32>,
@@ -18,7 +17,6 @@ pub trait McmsInterface {
         signatures: SignatureVec,
     ) -> Result<(), McmsError>;
     fn get_config(env: soroban_sdk::Env) -> Result<Config, McmsError>;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -38,7 +36,6 @@ pub trait McmsInterface {
         clear_root: bool,
     ) -> Result<(), McmsError>;
     fn get_op_count(env: soroban_sdk::Env) -> Result<u64, McmsError>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn extend_all_ttls(env: soroban_sdk::Env) -> Result<(), McmsError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn chain_network_id(env: soroban_sdk::Env) -> Result<soroban_sdk::BytesN<32>, McmsError>;
@@ -302,27 +299,27 @@ pub enum McmsError {
     InvalidArgsXdr = 60,
     ConfigVersionOverflow = 61,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_NewRoot", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_NewRoot"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NewRootEvent {
     pub root: soroban_sdk::BytesN<32>,
     pub valid_until: u32,
     pub metadata: StellarRootMetadata,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_ConfigSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_ConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     pub config: Config,
     pub config_version: u64,
     pub is_root_cleared: bool,
 }
-#[soroban_sdk::contractevent(topics = ["mcms_OpExecuted", "map"])]
+#[soroban_sdk::contractevent(topics = ["mcms_OpExecuted"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OpExecutedEvent {
     pub nonce: u64,

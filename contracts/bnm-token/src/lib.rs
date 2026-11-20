@@ -156,7 +156,7 @@ impl Initializable for BnmTokenContract {
 /// Owner/minter split (EVM `DEFAULT_ADMIN_ROLE` parity): two-step
 /// `transfer_ownership` → `accept_ownership` moves control to MCMS while the
 /// minters set (the pool) is left untouched.
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for BnmTokenContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -364,6 +364,21 @@ impl token::StellarAssetInterface for BnmTokenContract {
 
 #[contractimpl]
 impl BnmTokenContract {
+    /// Get the current owner, or `None` if not initialized.
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    /// Start a two-step ownership transfer to `new_owner`.
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    /// Accept a pending ownership transfer as the pending owner.
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     /// One-time initialization. Sets the token owner **and** primary minter
     /// (the deployer, who later hands off to the burn-mint pool via the
     /// owner-gated `set_admin`) and the ERC20 metadata. No initial supply is

@@ -421,7 +421,7 @@ var ForwarderErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -434,7 +434,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // ConfigSetEvent represents the ConfigSetEvent event.
-// Topics: [forwarder_ConfigSet map]
+// Topics: [forwarder_ConfigSet]
 type ConfigSetEvent struct {
 	DonId         uint32
 	ConfigVersion uint32
@@ -449,7 +449,7 @@ type ConfigSetEvent struct {
 const ConfigSetEventTopic = "forwarder_ConfigSet"
 
 // RelayerAddedEvent represents the RelayerAddedEvent event.
-// Topics: [forwarder_RelayerAdded map]
+// Topics: [forwarder_RelayerAdded]
 type RelayerAddedEvent struct {
 	Relayer string
 	// Event metadata
@@ -461,7 +461,7 @@ type RelayerAddedEvent struct {
 const RelayerAddedEventTopic = "forwarder_RelayerAdded"
 
 // ForwarderAddedEvent represents the ForwarderAddedEvent event.
-// Topics: [forwarder_ForwarderAdded map]
+// Topics: [forwarder_ForwarderAdded]
 type ForwarderAddedEvent struct {
 	Forwarder string
 	// Event metadata
@@ -473,7 +473,7 @@ type ForwarderAddedEvent struct {
 const ForwarderAddedEventTopic = "forwarder_ForwarderAdded"
 
 // RelayerRemovedEvent represents the RelayerRemovedEvent event.
-// Topics: [forwarder_RelayerRemoved map]
+// Topics: [forwarder_RelayerRemoved]
 type RelayerRemovedEvent struct {
 	Relayer string
 	// Event metadata
@@ -485,7 +485,7 @@ type RelayerRemovedEvent struct {
 const RelayerRemovedEventTopic = "forwarder_RelayerRemoved"
 
 // RelayProcessedEvent represents the RelayProcessedEvent event.
-// Topics: [forwarder_RelayProcessed single-value]
+// Topics: [forwarder_RelayProcessed]
 type RelayProcessedEvent struct {
 	Receiver    string
 	ExecutionId [32]byte
@@ -500,7 +500,7 @@ type RelayProcessedEvent struct {
 const RelayProcessedEventTopic = "forwarder_RelayProcessed"
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
-// Topics: [forwarder_ReportProcessed single-value]
+// Topics: [forwarder_ReportProcessed]
 type ReportProcessedEvent struct {
 	Receiver            string
 	WorkflowExecutionId [32]byte
@@ -515,7 +515,7 @@ type ReportProcessedEvent struct {
 const ReportProcessedEventTopic = "forwarder_ReportProcessed"
 
 // ForwarderRemovedEvent represents the ForwarderRemovedEvent event.
-// Topics: [forwarder_ForwarderRemoved map]
+// Topics: [forwarder_ForwarderRemoved]
 type ForwarderRemovedEvent struct {
 	Forwarder string
 	// Event metadata

@@ -59,7 +59,7 @@ impl Initializable for VersionedVerifierResolverContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for VersionedVerifierResolverContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -70,6 +70,18 @@ impl Upgradeable for VersionedVerifierResolverContract {}
 
 #[contractimpl]
 impl VersionedVerifierResolverContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     // ========================================
     // Initialization
     // ========================================

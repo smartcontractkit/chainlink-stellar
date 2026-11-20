@@ -36,7 +36,7 @@ fn test_initialize() {
     client.initialize(&owner, &rmn);
 
     env.as_contract(&client.address, || {
-        assert_eq!(RmnProxyContract::owner(&env).unwrap(), owner);
+        assert_eq!(<RmnProxyContract as Ownable>::owner(&env).unwrap(), owner);
     });
     assert_eq!(client.get_rmn(), rmn);
 }
@@ -227,13 +227,16 @@ fn test_transfer_ownership_two_step() {
 
     env.as_contract(&client.address, || {
         // Step 1: Initiate transfer
-        let _ = RmnProxyContract::transfer_ownership(&env, &new_owner);
+        let _ = <RmnProxyContract as Ownable>::transfer_ownership(&env, &new_owner);
         // Owner should still be the original owner until accepted
-        assert_eq!(RmnProxyContract::owner(&env).unwrap(), owner);
+        assert_eq!(<RmnProxyContract as Ownable>::owner(&env).unwrap(), owner);
         // Step 2: Accept transfer
-        let _ = RmnProxyContract::accept_ownership(&env);
+        let _ = <RmnProxyContract as Ownable>::accept_ownership(&env);
         // Now the new owner should be set
-        assert_eq!(RmnProxyContract::owner(&env).unwrap(), new_owner);
+        assert_eq!(
+            <RmnProxyContract as Ownable>::owner(&env).unwrap(),
+            new_owner
+        );
     });
 }
 

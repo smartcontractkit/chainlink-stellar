@@ -92,13 +92,7 @@ func TestCommitteeVerifier(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to set allowlist: %v", err)
 		}
-		t.Log("Allowlist set successfully")
-
-		allowlist, err := client.GetAllowlistEntry(ctx, 1)
-		if err != nil {
-			t.Fatalf("Failed to get allowlist: %v", err)
-		}
-		t.Logf("Allowlist: %v", allowlist)
+		t.Log("Allowlist set successfully; enforcement is exercised through forward_to_verifier below")
 	})
 
 	t.Run("verify owner", func(t *testing.T) {
@@ -255,25 +249,19 @@ func TestCommitteeVerifier(t *testing.T) {
 		t.Logf("ForwardToVerifier returned version tag successfully")
 	})
 
-	t.Run("is in allowlist", func(t *testing.T) {
-		mockedAllowlistedSender := helpers.GenerateMockContractID(t, deployerKP.Address(), "allowlisted-sender")
-		inList, err := client.IsInAllowlist(ctx, 1, mockedAllowlistedSender)
-		if err != nil {
-			t.Fatalf("Failed to check allowlist: %v", err)
-		}
-		if !inList {
-			t.Error("Expected allowlisted sender to be in allowlist")
+	t.Run("forward to verifier enforces allowlist", func(t *testing.T) {
+		var messageID [32]byte
+		mockFeeToken := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-token")
+		allowlistedSender := helpers.GenerateMockContractID(t, deployerKP.Address(), "allowlisted-sender")
+		if _, err := client.ForwardToVerifier(ctx, 1, allowlistedSender, messageID, mockFeeToken, big.NewInt(0), []byte{}); err != nil {
+			t.Fatalf("Allowlisted sender was rejected: %v", err)
 		}
 
-		randomAddr := helpers.GenerateMockContractID(t, deployerKP.Address(), "not-allowlisted")
-		inList, err = client.IsInAllowlist(ctx, 1, randomAddr)
-		if err != nil {
-			t.Fatalf("Failed to check allowlist for non-allowlisted: %v", err)
+		nonAllowlistedSender := helpers.GenerateMockContractID(t, deployerKP.Address(), "not-allowlisted")
+		if _, err := client.ForwardToVerifier(ctx, 1, nonAllowlistedSender, messageID, mockFeeToken, big.NewInt(0), []byte{}); err == nil {
+			t.Fatal("Expected non-allowlisted sender to be rejected")
 		}
-		if inList {
-			t.Error("Expected non-allowlisted sender to not be in allowlist")
-		}
-		t.Log("Allowlist checks passed")
+		t.Log("Allowlist accepted the listed sender and rejected the non-listed sender")
 	})
 
 	t.Run("withdraw fee tokens", func(t *testing.T) {

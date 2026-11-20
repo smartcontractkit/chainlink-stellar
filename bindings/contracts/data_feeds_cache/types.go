@@ -267,7 +267,7 @@ var CacheErrorMessage = map[int]string{
 }
 
 // FeedUpdated represents the FeedUpdated event.
-// Topics: [FeedUpdated map]
+// Topics: [FeedUpdated]
 type FeedUpdated struct {
 	DataId    [32]byte
 	RoundId   uint64
@@ -284,7 +284,7 @@ type FeedUpdated struct {
 const FeedUpdatedTopic = "FeedUpdated"
 
 // StaleReport represents the StaleReport event.
-// Topics: [StaleReport map]
+// Topics: [StaleReport]
 type StaleReport struct {
 	DataId   [32]byte
 	ReportTs uint64
@@ -298,7 +298,7 @@ type StaleReport struct {
 const StaleReportTopic = "StaleReport"
 
 // FeedConfigSet represents the FeedConfigSet event.
-// Topics: [FeedConfigSet map]
+// Topics: [FeedConfigSet]
 type FeedConfigSet struct {
 	DataId              [32]byte
 	Decimals            uint32
@@ -313,7 +313,7 @@ type FeedConfigSet struct {
 const FeedConfigSetTopic = "FeedConfigSet"
 
 // FeedFrozenSet represents the FeedFrozenSet event.
-// Topics: [FeedFrozenSet map]
+// Topics: [FeedFrozenSet]
 type FeedFrozenSet struct {
 	DataId [32]byte
 	Frozen bool
@@ -326,7 +326,7 @@ type FeedFrozenSet struct {
 const FeedFrozenSetTopic = "FeedFrozenSet"
 
 // FeedAdminAdded represents the FeedAdminAdded event.
-// Topics: [FeedAdminAdded map]
+// Topics: [FeedAdminAdded]
 type FeedAdminAdded struct {
 	Admin string
 	// Event metadata
@@ -338,7 +338,7 @@ type FeedAdminAdded struct {
 const FeedAdminAddedTopic = "FeedAdminAdded"
 
 // FeedAdminRemoved represents the FeedAdminRemoved event.
-// Topics: [FeedAdminRemoved map]
+// Topics: [FeedAdminRemoved]
 type FeedAdminRemoved struct {
 	Admin string
 	// Event metadata
@@ -350,7 +350,7 @@ type FeedAdminRemoved struct {
 const FeedAdminRemovedTopic = "FeedAdminRemoved"
 
 // FeedConfigRemoved represents the FeedConfigRemoved event.
-// Topics: [FeedConfigRemoved map]
+// Topics: [FeedConfigRemoved]
 type FeedConfigRemoved struct {
 	DataId [32]byte
 	// Event metadata
@@ -362,7 +362,7 @@ type FeedConfigRemoved struct {
 const FeedConfigRemovedTopic = "FeedConfigRemoved"
 
 // InvalidUpdatePermission represents the InvalidUpdatePermission event.
-// Topics: [InvalidUpdatePermission map]
+// Topics: [InvalidUpdatePermission]
 type InvalidUpdatePermission struct {
 	DataId        [32]byte
 	Sender        string
@@ -377,7 +377,7 @@ type InvalidUpdatePermission struct {
 const InvalidUpdatePermissionTopic = "InvalidUpdatePermission"
 
 // Upgraded represents the Upgraded event.
-// Topics: [Upgraded map]
+// Topics: [Upgraded]
 type Upgraded struct {
 	NewWasmHash [32]byte
 	// Event metadata
@@ -389,7 +389,7 @@ type Upgraded struct {
 const UpgradedTopic = "Upgraded"
 
 // TokenRecovered represents the TokenRecovered event.
-// Topics: [TokenRecovered map]
+// Topics: [TokenRecovered]
 type TokenRecovered struct {
 	Token  string
 	To     string
@@ -403,7 +403,7 @@ type TokenRecovered struct {
 const TokenRecoveredTopic = "TokenRecovered"
 
 // OwnershipTransfer represents the OwnershipTransfer event.
-// Topics: [ownership_transfer map]
+// Topics: [ownership_transfer]
 type OwnershipTransfer struct {
 	OldOwner        string
 	NewOwner        string
@@ -417,7 +417,7 @@ type OwnershipTransfer struct {
 const OwnershipTransferTopic = "ownership_transfer"
 
 // OwnershipRenounced represents the OwnershipRenounced event.
-// Topics: [ownership_renounced map]
+// Topics: [ownership_renounced]
 type OwnershipRenounced struct {
 	OldOwner string
 	// Event metadata
@@ -429,7 +429,7 @@ type OwnershipRenounced struct {
 const OwnershipRenouncedTopic = "ownership_renounced"
 
 // OwnershipTransferCompleted represents the OwnershipTransferCompleted event.
-// Topics: [ownership_transfer_completed map]
+// Topics: [ownership_transfer_completed]
 type OwnershipTransferCompleted struct {
 	NewOwner string
 	// Event metadata

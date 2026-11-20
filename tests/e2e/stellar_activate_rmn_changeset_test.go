@@ -97,11 +97,6 @@ func TestStellarActivateRMNChangeset(t *testing.T) {
 	admins, err := rmnClient.GetCurseAdmins(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{fastStack.TimelockID}, admins, "only the fast-curse timelock is a curse admin")
-	pendingOwner, err := rmnClient.GetPendingOwner(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, pendingOwner)
-	require.Equal(t, govStack.TimelockID, *pendingOwner)
-
 	require.Len(t, out.MCMSTimelockProposals, 1)
 	proposal := out.MCMSTimelockProposals[0]
 	cs64 := mcmstypes.ChainSelector(sel)

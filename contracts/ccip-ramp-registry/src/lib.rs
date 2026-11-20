@@ -40,7 +40,7 @@ impl Initializable for RampRegistryContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for RampRegistryContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -51,6 +51,18 @@ impl Upgradeable for RampRegistryContract {}
 
 #[contractimpl]
 impl RampRegistryContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     /// Initialize the registry. Owner-only mutations mirror the Router ramp admin API.
     pub fn initialize(env: Env, owner: Address) -> Result<(), CCIPError> {
         <Self as Initializable>::require_not_initialized(&env)?;

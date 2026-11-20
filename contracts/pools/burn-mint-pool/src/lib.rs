@@ -32,7 +32,7 @@ impl Initializable for BurnMintTokenPoolContract {
     const INITIALIZED: Symbol = INITIALIZED;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for BurnMintTokenPoolContract {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -46,6 +46,18 @@ impl BaseTokenPool for BurnMintTokenPoolContract {}
 
 #[contractimpl]
 impl BurnMintTokenPoolContract {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     // ------------------------------------------------------------------
     // Initialization
     // ------------------------------------------------------------------

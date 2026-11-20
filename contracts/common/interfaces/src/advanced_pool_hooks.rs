@@ -6,8 +6,6 @@ pub trait AdvancedPoolHooksInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn is_owner(env: soroban_sdk::Env, addr: soroban_sdk::Address) -> bool;
-    fn init_owner(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn initialize(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
@@ -17,7 +15,6 @@ pub trait AdvancedPoolHooksInterface {
         policy_engine: Option<soroban_sdk::Address>,
     ) -> Result<(), CCIPError>;
     fn get_allowlist(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
-    fn require_owner(env: soroban_sdk::Env) -> Result<soroban_sdk::Address, CCIPError>;
     fn get_ccv_config(env: soroban_sdk::Env, remote_chain_selector: u64) -> Option<CCVConfig>;
     fn preflight_check(
         env: soroban_sdk::Env,
@@ -40,7 +37,6 @@ pub trait AdvancedPoolHooksInterface {
         requested_finality: u32,
     ) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
-    fn get_pending_owner(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_policy_engine(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn get_required_ccvs(
         env: soroban_sdk::Env,
@@ -77,7 +73,6 @@ pub trait AdvancedPoolHooksInterface {
         env: soroban_sdk::Env,
         configs: soroban_sdk::Vec<CCVConfigArg>,
     ) -> Result<(), CCIPError>;
-    fn cancel_ownership_transfer(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn get_all_authorized_callers(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn apply_authorized_callers_updates(
         env: soroban_sdk::Env,
@@ -272,49 +267,49 @@ pub enum CCIPError {
     UnsupportedSelector = 807,
     ZeroAddressNotAllowed = 808,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["aph_AllowListAdd", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_AllowListAdd"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListAddEvent {
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["aph_AllowListRemove", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_AllowListRemove"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AllowListRemoveEvent {
     pub sender: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["aph_CCVConfigUpdated", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_CCVConfigUpdated"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CCVConfigUpdatedEvent {
     pub remote_chain_selector: u64,
     pub config: CCVConfig,
 }
-#[soroban_sdk::contractevent(topics = ["aph_ThresholdAmountSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_ThresholdAmountSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ThresholdAmountSetEvent {
     pub threshold_amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineAttached", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineAttached"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PolicyEngineAttachedEvent {
     pub policy_engine: Option<soroban_sdk::Address>,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerAdded", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineDetachFailed", "map"])]
+#[soroban_sdk::contractevent(topics = ["aph_PolicyEngineDetachFailed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PolicyEngineDetachFailedEvent {
     pub policy_engine: soroban_sdk::Address,

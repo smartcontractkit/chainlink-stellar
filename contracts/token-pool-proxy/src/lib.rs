@@ -110,7 +110,7 @@ impl Initializable for TokenPoolProxy {
     const INITIALIZED: Symbol = INIT;
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for TokenPoolProxy {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -121,6 +121,18 @@ impl Upgradeable for TokenPoolProxy {}
 
 #[contractimpl]
 impl TokenPoolProxy {
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
     /// One-time setup. `owner` governs the allowlist and SAC admin functions;
     /// `asset` is the SAC this proxy administers.
     ///

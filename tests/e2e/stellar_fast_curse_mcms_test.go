@@ -138,11 +138,6 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	require.Equal(t, fastStack.TimelockID, admins[0])
 	require.NotEqual(t, govStack.TimelockID, admins[0], "governance timelock must never be listed as curse admin")
 
-	pendingOwner, err := rmnClient.GetPendingOwner(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, pendingOwner)
-	require.Equal(t, govStack.TimelockID, *pendingOwner, "ownership must be pending the governance timelock")
-
 	// ④ Governed accept_ownership completes the transfer (schedule path, min delay).
 	acceptArgs, err := helpers.EncodeTimelockCallArgs(nil)
 	require.NoError(t, err)

@@ -201,7 +201,7 @@ var TimelockErrorMessage = map[int]string{
 }
 
 // UpgradedEvent represents the UpgradedEvent event.
-// Topics: [tl_Upgraded map]
+// Topics: [tl_Upgraded]
 type UpgradedEvent struct {
 	NewWasmHash [32]byte
 	// Event metadata
@@ -213,7 +213,7 @@ type UpgradedEvent struct {
 const UpgradedEventTopic = "tl_Upgraded"
 
 // CancelledEvent represents the CancelledEvent event.
-// Topics: [tl_Cancelled map]
+// Topics: [tl_Cancelled]
 type CancelledEvent struct {
 	Id [32]byte
 	// Event metadata
@@ -225,7 +225,7 @@ type CancelledEvent struct {
 const CancelledEventTopic = "tl_Cancelled"
 
 // RoleGrantedEvent represents the RoleGrantedEvent event.
-// Topics: [tl_RoleGranted map]
+// Topics: [tl_RoleGranted]
 type RoleGrantedEvent struct {
 	Role    string
 	Account string
@@ -239,7 +239,7 @@ type RoleGrantedEvent struct {
 const RoleGrantedEventTopic = "tl_RoleGranted"
 
 // RoleRevokedEvent represents the RoleRevokedEvent event.
-// Topics: [tl_RoleRevoked map]
+// Topics: [tl_RoleRevoked]
 type RoleRevokedEvent struct {
 	Role    string
 	Account string
@@ -253,7 +253,7 @@ type RoleRevokedEvent struct {
 const RoleRevokedEventTopic = "tl_RoleRevoked"
 
 // CallExecutedEvent represents the CallExecutedEvent event.
-// Topics: [tl_CallExecuted map]
+// Topics: [tl_CallExecuted]
 type CallExecutedEvent struct {
 	Id       [32]byte
 	Index    uint32
@@ -269,7 +269,7 @@ type CallExecutedEvent struct {
 const CallExecutedEventTopic = "tl_CallExecuted"
 
 // CallScheduledEvent represents the CallScheduledEvent event.
-// Topics: [tl_CallScheduled map]
+// Topics: [tl_CallScheduled]
 type CallScheduledEvent struct {
 	Id          [32]byte
 	Index       uint32
@@ -288,7 +288,7 @@ type CallScheduledEvent struct {
 const CallScheduledEventTopic = "tl_CallScheduled"
 
 // MinDelayChangeEvent represents the MinDelayChangeEvent event.
-// Topics: [tl_MinDelay map]
+// Topics: [tl_MinDelay]
 type MinDelayChangeEvent struct {
 	OldDuration uint64
 	NewDuration uint64
@@ -301,7 +301,7 @@ type MinDelayChangeEvent struct {
 const MinDelayChangeEventTopic = "tl_MinDelay"
 
 // FunctionBlockedEvent represents the FunctionBlockedEvent event.
-// Topics: [tl_FnBlocked map]
+// Topics: [tl_FnBlocked]
 type FunctionBlockedEvent struct {
 	Target   string
 	Function string
@@ -314,7 +314,7 @@ type FunctionBlockedEvent struct {
 const FunctionBlockedEventTopic = "tl_FnBlocked"
 
 // FunctionUnblockedEvent represents the FunctionUnblockedEvent event.
-// Topics: [tl_FnUnblocked map]
+// Topics: [tl_FnUnblocked]
 type FunctionUnblockedEvent struct {
 	Target   string
 	Function string
@@ -327,7 +327,7 @@ type FunctionUnblockedEvent struct {
 const FunctionUnblockedEventTopic = "tl_FnUnblocked"
 
 // BypasserCallExecutedEvent represents the BypasserCallExecutedEvent event.
-// Topics: [tl_BypCallExec map]
+// Topics: [tl_BypCallExec]
 type BypasserCallExecutedEvent struct {
 	Index    uint32
 	Target   string

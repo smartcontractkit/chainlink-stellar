@@ -121,7 +121,7 @@ var MockForwarderErrorMessage = map[int]string{
 }
 
 // ReportProcessedEvent represents the ReportProcessedEvent event.
-// Topics: [forwarder_ReportProcessed single-value]
+// Topics: [forwarder_ReportProcessed]
 type ReportProcessedEvent struct {
 	Receiver            string
 	WorkflowExecutionId [32]byte

@@ -192,11 +192,6 @@ func TestStellarToEVMTokenTransferRateLimitViaMCMS(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		pending, err := poolClient.GetPendingOwner(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, pending)
-		require.Equal(t, gov.TimelockID, *pending)
-
 		acceptArgs, err := helpers.EncodeTimelockCallArgs(nil)
 		require.NoError(t, err)
 

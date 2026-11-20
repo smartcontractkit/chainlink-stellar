@@ -250,13 +250,13 @@ pub enum ForwarderError {
     CannotRemoveSelf = 20,
     UnauthorizedRelayer = 21,
 }
-#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart", "map"])]
+#[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferStartedEvent {
     pub previous_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ConfigSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConfigSetEvent {
     #[topic]
@@ -266,22 +266,22 @@ pub struct ConfigSetEvent {
     pub f: u32,
     pub signers: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayerAdded", "map"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayerAddedEvent {
     pub relayer: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded", "map"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderAddedEvent {
     pub forwarder: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayerRemoved", "map"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayerRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayerRemovedEvent {
     pub relayer: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_RelayProcessed", "single-value"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_RelayProcessed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RelayProcessedEvent {
     #[topic]
@@ -292,7 +292,7 @@ pub struct RelayProcessedEvent {
     pub payload_hash: soroban_sdk::BytesN<32>,
     pub state: TransmissionState,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed", "single-value"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ReportProcessed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ReportProcessedEvent {
     #[topic]
@@ -303,7 +303,7 @@ pub struct ReportProcessedEvent {
     pub report_id: soroban_sdk::BytesN<2>,
     pub success: bool,
 }
-#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved", "map"])]
+#[soroban_sdk::contractevent(topics = ["forwarder_ForwarderRemoved"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ForwarderRemovedEvent {
     pub forwarder: soroban_sdk::Address,

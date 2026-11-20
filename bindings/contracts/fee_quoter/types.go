@@ -1148,7 +1148,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // AuthorizedCallerAddedEvent represents the AuthorizedCallerAddedEvent event.
-// Topics: [auth_CallerAdded map]
+// Topics: [auth_CallerAdded]
 type AuthorizedCallerAddedEvent struct {
 	Caller string
 	// Event metadata
@@ -1160,7 +1160,7 @@ type AuthorizedCallerAddedEvent struct {
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -1173,7 +1173,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // FeeTokenAddedEvent represents the FeeTokenAddedEvent event.
-// Topics: [fq_FeeTokenAdded map]
+// Topics: [fq_FeeTokenAdded]
 type FeeTokenAddedEvent struct {
 	FeeToken string
 	// Event metadata
@@ -1185,7 +1185,7 @@ type FeeTokenAddedEvent struct {
 const FeeTokenAddedEventTopic = "fq_FeeTokenAdded"
 
 // DestChainAddedEvent represents the DestChainAddedEvent event.
-// Topics: [fq_DestChainAdded map]
+// Topics: [fq_DestChainAdded]
 type DestChainAddedEvent struct {
 	DestChainSelector uint64
 	IsEnabled         bool
@@ -1199,7 +1199,7 @@ type DestChainAddedEvent struct {
 const DestChainAddedEventTopic = "fq_DestChainAdded"
 
 // FeeTokenRemovedEvent represents the FeeTokenRemovedEvent event.
-// Topics: [fq_FeeTokenRemoved map]
+// Topics: [fq_FeeTokenRemoved]
 type FeeTokenRemovedEvent struct {
 	FeeToken string
 	// Event metadata
@@ -1211,7 +1211,7 @@ type FeeTokenRemovedEvent struct {
 const FeeTokenRemovedEventTopic = "fq_FeeTokenRemoved"
 
 // UsdPerTokenUpdatedEvent represents the UsdPerTokenUpdatedEvent event.
-// Topics: [fq_UsdPerTokenUpdated map]
+// Topics: [fq_UsdPerTokenUpdated]
 type UsdPerTokenUpdatedEvent struct {
 	Token     string
 	Value     scval.U128
@@ -1225,7 +1225,7 @@ type UsdPerTokenUpdatedEvent struct {
 const UsdPerTokenUpdatedEventTopic = "fq_UsdPerTokenUpdated"
 
 // UsdPerUnitGasUpdatedEvent represents the UsdPerUnitGasUpdatedEvent event.
-// Topics: [fq_UsdPerUnitGasUpdated map]
+// Topics: [fq_UsdPerUnitGasUpdated]
 type UsdPerUnitGasUpdatedEvent struct {
 	DestChainSelector uint64
 	Value             scval.U128
@@ -1239,7 +1239,7 @@ type UsdPerUnitGasUpdatedEvent struct {
 const UsdPerUnitGasUpdatedEventTopic = "fq_UsdPerUnitGasUpdated"
 
 // TokenFeeConfigDeletedEvent represents the TokenFeeConfigDeletedEvent event.
-// Topics: [fq_TknTransferFeeDeleted map]
+// Topics: [fq_TknTransferFeeDeleted]
 type TokenFeeConfigDeletedEvent struct {
 	DestChainSelector uint64
 	Token             string
@@ -1252,7 +1252,7 @@ type TokenFeeConfigDeletedEvent struct {
 const TokenFeeConfigDeletedEventTopic = "fq_TknTransferFeeDeleted"
 
 // TokenFeeConfigUpdatedEvent represents the TokenFeeConfigUpdatedEvent event.
-// Topics: [fq_TknTransferFeeUpdated map]
+// Topics: [fq_TknTransferFeeUpdated]
 type TokenFeeConfigUpdatedEvent struct {
 	DestChainSelector uint64
 	Token             string
@@ -1268,7 +1268,7 @@ type TokenFeeConfigUpdatedEvent struct {
 const TokenFeeConfigUpdatedEventTopic = "fq_TknTransferFeeUpdated"
 
 // DestChainConfigUpdatedEvent represents the DestChainConfigUpdatedEvent event.
-// Topics: [fq_DestChainConfigUpdated map]
+// Topics: [fq_DestChainConfigUpdated]
 type DestChainConfigUpdatedEvent struct {
 	DestChainSelector uint64
 	IsEnabled         bool

@@ -159,14 +159,6 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	if err := reg.TransferOwnership(ctx, timelockID); err != nil {
 		t.Fatalf("TransferOwnership to timelock: %v", err)
 	}
-	pending, err := reg.GetPendingOwner(ctx)
-	if err != nil {
-		t.Fatalf("GetPendingOwner: %v", err)
-	}
-	if pending == nil || *pending != timelockID {
-		t.Fatalf("pending owner = %v, want timelock %s", pending, timelockID)
-	}
-
 	acceptArgs, err := helpers.EncodeTimelockCallArgs(nil)
 	if err != nil {
 		t.Fatalf("encode accept_ownership args: %v", err)

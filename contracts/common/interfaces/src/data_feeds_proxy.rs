@@ -65,44 +65,44 @@ pub enum ProxyReadError {
     InvalidDecimals = 51,
     RoundsToZero = 52,
 }
-#[soroban_sdk::contractevent(topics = ["CacheSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["CacheSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CacheSet {
     pub old_cache: soroban_sdk::Address,
     pub new_cache: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["MinDecimalsSet", "map"])]
+#[soroban_sdk::contractevent(topics = ["MinDecimalsSet"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MinDecimalsSet {
     #[topic]
     pub data_id: soroban_sdk::BytesN<32>,
     pub min: u32,
 }
-#[soroban_sdk::contractevent(topics = ["Upgraded", "map"])]
+#[soroban_sdk::contractevent(topics = ["Upgraded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Upgraded {
     pub new_wasm_hash: soroban_sdk::BytesN<32>,
 }
-#[soroban_sdk::contractevent(topics = ["TokenRecovered", "map"])]
+#[soroban_sdk::contractevent(topics = ["TokenRecovered"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TokenRecovered {
     pub token: soroban_sdk::Address,
     pub to: soroban_sdk::Address,
     pub amount: i128,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer", "map"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransfer {
     pub old_owner: soroban_sdk::Address,
     pub new_owner: soroban_sdk::Address,
     pub live_until_ledger: u32,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_renounced", "map"])]
+#[soroban_sdk::contractevent(topics = ["ownership_renounced"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipRenounced {
     pub old_owner: soroban_sdk::Address,
 }
-#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed", "map"])]
+#[soroban_sdk::contractevent(topics = ["ownership_transfer_completed"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OwnershipTransferCompleted {
     pub new_owner: soroban_sdk::Address,

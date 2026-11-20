@@ -11,7 +11,10 @@ use ccvs_versioned_verifier_resolver::{
     InboundImplementationUpdate, VersionedVerifierResolverContract,
     VersionedVerifierResolverContractClient,
 };
-use common_helpers::finality_codec::{WAIT_FOR_FINALITY_FLAG, WAIT_FOR_SAFE_FLAG};
+use common_helpers::{
+    curse_checkable::CurseCheckable,
+    finality_codec::{WAIT_FOR_FINALITY_FLAG, WAIT_FOR_SAFE_FLAG},
+};
 use common_interfaces::ccip_receiver::CcvsAndFinalityConfig;
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
@@ -78,16 +81,49 @@ fn test_double_initialize_fails() {
 
 #[test]
 fn test_curse_checkable_init_rejects_reinit() {
-    // `init` is exported via contracttrait: re-pointing the RMN proxy post-initialize
-    // must fail, or any account could install an always-uncursed RMN and disable every
-    // curse check.
+    // Re-pointing the RMN proxy post-initialize must fail even for direct/internal
+    // trait calls, or an always-uncursed RMN could disable every curse check.
     let (env, owner, client) = setup_env();
     let static_config = default_static_config(&env);
     client.initialize(&owner, &static_config);
 
     let attacker_rmn = Address::generate(&env);
-    let r = client.try_init(&attacker_rmn);
-    assert_eq!(r.unwrap_err().unwrap(), CCIPError::AlreadyInitialized);
+    env.as_contract(&client.address, || {
+        let r = <OffRampContract as CurseCheckable>::init(&env, &attacker_rmn);
+        assert_eq!(r.unwrap_err(), CCIPError::AlreadyInitialized);
+    });
+}
+
+#[test]
+fn test_pending_ownership_and_cancel_via_trait() {
+    let (env, owner, client) = setup_env();
+    client.initialize(&owner, &default_static_config(&env));
+
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&new_owner);
+
+    env.as_contract(&client.address, || {
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            Some(new_owner.clone())
+        );
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+
+        <OffRampContract as common_authorization::Ownable>::cancel_ownership_transfer(&env)
+            .unwrap();
+
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::get_pending_owner(&env),
+            None
+        );
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+    });
 }
 
 #[test]

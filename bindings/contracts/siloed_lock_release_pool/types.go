@@ -1087,7 +1087,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -1100,7 +1100,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // ChainRemovedEvent represents the ChainRemovedEvent event.
-// Topics: [pool_ChainRemoved map]
+// Topics: [pool_ChainRemoved]
 type ChainRemovedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1112,7 +1112,7 @@ type ChainRemovedEvent struct {
 const ChainRemovedEventTopic = "pool_ChainRemoved"
 
 // ChainConfiguredEvent represents the ChainConfiguredEvent event.
-// Topics: [pool_ChainConfigured map]
+// Topics: [pool_ChainConfigured]
 type ChainConfiguredEvent struct {
 	RemoteChainSelector       uint64
 	RemotePoolAddresses       [][]byte
@@ -1128,7 +1128,7 @@ type ChainConfiguredEvent struct {
 const ChainConfiguredEventTopic = "pool_ChainConfigured"
 
 // RemotePoolAddedEvent represents the RemotePoolAddedEvent event.
-// Topics: [pool_RemotePoolAdded map]
+// Topics: [pool_RemotePoolAdded]
 type RemotePoolAddedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1141,7 +1141,7 @@ type RemotePoolAddedEvent struct {
 const RemotePoolAddedEventTopic = "pool_RemotePoolAdded"
 
 // FinalityConfigSetEvent represents the FinalityConfigSetEvent event.
-// Topics: [pool_FinalityConfigSet map]
+// Topics: [pool_FinalityConfigSet]
 type FinalityConfigSetEvent struct {
 	AllowedFinality uint32
 	// Event metadata
@@ -1153,7 +1153,7 @@ type FinalityConfigSetEvent struct {
 const FinalityConfigSetEventTopic = "pool_FinalityConfigSet"
 
 // LockBoxConfiguredEvent represents the LockBoxConfiguredEvent event.
-// Topics: [pool_LockBoxConfigured map]
+// Topics: [pool_LockBoxConfigured]
 type LockBoxConfiguredEvent struct {
 	RemoteChainSelector uint64
 	LockBox             string
@@ -1166,7 +1166,7 @@ type LockBoxConfiguredEvent struct {
 const LockBoxConfiguredEventTopic = "pool_LockBoxConfigured"
 
 // RemotePoolRemovedEvent represents the RemotePoolRemovedEvent event.
-// Topics: [pool_RemotePoolRemoved map]
+// Topics: [pool_RemotePoolRemoved]
 type RemotePoolRemovedEvent struct {
 	RemoteChainSelector uint64
 	RemotePoolAddress   []byte
@@ -1179,7 +1179,7 @@ type RemotePoolRemovedEvent struct {
 const RemotePoolRemovedEventTopic = "pool_RemotePoolRemoved"
 
 // FtfInboundConsumedEvent represents the FtfInboundConsumedEvent event.
-// Topics: [pool_FtfInboundConsumed map]
+// Topics: [pool_FtfInboundConsumed]
 type FtfInboundConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1192,7 +1192,7 @@ type FtfInboundConsumedEvent struct {
 const FtfInboundConsumedEventTopic = "pool_FtfInboundConsumed"
 
 // TokenFeeCfgDeletedEvent represents the TokenFeeCfgDeletedEvent event.
-// Topics: [pool_TokenFeeCfgDeleted map]
+// Topics: [pool_TokenFeeCfgDeleted]
 type TokenFeeCfgDeletedEvent struct {
 	RemoteChainSelector uint64
 	// Event metadata
@@ -1204,7 +1204,7 @@ type TokenFeeCfgDeletedEvent struct {
 const TokenFeeCfgDeletedEventTopic = "pool_TokenFeeCfgDeleted"
 
 // TokenFeeCfgUpdatedEvent represents the TokenFeeCfgUpdatedEvent event.
-// Topics: [pool_TokenFeeCfgUpdated map]
+// Topics: [pool_TokenFeeCfgUpdated]
 type TokenFeeCfgUpdatedEvent struct {
 	RemoteChainSelector uint64
 	Config              TokenTransferFeeConfig
@@ -1217,7 +1217,7 @@ type TokenFeeCfgUpdatedEvent struct {
 const TokenFeeCfgUpdatedEventTopic = "pool_TokenFeeCfgUpdated"
 
 // FtfOutboundConsumedEvent represents the FtfOutboundConsumedEvent event.
-// Topics: [pool_FtfOutboundConsumed map]
+// Topics: [pool_FtfOutboundConsumed]
 type FtfOutboundConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1230,7 +1230,7 @@ type FtfOutboundConsumedEvent struct {
 const FtfOutboundConsumedEventTopic = "pool_FtfOutboundConsumed"
 
 // RateLimitConfiguredEvent represents the RateLimitConfiguredEvent event.
-// Topics: [pool_RateLimitConfigured map]
+// Topics: [pool_RateLimitConfigured]
 type RateLimitConfiguredEvent struct {
 	RemoteChainSelector uint64
 	FastFinality        bool
@@ -1245,7 +1245,7 @@ type RateLimitConfiguredEvent struct {
 const RateLimitConfiguredEventTopic = "pool_RateLimitConfigured"
 
 // AdvancedPoolHooksUpdatedEvent represents the AdvancedPoolHooksUpdatedEvent event.
-// Topics: [pool_HooksUpdated map]
+// Topics: [pool_HooksUpdated]
 type AdvancedPoolHooksUpdatedEvent struct {
 	OldHooks *string
 	NewHooks *string
@@ -1258,7 +1258,7 @@ type AdvancedPoolHooksUpdatedEvent struct {
 const AdvancedPoolHooksUpdatedEventTopic = "pool_HooksUpdated"
 
 // InboundRateLimitConsumedEvent represents the InboundRateLimitConsumedEvent event.
-// Topics: [pool_InboundRateLimitConsumed map]
+// Topics: [pool_InboundRateLimitConsumed]
 type InboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1271,7 +1271,7 @@ type InboundRateLimitConsumedEvent struct {
 const InboundRateLimitConsumedEventTopic = "pool_InboundRateLimitConsumed"
 
 // OutboundRateLimitConsumedEvent represents the OutboundRateLimitConsumedEvent event.
-// Topics: [pool_OutboundRateLimitConsumed map]
+// Topics: [pool_OutboundRateLimitConsumed]
 type OutboundRateLimitConsumedEvent struct {
 	RemoteChainSelector uint64
 	Amount              *big.Int
@@ -1284,7 +1284,7 @@ type OutboundRateLimitConsumedEvent struct {
 const OutboundRateLimitConsumedEventTopic = "pool_OutboundRateLimitConsumed"
 
 // LockedEvent represents the LockedEvent event.
-// Topics: [pool_Locked map]
+// Topics: [pool_Locked]
 type LockedEvent struct {
 	Sender string
 	Amount *big.Int
@@ -1297,7 +1297,7 @@ type LockedEvent struct {
 const LockedEventTopic = "pool_Locked"
 
 // ReleasedEvent represents the ReleasedEvent event.
-// Topics: [pool_Released map]
+// Topics: [pool_Released]
 type ReleasedEvent struct {
 	Sender    string
 	Recipient string

@@ -364,7 +364,7 @@ var CCIPErrorMessage = map[int]string{
 }
 
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
-// Topics: [auth_OwnerTransferStart map]
+// Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
 	PreviousOwner string
 	NewOwner      string
@@ -377,7 +377,7 @@ type OwnershipTransferStartedEvent struct {
 const OwnershipTransferStartedEventTopic = "auth_OwnerTransferStart"
 
 // BurnedEvent represents the BurnedEvent event.
-// Topics: [tpproxy_Burned map]
+// Topics: [tpproxy_Burned]
 type BurnedEvent struct {
 	Caller string
 	From   string
@@ -391,7 +391,7 @@ type BurnedEvent struct {
 const BurnedEventTopic = "tpproxy_Burned"
 
 // MintedEvent represents the MintedEvent event.
-// Topics: [tpproxy_Minted map]
+// Topics: [tpproxy_Minted]
 type MintedEvent struct {
 	Caller             string
 	To                 string
@@ -406,7 +406,7 @@ type MintedEvent struct {
 const MintedEventTopic = "tpproxy_Minted"
 
 // CallerRemovedEvent represents the CallerRemovedEvent event.
-// Topics: [tpproxy_CallerRemoved map]
+// Topics: [tpproxy_CallerRemoved]
 type CallerRemovedEvent struct {
 	Caller string
 	// Event metadata
@@ -418,7 +418,7 @@ type CallerRemovedEvent struct {
 const CallerRemovedEventTopic = "tpproxy_CallerRemoved"
 
 // CallerUpdatedEvent represents the CallerUpdatedEvent event.
-// Topics: [tpproxy_CallerUpdated map]
+// Topics: [tpproxy_CallerUpdated]
 type CallerUpdatedEvent struct {
 	Caller        string
 	MintAllowance *big.Int
@@ -431,7 +431,7 @@ type CallerUpdatedEvent struct {
 const CallerUpdatedEventTopic = "tpproxy_CallerUpdated"
 
 // AssetAdminChangedEvent represents the AssetAdminChangedEvent event.
-// Topics: [tpproxy_AssetAdminChanged map]
+// Topics: [tpproxy_AssetAdminChanged]
 type AssetAdminChangedEvent struct {
 	NewAdmin string
 	// Event metadata

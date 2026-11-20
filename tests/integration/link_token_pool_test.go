@@ -494,8 +494,8 @@ func TestLinkTokenPoolInbound(t *testing.T) {
 // overlap's positive mint legs (mint_as(oldPool/newPool, …)) require the pools'
 // own auth inside the call tree, which an external transaction cannot provide,
 // so this test asserts the rotation state, the membership rejections, and the
-// two-step ownership propose/read/cancel legs; the positive overlap legs are
-// covered by the Rust test_two_pool_migration_overlap.
+// two-step ownership proposal leg; the positive overlap legs are covered by
+// the Rust test_two_pool_migration_overlap.
 func TestLinkTokenMinterRotation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -513,9 +513,6 @@ func TestLinkTokenMinterRotation(t *testing.T) {
 	// both roles until the set_admin handoff).
 	if owner, err := client.Owner(ctx); err != nil || owner == nil || *owner != deployerAddr {
 		t.Fatalf("Owner: want deployer %s, got %v (err=%v)", deployerAddr, owner, err)
-	}
-	if ok, err := client.IsOwner(ctx, deployerAddr); err != nil || !ok {
-		t.Fatalf("IsOwner(deployer) = %v (err=%v); want true", ok, err)
 	}
 	if minters, err := client.GetMinters(ctx); err != nil || len(minters) != 1 || minters[0] != deployerAddr {
 		t.Fatalf("GetMinters: want [deployer], got %v (err=%v)", minters, err)
@@ -600,23 +597,15 @@ func TestLinkTokenMinterRotation(t *testing.T) {
 		t.Logf("MintAs(oldPool, …) after re-point correctly rejected: %v", err)
 	}
 
-	// Requirement-2 optional leg: the deployer MAY hand token ownership to
-	// MCMS via the two-step transfer. Acceptance needs MCMS's own auth (an
-	// external transaction cannot provide it), so externally this drives
-	// propose + read + cancel; the owner stays the deployer throughout.
+	// Requirement-2 optional leg: the deployer MAY start handing token
+	// ownership to MCMS. Acceptance needs MCMS's own auth (an external
+	// transaction cannot provide it), so this exercises only the proposal;
+	// pending-owner reads and cancellation are internal trait helpers, not
+	// public token entrypoints. The owner stays the deployer until acceptance.
 	if err := client.TransferOwnership(ctx, mcms); err != nil {
 		t.Fatalf("TransferOwnership(mcms): %v", err)
 	}
-	if pending, err := client.GetPendingOwner(ctx); err != nil || pending == nil || *pending != mcms {
-		t.Fatalf("GetPendingOwner: want %s, got %v (err=%v)", mcms, pending, err)
-	}
-	if err := client.CancelOwnershipTransfer(ctx); err != nil {
-		t.Fatalf("CancelOwnershipTransfer: %v", err)
-	}
-	if pending, err := client.GetPendingOwner(ctx); err != nil || pending != nil {
-		t.Fatalf("GetPendingOwner after cancel: want nil, got %v (err=%v)", pending, err)
-	}
 	if owner, err := client.Owner(ctx); err != nil || owner == nil || *owner != deployerAddr {
-		t.Fatalf("Owner after cancel: want deployer %s, got %v (err=%v)", deployerAddr, owner, err)
+		t.Fatalf("Owner after proposal: want deployer %s, got %v (err=%v)", deployerAddr, owner, err)
 	}
 }

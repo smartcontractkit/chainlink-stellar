@@ -88,28 +88,6 @@ func (c *SiloedLockReleasePoolClient) Upgrade(ctx context.Context, newWasmHash [
 	return nil
 }
 
-// IsOwner calls the is_owner function on the contract.
-func (c *SiloedLockReleasePoolClient) IsOwner(ctx context.Context, addr string) (bool, error) {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(addr),
-	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_owner: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_owner")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
 // GetToken calls the get_token function on the contract.
 func (c *SiloedLockReleasePoolClient) GetToken(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
@@ -148,21 +126,6 @@ func (c *SiloedLockReleasePoolClient) GetRouter(ctx context.Context) (*string, e
 		return nil, err
 	}
 	return v, nil
-}
-
-// InitOwner calls the init_owner function on the contract.
-func (c *SiloedLockReleasePoolClient) InitOwner(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call init_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // Initialize calls the initialize function on the contract.
@@ -279,26 +242,6 @@ func (c *SiloedLockReleasePoolClient) GetRmnProxy(ctx context.Context) (*string,
 	v, err := scval.OptionalAddressFromScVal(*result)
 	if err != nil {
 		return nil, err
-	}
-	return v, nil
-}
-
-// RequireOwner calls the require_owner function on the contract.
-func (c *SiloedLockReleasePoolClient) RequireOwner(ctx context.Context) (string, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call require_owner: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from require_owner")
-	}
-
-	v, err := scval.AddressFromScVal(*result)
-	if err != nil {
-		return "", err
 	}
 	return v, nil
 }
@@ -433,26 +376,6 @@ func (c *SiloedLockReleasePoolClient) TypeAndVersion(ctx context.Context) (strin
 	}
 
 	return scval.StringFromScVal(*result)
-}
-
-// GetPendingOwner calls the get_pending_owner function on the contract.
-func (c *SiloedLockReleasePoolClient) GetPendingOwner(ctx context.Context) (*string, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_pending_owner", args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call get_pending_owner: %w", err)
-	}
-
-	if result == nil {
-		return nil, fmt.Errorf("no return value from get_pending_owner")
-	}
-
-	v, err := scval.OptionalAddressFromScVal(*result)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
 }
 
 // GetRampRegistry calls the get_ramp_registry function on the contract.
@@ -771,19 +694,6 @@ func (c *SiloedLockReleasePoolClient) GetAllLockBoxConfigs(ctx context.Context) 
 		out[i] = *v
 	}
 	return out, nil
-}
-
-// CancelOwnershipTransfer calls the cancel_ownership_transfer function on the contract.
-func (c *SiloedLockReleasePoolClient) CancelOwnershipTransfer(ctx context.Context) error {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "cancel_ownership_transfer", args)
-	if err != nil {
-		return fmt.Errorf("failed to call cancel_ownership_transfer: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // RemoveAdvancedPoolHooks calls the remove_advanced_pool_hooks function on the contract.
