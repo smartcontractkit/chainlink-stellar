@@ -619,6 +619,9 @@ func promptTransferGas(ctx context.Context, client *ethclient.Client,
 	if err != nil {
 		return 0, fmt.Errorf("estimate transfer gas: %w", err)
 	}
+	if gas < 21_000 {
+		gas = 21_000 // some nodes estimate below the 21k pool admission floor
+	}
 	return gas * 13 / 10, nil // 30% headroom for state drift before inclusion
 }
 
