@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -608,17 +609,33 @@ func promptTxPricing(t *testing.T, ctx context.Context, client *ethclient.Client
 	return promptPricing{tip: tip, feeCap: feeCap}, nil
 }
 
-// promptTransferTxData assembles a prompt-inclusion 21k-gas transfer.
+// promptTransferGas estimates the gas limit for a plain ETH transfer. Never
+// hardcode 21k: a transfer to a fresh (non-existent) account costs far more
+// (observed ~207k on 2026 Sepolia), and an intrinsically-invalid tx burns all
+// its gas without moving value (the Nov 23 "not visible after 2m" failures).
+func promptTransferGas(ctx context.Context, client *ethclient.Client,
+	from, to common.Address, value *big.Int) (uint64, error) {
+	gas, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &to, Value: value})
+	if err != nil {
+		return 0, fmt.Errorf("estimate transfer gas: %w", err)
+	}
+	return gas * 13 / 10, nil // 30% headroom for state drift before inclusion
+}
+
+// promptTransferTxData assembles a prompt-inclusion transfer with an
+// estimated gas limit.
 func promptTransferTxData(t *testing.T, ctx context.Context, client *ethclient.Client,
 	from, to common.Address, value *big.Int, nonce uint64) types.TxData {
 	t.Helper()
 	pricing, err := promptTxPricing(t, ctx, client)
 	require.NoError(t, err)
+	gas, err := promptTransferGas(ctx, client, from, to, value)
+	require.NoError(t, err)
 	return &types.DynamicFeeTx{
 		Nonce:     nonce,
 		To:        &to,
 		Value:     value,
-		Gas:       21_000,
+		Gas:       gas,
 		GasTipCap: pricing.tip,
 		GasFeeCap: pricing.feeCap,
 	}
@@ -698,11 +715,18 @@ func sweepEphemeralETH(t *testing.T, cfg *evmToStellarConfig) {
 		t.Logf("sweep: %v", err)
 		return
 	}
-	// Reserve the worst-case 21k-gas fee (feeCap) plus margin; the real fee is
-	// 21000×(baseFee+tip) at inclusion, the difference stays behind as dust on
+	// Estimate with value 0 — the treasury always exists, so plain-transfer
+	// gas does not depend on the swept amount.
+	gas, err := promptTransferGas(ctx, client, from, to, big.NewInt(0))
+	if err != nil {
+		t.Logf("sweep: %v", err)
+		return
+	}
+	// Reserve the worst-case fee (gas × feeCap) plus margin; the real fee is
+	// gas×(baseFee+tip) at inclusion, the difference stays behind as dust on
 	// the ephemeral key.
 	fee := new(big.Int).Add(pricing.feeCap, pricing.tip)
-	fee.Mul(fee, big.NewInt(21_000))
+	fee.Mul(fee, new(big.Int).SetUint64(gas))
 	net := new(big.Int).Sub(balance, fee)
 	if net.Sign() <= 0 || net.Cmp(big.NewInt(1_000_000_000_000_000)) < 0 { // < 0.001 ETH
 		t.Logf("sweep: ephemeral sender holds %s wei, below the 0.001 ETH threshold — skipping sweep", balance.String())
@@ -723,7 +747,7 @@ func sweepEphemeralETH(t *testing.T, cfg *evmToStellarConfig) {
 		Nonce:     nonce,
 		To:        &to,
 		Value:     net,
-		Gas:       21_000,
+		Gas:       gas,
 		GasTipCap: pricing.tip,
 		GasFeeCap: pricing.feeCap,
 	})
