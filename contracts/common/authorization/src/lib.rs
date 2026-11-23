@@ -7,21 +7,32 @@
 //! - **AuthorizedCallers**: Dynamic set of authorized addresses (optional)
 //! - **AccessControl**: Role-based permissions (optional)
 //!
+//! Both optional features are traits bound to the embedding contract's
+//! `Ownable` impl, so every owner gate reads the embedding contract's own
+//! owner storage key. (The old free-function form gated on a `DefaultOwnable`
+//! stand-in whose `AUTHOWN` key no embedding contract writes — every gate was
+//! permanently `NotOwner` in production; tests masked it by seeding the
+//! stand-in directly.)
+//!
 //! ## Usage
 //!
 //! ```ignore
-//! use common_authorization::{Ownable, DefaultOwnable, AuthorizedCallers, AccessControl, CCIPError};
+//! use common_authorization::{Ownable, AuthorizedCallers, AccessControl, CCIPError};
 //!
-//! // In your contract's initialize function (implement Ownable for your contract):
-//! impl Ownable for MyContract {}
-//! <MyContract as Ownable>::init(&env, &owner);
-//! AuthorizedCallers::init(&env, authorized_callers); // Optional
-//! AccessControl::init(&env); // Optional
+//! // In your contract:
+//! impl Ownable for MyContract { const OWNER: Symbol = ...; const PENDING_OWNER: Symbol = ...; }
+//! impl AuthorizedCallers for MyContract { const AUTHORIZED_CALLERS: Symbol = ...; }
+//! impl AccessControl for MyContract { const ACCESS_ROLES: Symbol = ...; }
+//!
+//! // In initialize:
+//! <MyContract as Ownable>::init_owner(&env, &owner);
+//! <MyContract as AuthorizedCallers>::init_authorized_callers(&env, authorized_callers); // Optional
+//! <MyContract as AccessControl>::init_access_control(&env); // Optional
 //!
 //! // In protected functions:
 //! <MyContract as Ownable>::require_owner(&env)?;
-//! AuthorizedCallers::require_authorized_caller(&env, &updater)?;
-//! AccessControl::require_role(&env, &caller, symbol_short!("MINTER"))?;
+//! <MyContract as AuthorizedCallers>::require_authorized_caller(&env, &updater)?;
+//! <MyContract as AccessControl>::require_role(&env, &caller, symbol_short!("MINTER"))?;
 //! ```
 
 pub mod allowlist;
@@ -30,18 +41,11 @@ pub mod ownable;
 pub mod upgradeable;
 
 pub use events::*;
-pub use ownable::{DefaultOwnable, Ownable};
+pub use ownable::Ownable;
 pub use upgradeable::{Upgradeable, Upgraded};
 
 use common_error::CCIPError;
-use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
-
-// ============================================================
-// Storage Keys
-// ============================================================
-
-const AUTH_CALLERS: Symbol = symbol_short!("AUTHCALL");
-const AUTH_ROLES: Symbol = symbol_short!("AUTHROLE");
+use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Symbol, Vec};
 
 // ============================================================
 // Predefined Roles
@@ -60,23 +64,32 @@ pub const ROLE_BURNER: Symbol = symbol_short!("BURNER");
 // AuthorizedCallers
 // ============================================================
 
-/// Manages a set of authorized caller addresses.
+/// Manages a set of authorized caller addresses, gated by the embedding
+/// contract's own [`Ownable`] owner (EVM `AuthorizedCallers`).
+///
+/// Plain trait on purpose (like [`allowlist::AllowListHooks`]): `#[contracttrait]` would
+/// export `init_authorized_callers` as a public entrypoint, and a public
+/// re-init could reset the caller set. Embedding contracts expose exactly the
+/// surface they choose (e.g. FeeQuoter's owner-gated
+/// `apply_authorized_caller_updates`).
 ///
 /// This is an optional feature that must be explicitly initialized.
-/// If not initialized, `is_enabled()` returns false and `require_authorized_caller` returns `CCIPError::FeatureNotEnabled`.
-pub struct AuthorizedCallers;
+/// If not initialized, `is_authorized_callers_enabled` returns false and
+/// `require_authorized_caller` returns `CCIPError::FeatureNotEnabled`.
+pub trait AuthorizedCallers: Ownable {
+    /// Storage key for the authorized-caller set (instance storage).
+    const AUTHORIZED_CALLERS: Symbol;
 
-impl AuthorizedCallers {
-    /// Initialize the authorized callers list.
-    /// This enables the feature and sets the initial list of authorized callers.
+    /// Initialize the authorized callers list. Call from the embedding
+    /// contract's initialize function; this enables the feature.
     ///
     /// # Arguments
     /// * `env` - The environment
     /// * `initial_callers` - Initial list of authorized addresses
-    pub fn init(env: &Env, initial_callers: Vec<Address>) {
+    fn init_authorized_callers(env: &Env, initial_callers: Vec<Address>) {
         env.storage()
             .instance()
-            .set(&AUTH_CALLERS, &initial_callers);
+            .set(&Self::AUTHORIZED_CALLERS, &initial_callers);
 
         // Emit events for each initial caller
         for caller in initial_callers.iter() {
@@ -85,119 +98,21 @@ impl AuthorizedCallers {
     }
 
     /// Check if the AuthorizedCallers feature is enabled.
-    pub fn is_enabled(env: &Env) -> bool {
-        env.storage().instance().has(&AUTH_CALLERS)
-    }
-
-    /// Add authorized callers.
-    /// Requires owner authorization.
-    ///
-    /// # Arguments
-    /// * `env` - The environment
-    /// * `callers` - Addresses to add
-    ///
-    /// # Errors
-    /// * `FeatureNotEnabled` - AuthorizedCallers not initialized
-    /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
-    ///
-    /// # Panics
-    ///
-    /// If the owner did not authorize this invocation (`require_auth`).
-    pub fn add_callers(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
-            return Err(CCIPError::FeatureNotEnabled);
-        }
-        DefaultOwnable::require_owner(env)?;
-
-        let mut authorized: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AUTH_CALLERS)
-            .unwrap_or(Vec::new(env));
-
-        for caller in callers.iter() {
-            // Check if already authorized
-            let mut found = false;
-            for existing in authorized.iter() {
-                if existing == caller {
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                authorized.push_back(caller.clone());
-                AuthorizedCallerAddedEvent {
-                    caller: caller.clone(),
-                }
-                .publish(env);
-            }
-        }
-
-        env.storage().instance().set(&AUTH_CALLERS, &authorized);
-        Ok(())
-    }
-
-    /// Remove authorized callers.
-    /// Requires owner authorization.
-    ///
-    /// # Arguments
-    /// * `env` - The environment
-    /// * `callers` - Addresses to remove
-    ///
-    /// # Errors
-    /// * `FeatureNotEnabled` - AuthorizedCallers not initialized
-    /// * `NotOwner` - Owner not set in storage (see [`Ownable::require_owner`])
-    ///
-    /// # Panics
-    ///
-    /// If the owner did not authorize this invocation (`require_auth`).
-    pub fn remove_callers(env: &Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
-            return Err(CCIPError::FeatureNotEnabled);
-        }
-        DefaultOwnable::require_owner(env)?;
-
-        let authorized: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AUTH_CALLERS)
-            .unwrap_or(Vec::new(env));
-
-        let mut new_authorized: Vec<Address> = Vec::new(env);
-
-        for existing in authorized.iter() {
-            let mut should_remove = false;
-            for to_remove in callers.iter() {
-                if existing == to_remove {
-                    should_remove = true;
-                    AuthorizedCallerRemovedEvent {
-                        caller: existing.clone(),
-                    }
-                    .publish(env);
-                    break;
-                }
-            }
-            if !should_remove {
-                new_authorized.push_back(existing);
-            }
-        }
-
-        env.storage().instance().set(&AUTH_CALLERS, &new_authorized);
-        Ok(())
+    fn is_authorized_callers_enabled(env: &Env) -> bool {
+        env.storage().instance().has(&Self::AUTHORIZED_CALLERS)
     }
 
     /// Get all authorized callers.
-    pub fn get_callers(env: &Env) -> Vec<Address> {
+    fn get_authorized_callers(env: &Env) -> Vec<Address> {
         env.storage()
             .instance()
-            .get(&AUTH_CALLERS)
+            .get(&Self::AUTHORIZED_CALLERS)
             .unwrap_or(Vec::new(env))
     }
 
     /// Check if an address is authorized.
-    pub fn is_authorized(env: &Env, addr: &Address) -> bool {
-        let callers = Self::get_callers(env);
+    fn is_authorized_caller(env: &Env, addr: &Address) -> bool {
+        let callers = Self::get_authorized_callers(env);
         for caller in callers.iter() {
             if caller == *addr {
                 return true;
@@ -240,14 +155,88 @@ impl AuthorizedCallers {
     /// # Panics
     ///
     /// If `caller` is allowlisted but did not authorize this invocation (same as `require_auth`).
-    pub fn require_authorized_caller(env: &Env, caller: &Address) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
+    fn require_authorized_caller(env: &Env, caller: &Address) -> Result<(), CCIPError> {
+        if !Self::is_authorized_callers_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
-        if !Self::is_authorized(env, caller) {
+        if !Self::is_authorized_caller(env, caller) {
             return Err(CCIPError::CallerNotAuthorized);
         }
         caller.require_auth();
+        Ok(())
+    }
+
+    /// Add and/or remove authorized callers. Only callable by the embedding
+    /// contract's owner (EVM `AuthorizedCallers.applyAuthorizedCallerUpdates`).
+    ///
+    /// Bind-then-auth (same pattern as [`allowlist::AllowListable::apply_allowlist_updates`]):
+    /// check `caller`'s identity against the embedding contract's own owner
+    /// storage first, then one `require_auth_for_args` binding the exact
+    /// (caller, added, removed) payload — a signed authorization cannot be
+    /// replayed against a different update.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `caller` - The owner identity claiming this update
+    /// * `added` - Addresses to add (deduplicated against the stored set)
+    /// * `removed` - Addresses to remove
+    ///
+    /// # Errors
+    /// * `FeatureNotEnabled` - AuthorizedCallers not initialized
+    /// * `CallerNotAuthorized` - `caller` is not the owner
+    ///
+    /// # Panics
+    ///
+    /// If `caller` is the owner but did not authorize this exact payload.
+    fn apply_authorized_caller_updates(
+        env: &Env,
+        caller: &Address,
+        added: Vec<Address>,
+        removed: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        if !Self::is_authorized_callers_enabled(env) {
+            return Err(CCIPError::FeatureNotEnabled);
+        }
+        if !<Self as Ownable>::is_owner(env, caller) {
+            return Err(CCIPError::CallerNotAuthorized);
+        }
+        caller.require_auth_for_args(vec![
+            &env,
+            caller.clone().into_val(env),
+            added.clone().into_val(env),
+            removed.clone().into_val(env),
+        ]);
+
+        let mut authorized = Self::get_authorized_callers(env);
+
+        for to_remove in removed.iter() {
+            let mut next: Vec<Address> = Vec::new(env);
+            for existing in authorized.iter() {
+                if existing == to_remove {
+                    AuthorizedCallerRemovedEvent {
+                        caller: existing.clone(),
+                    }
+                    .publish(env);
+                } else {
+                    next.push_back(existing);
+                }
+            }
+            authorized = next;
+        }
+
+        for to_add in added.iter() {
+            if !Self::is_authorized_caller(env, &to_add) {
+                authorized.push_back(to_add.clone());
+                AuthorizedCallerAddedEvent {
+                    caller: to_add.clone(),
+                }
+                .publish(env);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&Self::AUTHORIZED_CALLERS, &authorized);
         Ok(())
     }
 }
@@ -256,27 +245,34 @@ impl AuthorizedCallers {
 // AccessControl
 // ============================================================
 
-/// Role-based access control.
+/// Role-based access control, gated by the embedding contract's own
+/// [`Ownable`] owner.
+///
+/// Plain trait on purpose (same reasoning as [`AuthorizedCallers`]): the
+/// embedding contract chooses which operations to expose as entrypoints.
 ///
 /// This is an optional feature that must be explicitly initialized.
 /// Roles are identified by `Symbol` values (up to 9 characters).
 ///
 /// The owner can always grant/revoke any role.
 /// Addresses with the ADMIN role can also grant/revoke other roles.
-pub struct AccessControl;
+pub trait AccessControl: Ownable {
+    /// Storage key for the roles table (instance storage).
+    const ACCESS_ROLES: Symbol;
 
-impl AccessControl {
     /// Initialize the AccessControl feature.
     /// Must be called before using role-based access control.
-    pub fn init(env: &Env) {
+    fn init_access_control(env: &Env) {
         // Initialize with an empty roles map marker
         let empty_roles: Vec<(Symbol, Vec<Address>)> = Vec::new(env);
-        env.storage().instance().set(&AUTH_ROLES, &empty_roles);
+        env.storage()
+            .instance()
+            .set(&Self::ACCESS_ROLES, &empty_roles);
     }
 
     /// Check if the AccessControl feature is enabled.
-    pub fn is_enabled(env: &Env) -> bool {
-        env.storage().instance().has(&AUTH_ROLES)
+    fn is_access_control_enabled(env: &Env) -> bool {
+        env.storage().instance().has(&Self::ACCESS_ROLES)
     }
 
     /// Grant a role to an address.
@@ -298,13 +294,13 @@ impl AccessControl {
     /// # Panics
     ///
     /// If `sender` is authorized to grant but did not authorize this invocation (`require_auth`).
-    pub fn grant_role(
+    fn grant_role(
         env: &Env,
         sender: &Address,
         role: Symbol,
         account: &Address,
     ) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
+        if !Self::is_access_control_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
@@ -315,7 +311,7 @@ impl AccessControl {
         let mut roles: Vec<(Symbol, Vec<Address>)> = env
             .storage()
             .instance()
-            .get(&AUTH_ROLES)
+            .get(&Self::ACCESS_ROLES)
             .unwrap_or(Vec::new(env));
 
         // Find or create the role entry
@@ -354,7 +350,7 @@ impl AccessControl {
             }
         }
 
-        env.storage().instance().set(&AUTH_ROLES, &roles);
+        env.storage().instance().set(&Self::ACCESS_ROLES, &roles);
 
         RoleGrantedEvent {
             role: role.clone(),
@@ -383,13 +379,13 @@ impl AccessControl {
     /// # Panics
     ///
     /// If `sender` is authorized to revoke but did not authorize this invocation (`require_auth`).
-    pub fn revoke_role(
+    fn revoke_role(
         env: &Env,
         sender: &Address,
         role: Symbol,
         account: &Address,
     ) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
+        if !Self::is_access_control_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
@@ -400,7 +396,7 @@ impl AccessControl {
         let mut roles: Vec<(Symbol, Vec<Address>)> = env
             .storage()
             .instance()
-            .get(&AUTH_ROLES)
+            .get(&Self::ACCESS_ROLES)
             .unwrap_or(Vec::new(env));
 
         // Find the role entry
@@ -420,7 +416,7 @@ impl AccessControl {
 
                 if found {
                     roles.set(i, (r, new_members));
-                    env.storage().instance().set(&AUTH_ROLES, &roles);
+                    env.storage().instance().set(&Self::ACCESS_ROLES, &roles);
 
                     RoleRevokedEvent {
                         role: role.clone(),
@@ -448,8 +444,8 @@ impl AccessControl {
     /// # Errors
     /// * `FeatureNotEnabled` - AccessControl not initialized
     /// * `CannotRenounceRole` - Account doesn't have the role
-    pub fn renounce_role(env: &Env, role: Symbol, account: &Address) -> Result<(), CCIPError> {
-        if !Self::is_enabled(env) {
+    fn renounce_role(env: &Env, role: Symbol, account: &Address) -> Result<(), CCIPError> {
+        if !Self::is_access_control_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
@@ -464,7 +460,7 @@ impl AccessControl {
         let mut roles: Vec<(Symbol, Vec<Address>)> = env
             .storage()
             .instance()
-            .get(&AUTH_ROLES)
+            .get(&Self::ACCESS_ROLES)
             .unwrap_or(Vec::new(env));
 
         // Find and remove from the role
@@ -484,7 +480,7 @@ impl AccessControl {
             }
         }
 
-        env.storage().instance().set(&AUTH_ROLES, &roles);
+        env.storage().instance().set(&Self::ACCESS_ROLES, &roles);
 
         RoleRevokedEvent {
             role: role.clone(),
@@ -497,15 +493,15 @@ impl AccessControl {
     }
 
     /// Check if an address has a specific role.
-    pub fn has_role(env: &Env, role: Symbol, account: &Address) -> bool {
-        if !Self::is_enabled(env) {
+    fn has_role(env: &Env, role: Symbol, account: &Address) -> bool {
+        if !Self::is_access_control_enabled(env) {
             return false;
         }
 
         let roles: Vec<(Symbol, Vec<Address>)> = env
             .storage()
             .instance()
-            .get(&AUTH_ROLES)
+            .get(&Self::ACCESS_ROLES)
             .unwrap_or(Vec::new(env));
 
         for (r, members) in roles.iter() {
@@ -539,8 +535,8 @@ impl AccessControl {
     /// # Panics
     ///
     /// If `subject` has the role but did not authorize this invocation (`require_auth`).
-    pub fn require_role(env: &Env, subject: &Address, role: Symbol) -> Result<Address, CCIPError> {
-        if !Self::is_enabled(env) {
+    fn require_role(env: &Env, subject: &Address, role: Symbol) -> Result<Address, CCIPError> {
+        if !Self::is_access_control_enabled(env) {
             return Err(CCIPError::FeatureNotEnabled);
         }
 
@@ -553,15 +549,15 @@ impl AccessControl {
     }
 
     /// Get all addresses that have a specific role.
-    pub fn get_role_members(env: &Env, role: Symbol) -> Vec<Address> {
-        if !Self::is_enabled(env) {
+    fn get_role_members(env: &Env, role: Symbol) -> Vec<Address> {
+        if !Self::is_access_control_enabled(env) {
             return Vec::new(env);
         }
 
         let roles: Vec<(Symbol, Vec<Address>)> = env
             .storage()
             .instance()
-            .get(&AUTH_ROLES)
+            .get(&Self::ACCESS_ROLES)
             .unwrap_or(Vec::new(env));
 
         for (r, members) in roles.iter() {
@@ -573,9 +569,10 @@ impl AccessControl {
         Vec::new(env)
     }
 
-    /// Internal: Require `subject` to be the stored owner, or to hold `ADMIN`, or (if no owner) to hold `ADMIN` only.
+    /// Internal: Require `subject` to be the embedding contract's owner, or to
+    /// hold `ADMIN`, or (if no owner) to hold `ADMIN` only.
     fn require_admin_or_owner(env: &Env, subject: &Address) -> Result<Address, CCIPError> {
-        match DefaultOwnable::owner(env) {
+        match <Self as Ownable>::owner(env) {
             Some(owner) => {
                 if owner == *subject {
                     subject.require_auth();

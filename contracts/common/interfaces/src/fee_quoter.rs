@@ -71,6 +71,7 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<DestChainConfig, CCIPError>;
+    fn get_authorized_callers(env: soroban_sdk::Env) -> soroban_sdk::Vec<soroban_sdk::Address>;
     fn get_token_transfer_fee(
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
@@ -93,6 +94,12 @@ pub trait FeeQuoterInterface {
         env: soroban_sdk::Env,
         token: soroban_sdk::Address,
     ) -> Result<u128, CCIPError>;
+    fn apply_authorized_caller_updates(
+        env: soroban_sdk::Env,
+        caller: soroban_sdk::Address,
+        added: soroban_sdk::Vec<soroban_sdk::Address>,
+        removed: soroban_sdk::Vec<soroban_sdk::Address>,
+    ) -> Result<(), CCIPError>;
 }
 #[soroban_sdk::contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -325,6 +332,11 @@ pub enum CCIPError {
 #[soroban_sdk::contractevent(topics = ["auth_CallerAdded"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct AuthorizedCallerAddedEvent {
+    pub caller: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(topics = ["auth_CallerRemoved"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AuthorizedCallerRemovedEvent {
     pub caller: soroban_sdk::Address,
 }
 #[soroban_sdk::contractevent(topics = ["auth_OwnerTransferStart"])]

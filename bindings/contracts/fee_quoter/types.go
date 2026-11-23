@@ -1161,6 +1161,18 @@ type AuthorizedCallerAddedEvent struct {
 // AuthorizedCallerAddedEventTopic is the event topic identifier.
 const AuthorizedCallerAddedEventTopic = "auth_CallerAdded"
 
+// AuthorizedCallerRemovedEvent represents the AuthorizedCallerRemovedEvent event.
+// Topics: [auth_CallerRemoved]
+type AuthorizedCallerRemovedEvent struct {
+	Caller string
+	// Event metadata
+	Ledger uint32
+	TxHash string
+}
+
+// AuthorizedCallerRemovedEventTopic is the event topic identifier.
+const AuthorizedCallerRemovedEventTopic = "auth_CallerRemoved"
+
 // OwnershipTransferStartedEvent represents the OwnershipTransferStartedEvent event.
 // Topics: [auth_OwnerTransferStart]
 type OwnershipTransferStartedEvent struct {
