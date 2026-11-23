@@ -49,6 +49,8 @@ const RMN_PROXY: Symbol = symbol_short!("RMN_PROXY");
 const TTL_THRESHOLD: u32 = 518_400;
 // Extend to ~180 days (at 5s/ledger)
 const TTL_EXTEND_TO: u32 = 3_110_400;
+// Default max number of CCVs for verification
+const MAX_CCV_COUNT: u8 = 128;
 
 // ============================================================
 // Contract
@@ -976,6 +978,11 @@ impl OffRampContract {
         verifier_results: &Vec<Bytes>,
         indices: &Vec<u32>,
     ) -> Result<(), CCIPError> {
+        // Validate the total number of CCVs specified
+        if indices.len() >= MAX_CCV_COUNT.into() {
+            return Err(CCIPError::CCVLengthTooLarge);
+        }
+
         for n in 0..indices.len() {
             let i = indices.get(n).ok_or(CCIPError::CCVLengthMismatch)?;
             let ccv = ccvs.get(i).ok_or(CCIPError::CCVLengthMismatch)?;
