@@ -5,6 +5,7 @@ package integration
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
@@ -199,7 +200,13 @@ func EncodeCcipTokenTransferV1Inbound(
 	if len(destRaw) != 32 {
 		return nil, fmt.Errorf("dest token raw id len %d, want 32", len(destRaw))
 	}
-	recvRaw, err := strkey.Decode(strkey.VersionByteContract, receiverContractStrkey)
+	// Contract (C...) or account (G...) receivers: the dest OffRamp resolves
+	// raw 32-byte receivers by ledger existence, so either family is valid.
+	recvVersion := strkey.VersionByte(strkey.VersionByteContract)
+	if strings.HasPrefix(receiverContractStrkey, "G") {
+		recvVersion = strkey.VersionByteAccountID
+	}
+	recvRaw, err := strkey.Decode(recvVersion, receiverContractStrkey)
 	if err != nil {
 		return nil, fmt.Errorf("receiver strkey: %w", err)
 	}
