@@ -70,7 +70,7 @@ jobs:
     name: Staging Tests (testnet, ephemeral senders)
     # Latency-bound (Sepolia finality waits), not CPU-bound.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     environment: staging
     steps:
       - name: Checkout
@@ -132,7 +132,7 @@ jobs:
           STAGING_EVM_OFFRAMP: "0x48c903a26A0b5bDA0F5C8d700810377694FED265"
           STAGING_EVM_TOKEN: "0x52627841876bbf1839dfeC397901bc85b0da8030"
           STAGING_EVM_TOKEN_POOL: "0x76e359670262a1E21B917017Ab87D9372476d2b0"
-        run: cd tests && go test -v -count=1 -timeout 20m ./staging/... -run 'TestStagingStellarToEVM|TestStagingEVMToStellar'
+        run: cd tests && go test -v -count=1 -timeout 30m ./staging/... -run 'TestStagingStellarToEVM|TestStagingEVMToStellar'
 
       # No teardown, no artifacts: nothing is deployed or started — the
       # shared environment stays as it is. Ephemeral Stellar senders'
