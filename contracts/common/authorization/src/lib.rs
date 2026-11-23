@@ -225,7 +225,10 @@ pub trait AuthorizedCallers: Ownable {
         }
 
         for to_add in added.iter() {
-            if !Self::is_authorized_caller(env, &to_add) {
+            // Membership against the working vector, not storage: storage is
+            // written only after the loops, so a storage read would miss
+            // earlier changes in this same batch (rmn_remote parity).
+            if !authorized.contains(&to_add) {
                 authorized.push_back(to_add.clone());
                 AuthorizedCallerAddedEvent {
                     caller: to_add.clone(),

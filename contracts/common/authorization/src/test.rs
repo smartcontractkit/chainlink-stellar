@@ -439,6 +439,70 @@ fn test_authorized_callers_require_empty_list() {
     assert_eq!(err, CCIPError::CallerNotAuthorized);
 }
 
+/// Within-batch idempotency: adding the same address twice in one call must
+/// store it once. The pre-fix membership check read the stored list (written
+/// only after the loops), so both iterations missed the address.
+#[test]
+fn test_authorized_caller_updates_same_batch_duplicate_add() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let updater = Address::generate(&env);
+
+    client.init_owner(&owner);
+    let mut initial: Vec<Address> = Vec::new(&env);
+    initial.push_back(Address::generate(&env));
+    client.init_callers(&initial);
+
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    added.push_back(updater.clone());
+    client.apply_caller_updates(&owner, &added, &Vec::new(&env));
+
+    let callers = client.get_callers();
+    assert_eq!(
+        callers.len(),
+        2,
+        "duplicate in-batch add must store one entry"
+    );
+    let mut occurrences: u32 = 0;
+    for c in callers.iter() {
+        if c == updater {
+            occurrences += 1;
+        }
+    }
+    assert_eq!(occurrences, 1);
+}
+
+/// Within-batch remove-then-add nets to present (EVM applyAuthorizedCallerUpdates
+/// semantics: removals first, then additions). The pre-fix storage-backed
+/// membership check saw the still-stored address and skipped the re-add,
+/// leaving it removed.
+#[test]
+fn test_authorized_caller_updates_remove_and_readd_same_batch() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let updater = Address::generate(&env);
+
+    client.init_owner(&owner);
+    let mut initial: Vec<Address> = Vec::new(&env);
+    initial.push_back(updater.clone());
+    client.init_callers(&initial);
+
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    let mut removed: Vec<Address> = Vec::new(&env);
+    removed.push_back(updater.clone());
+    client.apply_caller_updates(&owner, &added, &removed);
+
+    assert!(
+        client.is_authorized(&updater),
+        "remove-then-add in one batch must net to present"
+    );
+    assert_eq!(client.get_callers().len(), 1);
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #10)")]
 fn test_authorized_caller_updates_not_enabled() {
