@@ -17,6 +17,7 @@ use soroban_sdk::{
     contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, Executable,
     IntoVal, InvokeError, Map, Symbol, Vec,
 };
+use stellar_strkey::ed25519::PublicKey as StrkeyEd25519;
 use stellar_strkey::Contract as StrkeyContract;
 
 use common_authorization::{Ownable, Upgradeable};
@@ -51,6 +52,15 @@ const TTL_THRESHOLD: u32 = 518_400;
 const TTL_EXTEND_TO: u32 = 3_110_400;
 // Default max number of CCVs for verification
 const MAX_CCV_COUNT: u8 = 128;
+
+/// A receiver resolved from typeless 32-byte wire bytes
+/// ([`OffRampContract::resolve_receiver`]): a deployed Wasm contract at the
+/// contract-id interpretation, or an existing Stellar account at the
+/// account-pubkey interpretation (EVM EOA parity).
+enum ResolvedReceiver {
+    Contract(Address),
+    Account(Address),
+}
 
 // ============================================================
 // Contract
@@ -1196,14 +1206,13 @@ impl OffRampContract {
     /// EVM chain, this may be non-zero (WAIT_FOR_SAFE, block depth, etc.),
     /// reflecting higher reorg risk that the pool's FTF inbound limits guard.
     ///
-    /// `message_receiver` is the message-level receiver (a 32-byte Stellar contract
-    /// id hash on this destination chain). When the transfer's `token_receiver` is
-    /// empty, tokens are released/minted to `message_receiver` — EVM parity
-    /// (INV-TR-3): EVM defaults an empty `tokenReceiver` to `message.receiver`
-    /// outbound (`OnRamp.sol:311`); this defends inbound for sources that don't
-    /// default. `message_receiver` is in the exact 32-byte format
-    /// `address_from_token_bytes` resolves, so the fallback yields the same
-    /// `Address` as `ccip_receiver_contract_address`.
+    /// `message_receiver` is the message-level receiver (32 raw bytes: a Stellar
+    /// contract id hash or an account public key on this destination chain). When
+    /// the transfer's `token_receiver` is empty, tokens are released/minted to
+    /// `message_receiver` — EVM parity (INV-TR-3): EVM defaults an empty
+    /// `tokenReceiver` to `message.receiver` outbound (`OnRamp.sol:311`); this
+    /// defends inbound for sources that don't default. The fallback resolves
+    /// through the same existence-based classifier (`resolve_receiver`).
     fn release_or_mint_single_token(
         env: &Env,
         token_transfer_bytes: &Bytes,
@@ -1237,18 +1246,13 @@ impl OffRampContract {
         } else {
             message_receiver
         };
-        let receiver_address = Self::address_from_token_bytes(env, receiver_bytes)?;
-
-        // The wire carries no receiver type tag, so a 32-byte value always decodes
-        // to a contract id. A non-Wasm address can never authorize a transfer, so
-        // tokens released to it would be stuck.
-        match receiver_address.executable() {
-            Some(Executable::Wasm(_)) => {}
-            None => return Err(CCIPError::ReceiverDoesNotExist),
-            Some(Executable::Account) | Some(Executable::StellarAsset) => {
-                return Err(CCIPError::ReceiverNotWasmContract);
-            }
-        }
+        // EVM parity (OffRamp.sol:324): any address can receive tokens — the wire
+        // tokenReceiver is only length-checked, never code-checked. The typeless
+        // 32 bytes resolve by ledger existence: Wasm contract or existing account.
+        let receiver_address = match Self::resolve_receiver(env, receiver_bytes)? {
+            ResolvedReceiver::Contract(address) => address,
+            ResolvedReceiver::Account(address) => address,
+        };
 
         // Deliberate divergence from EVM's letter, documented so a future parity
         // sweep doesn't re-flag it: EVM `OffRamp._releaseOrMintSingleToken`
@@ -1312,18 +1316,14 @@ impl OffRampContract {
         Ok(amounts)
     }
 
-    /// Convert raw bytes containing a 32-byte contract hash to a Soroban `Address`.
-    fn address_from_token_bytes(env: &Env, bytes: &Bytes) -> Result<Address, CCIPError> {
+    /// Extract the raw 32-byte address payload from wire bytes: the last 32 bytes.
+    /// INV-MSG-8: any dropped prefix must be all-zero, matching EVM's ABI-padded
+    /// address check (OnRamp.sol:483). A non-zero prefix is rejected, not dropped.
+    fn receiver_hash32(bytes: &Bytes) -> Result<[u8; 32], CCIPError> {
         if bytes.len() < 32 {
             return Err(CCIPError::InvalidReceiverLength);
         }
-        // Take the last 32 bytes (XDR-encoded addresses have a discriminant prefix)
         let offset = bytes.len() - 32;
-        // INV-MSG-8: any dropped prefix must be all-zero. Stellar destination addresses are the
-        // raw 32-byte contract hash (offset 0 ⇒ no prefix ⇒ trivially satisfied); a longer input is
-        // only acceptable when the leading bytes are zero padding, matching EVM's ABI-padded
-        // address check (`if (word >> (addressBytesLength*8) != 0) revert InvalidDestChainAddress`,
-        // OnRamp.sol:483). A non-zero discriminant/prefix is rejected rather than silently dropped.
         for i in 0..offset {
             if bytes.get(i).ok_or(CCIPError::InvalidReceiverLength)? != 0 {
                 return Err(CCIPError::InvalidReceiverAddress);
@@ -1335,9 +1335,44 @@ impl OffRampContract {
                 .get(offset + i)
                 .ok_or(CCIPError::InvalidReceiverLength)?;
         }
-        let sk = StrkeyContract(hash);
+        Ok(hash)
+    }
+
+    /// Convert raw bytes containing a 32-byte contract hash to a Soroban `Address`.
+    fn address_from_token_bytes(env: &Env, bytes: &Bytes) -> Result<Address, CCIPError> {
+        let sk = StrkeyContract(Self::receiver_hash32(bytes)?);
         let encoded = sk.to_string();
         Ok(Address::from_str(env, encoded.as_str()))
+    }
+
+    /// Convert the same 32 bytes to the account-pubkey interpretation (`G...`).
+    fn account_address_from_token_bytes(env: &Env, bytes: &Bytes) -> Result<Address, CCIPError> {
+        let sk = StrkeyEd25519(Self::receiver_hash32(bytes)?);
+        let encoded = sk.to_string();
+        Ok(Address::from_str(env, encoded.as_str()))
+    }
+
+    /// Resolve typeless 32-byte receiver bytes by ledger existence. A Wasm contract
+    /// at the contract-id interpretation wins; otherwise an existing account (the
+    /// ed25519 interpretation) is a valid token receiver — EVM EOA parity
+    /// (OffRamp.sol:426 `receiver.code.length == 0`). The namespaces cannot collide
+    /// (contract-id hash vs ed25519 pubkey: each direction ≈2^256), so existence is
+    /// an unambiguous, ungameable classifier. Neither exists ⇒ `ReceiverDoesNotExist`
+    /// (retryable — create the account or deploy the contract, then re-execute).
+    fn resolve_receiver(env: &Env, bytes: &Bytes) -> Result<ResolvedReceiver, CCIPError> {
+        let contract = Self::address_from_token_bytes(env, bytes)?;
+        match contract.executable() {
+            Some(Executable::Wasm(_)) => Ok(ResolvedReceiver::Contract(contract)),
+            // A SAC id is a contract, not an account; it stays a rejected receiver.
+            Some(Executable::StellarAsset) => Err(CCIPError::ReceiverNotWasmContract),
+            _ => {
+                let account = Self::account_address_from_token_bytes(env, bytes)?;
+                match account.executable() {
+                    Some(Executable::Account) => Ok(ResolvedReceiver::Account(account)),
+                    _ => Err(CCIPError::ReceiverDoesNotExist),
+                }
+            }
+        }
     }
 
     /// Convert a 32-byte big-endian uint256 to i128 (lower 16 bytes).

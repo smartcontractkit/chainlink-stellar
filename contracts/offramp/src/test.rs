@@ -1461,6 +1461,100 @@ fn test_execute_token_receiver_without_deployed_contract_records_failure() {
     );
 }
 
+// ============================================================
+// Account (EOA-parity) receivers: receiver resolution by ledger existence
+// ============================================================
+
+/// Create an on-ledger Stellar account for `pubkey` (host testutils write a
+/// funded ACCOUNT entry directly to storage) and return its `Address` plus the
+/// raw 32-byte public key as wire-format receiver bytes.
+fn setup_account_receiver(env: &Env, pubkey: [u8; 32]) -> (Address, Bytes) {
+    use alloc::rc::Rc;
+    use soroban_sdk::xdr::{
+        AccountEntry, AccountEntryExt, AccountId, LedgerEntry, LedgerEntryData, LedgerEntryExt,
+        LedgerKey, LedgerKeyAccount, PublicKey, SequenceNumber, Thresholds, Uint256,
+    };
+    use stellar_strkey::ed25519::PublicKey as StrkeyEd25519;
+
+    let account_id = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(pubkey)));
+    env.host()
+        .add_ledger_entry(
+            &Rc::new(LedgerKey::Account(LedgerKeyAccount {
+                account_id: account_id.clone(),
+            })),
+            &Rc::new(LedgerEntry {
+                last_modified_ledger_seq: 0,
+                data: LedgerEntryData::Account(AccountEntry {
+                    account_id,
+                    balance: 10_000_000_000,
+                    seq_num: SequenceNumber(0),
+                    num_sub_entries: 0,
+                    inflation_dest: None,
+                    flags: 0,
+                    home_domain: Default::default(),
+                    thresholds: Thresholds([1u8, 0, 0, 0]),
+                    signers: Default::default(),
+                    ext: AccountEntryExt::V0,
+                }),
+                ext: LedgerEntryExt::V0,
+            }),
+            None,
+        )
+        .unwrap();
+
+    let sk = StrkeyEd25519(pubkey);
+    (
+        Address::from_str(env, sk.to_string().as_str()),
+        Bytes::from_array(env, &pubkey),
+    )
+}
+
+/// The receiver resolver classifies typeless 32-byte wire bytes by ledger
+/// existence: a deployed contract at the contract-id interpretation, else an
+/// existing account at the account-pubkey interpretation (EVM EOA parity,
+/// OffRamp.sol:324/426), else `ReceiverDoesNotExist` (retryable). The two
+/// namespaces cannot collide (contract-id hash vs ed25519 pubkey, ≈2^256 each
+/// direction), so the classification is unambiguous.
+#[test]
+fn test_resolve_receiver_contract_account_and_neither() {
+    use crate::ResolvedReceiver;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deployed contract: resolves through the contract-id interpretation.
+    let contract = env.register(MockVerifier, ());
+    let contract_field = offramp_address_field_from_contract(&env, &contract);
+    match crate::OffRampContract::resolve_receiver(&env, &contract_field).unwrap() {
+        ResolvedReceiver::Contract(resolved) => assert_eq!(resolved, contract),
+        other => panic!(
+            "expected a contract receiver, got {:?}",
+            matches!(other, ResolvedReceiver::Account(_))
+        ),
+    }
+
+    // Existing account: the same 32 bytes carry no contract, so the
+    // account-pubkey interpretation resolves and receives the tokens.
+    let mut key = [0x42u8; 32];
+    key[31] = 1;
+    let (account, account_field) = setup_account_receiver(&env, key);
+    match crate::OffRampContract::resolve_receiver(&env, &account_field).unwrap() {
+        ResolvedReceiver::Account(resolved) => assert_eq!(resolved, account),
+        other => panic!(
+            "expected an account receiver, got {:?}",
+            matches!(other, ResolvedReceiver::Contract(_))
+        ),
+    }
+
+    // Neither exists: retryable failure, so the sender can create the account
+    // or deploy the contract and re-execute.
+    let phantom = Bytes::from_array(&env, &[0xABu8; 32]);
+    assert!(matches!(
+        crate::OffRampContract::resolve_receiver(&env, &phantom),
+        Err(CCIPError::ReceiverDoesNotExist)
+    ));
+}
+
 #[test]
 // The token-only exception needs a decodable 32-byte receiver, so a malformed
 // zero receiver carrying data or receive gas fails decoding (InvalidReceiverLength,
