@@ -341,8 +341,11 @@ pub trait PoolInterface {
 	}
 	mustContain(t, out,
 		"func ConstructorArgs(owner string, allowlist []string, blobs [][]byte, hashes [][32]byte, config PoolConfig, configs []PoolConfig, admin *string, description string, instanceLabel string, chainNetworkId [32]byte, signerAddresses SignerAddresses) ([]xdr.ScVal, error) {",
-		"\t\tscval.AddressToScVal(owner),\n",
-		"\t\tscval.AddressSliceToScVal(allowlist),\n",
+		"ownerVal, err := scval.CheckedAddressToScVal(owner)",
+		`return nil, fmt.Errorf("encode constructor arg owner: %w", err)`,
+		"\t\townerVal,\n",
+		"allowlistVal, err := scval.CheckedAddressSliceToScVal(allowlist)",
+		"\t\tallowlistVal,\n",
 		"\t\tscval.BytesSliceToScVal(blobs),\n",
 		"\t\tscval.Bytes32SliceToScVal(hashes),\n",
 		"configVal, err := config.ToScVal()",
@@ -351,7 +354,8 @@ pub trait PoolInterface {
 		"for i, item := range configs {",
 		`return nil, fmt.Errorf("encode constructor arg configs[%d]: %w", i, err)`,
 		"\t\tscval.VecToScVal(configsItems),\n",
-		"\t\tscval.OptionalAddressToScVal(admin),\n",
+		"adminVal, err := scval.CheckedOptionalAddressToScVal(admin)",
+		"\t\tadminVal,\n",
 		"\t\tscval.StringToScVal(description),\n",
 		"\t\tscval.SymbolToScVal(instanceLabel),\n",
 		"\t\tscval.Bytes32ToScVal(chainNetworkId),\n",
@@ -362,6 +366,9 @@ pub trait PoolInterface {
 		"func (c *PoolClient) Constructor",
 		"MustToScVal(config.ToScVal())",
 		"StructSliceToScVal(configs)",
+		"scval.AddressToScVal(",
+		"scval.AddressSliceToScVal(",
+		"scval.OptionalAddressToScVal(",
 	)
 }
 
@@ -378,7 +385,7 @@ func TestGenerateConstructorArgs_ArgOrder(t *testing.T) {
 	out := GenerateClient("data_feeds_proxy", c)
 	mustContain(t, out,
 		"func ConstructorArgs(owner string, cache string) ([]xdr.ScVal, error) {",
-		"\treturn []xdr.ScVal{\n\t\tscval.AddressToScVal(owner),\n\t\tscval.AddressToScVal(cache),\n\t}, nil\n",
+		"\treturn []xdr.ScVal{\n\t\townerVal,\n\t\tcacheVal,\n\t}, nil\n",
 	)
 }
 
@@ -387,4 +394,21 @@ func TestGenerateConstructorArgs_ArgOrder(t *testing.T) {
 func TestGenerateConstructorArgs_NoConstructor(t *testing.T) {
 	c := &Contract{Name: "Router"}
 	mustNotContain(t, GenerateClient("router", c), "ConstructorArgs")
+}
+
+// TestGenerateConstructorArgs_BigIntImport: a big-integer constructor param
+// needs math/big even when no method uses one.
+func TestGenerateConstructorArgs_BigIntImport(t *testing.T) {
+	c := &Contract{
+		Name: "Token",
+		Constructor: &Function{Name: "__constructor", Inputs: []Field{
+			{Name: "initial_supply", Type: "i128"},
+		}},
+		Functions: []Function{{Name: "version", Returns: "u32", ReadOnly: true}},
+	}
+	out := GenerateClient("token", c)
+	if _, err := format.Source([]byte(out)); err != nil {
+		t.Fatalf("generated client does not parse: %v\n%s", err, out)
+	}
+	mustContain(t, out, "\t\"math/big\"\n", "func ConstructorArgs(initialSupply *big.Int)")
 }

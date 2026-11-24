@@ -34,8 +34,12 @@ func (c *DataFeedsCacheClient) ContractID() string {
 
 // ConstructorArgs encodes the DataFeedsCache __constructor arguments in spec order.
 func ConstructorArgs(owner string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
 	return []xdr.ScVal{
-		scval.AddressToScVal(owner),
+		ownerVal,
 	}, nil
 }
 

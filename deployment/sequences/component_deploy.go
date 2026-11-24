@@ -112,7 +112,7 @@ func resolveComponentContract(
 			return componentContract{}, fmt.Errorf("read %s instance state for ref %s: %w", ref.Type, id, err)
 		}
 		if !exists {
-			return componentContract{}, fmt.Errorf("datastore %s ref points at %s, which has no contract instance on chain", ref.Type, id)
+			return componentContract{}, fmt.Errorf("datastore %s ref points at %s, which has no live contract instance on chain (missing or archived)", ref.Type, id)
 		}
 		return componentContract{ID: id, FromRef: true, RefAddress: r.Address}, nil
 	}

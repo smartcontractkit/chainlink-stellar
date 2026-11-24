@@ -332,3 +332,30 @@ func TestOptionalI128_RoundTrip(t *testing.T) {
 		t.Fatal("expected error for non-i128, non-void value")
 	}
 }
+
+func TestCheckedAddressConverters(t *testing.T) {
+	valid, err := strkey.Encode(strkey.VersionByteContract, make([]byte, 32))
+	require.NoError(t, err)
+	bad := "not-a-strkey"
+
+	t.Run("address", func(t *testing.T) {
+		v, err := CheckedAddressToScVal(valid)
+		require.NoError(t, err)
+		require.NotNil(t, v.Address)
+		_, err = CheckedAddressToScVal(bad)
+		require.ErrorContains(t, err, `invalid Stellar address "not-a-strkey"`)
+	})
+	t.Run("optional address", func(t *testing.T) {
+		v, err := CheckedOptionalAddressToScVal(nil)
+		require.NoError(t, err)
+		require.Equal(t, xdr.ScValTypeScvVoid, v.Type)
+		_, err = CheckedOptionalAddressToScVal(&bad)
+		require.ErrorContains(t, err, "invalid Stellar address")
+	})
+	t.Run("address slice", func(t *testing.T) {
+		_, err := CheckedAddressSliceToScVal([]string{valid, valid})
+		require.NoError(t, err)
+		_, err = CheckedAddressSliceToScVal([]string{valid, bad})
+		require.ErrorContains(t, err, "item 1: invalid Stellar address")
+	})
+}

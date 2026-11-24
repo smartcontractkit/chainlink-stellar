@@ -34,9 +34,17 @@ func (c *DataFeedsProxyClient) ContractID() string {
 
 // ConstructorArgs encodes the DataFeedsProxy __constructor arguments in spec order.
 func ConstructorArgs(owner string, cache string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	cacheVal, err := scval.CheckedAddressToScVal(cache)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg cache: %w", err)
+	}
 	return []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressToScVal(cache),
+		ownerVal,
+		cacheVal,
 	}, nil
 }
 

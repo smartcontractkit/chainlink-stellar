@@ -218,7 +218,7 @@ func TestDeployTokenAdminRegistry_RefWithMissingInstanceErrors(t *testing.T) {
 	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{existingRefForID(t, id)},
 	})
-	require.ErrorContains(t, err, "points at "+id+", which has no contract instance on chain")
+	require.ErrorContains(t, err, "points at "+id+", which has no live contract instance on chain (missing or archived)")
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 

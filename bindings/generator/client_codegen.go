@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -56,12 +57,19 @@ func GenerateClient(pkg string, contract *Contract) string {
 }
 
 func requiresBigIntImport(contract *Contract) bool {
-	for _, fn := range contract.Functions {
-		if strings.Contains(fn.Returns, "i128") || strings.Contains(fn.Returns, "soroban_sdk::I256") {
+	usesBigInt := func(rustType string) bool {
+		return strings.Contains(rustType, "i128") || strings.Contains(rustType, "soroban_sdk::I256")
+	}
+	fns := contract.Functions
+	if contract.Constructor != nil {
+		fns = append(slices.Clip(fns), *contract.Constructor)
+	}
+	for _, fn := range fns {
+		if usesBigInt(fn.Returns) {
 			return true
 		}
 		for _, in := range fn.Inputs {
-			if strings.Contains(in.Type, "i128") || strings.Contains(in.Type, "soroban_sdk::I256") {
+			if usesBigInt(in.Type) {
 				return true
 			}
 		}
@@ -121,17 +129,22 @@ func generateConstructorArgs(b *strings.Builder, contract *Contract) {
 }
 
 // writeConstructorArg returns the ScVal expression for one constructor param.
-// Conversions that getArgConverter would panic on are written as checked
-// statements first, so ConstructorArgs reports them as errors.
+// Conversions that getArgConverter would panic on, or would encode a malformed
+// address unchecked, are written as checked statements first, so
+// ConstructorArgs reports them as errors.
 func writeConstructorArg(b *strings.Builder, in Field) string {
 	name := snakeToCamel(in.Name)
 	conv := getArgConverter(in.Type, name)
 
 	const mustPrefix = "scval.MustToScVal("
+	checked, isChecked := checkedAddressConverter(in.Type, name)
+	if !isChecked && strings.HasPrefix(conv, mustPrefix) {
+		checked, isChecked = strings.TrimSuffix(strings.TrimPrefix(conv, mustPrefix), ")"), true
+	}
 	switch {
-	case strings.HasPrefix(conv, mustPrefix):
+	case isChecked:
 		val := name + "Val"
-		b.WriteString(fmt.Sprintf("\t%s, err := %s\n", val, strings.TrimSuffix(strings.TrimPrefix(conv, mustPrefix), ")")))
+		b.WriteString(fmt.Sprintf("\t%s, err := %s\n", val, checked))
 		b.WriteString("\tif err != nil {\n")
 		b.WriteString(fmt.Sprintf("\t\treturn nil, fmt.Errorf(\"encode constructor arg %s: %%w\", err)\n", in.Name))
 		b.WriteString("\t}\n")
@@ -150,6 +163,20 @@ func writeConstructorArg(b *strings.Builder, in Field) string {
 	default:
 		return conv
 	}
+}
+
+// checkedAddressConverter returns the error-returning scval call for address
+// params, whose plain converters encode a malformed strkey as a nil Address.
+func checkedAddressConverter(rustType, varName string) (string, bool) {
+	switch {
+	case rustType == "soroban_sdk::Address", rustType == "soroban_sdk::MuxedAddress":
+		return fmt.Sprintf("scval.CheckedAddressToScVal(%s)", varName), true
+	case strings.HasPrefix(rustType, "Option<") && strings.Contains(rustType, "soroban_sdk::Address"):
+		return fmt.Sprintf("scval.CheckedOptionalAddressToScVal(%s)", varName), true
+	case strings.HasPrefix(rustType, "soroban_sdk::Vec<") && extractVecInnerType(rustType) == "soroban_sdk::Address":
+		return fmt.Sprintf("scval.CheckedAddressSliceToScVal(%s)", varName), true
+	}
+	return "", false
 }
 
 func generateMethod(b *strings.Builder, contract *Contract, fn Function) {
