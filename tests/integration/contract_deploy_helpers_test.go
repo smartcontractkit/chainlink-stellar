@@ -200,11 +200,8 @@ func deployFullStack(
 
 	var tokenAdminRegistryForOfframp string
 	if offrampUsesDeployedTokenAdminRegistry {
-		s.TokenAdminRegistryID = deploy("token-admin-registry", "token_admin_registry.wasm")
+		s.TokenAdminRegistryID = deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-token-admin-registry")
 		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
-		if err := s.TokenAdminRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-			t.Fatalf("TokenAdminRegistry Initialize (for OffRamp): %v", err)
-		}
 		tokenAdminRegistryForOfframp = s.TokenAdminRegistryID
 	} else {
 		tokenAdminRegistryForOfframp = helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-token-admin")
@@ -382,11 +379,8 @@ func (s *fullStack) deployTokenPool(
 	}
 
 	if s.TokenAdminRegistryID == "" {
-		s.TokenAdminRegistryID = deploy("token-admin-registry", "token_admin_registry.wasm")
+		s.TokenAdminRegistryID = deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-token-admin-registry")
 		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
-		if err := s.TokenAdminRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-			t.Fatalf("TokenAdminRegistry Initialize: %v", err)
-		}
 	} else if s.TokenAdminRegistryClient == nil {
 		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
 	}
@@ -511,7 +505,29 @@ func deployIntegrationTestSAC(
 	return sacID
 }
 
-// ensureTokenAdminRegistryForStack deploys and initializes token_admin_registry.wasm when the stack has no
+// deployTokenAdminRegistry creates token_admin_registry.wasm with owner set by its constructor.
+func deployTokenAdminRegistry(
+	ctx context.Context,
+	t *testing.T,
+	projectRoot string,
+	deployer *deployment.Deployer,
+	owner, saltLabel string,
+) string {
+	t.Helper()
+	ctorArgs, err := tarbindings.ConstructorArgs(owner)
+	if err != nil {
+		t.Fatalf("encode token_admin_registry constructor args: %v", err)
+	}
+	salt := deployment.GenerateDeterministicSalt(owner, saltLabel)
+	p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "token_admin_registry.wasm")
+	id, err := deployer.DeployContractWithArgs(ctx, p, salt, ctorArgs)
+	if err != nil {
+		t.Fatalf("deploy token_admin_registry: %v", err)
+	}
+	return id
+}
+
+// ensureTokenAdminRegistryForStack deploys token_admin_registry.wasm when the stack has no
 // registry yet (deployFullStack alone leaves TokenAdminRegistryID empty; deployTokenPool sets it).
 // OnRamp::initialize stores a real registry address — an empty strkey becomes a nil ScAddress and can
 // panic the client when building invoke XDR.
@@ -527,17 +543,9 @@ func ensureTokenAdminRegistryForStack(
 	if stack.TokenAdminRegistryID != "" {
 		return
 	}
-	salt := deployment.GenerateDeterministicSalt(deployerAddr, saltPrefix+"-onramp-tar")
-	p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "token_admin_registry.wasm")
-	id, err := deployer.DeployContract(ctx, p, salt)
-	if err != nil {
-		t.Fatalf("deploy token_admin_registry for OnRamp: %v", err)
-	}
+	id := deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-onramp-tar")
 	stack.TokenAdminRegistryID = id
 	stack.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, id)
-	if err := stack.TokenAdminRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-		t.Fatalf("TokenAdminRegistry Initialize: %v", err)
-	}
 }
 
 // outboundSendWire holds FeeQuoter + OnRamp contracts wired for Router.ccip_send to a remote destination.

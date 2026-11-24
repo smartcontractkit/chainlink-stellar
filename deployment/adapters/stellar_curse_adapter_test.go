@@ -63,7 +63,7 @@ func TestStellarCurseAdapter_DeriveCurseAdapterVersion(t *testing.T) {
 	env := envWithDatastore(newSealedDatastore())
 	v, err := a.DeriveCurseAdapterVersion(env, 0)
 	require.NoError(t, err)
-	require.True(t, v.Equal(stellarops.ContractDeploymentVersion))
+	require.True(t, v.Equal(stellarops.ContractRefVersion))
 }
 
 func TestStellarCurseAdapter_IsCurseEnabled_beforeInit(t *testing.T) {
@@ -92,7 +92,7 @@ func TestStellarCurseAdapter_SubjectRoundTrip(t *testing.T) {
 
 func TestStellarCurseAdapter_Registration(t *testing.T) {
 	reg := fastcurse.GetCurseRegistry()
-	v := stellarops.ContractDeploymentVersion
+	v := stellarops.ContractRefVersion
 
 	_, ok := reg.GetCurseAdapter("stellar", v)
 	require.True(t, ok, "StellarCurseAdapter should be registered from init()")

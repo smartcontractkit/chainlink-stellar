@@ -61,11 +61,8 @@ func (s *fullStack) deploySiloedTokenPool(
 	}
 
 	if s.TokenAdminRegistryID == "" {
-		s.TokenAdminRegistryID = deploy("token-admin-registry", "token_admin_registry.wasm")
+		s.TokenAdminRegistryID = deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-token-admin-registry")
 		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
-		if err := s.TokenAdminRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-			t.Fatalf("TokenAdminRegistry Initialize: %v", err)
-		}
 	} else if s.TokenAdminRegistryClient == nil {
 		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
 	}

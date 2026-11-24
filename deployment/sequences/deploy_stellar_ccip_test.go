@@ -39,7 +39,7 @@ func newTestBundle(t *testing.T) cldf_ops.Bundle {
 
 type stubDeployer struct{}
 
-func (stubDeployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
+func (stubDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, _ []xdr.ScVal) (string, error) {
 	_ = ctx
 	_ = wasmPath
 	_ = salt

@@ -42,6 +42,8 @@ func GenerateClient(pkg string, contract *Contract) string {
 	// Generate constructor
 	generateConstructor(&b, contract)
 
+	generateConstructorArgs(&b, contract)
+
 	// Generate methods for each function
 	for _, fn := range contract.Functions {
 		generateMethod(&b, contract, fn)
@@ -89,6 +91,65 @@ func generateConstructor(b *strings.Builder, contract *Contract) {
 	b.WriteString(fmt.Sprintf("func (c *%sClient) ContractID() string {\n", contract.Name))
 	b.WriteString("\treturn c.contractID\n")
 	b.WriteString("}\n\n")
+}
+
+// generateConstructorArgs emits ConstructorArgs, a pure encoder of the
+// __constructor params in spec order for deploy-time contract creation.
+func generateConstructorArgs(b *strings.Builder, contract *Contract) {
+	ctor := contract.Constructor
+	if ctor == nil {
+		return
+	}
+
+	params := make([]string, len(ctor.Inputs))
+	for i, in := range ctor.Inputs {
+		params[i] = fmt.Sprintf("%s %s", snakeToCamel(in.Name), rustTypeToGo(in.Type))
+	}
+
+	b.WriteString(fmt.Sprintf("// ConstructorArgs encodes the %s __constructor arguments in spec order.\n", contract.Name))
+	b.WriteString(fmt.Sprintf("func ConstructorArgs(%s) ([]xdr.ScVal, error) {\n", strings.Join(params, ", ")))
+	exprs := make([]string, len(ctor.Inputs))
+	for i, in := range ctor.Inputs {
+		exprs[i] = writeConstructorArg(b, in)
+	}
+	b.WriteString("\treturn []xdr.ScVal{\n")
+	for _, e := range exprs {
+		b.WriteString(fmt.Sprintf("\t\t%s,\n", e))
+	}
+	b.WriteString("\t}, nil\n")
+	b.WriteString("}\n\n")
+}
+
+// writeConstructorArg returns the ScVal expression for one constructor param.
+// Conversions that getArgConverter would panic on are written as checked
+// statements first, so ConstructorArgs reports them as errors.
+func writeConstructorArg(b *strings.Builder, in Field) string {
+	name := snakeToCamel(in.Name)
+	conv := getArgConverter(in.Type, name)
+
+	const mustPrefix = "scval.MustToScVal("
+	switch {
+	case strings.HasPrefix(conv, mustPrefix):
+		val := name + "Val"
+		b.WriteString(fmt.Sprintf("\t%s, err := %s\n", val, strings.TrimSuffix(strings.TrimPrefix(conv, mustPrefix), ")")))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn nil, fmt.Errorf(\"encode constructor arg %s: %%w\", err)\n", in.Name))
+		b.WriteString("\t}\n")
+		return val
+	case strings.HasPrefix(conv, "scval.StructSliceToScVal("):
+		items := name + "Items"
+		b.WriteString(fmt.Sprintf("\t%s := make([]xdr.ScVal, len(%s))\n", items, name))
+		b.WriteString(fmt.Sprintf("\tfor i, item := range %s {\n", name))
+		b.WriteString("\t\tv, err := item.ToScVal()\n")
+		b.WriteString("\t\tif err != nil {\n")
+		b.WriteString(fmt.Sprintf("\t\t\treturn nil, fmt.Errorf(\"encode constructor arg %s[%%d]: %%w\", i, err)\n", in.Name))
+		b.WriteString("\t\t}\n")
+		b.WriteString(fmt.Sprintf("\t\t%s[i] = v\n", items))
+		b.WriteString("\t}\n")
+		return fmt.Sprintf("scval.VecToScVal(%s)", items)
+	default:
+		return conv
+	}
 }
 
 func generateMethod(b *strings.Builder, contract *Contract, fn Function) {

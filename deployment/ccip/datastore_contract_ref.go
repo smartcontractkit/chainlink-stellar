@@ -165,7 +165,7 @@ func RMNRemoteDatastoreRef() DatastoreSorobanContractRef {
 func RMNProxyDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(rmnproxyops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -173,7 +173,7 @@ func RMNProxyDatastoreRef() DatastoreSorobanContractRef {
 func TokenAdminRegistryDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(TokenAdminRegistryContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -217,7 +217,7 @@ func CommitteeVerifierDatastoreRefWithQualifier(qualifier string) DatastoreSorob
 func RampRegistryDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(rrops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -232,7 +232,7 @@ func CCIPReceiverDatastoreRef() DatastoreSorobanContractRef {
 func CCIPReceiverDatastoreRefWithQualifier(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(CcipReceiverContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }
@@ -244,7 +244,7 @@ func LockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(lrops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: DevenvLegacyLockReleasePoolQualifier,
 	}
 }
@@ -252,7 +252,7 @@ func LegacyLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(slrrops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}
 }
@@ -260,7 +260,7 @@ func SiloedLockReleasePoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 func TokenLockBoxDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(tlbops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}
 }
@@ -268,7 +268,7 @@ func TokenLockBoxDevenvDatastoreRef() DatastoreSorobanContractRef {
 func DevenvTestTokenDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(TestTokenContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: DevenvTestTokenPoolQualifier,
 	}
 }
@@ -310,7 +310,7 @@ func ExecutorProxyDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 func BnmTokenDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(bnmops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -318,7 +318,7 @@ func BnmTokenDatastoreRef() DatastoreSorobanContractRef {
 func LinkTokenDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(lnkops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -326,7 +326,7 @@ func LinkTokenDatastoreRef() DatastoreSorobanContractRef {
 func AdvancedPoolHooksDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(aphops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }
@@ -334,7 +334,7 @@ func AdvancedPoolHooksDatastoreRef(qualifier string) DatastoreSorobanContractRef
 func AdvancedPoolHooksExtractorDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(aphxops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: "",
 	}
 }
@@ -342,7 +342,7 @@ func AdvancedPoolHooksExtractorDatastoreRef() DatastoreSorobanContractRef {
 func BurnMintPoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(bmpops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }
@@ -360,7 +360,7 @@ func BurnMintPoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 func CatalogBurnMintPoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(DevenvCatalogBurnMintTokenPoolType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: DevenvBnmPoolQualifier,
 	}
 }
@@ -368,7 +368,7 @@ func CatalogBurnMintPoolDevenvDatastoreRef() DatastoreSorobanContractRef {
 func LockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(lrops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }
@@ -376,7 +376,7 @@ func LockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 func SiloedLockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(slrrops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }
@@ -384,7 +384,7 @@ func SiloedLockReleasePoolDatastoreRef(qualifier string) DatastoreSorobanContrac
 func TokenLockBoxDatastoreRef(qualifier string) DatastoreSorobanContractRef {
 	return DatastoreSorobanContractRef{
 		Type:      datastore.ContractType(tlbops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: qualifier,
 	}
 }

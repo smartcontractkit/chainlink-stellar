@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stellar/go-stellar-sdk/keypair"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
 	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
@@ -131,7 +132,7 @@ type seqFakeDeployer struct {
 	Deployed []string
 }
 
-func (d *seqFakeDeployer) DeployContract(_ context.Context, _ string, _ [32]byte) (string, error) {
+func (d *seqFakeDeployer) DeployContractWithArgs(_ context.Context, _ string, _ [32]byte, _ []xdr.ScVal) (string, error) {
 	id := keypair.MustRandom().Address()
 	d.Deployed = append(d.Deployed, id)
 	return id, nil

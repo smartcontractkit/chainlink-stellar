@@ -31,7 +31,7 @@ func TestLockReleasePoolAddressRefDataStore(t *testing.T) {
 		ref := addrs[0]
 		assert.Equal(t, uint64(4242), ref.ChainSelector)
 		assert.Equal(t, datastore.ContractType(lrops.ContractType), ref.Type)
-		assert.Equal(t, stellarops.ContractDeploymentVersion, ref.Version)
+		assert.Equal(t, stellarops.ContractRefVersion, ref.Version)
 		assert.Equal(t, DevenvLegacyLockReleasePoolQualifier, ref.Qualifier)
 		assert.NotEmpty(t, ref.Address)
 	})

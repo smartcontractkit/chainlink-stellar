@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Masterminds/semver/v3"
 	cldfchain "github.com/smartcontractkit/chainlink-deployments-framework/chain"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldfops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
@@ -48,7 +47,7 @@ func StellarCREForwarderDatastoreRef(chainSelector uint64, qual, contractID stri
 	return datastore.AddressRef{
 		ChainSelector: chainSelector,
 		Type:          datastore.ContractType(creforwarderops.ContractType),
-		Version:       semver.MustParse(creforwarderops.Deploy.Version()),
+		Version:       stellarops.ContractRefVersion,
 		Qualifier:     qual,
 		Address:       contractID,
 	}
@@ -56,7 +55,7 @@ func StellarCREForwarderDatastoreRef(chainSelector uint64, qual, contractID stri
 
 // FindExistingStellarCREForwarder returns the CRE forwarder contract id from refs when present.
 func FindExistingStellarCREForwarder(refs []datastore.AddressRef, chainSelector uint64, qual string) (string, bool) {
-	v := semver.MustParse(creforwarderops.Deploy.Version())
+	v := stellarops.ContractRefVersion
 	for _, r := range refs {
 		if r.ChainSelector != chainSelector {
 			continue

@@ -38,11 +38,14 @@ type ComponentDeps struct {
 }
 
 // ComponentDeployOutput is what every component sequence returns.
+// NeedsConfiguration is true for a fresh or ledger-adopted contract and false
+// for ref-backed reuse, whose later configuration must not be overwritten.
 type ComponentDeployOutput struct {
-	ContractID  string                 `json:"contract_id"`
-	Deployed    bool                   `json:"deployed"`
-	Initialized bool                   `json:"initialized"`
-	Refs        []datastore.AddressRef `json:"refs,omitempty"`
+	ContractID         string                 `json:"contract_id"`
+	Deployed           bool                   `json:"deployed"`
+	Initialized        bool                   `json:"initialized"`
+	NeedsConfiguration bool                   `json:"needs_configuration"`
+	Refs               []datastore.AddressRef `json:"refs,omitempty"`
 }
 
 // componentContract is the outcome of skip layers 1 and 2.
@@ -80,10 +83,11 @@ func componentSaltLabel(name, qualifier string) string {
 }
 
 // resolveComponentContract applies skip layers 1 and 2 (design "Skip-if-exists"):
-// a datastore ref in existing wins; otherwise the deterministic contract ID is
-// predicted from (network, deployer, salt) and checked against the ledger. A
-// matching instance is adopted; a WASM-hash mismatch is an error, never a
-// silent second deploy.
+// a datastore ref in existing wins once the ledger confirms its instance exists;
+// otherwise the deterministic contract ID is predicted from (network, deployer,
+// salt) and checked against the ledger. A matching instance is adopted; a
+// WASM-hash mismatch is an error, never a silent second deploy. ctorArgs reach
+// __constructor only on a fresh deploy.
 func resolveComponentContract(
 	ctx context.Context,
 	b cldf_ops.Bundle,
@@ -92,6 +96,7 @@ func resolveComponentContract(
 	ref stellarccip.DatastoreSorobanContractRef,
 	chainSelector uint64,
 	saltLabel, wasmPath string,
+	ctorArgs []xdr.ScVal,
 	existing []datastore.AddressRef,
 ) (componentContract, error) {
 	if r := findExistingComponentRef(existing, ref, chainSelector); r != nil {
@@ -101,6 +106,13 @@ func resolveComponentContract(
 		id, err := ownership.NormalizeContractAddress(r.Address)
 		if err != nil {
 			return componentContract{}, fmt.Errorf("existing %s ref: %w", ref.Type, err)
+		}
+		exists, _, err := deps.Ledger.ContractInstanceState(ctx, id)
+		if err != nil {
+			return componentContract{}, fmt.Errorf("read %s instance state for ref %s: %w", ref.Type, id, err)
+		}
+		if !exists {
+			return componentContract{}, fmt.Errorf("datastore %s ref points at %s, which has no contract instance on chain", ref.Type, id)
 		}
 		return componentContract{ID: id, FromRef: true, RefAddress: r.Address}, nil
 	}
@@ -115,7 +127,7 @@ func resolveComponentContract(
 		return componentContract{}, fmt.Errorf("read %s instance state: %w", ref.Type, err)
 	}
 	if !exists {
-		out, err := execStellarCCIPOp(b, deps.StellarDeps, deployOp, stellarops.DeployInput{WasmPath: wasmPath, Salt: salt},
+		out, err := execStellarCCIPOp(b, deps.StellarDeps, deployOp, stellarops.DeployInput{WasmPath: wasmPath, Salt: salt, ConstructorArgs: ctorArgs},
 			cldf_ops.WithIdempotencyKey[stellarops.DeployInput, stellardeps.StellarDeps](componentIdempotencyKey(chainSelector, saltLabel)))
 		if err != nil {
 			return componentContract{}, fmt.Errorf("deploy %s: %w", ref.Type, err)
@@ -209,11 +221,11 @@ func deployAndInitialize(
 	existing []datastore.AddressRef,
 	init func(contractID string) error,
 ) (ComponentDeployOutput, error) {
-	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, existing)
+	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, nil, existing)
 	if err != nil {
 		return ComponentDeployOutput{}, err
 	}
-	out := ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed}
+	out := ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed, NeedsConfiguration: !contract.FromRef}
 	doInit, err := shouldInitialize(ctx, deps, contract, owner)
 	if err != nil {
 		return ComponentDeployOutput{}, err
@@ -246,7 +258,7 @@ func deployStatelessComponent(
 	saltLabel, wasmPath string,
 	existing []datastore.AddressRef,
 ) (ComponentDeployOutput, error) {
-	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, existing)
+	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, nil, existing)
 	if err != nil {
 		return ComponentDeployOutput{}, err
 	}
@@ -254,7 +266,54 @@ func deployStatelessComponent(
 	if err != nil {
 		return ComponentDeployOutput{}, err
 	}
-	return ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed, Refs: refs}, nil
+	return ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed, NeedsConfiguration: !contract.FromRef, Refs: refs}, nil
+}
+
+// deployConstructedComponent creates a component whose __constructor takes
+// ctorArgs, so creation and initial state land in one transaction. verify reads
+// back every constructor-supplied field and runs on fresh creation and no-ref
+// adoption; ref-backed reuse skips it so later owner and config changes stand.
+func deployConstructedComponent(
+	ctx context.Context,
+	b cldf_ops.Bundle,
+	deps ComponentDeps,
+	deployOp *cldf_ops.Operation[stellarops.DeployInput, stellarops.DeployOutput, stellardeps.StellarDeps],
+	ref stellarccip.DatastoreSorobanContractRef,
+	chainSelector uint64,
+	saltLabel, wasmPath string,
+	ctorArgs []xdr.ScVal,
+	existing []datastore.AddressRef,
+	verify func(contractID string) error,
+) (ComponentDeployOutput, error) {
+	if len(ctorArgs) == 0 {
+		return ComponentDeployOutput{}, fmt.Errorf("%s constructor args are required", ref.Type)
+	}
+	contract, err := resolveComponentContract(ctx, b, deps, deployOp, ref, chainSelector, saltLabel, wasmPath, ctorArgs, existing)
+	if err != nil {
+		return ComponentDeployOutput{}, err
+	}
+	if !contract.FromRef {
+		if err := verify(contract.ID); err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("%s contract %s constructor state: %w", ref.Type, contract.ID, err)
+		}
+	}
+	refs, err := componentRefsToRecord(contract, ref, chainSelector)
+	if err != nil {
+		return ComponentDeployOutput{}, err
+	}
+	return ComponentDeployOutput{ContractID: contract.ID, Deployed: contract.Deployed, NeedsConfiguration: !contract.FromRef, Refs: refs}, nil
+}
+
+// requireOwner checks a constructed contract's owner() readback. A missing
+// owner means the instance was never constructed with this tool's args.
+func requireOwner(got *string, want string) error {
+	if got == nil {
+		return fmt.Errorf("owner is unset: the instance is uninitialized, deploy a new one with another deployer or salt")
+	}
+	if *got != want {
+		return fmt.Errorf("owner is %s, expected %s", *got, want)
+	}
+	return nil
 }
 
 // componentRefsToRecord returns the datastore refs a resolved component must

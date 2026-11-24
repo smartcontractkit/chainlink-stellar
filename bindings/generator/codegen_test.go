@@ -1,6 +1,7 @@
 package main
 
 import (
+	"go/format"
 	"strings"
 	"testing"
 )
@@ -287,4 +288,103 @@ func TestGenerate_OptionalI128(t *testing.T) {
 	mustContain(t, client, "scval.OptionalI128FromScVal(entry.Val)")
 	mustNotContain(t, client, "Option < i128 >")
 	mustNotContain(t, client, "**big.Int")
+}
+
+// TestGenerateConstructorArgs covers each constructor param kind the deploy
+// path needs. Infallible conversions are inlined; struct conversions are
+// checked so a bad value returns an error instead of panicking.
+func TestGenerateConstructorArgs(t *testing.T) {
+	src := `
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone)]
+pub struct SignerAddresses {
+    pub inner: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone)]
+pub struct RateLimit {
+    pub capacity: i128,
+}
+#[soroban_sdk::contracttype]
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    pub router: soroban_sdk::Address,
+    pub limit: RateLimit,
+}
+pub trait PoolInterface {
+    fn __constructor(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+        allowlist: soroban_sdk::Vec<soroban_sdk::Address>,
+        blobs: soroban_sdk::Vec<soroban_sdk::Bytes>,
+        hashes: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+        config: PoolConfig,
+        configs: soroban_sdk::Vec<PoolConfig>,
+        admin: Option<soroban_sdk::Address>,
+        description: soroban_sdk::String,
+        instance_label: soroban_sdk::Symbol,
+        chain_network_id: soroban_sdk::BytesN<32>,
+        signer_addresses: SignerAddresses,
+    );
+    fn version(env: soroban_sdk::Env) -> u32;
+}
+`
+	c, err := ParseRustBindings(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	c.Name = "Pool"
+	out := GenerateClient("pool", c)
+
+	if _, err := format.Source([]byte(out)); err != nil {
+		t.Fatalf("generated client does not parse: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"func ConstructorArgs(owner string, allowlist []string, blobs [][]byte, hashes [][32]byte, config PoolConfig, configs []PoolConfig, admin *string, description string, instanceLabel string, chainNetworkId [32]byte, signerAddresses SignerAddresses) ([]xdr.ScVal, error) {",
+		"\t\tscval.AddressToScVal(owner),\n",
+		"\t\tscval.AddressSliceToScVal(allowlist),\n",
+		"\t\tscval.BytesSliceToScVal(blobs),\n",
+		"\t\tscval.Bytes32SliceToScVal(hashes),\n",
+		"configVal, err := config.ToScVal()",
+		`return nil, fmt.Errorf("encode constructor arg config: %w", err)`,
+		"\t\tconfigVal,\n",
+		"for i, item := range configs {",
+		`return nil, fmt.Errorf("encode constructor arg configs[%d]: %w", i, err)`,
+		"\t\tscval.VecToScVal(configsItems),\n",
+		"\t\tscval.OptionalAddressToScVal(admin),\n",
+		"\t\tscval.StringToScVal(description),\n",
+		"\t\tscval.SymbolToScVal(instanceLabel),\n",
+		"\t\tscval.Bytes32ToScVal(chainNetworkId),\n",
+		"signerAddressesVal, err := signerAddresses.ToScVal()",
+		"\t\tsignerAddressesVal,\n",
+	)
+	mustNotContain(t, out,
+		"func (c *PoolClient) Constructor",
+		"MustToScVal(config.ToScVal())",
+		"StructSliceToScVal(configs)",
+	)
+}
+
+// TestGenerateConstructorArgs_ArgOrder pins spec order: deploy passes the
+// slice positionally, so a reorder silently swaps constructor arguments.
+func TestGenerateConstructorArgs_ArgOrder(t *testing.T) {
+	c := &Contract{
+		Name: "DataFeedsProxy",
+		Constructor: &Function{Name: "__constructor", Inputs: []Field{
+			{Name: "owner", Type: "soroban_sdk::Address"},
+			{Name: "cache", Type: "soroban_sdk::Address"},
+		}},
+	}
+	out := GenerateClient("data_feeds_proxy", c)
+	mustContain(t, out,
+		"func ConstructorArgs(owner string, cache string) ([]xdr.ScVal, error) {",
+		"\treturn []xdr.ScVal{\n\t\tscval.AddressToScVal(owner),\n\t\tscval.AddressToScVal(cache),\n\t}, nil\n",
+	)
+}
+
+// TestGenerateConstructorArgs_NoConstructor: contracts without __constructor
+// get no encoder.
+func TestGenerateConstructorArgs_NoConstructor(t *testing.T) {
+	c := &Contract{Name: "Router"}
+	mustNotContain(t, GenerateClient("router", c), "ConstructorArgs")
 }

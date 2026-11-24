@@ -34,10 +34,9 @@ impl MockPoolRejectsToken {
 }
 
 fn setup(env: &Env) -> (TokenAdminRegistryContractClient<'_>, Address) {
-    let contract_id = env.register(TokenAdminRegistryContract, ());
-    let client = TokenAdminRegistryContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
-    client.initialize(&owner);
+    let contract_id = env.register(TokenAdminRegistryContract, (&owner,));
+    let client = TokenAdminRegistryContractClient::new(env, &contract_id);
     (client, owner)
 }
 
@@ -46,24 +45,29 @@ fn setup(env: &Env) -> (TokenAdminRegistryContractClient<'_>, Address) {
 // ============================================================
 
 #[test]
-fn test_initialize() {
+fn test_constructor_sets_owner_and_empty_registry() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, owner) = setup(&env);
 
     assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_all_configured_tokens(&0, &10), Vec::new(&env));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
+fn test_initialize_is_not_exported() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _owner) = setup(&env);
     let another = Address::generate(&env);
-    client.initialize(&another);
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, another.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 // ============================================================
@@ -629,10 +633,9 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
 fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(TokenAdminRegistryContract, ());
-    let client = TokenAdminRegistryContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    client.initialize(&owner);
+    let contract_id = env.register(TokenAdminRegistryContract, (&owner,));
+    let client = TokenAdminRegistryContractClient::new(&env, &contract_id);
 
     // `mock_all_auths` authorizes the owner, so `require_owner` ->
     // `owner.require_auth()` passes.
@@ -659,12 +662,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
-    let contract_id = env.register(TokenAdminRegistryContract, ());
-    let client = TokenAdminRegistryContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. `Env::register` auto-authorizes the constructor, so
+    // the contract is set up with the owner stored.
     let owner = Address::generate(&env);
-    client.initialize(&owner);
+    let contract_id = env.register(TokenAdminRegistryContract, (&owner,));
+    let client = TokenAdminRegistryContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

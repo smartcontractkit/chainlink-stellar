@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
@@ -23,12 +24,12 @@ import (
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
+	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
 	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
-	tarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/token_admin_registry"
 )
 
 // fakeLedger answers ContractInstanceState from a map, standing in for the
@@ -138,54 +139,59 @@ func existingRefForID(t *testing.T, contractID string) datastore.AddressRef {
 	return stellarccip.TokenAdminRegistryDatastoreRef().FullAddressRef(1, hexAddr)
 }
 
-func TestDeployTokenAdminRegistry_FreshDeploysAndInitializes(t *testing.T) {
+// stubTARReadback makes the TokenAdminRegistry readback see owner and an empty registry.
+func stubTARReadback(t *testing.T, inv *operationstest.RecordingInvoker, owner string) {
+	t.Helper()
+	tar := predictedID(t, "token-admin-registry")
+	ownerVal := scval.AddressToScVal(owner)
+	inv.WithSimulateResultForContract(tar, "owner", &ownerVal)
+	empty := scval.VecToScVal(nil)
+	inv.WithSimulateResultForContract(tar, "get_all_configured_tokens", &empty)
+}
+
+func TestDeployTokenAdminRegistry_FreshCreatesThroughConstructor(t *testing.T) {
 	t.Parallel()
 	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	stubTARReadback(t, inv, deps.DeployerAddress)
 	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath,
 	})
 	require.NoError(t, err)
 	require.True(t, out.Deployed)
-	require.True(t, out.Initialized)
+	require.True(t, out.NeedsConfiguration)
 	require.Len(t, out.Refs, 1)
-	require.Equal(t, []string{"token-admin-registry:deploy", "token-admin-registry:initialize", "stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
-	require.Equal(t, "initialize", inv.Last().Fn)
+	require.Equal(t, []string{"token-admin-registry:deploy", "stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+	args := opInput[stellarops.DeployInput](t, reporter, "token-admin-registry:deploy").ConstructorArgs
+	require.Equal(t, stellarops.ConstructorArgs{scval.AddressToScVal(deps.DeployerAddress)}, args)
+	for _, r := range inv.Records() {
+		require.True(t, r.Simulated, "readback must only simulate, got invoke of %s", r.Fn)
+	}
 }
 
-func TestDeployTokenAdminRegistry_RerunWithRefSkipsBoth(t *testing.T) {
+func TestDeployTokenAdminRegistry_RerunWithRefSkipsReadback(t *testing.T) {
 	t.Parallel()
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{
-		// A stale ledger entry must not matter: the ref wins (layer 1).
-		predictedID(t, "token-admin-registry"): {0x01},
-	}})
 	id := predictedID(t, "token-admin-registry")
-	// The ref proves an earlier run finished: owner() is set, so no initialize.
-	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
-	inv.WithSimulateResultForFn("owner", &configuredOwner)
+	// A ref-backed instance may run an upgraded wasm; only its existence matters.
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{existingRefForID(t, id)},
 	})
 	require.NoError(t, err)
 	require.False(t, out.Deployed)
-	require.False(t, out.Initialized)
+	require.False(t, out.NeedsConfiguration)
 	require.Empty(t, out.Refs)
 	require.Equal(t, id, out.ContractID)
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
-	// Layer 3 still reads owner() on a ref-backed contract; only the deploy and
-	// initialize ops are skipped.
-	records := inv.Records()
-	require.Len(t, records, 1)
-	require.Equal(t, "owner", records[0].Fn)
+	// No owner or state comparison: a later ownership transfer must stand.
+	require.Empty(t, inv.Records())
 }
 
 func TestDeployTokenAdminRegistry_RerunWithStrkeyFormRef(t *testing.T) {
 	t.Parallel()
 	// A ref recorded by hand may carry the C… strkey instead of the hex the
 	// datastore Record* helpers write; layer 1 must accept both forms.
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	id := predictedID(t, "token-admin-registry")
-	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
-	inv.WithSimulateResultForFn("owner", &configuredOwner)
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	strkeyRef := stellarccip.TokenAdminRegistryDatastoreRef().FullAddressRef(1, "")
 	strkeyRef.Address = id
 	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
@@ -193,7 +199,6 @@ func TestDeployTokenAdminRegistry_RerunWithStrkeyFormRef(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, out.Deployed)
-	require.False(t, out.Initialized)
 	require.Equal(t, id, out.ContractID)
 	// The strkey-form row is rewritten to hex in the returned refs, so the
 	// datastore readers that expect hex keep working.
@@ -204,19 +209,16 @@ func TestDeployTokenAdminRegistry_RerunWithStrkeyFormRef(t *testing.T) {
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
-func TestDeployTokenAdminRegistry_StaleRefErrorsClearly(t *testing.T) {
+func TestDeployTokenAdminRegistry_RefWithMissingInstanceErrors(t *testing.T) {
 	t.Parallel()
-	// A ref whose contract is gone from the chain fails the owner read; the
-	// error must point at the stale ref.
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	// The ref survives in the datastore but the ledger lost the instance, as
+	// after a network reset: the uncached run must fail and name the address.
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
 	id := predictedID(t, "token-admin-registry")
-	deps.Invoker = simulateErrorInvoker{inv}
-	strkeyRef := stellarccip.TokenAdminRegistryDatastoreRef().FullAddressRef(1, "")
-	strkeyRef.Address = id
 	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
-		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{strkeyRef},
+		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{existingRefForID(t, id)},
 	})
-	require.ErrorContains(t, err, "datastore ref may be stale")
+	require.ErrorContains(t, err, "points at "+id+", which has no contract instance on chain")
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
@@ -255,67 +257,97 @@ func TestDeployRMNRemote_FastCurseWithoutTimelockErrors(t *testing.T) {
 	require.Equal(t, []string{"stellar-deploy-rmn-remote"}, reportIDs(t, reporter))
 }
 
-func TestDeployTokenAdminRegistry_AdoptsMatchingWasmAndInitializes(t *testing.T) {
-	t.Parallel()
-	wasmPath, _, _, _, deps := componentTestSetup(t, fakeLedger{})
+// adoptionSetup returns a fixture whose ledger already holds a TokenAdminRegistry
+// at the predicted ID running the local wasm, as after a crash before refs persist.
+func adoptionSetup(t *testing.T) (string, cldf_ops.Bundle, *operationstest.RecordingInvoker, *cldf_ops.MemoryReporter, ComponentDeps) {
+	t.Helper()
 	id := predictedID(t, "token-admin-registry")
-	ledger := fakeLedger{instances: map[string]xdr.Hash{id: localWasmHash(t, wasmPath)}}
-	wasmPath, b, _, reporter, deps := componentTestSetup(t, ledger)
+	wasmPath, _, _, _, _ := componentTestSetup(t, fakeLedger{})
+	return componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: localWasmHash(t, wasmPath)}})
+}
+
+func TestDeployTokenAdminRegistry_AdoptsConstructedInstance(t *testing.T) {
+	t.Parallel()
+	wasmPath, b, inv, reporter, deps := adoptionSetup(t)
+	stubTARReadback(t, inv, deps.DeployerAddress)
 	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath,
 	})
 	require.NoError(t, err)
 	require.False(t, out.Deployed)
-	require.True(t, out.Initialized)
-	require.Equal(t, id, out.ContractID)
+	require.True(t, out.NeedsConfiguration)
+	require.Equal(t, predictedID(t, "token-admin-registry"), out.ContractID)
 	require.Len(t, out.Refs, 1)
-	require.Equal(t, []string{"token-admin-registry:initialize", "stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
 func TestDeployTokenAdminRegistry_WasmMismatchErrors(t *testing.T) {
 	t.Parallel()
-	wasmPath, _, _, _, deps := componentTestSetup(t, fakeLedger{})
+	// Covers a pre-constructor wasm at the predicted address: never initialized
+	// or redeployed implicitly.
 	id := predictedID(t, "token-admin-registry")
-	ledger := fakeLedger{instances: map[string]xdr.Hash{id: {0x01, 0x02}}}
-	wasmPath, b, _, reporter, deps := componentTestSetup(t, ledger)
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01, 0x02}}})
 	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath,
 	})
 	require.ErrorContains(t, err, "runs wasm")
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+	require.Empty(t, inv.Records())
+}
+
+func TestDeployTokenAdminRegistry_AdoptedUninitializedErrors(t *testing.T) {
+	t.Parallel()
+	// The default simulate result is Void, so owner() reads None.
+	wasmPath, b, _, reporter, deps := adoptionSetup(t)
+	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
+		ChainSelector: 1, WasmPath: wasmPath,
+	})
+	require.ErrorContains(t, err, "instance is uninitialized")
+	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 }
 
 func TestDeployTokenAdminRegistry_AdoptedForeignOwnerErrors(t *testing.T) {
 	t.Parallel()
-	id := predictedID(t, "token-admin-registry")
-	wasmPath, _, _, _, _ := componentTestSetup(t, fakeLedger{})
-	ledger := fakeLedger{instances: map[string]xdr.Hash{id: localWasmHash(t, wasmPath)}}
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, ledger)
-	foreignOwner := scval.AddressToScVal(foreignOwnerAddress())
-	inv.WithSimulateResultForFn("owner", &foreignOwner)
+	wasmPath, b, inv, reporter, deps := adoptionSetup(t)
+	stubTARReadback(t, inv, foreignOwnerAddress())
 	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath,
 	})
-	require.ErrorContains(t, err, "was initialized by")
+	require.ErrorContains(t, err, "owner is "+foreignOwnerAddress())
 	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
 	require.Empty(t, out.ContractID)
 }
 
-func TestDeployTokenAdminRegistry_AdoptedOwnedByConfiguredOwnerSkipsInit(t *testing.T) {
+func TestDeployTokenAdminRegistry_AdoptedNonEmptyRegistryErrors(t *testing.T) {
 	t.Parallel()
-	id := predictedID(t, "token-admin-registry")
-	wasmPath, _, _, _, _ := componentTestSetup(t, fakeLedger{})
-	ledger := fakeLedger{instances: map[string]xdr.Hash{id: localWasmHash(t, wasmPath)}}
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, ledger)
-	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
-	inv.WithSimulateResultForFn("owner", &configuredOwner)
-	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
+	wasmPath, b, inv, _, deps := adoptionSetup(t)
+	stubTARReadback(t, inv, deps.DeployerAddress)
+	tokens := scval.VecToScVal([]xdr.ScVal{scval.AddressToScVal(predictedID(t, "some-token"))})
+	inv.WithSimulateResultForContract(predictedID(t, "token-admin-registry"), "get_all_configured_tokens", &tokens)
+	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath,
 	})
+	require.ErrorContains(t, err, "expected an empty registry")
+}
+
+func TestDeployTokenAdminRegistry_ReportsAtOldVersionDoNotReplay(t *testing.T) {
+	t.Parallel()
+	// A 2.0.0 report from the deploy-then-initialize code must not satisfy the
+	// constructor sequence, even for identical input.
+	wasmPath, _, inv, _, deps := componentTestSetup(t, fakeLedger{})
+	stubTARReadback(t, inv, deps.DeployerAddress)
+	in := DeployTokenAdminRegistryInput{ChainSelector: 1, WasmPath: wasmPath}
+	oldDef := cldf_ops.Definition{
+		ID: DeployTokenAdminRegistry.ID(), Version: semver.MustParse("2.0.0"), Description: DeployTokenAdminRegistry.Description(),
+	}
+	stale := cldf_ops.NewReport(oldDef, in, ComponentDeployOutput{ContractID: predictedID(t, "stale-tar")}, nil)
+	reporter := cldf_ops.NewMemoryReporter(cldf_ops.WithReports([]cldf_ops.Report[any, any]{stale.ToGenericReport()}))
+	b := cldf_ops.NewBundle(func() context.Context { return t.Context() }, cldflogger.Nop(), reporter)
+
+	out, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, in)
 	require.NoError(t, err)
-	require.False(t, out.Deployed)
-	require.False(t, out.Initialized)
-	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, reportIDs(t, reporter))
+	require.True(t, out.Deployed)
+	require.Equal(t, predictedID(t, "token-admin-registry"), out.ContractID)
 }
 
 // simulateErrorInvoker fails every SimulateContract, as a stale ref would.
@@ -331,7 +363,7 @@ func (simulateErrorInvoker) SimulateContract(context.Context, string, string, []
 // if ComponentDeps did not match the signing key.
 type bogusDeployer struct{ id string }
 
-func (d bogusDeployer) DeployContract(context.Context, string, [32]byte) (string, error) {
+func (d bogusDeployer) DeployContractWithArgs(context.Context, string, [32]byte, []xdr.ScVal) (string, error) {
 	return d.id, nil
 }
 
@@ -350,8 +382,8 @@ func TestDeployExecutor_WritesProxyRefWhenMissing(t *testing.T) {
 	t.Parallel()
 	// An executor ref recorded by hand but no proxy row: nothing deploys or
 	// initializes, yet the missing proxy row is written.
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	id := predictedID(t, "executor")
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	execHex, err := stellarutil.StrkeyToHex(id)
 	require.NoError(t, err)
 	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
@@ -373,8 +405,8 @@ func TestDeployExecutor_RewritesStaleProxyRef(t *testing.T) {
 	t.Parallel()
 	// A proxy row pointing at an old executor is realigned with the executor the
 	// sequence resolved, so the OnRamp's default-executor lookup stays correct.
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	id := predictedID(t, "executor")
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	oldExecutor := predictedID(t, "old-executor")
 	execHex, err := stellarutil.StrkeyToHex(id)
 	require.NoError(t, err)
@@ -416,15 +448,17 @@ func TestComponentParams_FlowIntoInitializeInputs(t *testing.T) {
 	t.Parallel()
 	// L3 changesets will call the sequences with explicit params; the values
 	// must reach the initialize op inputs verbatim.
-	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	owner := foreignOwnerAddress()
 	feeAgg := predictedID(t, "fee-agg")
+	stubTARReadback(t, inv, owner)
 
 	_, err := execComponentSequence(b, deps, DeployTokenAdminRegistry, DeployTokenAdminRegistryInput{
 		ChainSelector: 1, WasmPath: wasmPath, Owner: owner,
 	})
 	require.NoError(t, err)
-	require.Equal(t, owner, opInput[tarops.InitializeInput](t, reporter, "token-admin-registry:initialize").Owner)
+	require.Equal(t, stellarops.ConstructorArgs{scval.AddressToScVal(owner)},
+		opInput[stellarops.DeployInput](t, reporter, "token-admin-registry:deploy").ConstructorArgs)
 
 	_, err = execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
 		ChainSelector: 1, WasmPath: wasmPath, Owner: owner, AllowlistAdmin: feeAgg, FeeAggregator: owner,

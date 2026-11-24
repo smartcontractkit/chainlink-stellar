@@ -32,6 +32,14 @@ func (c *DataFeedsProxyClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the DataFeedsProxy __constructor arguments in spec order.
+func ConstructorArgs(owner string, cache string) ([]xdr.ScVal, error) {
+	return []xdr.ScVal{
+		scval.AddressToScVal(owner),
+		scval.AddressToScVal(cache),
+	}, nil
+}
+
 // Upgrade calls the upgrade function on the contract.
 func (c *DataFeedsProxyClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
 	args := []xdr.ScVal{

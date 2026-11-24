@@ -136,7 +136,7 @@ func collectPoolOwnershipRefs(b cldf_ops.Bundle, deps stellardeps.StellarDeps, d
 			refs = append(refs, datastore.AddressRef{
 				ChainSelector: input.ChainSelector,
 				Type:          datastore.ContractType(tlbops.ContractType),
-				Version:       stellarops.ContractDeploymentVersion,
+				Version:       stellarops.ContractRefVersion,
 				Address:       entry.LockBox,
 			})
 		}
@@ -155,7 +155,7 @@ func collectPoolOwnershipRefs(b cldf_ops.Bundle, deps stellardeps.StellarDeps, d
 		refs = append(refs, datastore.AddressRef{
 			ChainSelector: input.ChainSelector,
 			Type:          datastore.ContractType(aphops.ContractType),
-			Version:       stellarops.ContractDeploymentVersion,
+			Version:       stellarops.ContractRefVersion,
 			Address:       *hooksReport.Output,
 		})
 	}

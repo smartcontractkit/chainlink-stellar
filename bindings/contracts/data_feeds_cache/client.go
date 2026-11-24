@@ -32,6 +32,13 @@ func (c *DataFeedsCacheClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the DataFeedsCache __constructor arguments in spec order.
+func ConstructorArgs(owner string) ([]xdr.ScVal, error) {
+	return []xdr.ScVal{
+		scval.AddressToScVal(owner),
+	}, nil
+}
+
 // Upgrade calls the upgrade function on the contract.
 func (c *DataFeedsCacheClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error {
 	args := []xdr.ScVal{

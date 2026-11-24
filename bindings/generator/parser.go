@@ -11,9 +11,11 @@ type Contract struct {
 	Name      string
 	Structs   []Struct
 	Functions []Function
-	Errors    []ErrorEnum
-	Events    []Event
-	Enums     []Enum
+	// Constructor is the spec's __constructor, nil when the contract has none.
+	Constructor *Function
+	Errors      []ErrorEnum
+	Events      []Event
+	Enums       []Enum
 }
 
 // Struct represents a Soroban struct type.
@@ -145,8 +147,7 @@ func ParseRustBindings(input string) (*Contract, error) {
 	// Parse structs
 	contract.Structs = parseStructs(input)
 
-	// Parse trait functions
-	contract.Functions = parseFunctions(input)
+	contract.Functions, contract.Constructor = parseFunctions(input)
 
 	// Parse error enums
 	contract.Errors = parseErrors(input)
@@ -382,12 +383,14 @@ func parseStructs(input string) []Struct {
 	return structs
 }
 
-func parseFunctions(input string) []Function {
+// parseFunctions returns the trait's client-callable functions and, separately,
+// its __constructor. Other `__`-prefixed host hooks are dropped.
+func parseFunctions(input string) ([]Function, *Function) {
 	// Match trait block (Contract or {Name}Interface from gen_interfaces.sh)
 	traitRe := regexp.MustCompile(`(?s)pub trait \w+ \{(.+?)\n\}`)
 	traitMatch := traitRe.FindStringSubmatch(input)
 	if traitMatch == nil {
-		return nil
+		return nil, nil
 	}
 	traitBody := traitMatch[1]
 
@@ -396,40 +399,39 @@ func parseFunctions(input string) []Function {
 	funcRe := regexp.MustCompile(`fn (\w+)\s*\(\s*env:\s*soroban_sdk::Env\s*(?:,\s*([^)]*))?\)\s*(?:->\s*([^;]+))?;`)
 
 	var functions []Function
+	var constructor *Function
 	matches := funcRe.FindAllStringSubmatch(traitBody, -1)
 
 	for _, match := range matches {
-		name := match[1]
-		paramsStr := strings.TrimSpace(match[2])
-		returnStr := strings.TrimSpace(match[3])
-
-		if strings.HasPrefix(name, "__") {
-			continue
+		fn := Function{
+			Name:    match[1],
+			Inputs:  parseParams(strings.TrimSpace(match[2])),
+			Returns: strings.TrimSpace(match[3]),
 		}
-
-		var inputs []Field
-		if paramsStr != "" {
-			// Parse each parameter
-			params := splitParams(paramsStr)
-			for _, p := range params {
-				parts := strings.SplitN(p, ":", 2)
-				if len(parts) == 2 {
-					inputs = append(inputs, Field{
-						Name: strings.TrimSpace(parts[0]),
-						Type: strings.TrimSpace(parts[1]),
-					})
-				}
-			}
+		switch {
+		case fn.Name == "__constructor":
+			constructor = &fn
+		case strings.HasPrefix(fn.Name, "__"):
+		default:
+			functions = append(functions, fn)
 		}
-
-		functions = append(functions, Function{
-			Name:    name,
-			Inputs:  inputs,
-			Returns: returnStr,
-		})
 	}
 
-	return functions
+	return functions, constructor
+}
+
+func parseParams(paramsStr string) []Field {
+	var inputs []Field
+	for _, p := range splitParams(paramsStr) {
+		parts := strings.SplitN(p, ":", 2)
+		if len(parts) == 2 {
+			inputs = append(inputs, Field{
+				Name: strings.TrimSpace(parts[0]),
+				Type: strings.TrimSpace(parts[1]),
+			})
+		}
+	}
+	return inputs
 }
 
 func splitParams(params string) []string {

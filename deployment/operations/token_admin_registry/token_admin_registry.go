@@ -10,28 +10,8 @@ import (
 // ContractType labels TokenAdminRegistry.
 const ContractType = "TokenAdminRegistry"
 
-// Deploy uploads token_admin_registry.wasm.
+// Deploy uploads token_admin_registry.wasm and runs its constructor.
 var Deploy = stellarops.NewDeployOperation("token-admin-registry:deploy", "Deploys the TokenAdminRegistry Soroban contract from WASM")
-
-// InitializeInput sets registry owner.
-type InitializeInput struct {
-	ContractID string `json:"contract_id"`
-	Owner      string `json:"owner"`
-}
-
-// Initialize calls TokenAdminRegistry `initialize`.
-var Initialize = cldfops.NewOperation(
-	"token-admin-registry:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes TokenAdminRegistry with owner",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := tarbindings.NewTokenAdminRegistryClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
 
 // ProposeAdministratorInput proposes a token administrator.
 type ProposeAdministratorInput struct {

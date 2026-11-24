@@ -639,7 +639,7 @@ func resolveRemoteRateLimitBuckets(input tokens.ConfigureTokenForTransfersInput,
 	if outOK {
 		outbound, inbound := tokens.GenerateTPRLConfigs(
 			defaultOut.RateLimit, defaultIn.RateLimit, localDecimals, rc.RemoteDecimals,
-			chainsel.FamilyStellar, stellarops.ContractDeploymentVersion, input.PoolType)
+			chainsel.FamilyStellar, stellarops.ContractRefVersion, input.PoolType)
 		defBucket = &tokens.TPRLRateLimitBucket{OutboundRateLimiterConfig: outbound, InboundRateLimiterConfig: inbound}
 	}
 
@@ -653,7 +653,7 @@ func resolveRemoteRateLimitBuckets(input tokens.ConfigureTokenForTransfersInput,
 	if ffOutOK {
 		ffOutbound, ffInbound := tokens.GenerateTPRLConfigs(
 			ffOut.RateLimit, ffIn.RateLimit, localDecimals, rc.RemoteDecimals,
-			chainsel.FamilyStellar, stellarops.ContractDeploymentVersion, input.PoolType)
+			chainsel.FamilyStellar, stellarops.ContractRefVersion, input.PoolType)
 		ffBucket = &tokens.TPRLRateLimitBucket{
 			OutboundRateLimiterConfig: ffOutbound, InboundRateLimiterConfig: ffInbound, FastFinality: true,
 		}

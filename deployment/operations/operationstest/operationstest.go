@@ -202,15 +202,17 @@ func (r *RecordingInvoker) Last() InvokeRecord {
 }
 
 // FakeDeployer is a stellardeps.SorobanContractDeployer that records the last
-// wasm path + salt and returns a fixed contract ID.
+// wasm path, salt and constructor args and returns a fixed contract ID.
 type FakeDeployer struct {
-	LastWasm string
-	LastSalt [32]byte
+	LastWasm     string
+	LastSalt     [32]byte
+	LastCtorArgs []xdr.ScVal
 }
 
-func (f *FakeDeployer) DeployContract(_ context.Context, wasmPath string, salt [32]byte) (string, error) {
+func (f *FakeDeployer) DeployContractWithArgs(_ context.Context, wasmPath string, salt [32]byte, ctorArgs []xdr.ScVal) (string, error) {
 	f.LastWasm = wasmPath
 	f.LastSalt = salt
+	f.LastCtorArgs = ctorArgs
 	return MockContractID, nil
 }
 

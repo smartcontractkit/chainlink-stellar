@@ -21,7 +21,7 @@ type fakeDeployer struct {
 	lastSalt [32]byte
 }
 
-func (f *fakeDeployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
+func (f *fakeDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, _ []xdr.ScVal) (string, error) {
 	_ = ctx
 	f.lastWasm = wasmPath
 	f.lastSalt = salt
@@ -96,7 +96,7 @@ func TestExecuteOperation_withStellarDeps(t *testing.T) {
 		"smoke test that deps wiring matches CLDF operation execution",
 		func(b cldfops.Bundle, d stellardeps.StellarDeps, input in) (out, error) {
 			ctx := b.GetContext()
-			id, err := d.Deploy.DeployContract(ctx, input.Wasm, [32]byte{7})
+			id, err := d.Deploy.DeployContractWithArgs(ctx, input.Wasm, [32]byte{7}, nil)
 			if err != nil {
 				return out{}, err
 			}
