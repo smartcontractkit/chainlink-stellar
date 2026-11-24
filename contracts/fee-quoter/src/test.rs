@@ -75,6 +75,85 @@ fn test_update_prices_rejects_unauthorized_updater() {
     assert_eq!(err, CCIPError::CallerNotAuthorized);
 }
 
+/// The owner can rotate the price-updater set on chain (EVM
+/// `FeeQuoter.applyAuthorizedCallerUpdates` parity). Regression for the
+/// `DefaultOwnable`/`AUTHOWN` defect: the gate now reads this contract's own
+/// owner key, so the real owner passes — before the trait fix this entry point
+/// family always failed with `NotOwner`, leaving the updater set immutable
+/// without a Wasm upgrade.
+#[test]
+fn test_apply_authorized_caller_updates() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let new_updater = Address::generate(&env);
+
+    let static_config = create_static_config(link_token.clone());
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // Owner adds a second updater.
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(new_updater.clone());
+    client.apply_authorized_caller_updates(&owner, &added, &Vec::new(&env));
+
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 2);
+    assert!(client.get_authorized_callers().contains(&new_updater));
+
+    // The new updater can update prices.
+    let price_updates = PriceUpdates {
+        token_price_updates: Vec::new(&env),
+        gas_price_updates: Vec::new(&env),
+    };
+    client.update_prices(&new_updater, &price_updates);
+
+    // Owner removes the original updater.
+    let mut removed: Vec<Address> = Vec::new(&env);
+    removed.push_back(price_updater.clone());
+    client.apply_authorized_caller_updates(&owner, &Vec::new(&env), &removed);
+
+    assert!(!client.get_authorized_callers().contains(&price_updater));
+    let err = client
+        .try_update_prices(&price_updater, &price_updates)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::CallerNotAuthorized);
+}
+
+#[test]
+fn test_apply_authorized_caller_updates_rejects_non_owner() {
+    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let intruder = Address::generate(&env);
+    let new_updater = Address::generate(&env);
+
+    let static_config = create_static_config(link_token);
+    let mut authorized_callers: Vec<Address> = Vec::new(&env);
+    authorized_callers.push_back(price_updater.clone());
+    client.initialize(&owner, &static_config, &authorized_callers);
+
+    // An authorized price updater is NOT the owner — cannot rotate the set.
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(new_updater.clone());
+    let err = client
+        .try_apply_authorized_caller_updates(&price_updater, &added, &Vec::new(&env))
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::CallerNotAuthorized);
+
+    let err = client
+        .try_apply_authorized_caller_updates(&intruder, &added, &Vec::new(&env))
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::CallerNotAuthorized);
+
+    // No state change: still exactly the initial updater.
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers.get(0).unwrap(), price_updater);
+}
+
 #[test]
 fn test_initialize() {
     let (env, contract_id, owner, link_token, price_updater) = setup_env();
@@ -99,9 +178,9 @@ fn test_initialize() {
     );
 
     // Verify authorized callers
-    // let callers = client.get_authorized_callers();
-    // assert_eq!(callers.len(), 1);
-    // assert_eq!(callers.get(0).unwrap(), price_updater);
+    let callers = client.get_authorized_callers();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers.get(0).unwrap(), price_updater);
 }
 
 #[test]
