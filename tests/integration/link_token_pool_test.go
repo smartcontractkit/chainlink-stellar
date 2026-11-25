@@ -481,6 +481,82 @@ func TestLinkTokenPoolInbound(t *testing.T) {
 	}
 	t.Logf("inbound release_or_mint: pool minted %d fresh LINK to receiver %s (pool balance untouched)",
 		releaseAmount, stack.ReceiverID)
+
+	// Account (EOA-parity) token receiver: same inbound flow, but the token
+	// transfer names the deployer account's public key instead of the receiver
+	// contract — the OffRamp resolves raw 32-byte receivers by ledger
+	// existence and mints to the account (EVM OffRamp.sol:324/426 parity).
+	// The custom LINK token holds storage balances, so no trustline is needed.
+	t.Run("account token receiver", func(t *testing.T) {
+		const acctSeqNo = uint64(2)
+		const acctReleaseAmount = int64(1_500_000)
+
+		acctBefore := linkBalanceOrFatal(ctx, t, lane.TokenClient, deployerAddr)
+
+		tokenXfer, err := EncodeCcipTokenTransferV1Inbound(acctReleaseAmount, lane.RemotePool, lane.RemoteToken, lane.TokenID, deployerAddr, nil)
+		if err != nil {
+			t.Fatalf("EncodeCcipTokenTransferV1Inbound (account): %v", err)
+		}
+		evmSender := bytes.Repeat([]byte{0xcd}, 20)
+		var ccvZero [32]byte
+		encoded, err := encodeCcipMessageV1(ccipV1Wire{
+			SourceChainSelector: remoteSourceChain,
+			DestChainSelector:   localChain,
+			SequenceNumber:      acctSeqNo,
+			ExecutionGasLimit:   0,
+			CcipReceiveGasLimit: 0,
+			Finality:            0,
+			CcvExecutorHash:     ccvZero,
+			OnRampAddress:       stack.OnRampWire,
+			OffRampAddress:      stack.OffRampSuffix,
+			Sender:              evmSender,
+			Receiver:            stack.ReceiverRaw,
+			DestBlob:            nil,
+			TokenTransfer:       tokenXfer,
+			Data:                nil,
+		})
+		if err != nil {
+			t.Fatalf("encodeCcipMessageV1 (account): %v", err)
+		}
+		acctMsgID := keccak256MessageID(encoded)
+		acctBlob := stack.signVerifierBlob(t, acctMsgID)
+
+		latest, err := rpcClient.GetLatestLedger(ctx)
+		if err != nil {
+			t.Fatalf("GetLatestLedger: %v", err)
+		}
+		acctStartLedger := latest.Sequence
+
+		if err := stack.OfframpClient.Execute(ctx, encoded, []string{stack.VvrID}, [][]byte{acctBlob}, 0); err != nil {
+			t.Fatalf("OffRamp Execute (account receiver): %v", err)
+		}
+
+		state, err := stack.OfframpClient.GetExecutionState(ctx, acctMsgID)
+		if err != nil {
+			t.Fatalf("GetExecutionState: %v", err)
+		}
+		if state != offrampbindings.MessageExecutionStateSuccess {
+			t.Fatalf("execution state = %d, want Success (%d)", state, offrampbindings.MessageExecutionStateSuccess)
+		}
+
+		const eventWait = 30 * time.Second
+		minted, err := lane.PoolClient.WaitForMintedEvent(ctx, acctStartLedger, eventWait,
+			func(e *burnmintpoolbindings.MintedEvent) bool { return e.Recipient == deployerAddr })
+		if err != nil {
+			t.Fatalf("WaitForMintedEvent (account): %v", err)
+		}
+		if minted.Amount.Cmp(big.NewInt(acctReleaseAmount)) != 0 {
+			t.Fatalf("MintedEvent amount: want %d, got %s", acctReleaseAmount, minted.Amount)
+		}
+
+		acctAfter := linkBalanceOrFatal(ctx, t, lane.TokenClient, deployerAddr)
+		if got := new(big.Int).Sub(acctAfter, acctBefore); got.Cmp(big.NewInt(acctReleaseAmount)) != 0 {
+			t.Fatalf("deployer account LINK balance should increase by %d; before=%s after=%s (delta=%s)",
+				acctReleaseAmount, acctBefore, acctAfter, got)
+		}
+		t.Logf("inbound release_or_mint (account): pool minted %d fresh LINK to account %s",
+			acctReleaseAmount, deployerAddr)
+	})
 }
 
 // TestLinkTokenMinterRotation exercises the owner/minters surface of the
