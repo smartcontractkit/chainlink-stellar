@@ -18,6 +18,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	eventsfetcher "github.com/smartcontractkit/chainlink-stellar/ccv/common/events_fetcher"
+	"github.com/smartcontractkit/chainlink-stellar/ccv/common/events_fetcher/eventsfetchertest"
 	"github.com/smartcontractkit/chainlink-stellar/relayer/mocks"
 )
 
@@ -340,7 +342,8 @@ func TestGetBlocksHeaders(t *testing.T) {
 }
 
 // makeMessageSentEventInfo builds a decodable CCIPMessageSent RPC event for
-// the given ledger and sequence number.
+// the given ledger and sequence number, positioned at transaction index
+// seqNum within the ledger.
 func makeMessageSentEventInfo(t *testing.T, ledger int32, seqNum uint64, txHash string) protocolrpc.EventInfo {
 	t.Helper()
 
@@ -367,142 +370,205 @@ func makeMessageSentEventInfo(t *testing.T, ledger int32, seqNum uint64, txHash 
 	valueB64, err := xdr.MarshalBase64(eventVal)
 	require.NoError(t, err)
 
-	return protocolrpc.EventInfo{
-		EventType:       protocolrpc.EventTypeContract,
-		Ledger:          ledger,
-		TransactionHash: txHash,
-		ValueXDR:        valueB64,
-	}
+	e := eventsfetchertest.Event(uint32(ledger), uint32(seqNum), 0, 0, txHash)
+	e.ValueXDR = valueB64
+	return e
 }
 
-func TestFetchMessageSentEventsPagination(t *testing.T) {
+// testOnRampID is a syntactically valid contract strkey; the fake RPC rejects
+// filters with malformed contract IDs, as stellar-rpc does.
+const testOnRampID = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526"
+
+// fakeSourceRPC serves getEvents and getLatestLedger from an in-memory
+// stellar-rpc double.
+type fakeSourceRPC struct {
+	*eventsfetchertest.FakeRPC
+}
+
+func (fakeSourceRPC) GetLedgers(context.Context, protocolrpc.GetLedgersRequest) (protocolrpc.GetLedgersResponse, error) {
+	return protocolrpc.GetLedgersResponse{}, errors.New("not implemented")
+}
+
+func newFakeSourceReader(t *testing.T, oldest, latest uint32) (*SourceReader, *eventsfetchertest.FakeRPC) {
+	t.Helper()
 	lggr := zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.DebugLevel)
+	f := eventsfetchertest.New(oldest, latest)
+	reader, err := NewSourceReaderWithClient(fakeSourceRPC{f}, nil, testOnRampID, "transfer", "RMNREMOTE", &lggr)
+	require.NoError(t, err)
+	return reader, f
+}
 
-	newReader := func(t *testing.T) (*SourceReader, *mocks.MockRPCClient) {
-		t.Helper()
-		mockClient := mocks.NewMockRPCClient(t)
-		reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
-		require.NoError(t, err)
-		return reader, mockClient
+func seqNums(events []protocol.MessageSentEvent) []protocol.SequenceNumber {
+	out := make([]protocol.SequenceNumber, len(events))
+	for i, e := range events {
+		out[i] = e.Message.SequenceNumber
 	}
+	return out
+}
 
-	t.Run("consumes all pages and returns distinct events", func(t *testing.T) {
-		reader, mockClient := newReader(t)
+func TestFetchMessageSentEvents(t *testing.T) {
+	t.Run("event in the last ledger of the range is returned", func(t *testing.T) {
+		// Regression: EndLedger is exclusive and an empty first page used to
+		// end pagination, so this event was lost permanently.
+		reader, f := newFakeSourceReader(t, 10, 2000)
+		f.Add(makeMessageSentEventInfo(t, 1099, 1, "tx-a"))
 
-		cursor1 := protocolrpc.Cursor{Ledger: 150, Tx: 1, Op: 0, Event: 0}.String()
-		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
-		evtB := makeMessageSentEventInfo(t, 180, 2, "tx-b")
-
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination == nil && req.StartLedger == 100 && req.EndLedger == 200
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: cursor1},
-			nil,
-		).Once()
-
-		// Continuation requests must carry only the cursor — ledger ranges and
-		// cursors are mutually exclusive in GetEventsRequest.
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination != nil && req.Pagination.Cursor != nil &&
-				req.Pagination.Cursor.Ledger == 150 &&
-				req.StartLedger == 0 && req.EndLedger == 0
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtB}, Cursor: ""},
-			nil,
-		).Once()
-
-		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
 		require.NoError(t, err)
-		require.Len(t, events, 2, "second page event must not be dropped")
-		assert.Equal(t, protocol.SequenceNumber(1), events[0].Message.SequenceNumber)
-		assert.Equal(t, protocol.SequenceNumber(2), events[1].Message.SequenceNumber)
+		assert.Equal(t, []protocol.SequenceNumber{1}, seqNums(events))
+		assert.Equal(t, uint64(1099), events[0].BlockNumber)
 	})
 
-	t.Run("single page without cursor issues one request", func(t *testing.T) {
-		reader, mockClient := newReader(t)
+	t.Run("consecutive inclusive chunks lose and duplicate nothing", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 2000)
+		for i, ledger := range []int32{1000, 1100, 1101, 1201, 1202, 1300} {
+			f.Add(makeMessageSentEventInfo(t, ledger, uint64(i+1), "tx"))
+		}
 
-		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
-
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination == nil && req.StartLedger == 100 && req.EndLedger == 200
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: ""},
-			nil,
-		).Once()
-
-		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
-		require.NoError(t, err)
-		require.Len(t, events, 1)
+		var got []protocol.SequenceNumber
+		for from := uint64(1000); from <= 1300; from += 101 {
+			events, err := reader.FetchMessageSentEvents(context.Background(), from, min(from+100, 1300))
+			require.NoError(t, err)
+			got = append(got, seqNums(events)...)
+		}
+		assert.Equal(t, []protocol.SequenceNumber{1, 2, 3, 4, 5, 6}, got)
 	})
 
-	t.Run("returns error when a continuation page fails", func(t *testing.T) {
-		reader, mockClient := newReader(t)
+	t.Run("pages through more events than one page holds", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 2000)
+		for i := 0; i < 250; i++ {
+			f.Add(makeMessageSentEventInfo(t, int32(1000+i/3), uint64(i), "tx"))
+		}
 
-		cursor1 := protocolrpc.Cursor{Ledger: 150, Tx: 1, Op: 0, Event: 0}.String()
-		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
+		require.NoError(t, err)
+		assert.Len(t, events, 250)
+	})
 
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination == nil
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: cursor1},
-			nil,
-		).Once()
+	t.Run("range wider than the server scan cap is fully covered", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 40000)
+		f.Add(makeMessageSentEventInfo(t, 25000, 1, "tx"))
 
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination != nil
-		})).Return(
-			protocolrpc.GetEventsResponse{},
-			errors.New("rpc timeout"),
-		).Once()
+		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 30000)
+		require.NoError(t, err)
+		assert.Equal(t, []protocol.SequenceNumber{1}, seqNums(events))
+	})
 
-		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
-		require.Error(t, err, "incomplete retrieval must error, not return a partial result")
+	t.Run("toBlock 0 reads through the latest ledger", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 1500)
+		f.Add(makeMessageSentEventInfo(t, 1500, 1, "tx"))
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 0)
+		require.NoError(t, err)
+		assert.Equal(t, []protocol.SequenceNumber{1}, seqNums(events))
+		assert.Equal(t, uint32(1501), f.Requests()[0].EndLedger)
+	})
+
+	t.Run("toBlock 0 errors when the events node lags an already-reported latest", func(t *testing.T) {
+		// The verifier saw ledger 1500 via LatestAndFinalizedBlock and will
+		// checkpoint there, but the node now serving lags at 1400.
+		reader, _ := newFakeSourceReader(t, 10, 1400)
+		reader.observeLatest(1500)
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 0)
+		var inc *eventsfetcher.IncompleteRangeError
+		require.ErrorAs(t, err, &inc, "a short result would let the caller skip ledgers 1401-1500")
+		assert.Nil(t, events)
+	})
+
+	t.Run("explicit toBlock past the node's latest errors", func(t *testing.T) {
+		reader, _ := newFakeSourceReader(t, 10, 1050)
+
+		_, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
+		var inc *eventsfetcher.IncompleteRangeError
+		require.ErrorAs(t, err, &inc)
+	})
+
+	t.Run("range below the minimum ledger is empty without an RPC call", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 1, 2000)
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 0, 5)
+		require.NoError(t, err)
+		assert.Empty(t, events)
+		assert.Empty(t, f.Requests())
+	})
+
+	t.Run("from is clamped to the minimum ledger", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 1, 2000)
+
+		_, err := reader.FetchMessageSentEvents(context.Background(), 0, 100)
+		require.NoError(t, err)
+		assert.Equal(t, uint32(7), f.Requests()[0].StartLedger)
+	})
+
+	t.Run("undecodable event is skipped and the rest returned", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 2000)
+		bad := eventsfetchertest.Event(1050, 0, 0, 0, "tx-bad")
+		bad.ValueXDR = "not-xdr"
+		f.Add(makeMessageSentEventInfo(t, 1010, 1, "tx-a"), bad, makeMessageSentEventInfo(t, 1090, 2, "tx-b"))
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
+		require.NoError(t, err)
+		assert.Equal(t, []protocol.SequenceNumber{1, 2}, seqNums(events))
+	})
+
+	t.Run("rpc error mid-pagination returns an error, not a partial result", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 2000)
+		for i := 0; i < 150; i++ {
+			f.Add(makeMessageSentEventInfo(t, int32(1000+i/2), uint64(i), "tx"))
+		}
+		f.Override = func(n int, _ protocolrpc.GetEventsRequest) (protocolrpc.GetEventsResponse, error, bool) {
+			if n == 2 {
+				return protocolrpc.GetEventsResponse{}, errors.New("rpc timeout"), true
+			}
+			return protocolrpc.GetEventsResponse{}, nil, false
+		}
+
+		events, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
+		require.Error(t, err)
 		assert.Nil(t, events)
 		assert.Contains(t, err.Error(), "page 2")
 	})
 
-	t.Run("stops at events beyond the fixed ledger range", func(t *testing.T) {
-		reader, mockClient := newReader(t)
+	t.Run("filters on the onramp contract and message sent topic", func(t *testing.T) {
+		reader, f := newFakeSourceReader(t, 10, 2000)
 
-		cursor1 := protocolrpc.Cursor{Ledger: 150, Tx: 1, Op: 0, Event: 0}.String()
-		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
-		evtOutOfRange := makeMessageSentEventInfo(t, 250, 2, "tx-b")
-
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination == nil
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: cursor1},
-			nil,
-		).Once()
-
-		mockClient.On("GetEvents", mock.Anything, mock.MatchedBy(func(req protocolrpc.GetEventsRequest) bool {
-			return req.Pagination != nil
-		})).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtOutOfRange}, Cursor: ""},
-			nil,
-		).Once()
-
-		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
+		_, err := reader.FetchMessageSentEvents(context.Background(), 1000, 1099)
 		require.NoError(t, err)
-		require.Len(t, events, 1, "events past toBlock on a continuation page must be excluded")
-		assert.Equal(t, protocol.SequenceNumber(1), events[0].Message.SequenceNumber)
+		req := f.Requests()[0]
+		require.Len(t, req.Filters, 1)
+		assert.Equal(t, []string{testOnRampID}, req.Filters[0].ContractIDs)
+		assert.Equal(t, scval.SymbolToScValPtr("transfer"), req.Filters[0].Topics[0][0].ScVal)
 	})
 
-	t.Run("returns error on malformed continuation cursor", func(t *testing.T) {
-		reader, mockClient := newReader(t)
+	t.Run("rejects ledger numbers beyond uint32", func(t *testing.T) {
+		reader, _ := newFakeSourceReader(t, 10, 2000)
 
-		evtA := makeMessageSentEventInfo(t, 150, 1, "tx-a")
-
-		mockClient.On("GetEvents", mock.Anything, mock.Anything).Return(
-			protocolrpc.GetEventsResponse{Events: []protocolrpc.EventInfo{evtA}, Cursor: "not-a-cursor"},
-			nil,
-		).Once()
-
-		events, err := reader.FetchMessageSentEvents(context.Background(), 100, 200)
+		_, err := reader.FetchMessageSentEvents(context.Background(), 1<<33, 0)
 		require.Error(t, err)
-		assert.Nil(t, events)
-		assert.Contains(t, err.Error(), "continuation cursor")
+		_, err = reader.FetchMessageSentEvents(context.Background(), 1, 1<<33)
+		require.Error(t, err)
 	})
+}
+
+func TestLatestAndFinalizedBlockRaisesHighWaterMark(t *testing.T) {
+	lggr := zerolog.Nop()
+	mockClient := mocks.NewMockRPCClient(t)
+	header := xdr.LedgerHeader{LedgerSeq: 1500}
+	headerB64, err := xdr.MarshalBase64(header)
+	require.NoError(t, err)
+	mockClient.On("GetLatestLedger", mock.Anything).Return(protocolrpc.GetLatestLedgerResponse{
+		Hash:         strings.Repeat("ab", 32),
+		Sequence:     1500,
+		LedgerHeader: headerB64,
+	}, nil)
+	reader, err := NewSourceReaderWithClient(mockClient, nil, "CADDR", "transfer", "RMNREMOTE", &lggr)
+	require.NoError(t, err)
+
+	_, _, err = reader.LatestAndFinalizedBlock(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1500), reader.latestSeen.Load())
+	assert.Equal(t, uint32(1500), reader.observeLatest(1400), "the mark never moves backwards")
 }
 
 func TestToBytes32(t *testing.T) {

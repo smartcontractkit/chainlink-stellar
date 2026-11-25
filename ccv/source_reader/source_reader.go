@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -20,7 +21,11 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
+	eventsfetcher "github.com/smartcontractkit/chainlink-stellar/ccv/common/events_fetcher"
 )
+
+// minStellarLedger is the lowest ledger sequence getEvents can be queried from.
+const minStellarLedger = uint32(7)
 
 // Compile-time check to ensure we satisfy the chainaccess.SourceReader interface.
 var _ chainaccess.SourceReader = (*SourceReader)(nil)
@@ -59,6 +64,9 @@ type SourceReader struct {
 	ccipMessageSentTopic string
 	rmnRemoteAddress     string
 	lggr                 *zerolog.Logger
+	// latestSeen is the highest ledger reported as latest by any RPC call, so
+	// a toBlock=0 fetch never scans short of a ledger the caller already saw.
+	latestSeen atomic.Uint32
 }
 
 // NewSourceReaderWithClient constructs a Stellar source reader with a RPC client.
@@ -96,15 +104,18 @@ func NewSourceReaderWithClient(
 	}, nil
 }
 
-// FetchMessageSentEvents fetches CCIP MessageSent events from the Stellar OnRamp contract.
-// A toBlock of 0 queries up to the latest ledger.
+// FetchMessageSentEvents fetches CCIP MessageSent events emitted by the Stellar
+// OnRamp in the inclusive ledger range [fromBlock, toBlock]. A toBlock of 0
+// queries up to the latest ledger.
+//
+// The result covers the whole range or the call fails: the caller
+// (chainlink-ccv's verifier) checkpoints past the range it asked for, so a
+// short result would lose messages permanently, whereas an error makes it
+// retry the same range.
 func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, toBlock uint64) ([]protocol.MessageSentEvent, error) {
 	if fromBlock > math.MaxUint32 {
 		return nil, fmt.Errorf("block number exceeds uint32 (ledger seq) range: %d", fromBlock)
 	}
-
-	// OnStellar, ledger 7 is the min starting ledger number.
-	fromLedger := max(uint32(fromBlock), 7)
 
 	var toLedger uint32
 	if toBlock != 0 {
@@ -117,25 +128,34 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 		if err != nil {
 			return nil, fmt.Errorf("failed to get latest ledger: %w", err)
 		}
-		toLedger = latestLedger.Sequence
+		// The caller advances its checkpoint to the latest ledger it saw via
+		// LatestAndFinalizedBlock, which may have come from a node ahead of
+		// the one that just answered. Never scan short of a ledger already
+		// reported as latest; if the events node lags it, FetchRange errors
+		// and the caller retries instead of skipping the gap.
+		toLedger = max(latestLedger.Sequence, s.observeLatest(latestLedger.Sequence))
 	}
 
-	// Build topic filter for CCIPMessageSent event
-	topicScVal := scval.SymbolToScValPtr(s.ccipMessageSentTopic)
+	// On Stellar, ledger 7 is the min starting ledger number.
+	fromLedger := max(uint32(fromBlock), minStellarLedger)
+	if fromLedger > toLedger {
+		return []protocol.MessageSentEvent{}, nil
+	}
 
-	events, err := s.fetchAllEvents(ctx, fromLedger, toLedger, topicScVal)
+	filters := []protocolrpc.EventFilter{eventsfetcher.ContractTopicFilter(s.ccipOnrampAddress, s.ccipMessageSentTopic)}
+	res, err := eventsfetcher.FetchRange(ctx, s.client, filters, fromLedger, toLedger, eventsfetcher.Options{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch CCIPMessageSent events: %w", err)
 	}
 
-	results := make([]protocol.MessageSentEvent, 0, len(events))
-	for _, e := range events {
-		// Parse the CCIPMessageSent event
+	results := make([]protocol.MessageSentEvent, 0, len(res.Events))
+	for _, e := range res.Events {
 		msgEvent, err := s.decodeCCIPMessageSentEvent(e)
 		if err != nil {
-			s.lggr.Warn().
+			s.lggr.Error().
 				Int("ledger", int(e.Ledger)).
 				Str("txHash", e.TransactionHash).
+				Str("eventID", e.ID).
 				Err(err).
 				Msg("Failed to decode CCIPMessageSent event, skipping")
 			continue
@@ -144,87 +164,27 @@ func (s *SourceReader) FetchMessageSentEvents(ctx context.Context, fromBlock, to
 	}
 
 	s.lggr.Info().
-		Int("fromLedger", int(fromLedger)).
-		Int("toLedger", int(toLedger)).
+		Uint32("fromLedger", fromLedger).
+		Uint32("toLedger", toLedger).
+		Int("pages", res.Pages).
 		Int("count", len(results)).
 		Msg("Fetched CCIPMessageSent events")
 
 	return results, nil
 }
 
-// fetchAllEvents returns every CCIPMessageSent event in the fixed ledger range
-// [fromLedger, toLedger], following GetEvents continuation cursors until the
-// range is fully consumed. Any failure mid-pagination returns an error rather
-// than a partial result, so callers never advance past silently dropped
-// MessageSent events.
-func (s *SourceReader) fetchAllEvents(ctx context.Context, fromLedger, toLedger uint32, topicScVal *xdr.ScVal) ([]protocolrpc.EventInfo, error) {
-	// Use wildcard to match events with additional topics
-	zeroOrMore := protocolrpc.WildCardZeroOrMore
-	filters := []protocolrpc.EventFilter{
-		{
-			EventType:   protocolrpc.EventTypeSet{protocolrpc.EventTypeContract: nil},
-			ContractIDs: []string{s.ccipOnrampAddress},
-			Topics: []protocolrpc.TopicFilter{
-				{
-					{ScVal: topicScVal},
-					{Wildcard: &zeroOrMore},
-				},
-			},
-		},
-	}
-
-	req := protocolrpc.GetEventsRequest{
-		StartLedger: fromLedger,
-		EndLedger:   toLedger,
-		Filters:     filters,
-	}
-
-	var events []protocolrpc.EventInfo
-	prevCursor := ""
-	pages := 0
+// observeLatest raises the latest-ledger high-water mark to seq and returns
+// the resulting mark.
+func (s *SourceReader) observeLatest(seq uint32) uint32 {
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("fetching events (range %d-%d): %w", fromLedger, toLedger, err)
+		cur := s.latestSeen.Load()
+		if seq <= cur {
+			return cur
 		}
-
-		resp, err := s.client.GetEvents(ctx, req)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get events (range %d-%d, page %d): %w", fromLedger, toLedger, pages+1, err)
-		}
-		pages++
-
-		// Continuation requests cannot carry EndLedger (a cursor and a ledger
-		// range are mutually exclusive in GetEventsRequest), so the fixed range
-		// is enforced client-side: events arrive in ascending (ledger, tx, op,
-		// event) order, so the first event past toLedger terminates the scan.
-		outOfRange := false
-		for _, e := range resp.Events {
-			if uint32(e.Ledger) > toLedger {
-				outOfRange = true
-				break
-			}
-			events = append(events, e)
-		}
-
-		if outOfRange || resp.Cursor == "" || len(resp.Events) == 0 || resp.Cursor == prevCursor {
-			break
-		}
-
-		cursor, err := protocolrpc.ParseCursor(resp.Cursor)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse events continuation cursor %q: %w", resp.Cursor, err)
-		}
-		if cursor.Ledger > toLedger {
-			break
-		}
-		prevCursor = resp.Cursor
-		req = protocolrpc.GetEventsRequest{
-			Filters:    filters,
-			Pagination: &protocolrpc.PaginationOptions{Cursor: &cursor},
+		if s.latestSeen.CompareAndSwap(cur, seq) {
+			return seq
 		}
 	}
-
-	return events, nil
 }
 
 // Rust event struct (contracts/onramp/src/events.rs):
@@ -325,7 +285,7 @@ func (s *SourceReader) decodeCCIPMessageSentEvent(e protocolrpc.EventInfo) (*pro
 		}
 	}
 
-	ev := s.lggr.Info().
+	ev := s.lggr.Debug().
 		Uint64("destChainSelector", destChainSelector).
 		Uint64("sequenceNumber", sequenceNumber).
 		Str("sender", sender).
@@ -476,6 +436,7 @@ func (s *SourceReader) LatestAndFinalizedBlock(ctx context.Context) (latest, fin
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build block header: %w", err)
 	}
+	s.observeLatest(latestLedger.Sequence)
 
 	// Stellar ledgers are finalized on close; latest == finalized.
 	return &header, &header, nil
