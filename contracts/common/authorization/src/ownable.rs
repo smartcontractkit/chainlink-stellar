@@ -9,7 +9,7 @@
 //! This prevents accidental transfers to wrong addresses.
 
 use common_error::CCIPError;
-use soroban_sdk::{contracttrait, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contracttrait, Address, Env, Symbol};
 
 use super::events::{OwnershipTransferStartedEvent, OwnershipTransferredEvent};
 use common_guard::initializable::Initializable;
@@ -155,21 +155,4 @@ pub trait Ownable: Initializable {
         env.storage().instance().remove(&Self::PENDING_OWNER);
         Ok(())
     }
-}
-
-/// Default implementation of Ownable using standard storage keys.
-///
-/// Use this when you need to call Ownable methods without a specific contract type
-/// (e.g., from AuthorizedCallers or AccessControl).
-pub struct DefaultOwnable;
-
-impl Initializable for DefaultOwnable {
-    const INITIALIZED: Symbol = symbol_short!("INIT");
-}
-
-impl Ownable for DefaultOwnable {
-    /// Storage key for the owner address.
-    const OWNER: Symbol = symbol_short!("AUTHOWN");
-    /// Storage key for the pending owner (during two-step transfer).
-    const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
 }

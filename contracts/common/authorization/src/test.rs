@@ -2,87 +2,119 @@
 
 use super::*;
 use common_error::CCIPError;
+use common_guard::initializable::Initializable;
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Symbol, Vec};
 
 // ============================================================
 // Test Contract
 // ============================================================
 
-/// A test contract that wraps the authorization library for testing.
+/// A test contract that wires the authorization traits the way production
+/// contracts do: `Ownable`/`AuthorizedCallers`/`AccessControl` implemented on
+/// the contract itself, each with its own storage key. The previous form
+/// wrapped the free-function helpers and seeded the `DefaultOwnable` stand-in
+/// (`AUTHOWN`) directly, which no production contract writes — masking the
+/// permanently-`NotOwner` owner gates this file now pins as regressions.
 #[contract]
 pub struct TestAuthContract;
 
+const INITIALIZED: Symbol = symbol_short!("INIT");
+const OWNER: Symbol = symbol_short!("OWNER");
+const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
+const AUTHORIZED_CALLERS: Symbol = symbol_short!("AUTHCALL");
+const ACCESS_ROLES: Symbol = symbol_short!("AUTHROLE");
+
+#[contractimpl]
+impl Initializable for TestAuthContract {
+    const INITIALIZED: Symbol = INITIALIZED;
+}
+
+#[contractimpl]
+impl Ownable for TestAuthContract {
+    const OWNER: Symbol = OWNER;
+    const PENDING_OWNER: Symbol = PENDING_OWNER;
+}
+
+impl AuthorizedCallers for TestAuthContract {
+    const AUTHORIZED_CALLERS: Symbol = AUTHORIZED_CALLERS;
+}
+
+impl AccessControl for TestAuthContract {
+    const ACCESS_ROLES: Symbol = ACCESS_ROLES;
+}
+
 #[contractimpl]
 impl TestAuthContract {
-    // ---- Ownable (using DefaultOwnable for testing) ----
-    pub fn init_owner(env: Env, owner: Address) {
-        let _ = DefaultOwnable::init_owner(&env, &owner);
+    // ---- Ownable ----
+    pub fn init_owner(env: Env, owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::init_owner(&env, &owner)
     }
 
     pub fn get_owner(env: Env) -> Option<Address> {
-        DefaultOwnable::owner(&env)
+        <Self as Ownable>::owner(&env)
     }
 
     pub fn is_owner(env: Env, addr: Address) -> bool {
-        DefaultOwnable::is_owner(&env, &addr)
+        <Self as Ownable>::is_owner(&env, &addr)
     }
 
     pub fn require_owner(env: Env) -> Result<Address, CCIPError> {
-        DefaultOwnable::require_owner(&env)
+        <Self as Ownable>::require_owner(&env)
     }
 
     pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
-        DefaultOwnable::transfer_ownership(&env, &new_owner)
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
     }
 
     pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
-        DefaultOwnable::accept_ownership(&env)
+        <Self as Ownable>::accept_ownership(&env)
     }
 
     pub fn get_pending_owner(env: Env) -> Option<Address> {
-        DefaultOwnable::get_pending_owner(&env)
+        <Self as Ownable>::get_pending_owner(&env)
     }
 
     pub fn cancel_transfer(env: Env) -> Result<(), CCIPError> {
-        DefaultOwnable::cancel_ownership_transfer(&env)
+        <Self as Ownable>::cancel_ownership_transfer(&env)
     }
 
     // ---- AuthorizedCallers ----
     pub fn init_callers(env: Env, initial_callers: Vec<Address>) {
-        AuthorizedCallers::init(&env, initial_callers);
+        <Self as AuthorizedCallers>::init_authorized_callers(&env, initial_callers);
     }
 
     pub fn callers_enabled(env: Env) -> bool {
-        AuthorizedCallers::is_enabled(&env)
-    }
-
-    pub fn add_callers(env: Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        AuthorizedCallers::add_callers(&env, callers)
-    }
-
-    pub fn remove_callers(env: Env, callers: Vec<Address>) -> Result<(), CCIPError> {
-        AuthorizedCallers::remove_callers(&env, callers)
+        <Self as AuthorizedCallers>::is_authorized_callers_enabled(&env)
     }
 
     pub fn get_callers(env: Env) -> Vec<Address> {
-        AuthorizedCallers::get_callers(&env)
+        <Self as AuthorizedCallers>::get_authorized_callers(&env)
     }
 
     pub fn is_authorized(env: Env, addr: Address) -> bool {
-        AuthorizedCallers::is_authorized(&env, &addr)
+        <Self as AuthorizedCallers>::is_authorized_caller(&env, &addr)
     }
 
     pub fn require_authorized_caller(env: Env, caller: Address) -> Result<(), CCIPError> {
-        AuthorizedCallers::require_authorized_caller(&env, &caller)
+        <Self as AuthorizedCallers>::require_authorized_caller(&env, &caller)
+    }
+
+    pub fn apply_caller_updates(
+        env: Env,
+        caller: Address,
+        added: Vec<Address>,
+        removed: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as AuthorizedCallers>::apply_authorized_caller_updates(&env, &caller, added, removed)
     }
 
     // ---- AccessControl ----
     pub fn init_access(env: Env) {
-        AccessControl::init(&env);
+        <Self as AccessControl>::init_access_control(&env);
     }
 
     pub fn access_enabled(env: Env) -> bool {
-        AccessControl::is_enabled(&env)
+        <Self as AccessControl>::is_access_control_enabled(&env)
     }
 
     pub fn grant_role(
@@ -91,7 +123,7 @@ impl TestAuthContract {
         role: Symbol,
         account: Address,
     ) -> Result<(), CCIPError> {
-        AccessControl::grant_role(&env, &sender, role, &account)
+        <Self as AccessControl>::grant_role(&env, &sender, role, &account)
     }
 
     pub fn revoke_role(
@@ -100,23 +132,23 @@ impl TestAuthContract {
         role: Symbol,
         account: Address,
     ) -> Result<(), CCIPError> {
-        AccessControl::revoke_role(&env, &sender, role, &account)
+        <Self as AccessControl>::revoke_role(&env, &sender, role, &account)
     }
 
     pub fn renounce_role(env: Env, role: Symbol, account: Address) -> Result<(), CCIPError> {
-        AccessControl::renounce_role(&env, role, &account)
+        <Self as AccessControl>::renounce_role(&env, role, &account)
     }
 
     pub fn has_role(env: Env, role: Symbol, account: Address) -> bool {
-        AccessControl::has_role(&env, role, &account)
+        <Self as AccessControl>::has_role(&env, role, &account)
     }
 
     pub fn require_role(env: Env, subject: Address, role: Symbol) -> Result<Address, CCIPError> {
-        AccessControl::require_role(&env, &subject, role)
+        <Self as AccessControl>::require_role(&env, &subject, role)
     }
 
     pub fn get_role_members(env: Env, role: Symbol) -> Vec<Address> {
-        AccessControl::get_role_members(&env, role)
+        <Self as AccessControl>::get_role_members(&env, role)
     }
 }
 
@@ -276,72 +308,80 @@ fn test_authorized_callers_init() {
     assert_eq!(callers.len(), 2);
 }
 
+/// Regression for the original defect: the owner gate must read the EMBEDDING
+/// contract's own owner key. The free-function form gated on `DefaultOwnable`
+/// (`AUTHOWN`), a stand-in no production contract writes, so every owner-gated
+/// update failed with `NotOwner` even for the real owner.
 #[test]
-fn test_authorized_callers_add() {
+fn test_authorized_caller_updates_owner_gate_reads_contract_owner() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let caller1 = Address::generate(&env);
-    let caller2 = Address::generate(&env);
+    let updater1 = Address::generate(&env);
+    let updater2 = Address::generate(&env);
+
+    // Owner is set through the contract's Ownable impl only — no stand-in key.
+    client.init_owner(&owner);
+    client.init_callers(&Vec::new(&env));
+
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater1.clone());
+    added.push_back(updater2.clone());
+    client.apply_caller_updates(&owner, &added, &Vec::new(&env));
+
+    assert!(client.is_authorized(&updater1));
+    assert!(client.is_authorized(&updater2));
+
+    // The new owner after a two-step transfer can update the set too.
+    client.transfer_ownership(&updater2);
+    client.accept_ownership();
+
+    let mut removed: Vec<Address> = Vec::new(&env);
+    removed.push_back(updater1.clone());
+    client.apply_caller_updates(&updater2, &Vec::new(&env), &removed);
+
+    assert!(!client.is_authorized(&updater1));
+    assert!(client.is_authorized(&updater2));
+}
+
+#[test]
+fn test_authorized_caller_updates_non_owner_rejected() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let intruder = Address::generate(&env);
+    let updater = Address::generate(&env);
 
     client.init_owner(&owner);
     client.init_callers(&Vec::new(&env));
 
-    let mut to_add: Vec<Address> = Vec::new(&env);
-    to_add.push_back(caller1.clone());
-    to_add.push_back(caller2.clone());
-
-    client.add_callers(&to_add);
-
-    assert!(client.is_authorized(&caller1));
-    assert!(client.is_authorized(&caller2));
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    let err = client
+        .try_apply_caller_updates(&intruder, &added, &Vec::new(&env))
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, CCIPError::CallerNotAuthorized);
+    assert!(!client.is_authorized(&updater));
 }
 
 #[test]
-fn test_authorized_callers_add_duplicate() {
+fn test_authorized_caller_updates_add_duplicate() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let caller = Address::generate(&env);
+    let updater = Address::generate(&env);
 
     client.init_owner(&owner);
 
     let mut initial: Vec<Address> = Vec::new(&env);
-    initial.push_back(caller.clone());
+    initial.push_back(updater.clone());
     client.init_callers(&initial);
 
-    // Try to add the same caller again
-    let mut to_add: Vec<Address> = Vec::new(&env);
-    to_add.push_back(caller.clone());
-    client.add_callers(&to_add);
-
-    // Should still have only one entry
-    let callers = client.get_callers();
-    assert_eq!(callers.len(), 1);
-}
-
-#[test]
-fn test_authorized_callers_remove() {
-    let (env, contract_id) = setup_env();
-    let client = TestAuthContractClient::new(&env, &contract_id);
-    let owner = Address::generate(&env);
-    let caller1 = Address::generate(&env);
-    let caller2 = Address::generate(&env);
-
-    client.init_owner(&owner);
-
-    let mut initial: Vec<Address> = Vec::new(&env);
-    initial.push_back(caller1.clone());
-    initial.push_back(caller2.clone());
-    client.init_callers(&initial);
-
-    // Remove caller1
-    let mut to_remove: Vec<Address> = Vec::new(&env);
-    to_remove.push_back(caller1.clone());
-    client.remove_callers(&to_remove);
-
-    assert!(!client.is_authorized(&caller1));
-    assert!(client.is_authorized(&caller2));
+    // Re-adding an existing caller is a no-op (deduped).
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    client.apply_caller_updates(&owner, &added, &Vec::new(&env));
 
     let callers = client.get_callers();
     assert_eq!(callers.len(), 1);
@@ -399,20 +439,83 @@ fn test_authorized_callers_require_empty_list() {
     assert_eq!(err, CCIPError::CallerNotAuthorized);
 }
 
+/// Within-batch idempotency: adding the same address twice in one call must
+/// store it once. The pre-fix membership check read the stored list (written
+/// only after the loops), so both iterations missed the address.
 #[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_authorized_callers_add_not_enabled() {
+fn test_authorized_caller_updates_same_batch_duplicate_add() {
     let (env, contract_id) = setup_env();
     let client = TestAuthContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let caller = Address::generate(&env);
+    let updater = Address::generate(&env);
+
+    client.init_owner(&owner);
+    let mut initial: Vec<Address> = Vec::new(&env);
+    initial.push_back(Address::generate(&env));
+    client.init_callers(&initial);
+
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    added.push_back(updater.clone());
+    client.apply_caller_updates(&owner, &added, &Vec::new(&env));
+
+    let callers = client.get_callers();
+    assert_eq!(
+        callers.len(),
+        2,
+        "duplicate in-batch add must store one entry"
+    );
+    let mut occurrences: u32 = 0;
+    for c in callers.iter() {
+        if c == updater {
+            occurrences += 1;
+        }
+    }
+    assert_eq!(occurrences, 1);
+}
+
+/// Within-batch remove-then-add nets to present (EVM applyAuthorizedCallerUpdates
+/// semantics: removals first, then additions). The pre-fix storage-backed
+/// membership check saw the still-stored address and skipped the re-add,
+/// leaving it removed.
+#[test]
+fn test_authorized_caller_updates_remove_and_readd_same_batch() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let updater = Address::generate(&env);
+
+    client.init_owner(&owner);
+    let mut initial: Vec<Address> = Vec::new(&env);
+    initial.push_back(updater.clone());
+    client.init_callers(&initial);
+
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater.clone());
+    let mut removed: Vec<Address> = Vec::new(&env);
+    removed.push_back(updater.clone());
+    client.apply_caller_updates(&owner, &added, &removed);
+
+    assert!(
+        client.is_authorized(&updater),
+        "remove-then-add in one batch must net to present"
+    );
+    assert_eq!(client.get_callers().len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_authorized_caller_updates_not_enabled() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let updater = Address::generate(&env);
 
     client.init_owner(&owner);
 
-    let mut to_add: Vec<Address> = Vec::new(&env);
-    to_add.push_back(caller);
-
-    client.add_callers(&to_add);
+    let mut added: Vec<Address> = Vec::new(&env);
+    added.push_back(updater);
+    client.apply_caller_updates(&owner, &added, &Vec::new(&env));
 }
 
 // ============================================================
@@ -450,6 +553,26 @@ fn test_access_control_init() {
     client.init_access();
 
     assert!(client.access_enabled());
+}
+
+/// Regression for the original defect: role management must resolve the owner
+/// through the EMBEDDING contract's own owner key. The free-function form read
+/// the `DefaultOwnable` stand-in (`AUTHOWN`), which nothing writes — the owner
+/// branch was unreachable and role grants fell back to ADMIN-only (with no
+/// ADMIN members seeded, fully deadlocked).
+#[test]
+fn test_access_control_owner_gate_reads_contract_owner() {
+    let (env, contract_id) = setup_env();
+    let client = TestAuthContractClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let minter = Address::generate(&env);
+
+    // Owner is set through the contract's Ownable impl only — no stand-in key.
+    client.init_owner(&owner);
+    client.init_access();
+
+    client.grant_role(&owner, &ROLE_MINTER, &minter);
+    assert!(client.has_role(&ROLE_MINTER, &minter));
 }
 
 #[test]
@@ -674,7 +797,7 @@ fn test_combined_authorization() {
     let price_updater = Address::generate(&env);
     let minter = Address::generate(&env);
 
-    // Initialize all three features
+    // Initialize all three features through the contract's own wiring
     client.init_owner(&owner);
 
     let mut callers: Vec<Address> = Vec::new(&env);

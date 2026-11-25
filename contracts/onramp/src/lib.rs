@@ -630,10 +630,10 @@ impl OnRampContract {
     /// Build the final outbound CCV plan (addresses + parallel args) used for both
     /// [`Self::get_fee`] and [`Self::forward_from_router`].
     ///
-    /// Mirrors EVM `OnRamp.forwardFromRouter`'s merge step: user + lane-mandated are combined
-    /// (with default fallback when both are empty), then pool-required CCVs are appended. Slots
-    /// without user-provided args (lane/pool/default) carry empty `Bytes` to keep the two Vecs
-    /// parallel.
+    /// Mirrors EVM `OnRamp.forwardFromRouter`'s merge step: an empty user list resolves
+    /// to lane defaults (OnRamp.sol:802-810), lane-mandated merge on top (OnRamp.sol:272),
+    /// then pool-required CCVs are appended. Slots without user-provided args
+    /// (lane/pool/default) carry empty `Bytes` to keep the two Vecs parallel.
     fn build_merged_outbound_ccv_lists(
         env: &Env,
         dest_chain_selector: u64,
@@ -1619,9 +1619,10 @@ impl OnRampContract {
         Ok(())
     }
 
-    /// Merge CCV address lists (user + lane-mandated + defaults) and build parallel
-    /// `ccv_args` (empty bytes for lane-only and default-fallback entries), matching
-    /// EVM `OnRamp._mergeCCVLists` empty-arg slots for non-user CCVs.
+    /// Merge CCV lists (user-or-defaults + lane-mandated) with parallel `ccv_args`
+    /// (empty bytes for non-user slots). EVM ordering: empty user list ⇒ lane defaults
+    /// first (`_resolveUserOrDefaultCCVs`, OnRamp.sol:802-810), mandated deduped on top
+    /// (`_mergeCCVLists`, OnRamp.sol:272).
     fn merge_ccv_lists_with_ccv_args(
         env: &Env,
         user_ccvs: &Vec<Address>,
@@ -1633,26 +1634,23 @@ impl OnRampContract {
             return Err(CCIPError::CCVLengthMismatch);
         }
 
-        // M-16 / INV-SRC-1/17: user-supplied CCVs (from ExtraArgsV3) must not contain
-        // duplicates, otherwise duplicate fee receipts are emitted and the
-        // `ccv_and_executor_hash` committed to the message won't match offchain
-        // expectations. Mirrors EVM `CCVConfigValidation._assertNoDuplicates(userCCVs)`
-        // (OnRamp.sol:812), invoked before the merge. Lane-mandated and pool-required
-        // CCVs are deduped against the running list below; only the user list needs this
-        // explicit rejection since it is cloned verbatim.
+        // M-16 / INV-SRC-1/17: user-supplied CCVs must not contain duplicates (EVM
+        // `CCVConfigValidation._assertNoDuplicates`, OnRamp.sol:812); mandated are
+        // deduped against the running list below.
         Self::assert_no_duplicate_ccvs(user_ccvs)?;
 
-        if user_ccvs.is_empty() && lane_mandated_ccvs.is_empty() {
-            let merged = default_ccvs.clone();
+        // Empty user list ⇒ seed from lane defaults regardless of lane-mandated
+        // (EVM OnRamp.sol:802-810). The caller passes an empty defaults list for
+        // token-only transfers, preserving the EVM token-only skip.
+        let (mut merged, mut args) = if user_ccvs.is_empty() {
             let mut args = Vec::new(env);
-            for _ in 0..merged.len() {
+            for _ in 0..default_ccvs.len() {
                 args.push_back(Bytes::new(env));
             }
-            return Ok((merged, args));
-        }
-
-        let mut merged = user_ccvs.clone();
-        let mut args = user_ccv_args.clone();
+            (default_ccvs.clone(), args)
+        } else {
+            (user_ccvs.clone(), user_ccv_args.clone())
+        };
 
         for i in 0..lane_mandated_ccvs.len() {
             if let Some(ccv) = lane_mandated_ccvs.get(i) {
@@ -1670,6 +1668,9 @@ impl OnRampContract {
             }
         }
 
+        // Safety net: reachable only when user, defaults AND mandated are all
+        // empty (invalid lane config) — the H-1 guard in
+        // `build_merged_outbound_ccv_lists` rejects the empty merge upstream.
         if merged.is_empty() {
             let merged = default_ccvs.clone();
             let mut args = Vec::new(env);

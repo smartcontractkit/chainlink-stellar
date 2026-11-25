@@ -4,6 +4,7 @@ members = [
     "data-feeds-common",
     "data-feeds-cache",
     "data-feeds-proxy",
+    "data-feeds-sep40-proxy",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ soroban-sdk = "=26.1.0"
 stellar-access = "=0.7.2"
 data-feeds-common = { path = "data-feeds-common" }
 data-feeds-cache = { path = "data-feeds-cache", default-features = false }
+data-feeds-proxy = { path = "data-feeds-proxy", default-features = false }
 
 [profile.release]
 opt-level = "z"

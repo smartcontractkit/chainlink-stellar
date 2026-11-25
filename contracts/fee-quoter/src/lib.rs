@@ -37,6 +37,7 @@ const GAS_PRC: Symbol = symbol_short!("GASPRC");
 const FEE_TKNS: Symbol = symbol_short!("FEETKNS");
 const DEST_CFG: Symbol = symbol_short!("DESTCFG");
 const TKN_FEES: Symbol = symbol_short!("TKNFEES");
+const AUTHORIZED_CALLERS: Symbol = symbol_short!("AUTHCALL");
 
 /// Minimum bytes overhead for token pool return data (matching EVM Pool.CCIP_LOCK_OR_BURN_V1_RET_BYTES).
 const CCIP_LOCK_OR_BURN_V1_RET_BYTES: u32 = 32;
@@ -59,6 +60,13 @@ impl Ownable for FeeQuoterContract {
     const PENDING_OWNER: Symbol = PENDING_OWNER;
 }
 
+/// Authorized price-updater set, owner-gated through this contract's own
+/// `Ownable` key (EVM `AuthorizedCallers`). Plain trait: the public surface is
+/// chosen explicitly below.
+impl AuthorizedCallers for FeeQuoterContract {
+    const AUTHORIZED_CALLERS: Symbol = AUTHORIZED_CALLERS;
+}
+
 #[contractimpl(contracttrait)]
 impl Upgradeable for FeeQuoterContract {}
 
@@ -74,6 +82,28 @@ impl FeeQuoterContract {
 
     pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
         <Self as Ownable>::accept_ownership(&env)
+    }
+
+    /// Add and/or remove authorized price updaters. Only callable by the
+    /// owner (EVM `FeeQuoter.applyAuthorizedCallerUpdates` parity).
+    ///
+    /// # Arguments
+    /// * `caller` - The owner identity claiming this update
+    /// * `added` - Updaters to add
+    /// * `removed` - Updaters to remove
+    pub fn apply_authorized_caller_updates(
+        env: Env,
+        caller: Address,
+        added: Vec<Address>,
+        removed: Vec<Address>,
+    ) -> Result<(), CCIPError> {
+        <Self as Initializable>::require_initialized(&env)?;
+        <Self as AuthorizedCallers>::apply_authorized_caller_updates(&env, &caller, added, removed)
+    }
+
+    /// All authorized price updaters (EVM `getAllAuthorizedCallers` parity).
+    pub fn get_authorized_callers(env: Env) -> Vec<Address> {
+        <Self as AuthorizedCallers>::get_authorized_callers(&env)
     }
 
     // ========================================
@@ -106,9 +136,7 @@ impl FeeQuoterContract {
         <Self as Initializable>::init(&env)?;
         <Self as Ownable>::init_owner(&env, &owner)?;
 
-        // Initialize authorized callers (common-authorization)
-        // TODO: remove this in favor of using the AllowListable trait.
-        AuthorizedCallers::init(&env, authorized_callers);
+        <Self as AuthorizedCallers>::init_authorized_callers(&env, authorized_callers);
 
         // Store static config
         env.storage().instance().set(&STATIC_CFG, &static_config);
@@ -343,7 +371,7 @@ impl FeeQuoterContract {
         price_updates: PriceUpdates,
     ) -> Result<(), CCIPError> {
         <Self as Initializable>::require_initialized(&env)?;
-        AuthorizedCallers::require_authorized_caller(&env, &updater)?;
+        <Self as AuthorizedCallers>::require_authorized_caller(&env, &updater)?;
 
         // Reentrancy protection for price updates
         ReentrancyGuard::enter(&env)?;

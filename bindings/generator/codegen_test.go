@@ -249,3 +249,42 @@ func mustNotContain(t *testing.T, s string, needles ...string) {
 		}
 	}
 }
+
+// TestGenerate_OptionalI128 covers Option<i128> struct fields, event fields and
+// function args: they map to a nil-able *big.Int (nil = None) and use the
+// OptionalI128 scval helpers, instead of the broken **big.Int /
+// `Option<i128>FromScVal` output.
+func TestGenerate_OptionalI128(t *testing.T) {
+	c := &Contract{
+		Name: "TokenPoolProxy",
+		Structs: []Struct{{
+			Name:   "CallerConfig",
+			Fields: []Field{{Name: "mint_allowance", Type: "Option<i128>"}},
+		}},
+		Events: []Event{{
+			Name:   "MintedEvent",
+			Topics: []string{"tpproxy_Minted"},
+			Fields: []EventField{{Field: Field{Name: "remaining_allowance", Type: "Option<i128>"}}},
+		}},
+		Functions: []Function{{
+			Name:    "set_limit",
+			Inputs:  []Field{{Name: "limit", Type: "Option<i128>"}},
+			Returns: "Option<i128>",
+		}},
+	}
+
+	types := GenerateTypes("token_pool_proxy", c)
+	mustContain(t, types, "MintAllowance *big.Int")
+	mustContain(t, types, "RemainingAllowance *big.Int")
+	mustContain(t, types, `"math/big"`)
+	mustContain(t, types, "scval.OptionalI128ToScVal(s.MintAllowance)")
+	mustContain(t, types, "scval.OptionalI128FromScVal(entry.Val)")
+	mustNotContain(t, types, "**big.Int")
+
+	client := GenerateClient("token_pool_proxy", c)
+	mustContain(t, client, "scval.OptionalI128ToScVal(limit)")
+	mustContain(t, client, "scval.OptionalI128FromScVal(*result)")
+	mustContain(t, client, "scval.OptionalI128FromScVal(entry.Val)")
+	mustNotContain(t, client, "Option < i128 >")
+	mustNotContain(t, client, "**big.Int")
+}

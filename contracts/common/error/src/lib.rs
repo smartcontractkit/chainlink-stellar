@@ -164,6 +164,7 @@ pub enum CCIPError {
     /// transaction reverts instead of rewriting the state and re-emitting the event
     /// (EVM `OffRamp.NoStateProgressMade`; INV-EXEC-7).
     NoStateProgressMade = 119,
+    CCVLengthTooLarge = 120,
 
     // ============================================================
     // TokenAdminRegistry errors
@@ -187,7 +188,7 @@ pub enum CCIPError {
     InvalidRemoteChainDecimals = 307,
     /// Local amount conversion overflow (EVM `OverflowDetected` / rate math).
     DecimalAmountOverflow = 308,
-    /// Pool `token_decimals` init argument out of range or mismatching the token's SEP-41 `decimals()` (EVM `InvalidDecimalArgs`).
+    /// Pool `token_decimals` init argument out of range (must fit `uint8` / EVM `i_tokenDecimals`).
     InvalidPoolTokenDecimals = 309,
     /// Token bucket current tokens exceed capacity (EVM `BucketOverfilled`).
     BucketOverfilled = 310,
@@ -226,6 +227,9 @@ pub enum CCIPError {
     /// Allowlist update adds senders while setting `allowlistEnabled = false`
     /// (EVM `BaseVerifier.InvalidAllowListRequest`).
     InvalidAllowListRequest = 323,
+    /// Token pool proxy: mint `amount` exceeds the caller's remaining mint allowance
+    /// (Circle FiatToken `minterAllowance` semantics).
+    MintAllowanceExceeded = 324,
 
     // ============================================================
     // Calculation errors
