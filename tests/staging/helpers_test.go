@@ -237,13 +237,13 @@ func (e *stagingEnv) waitForSentEvent(t *testing.T, ctx context.Context, startLe
 		// an event beyond it would never be seen (see waitForStellarExecution).
 		// The window only advances once it has been read: a failed query is
 		// retried from the same ledger, or its event would be skipped for good.
-		// getEvents' endLedger is exclusive, so [fromLedger, latest) leaves the
-		// latest ledger for the next window to start from.
+		// GetEventsInRange reads the inclusive window [fromLedger, latest], so the
+		// next window starts at latest+1.
 		latest, err := e.rpc.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
 			e.l.Warn().Err(err).Msg("getLatestLedger failed; retrying")
-		} else if uint32(latest.Sequence) > fromLedger {
+		} else if uint32(latest.Sequence) >= fromLedger {
 			toLedger := uint32(latest.Sequence)
 			events, err := destinationreader.GetEventsInRange(ctx, e.rpc, e.onRampID, fromLedger, toLedger, []string{ccvchain.CCIPMessageSentEventTopic})
 			if err != nil {
@@ -263,7 +263,7 @@ func (e *stagingEnv) waitForSentEvent(t *testing.T, ctx context.Context, startLe
 						return ev
 					}
 				}
-				fromLedger = toLedger
+				fromLedger = toLedger + 1
 			}
 		}
 		select {
@@ -677,9 +677,9 @@ func (e *evmToStellarEnv) waitForStellarExecution(t *testing.T, ctx context.Cont
 		latest, err := e.stellarRPC.GetLatestLedger(ctx)
 		if err != nil {
 			lastErr = err
-		} else if uint32(latest.Sequence) > fromLedger {
-			// Advance only past a window that was read, and resume at the
-			// excluded end ledger; see waitForSentEvent.
+		} else if uint32(latest.Sequence) >= fromLedger {
+			// Advance only past a window that was read, and resume after its
+			// (inclusive) end ledger; see waitForSentEvent.
 			events, err := destinationreader.GetEventsInRange(ctx, e.stellarRPC, e.offRampID, fromLedger, uint32(latest.Sequence), []string{destinationreader.ExecutionStateChangedEventTopic})
 			if err != nil {
 				lastErr = err
@@ -694,7 +694,7 @@ func (e *evmToStellarEnv) waitForStellarExecution(t *testing.T, ctx context.Cont
 						return ev
 					}
 				}
-				fromLedger = uint32(latest.Sequence)
+				fromLedger = uint32(latest.Sequence) + 1
 			}
 		}
 		select {
