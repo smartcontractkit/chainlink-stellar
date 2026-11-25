@@ -95,9 +95,9 @@ func TestStellarFeeAdapter_ApplyDestChainConfigUpdates_nonNil(t *testing.T) {
 
 func TestStellarFeeAdapter_Registration(t *testing.T) {
 	reg := fees.GetRegistry()
-	_, ok := reg.GetFeeAdapter("stellar", stellarops.ContractDeploymentVersion)
+	_, ok := reg.GetFeeAdapter("stellar", stellarops.ContractRefVersion)
 	if !ok {
-		_, ok = reg.GetFeeAdapter("stellar", stellarops.ContractDeploymentVersion)
+		_, ok = reg.GetFeeAdapter("stellar", stellarops.ContractRefVersion)
 	}
 	require.True(t, ok, "StellarFeeAdapter should be registered from init()")
 	_, ok = reg.GetFeeResolver("stellar")
@@ -136,7 +136,7 @@ func TestStellarFeeAggregatorAdapter_GetFeeAggregator_requiresChainAndDatastore(
 
 func TestStellarFeeAggregatorAdapter_Registration(t *testing.T) {
 	reg := fees.GetFeeAggregatorRegistry()
-	_, ok := reg.GetFeeAggregatorAdapter("stellar", stellarops.ContractDeploymentVersion)
+	_, ok := reg.GetFeeAggregatorAdapter("stellar", stellarops.ContractRefVersion)
 	require.True(t, ok, "StellarFeeAggregatorAdapter should be registered from init()")
 }
 

@@ -33,6 +33,7 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 	)
 
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	stubConstructedReadbacks(t, inv)
 	deps := stellardeps.StellarDeps{
 		Deploy:  newCharacterizationDeployer(),
 		Invoker: inv,
@@ -94,12 +95,12 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 	recvSecondary := requireRef(recvType, "secondary")
 	require.NotEqual(t, recvDefault, recvSecondary, "secondary receiver must be a distinct contract")
 
-	// 60 = the 46 baseline reports plus 9 for the secondary pair: VVR and CV
+	// 59 = the 45 baseline reports plus 9 for the secondary pair: VVR and CV
 	// sequences (deploy + init + sequence report each), the two impl updates,
 	// and the secondary CV's remote chain config updates; plus 5 for the
 	// secondary-qualified receiver: deploy + init + sequence report, and its
 	// per-remote EnableRemoteChain + ApplyCcvConfigUpdates.
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	require.Len(t, reports, 60)
+	require.Len(t, reports, 59)
 }

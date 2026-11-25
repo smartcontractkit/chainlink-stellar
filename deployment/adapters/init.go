@@ -110,7 +110,7 @@ func init() {
 	curseAdapter := NewStellarCurseAdapter()
 	fastcurse.GetCurseRegistry().RegisterNewCurse(fastcurse.CurseRegistryInput{
 		CursingFamily:       chainsel.FamilyStellar,
-		CursingVersion:      stellarops.ContractDeploymentVersion,
+		CursingVersion:      stellarops.ContractRefVersion,
 		CurseAdapter:        curseAdapter,
 		CurseSubjectAdapter: curseAdapter,
 	})

@@ -304,3 +304,54 @@ func TestSplitTopLevel(t *testing.T) {
 		}
 	}
 }
+
+// TestParseFunctions_ConstructorIsMetadata pins that __constructor is kept as
+// contract metadata for deploy-time encoding but never becomes a client
+// method, while other `__` host hooks are still dropped.
+func TestParseFunctions_ConstructorIsMetadata(t *testing.T) {
+	src := `
+pub trait DataFeedsProxyInterface {
+    fn version(env: soroban_sdk::Env) -> u32;
+    fn __constructor(
+        env: soroban_sdk::Env,
+        owner: soroban_sdk::Address,
+        signers: soroban_sdk::Vec<soroban_sdk::Address>,
+    );
+    fn __check_auth(env: soroban_sdk::Env, payload: soroban_sdk::BytesN<32>);
+}
+`
+	c, err := ParseRustBindings(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := &Function{
+		Name: "__constructor",
+		Inputs: []Field{
+			{Name: "owner", Type: "soroban_sdk::Address"},
+			{Name: "signers", Type: "soroban_sdk::Vec<soroban_sdk::Address>"},
+		},
+	}
+	if !reflect.DeepEqual(c.Constructor, want) {
+		t.Fatalf("constructor: got %+v want %+v", c.Constructor, want)
+	}
+	if len(c.Functions) != 1 || c.Functions[0].Name != "version" {
+		t.Fatalf("functions: got %+v, want only version", c.Functions)
+	}
+}
+
+// TestParseFunctions_NoConstructor keeps Constructor nil so codegen emits no
+// ConstructorArgs for contracts initialized another way.
+func TestParseFunctions_NoConstructor(t *testing.T) {
+	src := `
+pub trait RouterInterface {
+    fn version(env: soroban_sdk::Env) -> u32;
+}
+`
+	c, err := ParseRustBindings(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if c.Constructor != nil {
+		t.Fatalf("expected nil constructor, got %+v", c.Constructor)
+	}
+}

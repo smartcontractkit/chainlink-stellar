@@ -12,15 +12,19 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	chainsel "github.com/smartcontractkit/chain-selectors"
+	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 	sequences "github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
-// TestTokenAdminRegistrySequenceSkipIfExists proves the component sequence's
-// rerun safety on a live network: a fresh run deploys and initializes, and a
-// second run with an empty datastore (fresh bundle, no reports) adopts the
-// on-chain contract with zero deploy and initialize transactions.
+// TestTokenAdminRegistrySequenceSkipIfExists proves constructor creation and
+// rerun safety on a live network: one creating transaction sets the owner, a
+// no-ref rerun adopts the instance with zero transactions, and a ref-backed
+// rerun sends nothing and reads nothing.
 func TestTokenAdminRegistrySequenceSkipIfExists(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -36,35 +40,49 @@ func TestTokenAdminRegistrySequenceSkipIfExists(t *testing.T) {
 	}
 	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "token_admin_registry.wasm")
 	sel := chainsel.STELLAR_LOCALNET.Selector
+	in := sequences.DeployTokenAdminRegistryInput{ChainSelector: sel, WasmPath: wasmPath}
+	run := func(in sequences.DeployTokenAdminRegistryInput) (sequences.ComponentDeployOutput, []string) {
+		t.Helper()
+		reporter := cldfops.NewMemoryReporter()
+		b := cldfops.NewBundle(func() context.Context { return ctx }, cldflogger.Nop(), reporter)
+		rep, err := cldfops.ExecuteSequence(b, sequences.DeployTokenAdminRegistry, deps, in)
+		require.NoError(t, err)
+		reports, err := reporter.GetReports()
+		require.NoError(t, err)
+		ids := make([]string, len(reports))
+		for i, r := range reports {
+			ids[i] = r.Def.ID
+		}
+		return rep.Output, ids
+	}
 
-	freshReporter := cldfops.NewMemoryReporter()
-	freshBundle := cldfops.NewBundle(func() context.Context { return ctx }, cldflogger.Nop(), freshReporter)
-	rep, err := cldfops.ExecuteSequence(freshBundle, sequences.DeployTokenAdminRegistry, deps, sequences.DeployTokenAdminRegistryInput{
-		ChainSelector: sel,
-		WasmPath:      wasmPath,
-	})
-	require.NoError(t, err)
-	require.True(t, rep.Output.Deployed)
-	require.True(t, rep.Output.Initialized)
-	require.Len(t, rep.Output.Refs, 1)
+	fresh, ids := run(in)
+	require.True(t, fresh.Deployed)
+	require.True(t, fresh.NeedsConfiguration)
+	require.Len(t, fresh.Refs, 1)
+	require.Equal(t, []string{"token-admin-registry:deploy", "stellar-deploy-token-admin-registry"}, ids)
 
-	// Rerun with an empty datastore and a fresh bundle: layer 2 predicts the same
-	// contract ID, adopts it (WASM hash matches), and layer 3 sees the owner we
-	// set. Zero transactions: the reporter must hold only the sequence report,
-	// no token-admin-registry:* op reports.
-	rerunReporter := cldfops.NewMemoryReporter()
-	rerunBundle := cldfops.NewBundle(func() context.Context { return ctx }, cldflogger.Nop(), rerunReporter)
-	rep2, err := cldfops.ExecuteSequence(rerunBundle, sequences.DeployTokenAdminRegistry, deps, sequences.DeployTokenAdminRegistryInput{
-		ChainSelector: sel,
-		WasmPath:      wasmPath,
-	})
+	tar := tarbindings.NewTokenAdminRegistryClient(deployer, fresh.ContractID)
+	owner, err := tar.Owner(ctx)
 	require.NoError(t, err)
-	require.False(t, rep2.Output.Deployed)
-	require.False(t, rep2.Output.Initialized)
-	require.Equal(t, rep.Output.ContractID, rep2.Output.ContractID)
-	require.Len(t, rep2.Output.Refs, 1)
-	reports, err := rerunReporter.GetReports()
-	require.NoError(t, err)
-	require.Len(t, reports, 1)
-	require.Equal(t, "stellar-deploy-token-admin-registry", reports[0].Def.ID)
+	require.NotNil(t, owner)
+	require.Equal(t, deployerKP.Address(), *owner)
+	_, err = deployer.SimulateContract(ctx, fresh.ContractID, "initialize", []xdr.ScVal{scval.AddressToScVal(deployerKP.Address())})
+	require.Error(t, err, "initialize must not exist on a constructor-built registry")
+
+	// No refs and no reports, as after a crash before refs persisted: adopt.
+	adopted, ids := run(in)
+	require.False(t, adopted.Deployed)
+	require.True(t, adopted.NeedsConfiguration)
+	require.Equal(t, fresh.ContractID, adopted.ContractID)
+	require.Len(t, adopted.Refs, 1)
+	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, ids)
+
+	in.ExistingAddresses = fresh.Refs
+	reused, ids := run(in)
+	require.False(t, reused.Deployed)
+	require.False(t, reused.NeedsConfiguration)
+	require.Equal(t, fresh.ContractID, reused.ContractID)
+	require.Empty(t, reused.Refs)
+	require.Equal(t, []string{"stellar-deploy-token-admin-registry"}, ids)
 }

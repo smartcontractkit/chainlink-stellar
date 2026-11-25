@@ -167,7 +167,7 @@ func setOffRampSourceOnRamps(
 	owner, err := readOwner(b.GetContext(), deps, datastore.AddressRef{
 		ChainSelector: update.LocalChainSelector,
 		Type:          datastore.ContractType(offrampops.ContractType),
-		Version:       stellarops.ContractDeploymentVersion,
+		Version:       stellarops.ContractRefVersion,
 		Address:       offRampID,
 	})
 	if err != nil {

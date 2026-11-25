@@ -22,7 +22,7 @@ type fakeDeployer struct {
 	lastSalt [32]byte
 }
 
-func (f *fakeDeployer) DeployContract(ctx context.Context, wasmPath string, salt [32]byte) (string, error) {
+func (f *fakeDeployer) DeployContractWithArgs(ctx context.Context, wasmPath string, salt [32]byte, _ []xdr.ScVal) (string, error) {
 	_ = ctx
 	f.lastWasm = wasmPath
 	f.lastSalt = salt

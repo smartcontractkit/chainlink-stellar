@@ -31,6 +31,17 @@ func (c *TokenAdminRegistryClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the TokenAdminRegistry __constructor arguments in spec order.
+func ConstructorArgs(owner string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *TokenAdminRegistryClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -132,21 +143,6 @@ func (c *TokenAdminRegistryClient) GetPools(ctx context.Context, tokens []string
 		out[i] = v
 	}
 	return out, nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *TokenAdminRegistryClient) Initialize(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.

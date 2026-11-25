@@ -33,6 +33,7 @@ func TestRunStellarCCIPFullDeploy_ExecutorPool(t *testing.T) {
 	)
 
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	stubConstructedReadbacks(t, inv)
 	deps := stellardeps.StellarDeps{
 		Deploy:  newCharacterizationDeployer(),
 		Invoker: inv,
@@ -85,9 +86,9 @@ func TestRunStellarCCIPFullDeploy_ExecutorPool(t *testing.T) {
 	// Soroban has no delegate proxy: both rows point at the same contract.
 	require.Equal(t, execCustom, proxyCustom)
 
-	// 50 = the 46 baseline reports plus 4 for the custom executor: deploy, init,
+	// 49 = the 45 baseline reports plus 4 for the custom executor: deploy, init,
 	// the sequence report, and the dest chain updates.
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	require.Len(t, reports, 50)
+	require.Len(t, reports, 49)
 }

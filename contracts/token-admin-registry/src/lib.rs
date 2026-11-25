@@ -60,12 +60,7 @@ impl TokenAdminRegistryContract {
         <Self as Ownable>::accept_ownership(&env)
     }
 
-    // ========================================
-    // Initialization
-    // ========================================
-
-    pub fn initialize(env: Env, owner: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
+    pub fn __constructor(env: Env, owner: Address) -> Result<(), CCIPError> {
         <Self as Initializable>::init(&env)?;
         <Self as Ownable>::init_owner(&env, &owner)?;
 

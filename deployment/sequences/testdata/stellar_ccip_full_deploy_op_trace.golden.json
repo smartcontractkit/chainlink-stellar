@@ -237,14 +237,10 @@
           42,
           254,
           49
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI="
         ]
-      }
-    },
-    {
-      "id": "token-admin-registry:initialize",
-      "input": {
-        "contract_id": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
       }
     },
     {

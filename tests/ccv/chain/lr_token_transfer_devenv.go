@@ -58,7 +58,7 @@ func (c *Chain) fundLockReleasePoolLockBoxes(env *deployment.Environment, select
 			return fmt.Errorf("lookup lock box for lock-release pool %q: %w", qualifier, err)
 		}
 		tokenRef, err := stellarccip.LookupAddressRef(env.DataStore, selector,
-			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, qualifier)
+			datastore.ContractType(bnmops.ContractType), stellarops.ContractRefVersion, qualifier)
 		if err != nil {
 			return fmt.Errorf("lookup BnM token for lock-release pool %q: %w", qualifier, err)
 		}

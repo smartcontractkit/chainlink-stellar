@@ -94,7 +94,7 @@ func TestFeeAdapterReadback(t *testing.T) {
 	fqRef, err := ccip.FeeQuoterDatastoreRef().LookupAddressRef(sealed, sel)
 	require.NoError(t, err)
 
-	feeAdapter, ok := fees.GetRegistry().GetFeeAdapter(chainsel.FamilyStellar, stellarops.ContractDeploymentVersion)
+	feeAdapter, ok := fees.GetRegistry().GetFeeAdapter(chainsel.FamilyStellar, stellarops.ContractRefVersion)
 	require.True(t, ok, "stellar fee adapter should be registered from init()")
 
 	token := stellarutil.MustGenerateMockContractID("fee-readback", "token")

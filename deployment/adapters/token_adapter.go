@@ -67,7 +67,7 @@ func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chain
 			return tokenHex, nil
 		}
 		ref, dsErr := stellarccip.LookupAddressRef(e.DataStore, chainSelector,
-			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, poolRef.Qualifier)
+			datastore.ContractType(bnmops.ContractType), stellarops.ContractRefVersion, poolRef.Qualifier)
 		if dsErr == nil {
 			return ref.Address, nil
 		}
@@ -81,7 +81,7 @@ func (a *StellarTokenAdapter) DeriveTokenAddress(e deployment.Environment, chain
 		}
 		tokenRef, err := datastore_utils.FindAndFormatRef(e.DataStore, datastore.AddressRef{
 			Type:      datastore.ContractType(stellarccip.TestTokenContractType),
-			Version:   stellarops.ContractDeploymentVersion,
+			Version:   stellarops.ContractRefVersion,
 			Qualifier: qualifier,
 		}, chainSelector, datastore_utils.FullRef)
 		if err != nil {

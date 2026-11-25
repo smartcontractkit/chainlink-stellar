@@ -204,7 +204,7 @@ func (a *StellarCurseAdapter) SelectorToSubject(selector uint64) api.Subject {
 }
 
 func (a *StellarCurseAdapter) DeriveCurseAdapterVersion(_ cldf.Environment, _ uint64) (*semver.Version, error) {
-	return stellarops.ContractDeploymentVersion, nil
+	return stellarops.ContractRefVersion, nil
 }
 
 func (a *StellarCurseAdapter) Curse() *cldf_ops.Sequence[api.CurseInput, seqcore.OnChainOutput, cldf_chain.BlockChains] {

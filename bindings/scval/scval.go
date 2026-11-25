@@ -93,6 +93,37 @@ func OptionalAddressToScVal(addr *string) xdr.ScVal {
 	return AddressToScVal(*addr)
 }
 
+// CheckedAddressToScVal is AddressToScVal that rejects a malformed address
+// instead of returning an ScVal with a nil Address.
+func CheckedAddressToScVal(addr string) (xdr.ScVal, error) {
+	val := AddressToScVal(addr)
+	if val.Address == nil {
+		return xdr.ScVal{}, fmt.Errorf("invalid Stellar address %q", addr)
+	}
+	return val, nil
+}
+
+// CheckedOptionalAddressToScVal is OptionalAddressToScVal that rejects a malformed address.
+func CheckedOptionalAddressToScVal(addr *string) (xdr.ScVal, error) {
+	if addr == nil {
+		return VoidScVal(), nil
+	}
+	return CheckedAddressToScVal(*addr)
+}
+
+// CheckedAddressSliceToScVal is AddressSliceToScVal that rejects a malformed address.
+func CheckedAddressSliceToScVal(items []string) (xdr.ScVal, error) {
+	scVals := make([]xdr.ScVal, len(items))
+	for i, item := range items {
+		val, err := CheckedAddressToScVal(item)
+		if err != nil {
+			return xdr.ScVal{}, fmt.Errorf("item %d: %w", i, err)
+		}
+		scVals[i] = val
+	}
+	return VecToScVal(scVals), nil
+}
+
 // OptionalAddressFromScVal extracts a *string from an ScVal.
 // ScvVoid returns nil (Option::None), ScvAddress returns a pointer to the address string (Option::Some).
 func OptionalAddressFromScVal(val xdr.ScVal) (*string, error) {

@@ -2036,9 +2036,8 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
         },
     ]);
 
-    let tar_id = env.register(TokenAdminRegistryContract, ());
+    let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
-    tar_client.initialize(&owner);
     let token_registry_admin = Address::generate(&env);
     tar_client.propose_administrator(&owner, &transfer_token, &token_registry_admin);
     tar_client.accept_admin_role(&transfer_token);
@@ -3041,9 +3040,8 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         },
     ]);
 
-    let tar_id = env.register(TokenAdminRegistryContract, ());
+    let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
-    tar_client.initialize(&owner);
 
     let token_registry_admin = Address::generate(&env);
     tar_client.propose_administrator(&owner, &transfer_token, &token_registry_admin);
@@ -3395,9 +3393,8 @@ where
         },
     ]);
 
-    let tar_id = env.register(TokenAdminRegistryContract, ());
+    let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
-    tar_client.initialize(&owner);
     let token_registry_admin = Address::generate(&env);
     tar_client.propose_administrator(&owner, &transfer_token, &token_registry_admin);
     tar_client.accept_admin_role(&transfer_token);

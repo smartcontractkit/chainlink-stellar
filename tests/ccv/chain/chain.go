@@ -510,8 +510,8 @@ func (c *Chain) PostDeployContractsForSelector(ctx context.Context, env *deploym
 // PostConnect for the legacy hand-written e2e tests.
 func (c *Chain) GetSupportedPools() []devenvcommon.PoolCapability {
 	return []devenvcommon.PoolCapability{
-		{PoolType: stellarccip.DevenvCatalogBurnMintTokenPoolType, PoolVersion: stellarops.ContractDeploymentVersion},
-		{PoolType: stellarccip.DevenvCatalogLockReleaseTokenPoolType, PoolVersion: stellarops.ContractDeploymentVersion},
+		{PoolType: stellarccip.DevenvCatalogBurnMintTokenPoolType, PoolVersion: stellarops.ContractRefVersion},
+		{PoolType: stellarccip.DevenvCatalogLockReleaseTokenPoolType, PoolVersion: stellarops.ContractRefVersion},
 	}
 }
 
@@ -602,7 +602,7 @@ func (c *Chain) PostTokenDeploy(
 	ctx := context.Background()
 	for _, ref := range deployedRefs {
 		tokenRef, err := stellarccip.LookupAddressRef(env.DataStore, selector,
-			datastore.ContractType(bnmops.ContractType), stellarops.ContractDeploymentVersion, ref.Qualifier)
+			datastore.ContractType(bnmops.ContractType), stellarops.ContractRefVersion, ref.Qualifier)
 		if err != nil {
 			return fmt.Errorf("lookup BnM token for pool %q: %w", ref.Qualifier, err)
 		}
@@ -728,7 +728,7 @@ func stellarTokenRefForPool(poolRef datastore.AddressRef) (datastore.AddressRef,
 	}
 	return datastore.AddressRef{
 		Type:      datastore.ContractType(bnmops.ContractType),
-		Version:   stellarops.ContractDeploymentVersion,
+		Version:   stellarops.ContractRefVersion,
 		Qualifier: poolRef.Qualifier,
 	}, nil
 }
