@@ -87,7 +87,7 @@ func bnmEOACases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, configOutpu
 			fmt.Sprintf("token transfer EOA (%s)", qual), args))
 		if devenvcommon.Is17Combination(combo) {
 			cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, 0, true,
-				fmt.Sprintf("token transfer 1.7.0 EOA default finality (%s)", qual), args))
+				fmt.Sprintf("token transfer 2.0.0 EOA default finality (%s)", qual), args))
 		}
 	}
 	return cases
@@ -105,7 +105,7 @@ func bnmMockReceiverCases(t *testing.T, env *helpers.E2ETestEnv, lib ccv.Lib, co
 		}
 		qual := combo.LocalPoolAddressRef().Qualifier
 		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, 0, false,
-			fmt.Sprintf("token transfer 1.7.0 mock receiver default finality (%s)", qual), args))
+			fmt.Sprintf("token transfer 2.0.0 mock receiver default finality (%s)", qual), args))
 	}
 	return cases
 }
@@ -123,7 +123,7 @@ func bnmMockReceiverFastFinalityCases(t *testing.T, env *helpers.E2ETestEnv, lib
 		}
 		qual := combo.LocalPoolAddressRef().Qualifier
 		cases = append(cases, token_transfer.TokenTransfer(lib, src, dst, combo, combo.FinalityConfig(), false,
-			fmt.Sprintf("token transfer 1.7.0 mock receiver fast finality (%s)", qual), args))
+			fmt.Sprintf("token transfer 2.0.0 mock receiver fast finality (%s)", qual), args))
 	}
 	return cases
 }
