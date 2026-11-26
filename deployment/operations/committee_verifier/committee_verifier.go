@@ -13,30 +13,6 @@ const ContractType = "CommitteeVerifier"
 // Deploy uploads ccvs_committee_verifier.wasm.
 var Deploy = stellarops.NewDeployOperation("committee-verifier:deploy", "Deploys the Committee Verifier Soroban contract from WASM")
 
-// InitializeInput configures Committee Verifier dynamic config and storage.
-type InitializeInput struct {
-	ContractID       string                   `json:"contract_id"`
-	Owner            string                   `json:"owner"`
-	DynamicConfig    cvbindings.DynamicConfig `json:"dynamic_config"`
-	StorageLocations [][]byte                 `json:"storage_locations"`
-	RmnProxy         string                   `json:"rmn_proxy"`
-	VersionTag       [4]byte                  `json:"version_tag"`
-}
-
-// Initialize calls Committee Verifier `initialize`.
-var Initialize = cldfops.NewOperation(
-	"committee-verifier:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes Committee Verifier with owner, dynamic config, and RMN proxy",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := cvbindings.NewCommitteeVerifierClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.DynamicConfig, in.StorageLocations, in.RmnProxy, in.VersionTag); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplyRemoteChainCfgUpdatesInput applies per-remote-chain fee and router settings on Committee Verifier.
 type ApplyRemoteChainCfgUpdatesInput struct {
 	ContractID string                         `json:"contract_id"`

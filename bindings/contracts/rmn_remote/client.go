@@ -31,6 +31,22 @@ func (c *RmnRemoteClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the RmnRemote __constructor arguments in spec order.
+func ConstructorArgs(owner string, curseAdmins []string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	curseAdminsVal, err := scval.CheckedAddressSliceToScVal(curseAdmins)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg curse_admins: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		curseAdminsVal,
+	}, nil
+}
+
 // Curse calls the curse function on the contract.
 func (c *RmnRemoteClient) Curse(ctx context.Context, caller string, subjects [][16]byte) error {
 	args := []xdr.ScVal{
@@ -115,22 +131,6 @@ func (c *RmnRemoteClient) IsCursed(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("expected bool return type")
 	}
 	return v, nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *RmnRemoteClient) Initialize(ctx context.Context, owner string, curseAdmins []string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressSliceToScVal(curseAdmins),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.

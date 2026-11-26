@@ -132,7 +132,8 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 		return id
 	}
 
-	registryID := deploy("gov-tl-ramp-registry", "ccip_ramp_registry.wasm")
+	registryID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(), "ccip_ramp_registry.wasm",
+		"gov-tl-ramp-registry", mustCtor(t)(rampbindings.ConstructorArgs(deployerKP.Address())))
 	timelockID := deploy("gov-tl-timelock", "timelock.wasm")
 
 	tlReader := timelockbindings.NewTimelockClient(deployer, timelockID)
@@ -152,9 +153,6 @@ func TestGovernanceTimelockRampRegistry(t *testing.T) {
 	}
 
 	reg := rampbindings.NewRampRegistryClient(deployer, registryID)
-	if err := reg.Initialize(ctx, deployerKP.Address()); err != nil {
-		t.Fatalf("RampRegistry Initialize: %v", err)
-	}
 
 	if err := reg.TransferOwnership(ctx, timelockID); err != nil {
 		t.Fatalf("TransferOwnership to timelock: %v", err)

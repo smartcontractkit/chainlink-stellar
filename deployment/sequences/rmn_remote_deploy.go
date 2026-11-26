@@ -2,18 +2,20 @@ package sequences
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
+	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
-// DeployRMNRemoteInput deploys and initializes the RMN Remote contract.
+// DeployRMNRemoteInput creates the RMN Remote contract.
 // Owner defaults to the deployer address. CurseAdmins default to none;
 // EnableFastCurse prepends the fast-curse timelock resolved from
 // ExistingAddresses (qualifier FastCurseQualifier, default the Ultra Fast
@@ -31,7 +33,7 @@ type DeployRMNRemoteInput struct {
 var DeployRMNRemote = cldf_ops.NewSequence(
 	"stellar-deploy-rmn-remote",
 	SequenceVersion,
-	"Deploys and initializes the RMN Remote Soroban contract with skip-if-exists",
+	"Creates the RMN Remote Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployRMNRemoteInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		if err := statReleaseWasm(in.WasmPath, "RMN Remote"); err != nil {
@@ -50,15 +52,30 @@ var DeployRMNRemote = cldf_ops.NewSequence(
 			}
 			curseAdmins = append([]string{fastTL}, curseAdmins...)
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, rmnremoteops.Deploy,
-			stellarccip.RMNRemoteDatastoreRef(), in.ChainSelector, "rmn-remote", in.WasmPath, owner, in.ExistingAddresses,
+		ctorArgs, err := rmnremotebindings.ConstructorArgs(owner, curseAdmins)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode RMN Remote constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, rmnremoteops.Deploy,
+			stellarccip.RMNRemoteDatastoreRef(), in.ChainSelector, "rmn-remote", in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, rmnremoteops.Initialize, rmnremoteops.InitializeInput{
-					ContractID:  contractID,
-					Owner:       owner,
-					CurseAdmins: curseAdmins,
-				}, withComponentIdempotencyKey[rmnremoteops.InitializeInput](in.ChainSelector))
-				return err
+				c := rmnremotebindings.NewRmnRemoteClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				admins, err := c.GetCurseAdmins(ctx)
+				if err != nil {
+					return err
+				}
+				if want := dedupeStrkeys(curseAdmins); !slices.Equal(admins, want) {
+					return fmt.Errorf("curse admins are %v, expected %v", admins, want)
+				}
+				return nil
 			})
 	},
 )

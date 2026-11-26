@@ -102,29 +102,6 @@ func TestDeploy_operation(t *testing.T) {
 	require.Equal(t, byte(9), fd.lastSalt[0])
 }
 
-func TestInitialize_operation(t *testing.T) {
-	t.Parallel()
-	fd := &fakeDeployer{}
-	inv := &recordingInvoker{}
-	deps := stellardeps.StellarDeps{Deploy: fd, Invoker: inv}
-
-	cid := "COFFRAMP0000000000000000000000000000000000000000000000"
-	_, err := cldfops.ExecuteOperation(testBundle(t), offramp.Initialize, deps, offramp.InitializeInput{
-		ContractID: cid,
-		Owner:      "GOWNERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		Config: offrampbindings.StaticConfig{
-			ChainSelector:      123,
-			RmnProxy:           "GRMNAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-			TokenAdminRegistry: "GTARAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		},
-	})
-	require.NoError(t, err)
-	rec := inv.last()
-	require.Equal(t, cid, rec.contractID)
-	require.Equal(t, "initialize", rec.fn)
-	require.Equal(t, 2, rec.argLen)
-}
-
 func TestApplySourceChainCfgUpdates_operation(t *testing.T) {
 	t.Parallel()
 	inv := &recordingInvoker{}
@@ -213,15 +190,6 @@ func TestOperationInputs_areCLDFSerializable(t *testing.T) {
 	salt[31] = 1
 
 	require.True(t, cldfops.IsSerializable(lg, stellarops.DeployInput{WasmPath: "x.wasm", Salt: salt}))
-	require.True(t, cldfops.IsSerializable(lg, offramp.InitializeInput{
-		ContractID: "C1",
-		Owner:      "G1",
-		Config: offrampbindings.StaticConfig{
-			ChainSelector:      1,
-			RmnProxy:           "G2",
-			TokenAdminRegistry: "G3",
-		},
-	}))
 	require.True(t, cldfops.IsSerializable(lg, offramp.ApplySourceChainCfgUpdatesInput{
 		ContractID: "C1",
 		Updates: []offrampbindings.SourceChainConfigArgs{

@@ -14,7 +14,6 @@ pub trait RampRegistryInterface {
         env: soroban_sdk::Env,
         dest_chain_selector: u64,
     ) -> Result<soroban_sdk::Address, CCIPError>;
-    fn initialize(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn is_offramp(
         env: soroban_sdk::Env,
         source_chain_selector: u64,
@@ -22,6 +21,7 @@ pub trait RampRegistryInterface {
     ) -> Result<bool, CCIPError>;
     fn get_onramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OnRampEntry>, CCIPError>;
     fn get_offramps(env: soroban_sdk::Env) -> Result<soroban_sdk::Vec<OffRampEntry>, CCIPError>;
+    fn __constructor(env: soroban_sdk::Env, owner: soroban_sdk::Address) -> Result<(), CCIPError>;
     fn accept_ownership(env: soroban_sdk::Env) -> Result<(), CCIPError>;
     fn type_and_version(env: soroban_sdk::Env) -> soroban_sdk::String;
     fn transfer_ownership(

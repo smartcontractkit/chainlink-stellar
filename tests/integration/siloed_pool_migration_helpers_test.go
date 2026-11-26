@@ -77,11 +77,9 @@ func (s *fullStack) deploySiloedTokenPool(
 	poolClient := slrbindings.NewSiloedLockReleasePoolClient(deployer, poolID)
 
 	if s.RampRegistryID == "" {
-		s.RampRegistryID = deploy("ramp-registry", "ccip_ramp_registry.wasm")
+		s.RampRegistryID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "ccip_ramp_registry.wasm",
+			saltPrefix+"-ramp-registry", mustCtor(t)(rampregistrybindings.ConstructorArgs(deployerAddr)))
 		s.RampRegistryClient = rampregistrybindings.NewRampRegistryClient(deployer, s.RampRegistryID)
-		if err := s.RampRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-			t.Fatalf("RampRegistry Initialize: %v", err)
-		}
 	} else if s.RampRegistryClient == nil {
 		s.RampRegistryClient = rampregistrybindings.NewRampRegistryClient(deployer, s.RampRegistryID)
 	}

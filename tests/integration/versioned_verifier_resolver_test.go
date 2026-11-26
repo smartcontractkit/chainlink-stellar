@@ -4,12 +4,10 @@ package integration
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
-	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
@@ -20,31 +18,19 @@ func TestVersionedVerifierResolver(t *testing.T) {
 
 	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
-	// Deploy the VersionedVerifierResolver contract
-	t.Log("Deploying VersionedVerifierResolver contract...")
-	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "versioned-verifier-resolver")
-	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "ccvs_versioned_verifier_resolver.wasm")
-
-	contractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy VersionedVerifierResolver: %v", err)
-	}
-	t.Logf("VersionedVerifierResolver deployed at: %s", contractID)
-
-	// Create client
-	client := vvrbindings.NewVersionedVerifierResolverClient(deployer, contractID)
-
-	// Generate mock addresses
 	mockFeeAggregator := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-aggregator")
 	mockInboundVerifier := helpers.GenerateMockContractID(t, deployerKP.Address(), "inbound-verifier")
 	mockOutboundVerifier := helpers.GenerateMockContractID(t, deployerKP.Address(), "outbound-verifier")
 
-	t.Run("initialize", func(t *testing.T) {
-		err := client.Initialize(ctx, deployerKP.Address(), mockFeeAggregator)
-		if err != nil {
-			t.Fatalf("Failed to initialize: %v", err)
-		}
-		t.Log("VersionedVerifierResolver initialized successfully")
+	contractID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(),
+		"ccvs_versioned_verifier_resolver.wasm", "versioned-verifier-resolver",
+		mustCtor(t)(vvrbindings.ConstructorArgs(deployerKP.Address(), mockFeeAggregator)))
+	t.Logf("VersionedVerifierResolver deployed at: %s", contractID)
+
+	client := vvrbindings.NewVersionedVerifierResolverClient(deployer, contractID)
+
+	t.Run("initialize is not exported", func(t *testing.T) {
+		requireNoInitializeExport(ctx, t, deployer, contractID)
 	})
 
 	t.Run("verify owner", func(t *testing.T) {

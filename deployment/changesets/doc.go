@@ -41,12 +41,15 @@
 // accept_ownership proposal.
 //
 // Rerun safety comes from the component sequences' three-layer skip
-// (datastore ref, predicted contract ID + WASM hash, owner()): re-applying an
-// already-deployed component sends no transactions and records no new refs.
+// (datastore ref, predicted contract ID + WASM hash, then a constructor-state
+// readback for components created through __constructor or owner() for the
+// rest): re-applying an already-deployed component sends no transactions and
+// records no new refs.
 //
-// Report size: each component changeset appends one sequence report plus at
-// most one deploy and one initialize op report (two op reports on a fresh
-// deploy, zero on a rerun). Op reports embed the absolute WASM path and are
-// deleted from durable pipeline storage after 30 days, so they are a
-// crash-resume aid, not the idempotency mechanism — the skip layers are.
+// Report size: each component changeset appends one sequence report plus one
+// deploy op report on a fresh deploy, and one more initialize op report for a
+// component without a constructor (zero op reports on a rerun). Op reports
+// embed the absolute WASM path and are deleted from durable pipeline storage
+// after 30 days, so they are a crash-resume aid. The skip layers are the
+// idempotency mechanism.
 package changesets

@@ -316,6 +316,22 @@ func requireOwner(got *string, want string) error {
 	return nil
 }
 
+// requireField checks one constructor-supplied value read back from chain.
+func requireField[T comparable](name string, got, want T) error {
+	if got != want {
+		return fmt.Errorf("%s is %v, expected %v", name, got, want)
+	}
+	return nil
+}
+
+// ptrString reads an optional address field, with nil as "".
+func ptrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // componentRefsToRecord returns the datastore refs a resolved component must
 // record: new deploys and adoptions always; a ref reuse only when the row was
 // hand-recorded as a strkey and needs the hex rewrite the datastore readers

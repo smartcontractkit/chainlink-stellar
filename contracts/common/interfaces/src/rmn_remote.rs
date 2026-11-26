@@ -20,7 +20,7 @@ pub trait RmnRemoteInterface {
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
     fn is_cursed(env: soroban_sdk::Env) -> bool;
-    fn initialize(
+    fn __constructor(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         curse_admins: soroban_sdk::Vec<soroban_sdk::Address>,

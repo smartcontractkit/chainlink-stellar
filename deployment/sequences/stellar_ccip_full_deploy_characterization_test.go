@@ -33,11 +33,9 @@ import (
 	tarbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_admin_registry"
 	tokenpoolbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/token_pool"
 
-	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
 var updateGoldens = flag.Bool("update", false, "rewrite characterization golden files")
@@ -76,17 +74,6 @@ type characterizationDeployer struct {
 
 func (d characterizationDeployer) DeployContractWithArgs(_ context.Context, _ string, salt [32]byte, _ []xdr.ScVal) (string, error) {
 	return stellardeployment.ComputeContractID(d.passphrase, d.deployerAddress, salt)
-}
-
-// stubConstructedReadbacks answers the readback of each component created
-// through __constructor with the state its constructor writes.
-func stubConstructedReadbacks(t *testing.T, inv *operationstest.RecordingInvoker) {
-	t.Helper()
-	tar := predictedID(t, "token-admin-registry")
-	owner := scval.AddressToScVal(characterizationKeypair().Address())
-	empty := scval.VecToScVal(nil)
-	inv.WithSimulateResultForContract(tar, "owner", &owner).
-		WithSimulateResultForContract(tar, "get_all_configured_tokens", &empty)
 }
 
 // newCharacterizationDeployer builds the fake over the fixture's fixed keypair.
@@ -294,14 +281,9 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 		reporter,
 	)
 
-	// owner() reads in the skip layer simulate through the invoker; void means
-	// uninitialized, so every component initializes exactly once.
+	// Constructor readbacks answer from the echo; every other read returns void.
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
-	stubConstructedReadbacks(t, inv)
-	deps := stellardeps.StellarDeps{
-		Deploy:  newCharacterizationDeployer(),
-		Invoker: inv,
-	}
+	deps := newConstructorEcho(inv).deps()
 	host := newFakeCCIPDevenvHost(t)
 
 	out, err := RunStellarCCIPFullDeploy(b.GetContext(), b, deps, host, nil, DeployStellarCCIPInnerInput{
@@ -312,16 +294,16 @@ func TestRunStellarCCIPFullDeploy_Characterization(t *testing.T) {
 
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	// 33 op call sites for this input: 23 deploy/init + 10 config, where
+	// 22 op call sites for this input: 12 deploys + 10 config, where
 	// ccip-receiver:enable-remote-chain runs once per remote chain (one here).
 	// All 12 components run through their component sequences, so 12 sequence
-	// reports join the trace after their child op reports (33 + 12 = 45).
-	// TokenAdminRegistry runs its constructor in the deploy op, so it has no init op.
+	// reports join the trace after their child op reports (22 + 12 = 34).
+	// Every component runs its constructor in the deploy op, so none has an init op.
 	// No OnRamp DestChainConfig / OffRamp SourceChainConfig applies here — ramp
 	// lane wiring is lane-configuration-time work (EVM/Solana parity), done by
 	// ccvchain Chain.PostConnect with datastore-resolved remote ramp addresses;
 	// the OffRamp rejects zero onramp placeholders (ZeroAddressNotAllowed).
-	require.Len(t, reports, 45)
+	require.Len(t, reports, 34)
 
 	trace := buildTrace(t, reports, root, out.Addresses)
 	got, err := json.MarshalIndent(trace, "", "  ")

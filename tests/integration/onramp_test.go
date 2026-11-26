@@ -5,17 +5,14 @@ package integration
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	common "github.com/smartcontractkit/chainlink-stellar/ccv/common"
-	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
-	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
@@ -27,18 +24,6 @@ func TestOnRamp(t *testing.T) {
 	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
 	t.Run("can deploy onramp contract", func(t *testing.T) {
-		// Deploy the OnRamp contract
-		t.Log("Deploying OnRamp contract...")
-		onrampSalt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "onramp")
-		onrampWasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "onramp.wasm")
-
-		fmt.Printf("OnRamp WASM path: %s\n", onrampWasmPath)
-		contractID, err := deployer.DeployContract(ctx, onrampWasmPath, onrampSalt)
-		if err != nil {
-			t.Fatalf("Failed to deploy OnRamp: %v", err)
-		}
-
-		// Generate mock addresses for the configuration
 		mockFeeQuoter := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-quoter")
 		mockFeeAggregator := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-aggregator")
 		mockRMNRemote := helpers.GenerateMockContractID(t, deployerKP.Address(), "rmn-remote")
@@ -46,12 +31,6 @@ func TestOnRamp(t *testing.T) {
 
 		t.Logf("Mock contracts - FeeQuoter: %s, FeeAggregator: %s, RMNRemote: %s, TokenAdminRegistry: %s",
 			mockFeeQuoter, mockFeeAggregator, mockRMNRemote, mockTokenAdminRegistry)
-
-		// Create OnRamp client using the deployer as the Invoker
-		onRampClient := onrampbindings.NewOnRampClient(deployer, contractID)
-
-		// Initialize the OnRamp contract using devenv types
-		t.Log("Initializing OnRamp contract...")
 
 		staticConfig := onrampbindings.StaticConfig{
 			ChainSelector:         12345, // Test chain selector
@@ -65,12 +44,10 @@ func TestOnRamp(t *testing.T) {
 			FeeAggregator: mockFeeAggregator,
 		}
 
-		// Call initialize using the OnRampClient
-		err = onRampClient.Initialize(ctx, deployerKP.Address(), staticConfig, dynamicConfig)
-		if err != nil {
-			t.Fatalf("Failed to initialize OnRamp: %v", err)
-		}
-		t.Log("OnRamp initialized successfully")
+		t.Log("Deploying OnRamp contract with constructor config...")
+		contractID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(), "onramp.wasm", "onramp",
+			mustCtor(t)(onrampbindings.ConstructorArgs(deployerKP.Address(), staticConfig, dynamicConfig)))
+		onRampClient := onrampbindings.NewOnRampClient(deployer, contractID)
 
 		// Verify static config using OnRampClient
 		t.Log("Verifying static config...")
@@ -110,7 +87,7 @@ func TestOnRamp(t *testing.T) {
 		t.Logf("Dynamic config verified: FeeQuoter=%s, FeeAggregator=%s",
 			parsedDynamicConfig.FeeQuoter, parsedDynamicConfig.FeeAggregator)
 
-		t.Log("OnRamp deployment and initialization test passed!")
+		t.Log("OnRamp deployment test passed!")
 
 		t.Run("can apply dest chain config", func(t *testing.T) {
 			mockRouter := helpers.GenerateMockContractID(t, deployerKP.Address(), "router")

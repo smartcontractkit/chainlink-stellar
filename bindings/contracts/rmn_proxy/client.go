@@ -31,6 +31,22 @@ func (c *RmnProxyClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the RmnProxy __constructor arguments in spec order.
+func ConstructorArgs(owner string, rmn string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	rmnVal, err := scval.CheckedAddressToScVal(rmn)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg rmn: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		rmnVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *RmnProxyClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -119,22 +135,6 @@ func (c *RmnProxyClient) IsCursed(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("expected bool return type")
 	}
 	return v, nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *RmnProxyClient) Initialize(ctx context.Context, owner string, rmn string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressToScVal(rmn),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // AcceptOwnership calls the accept_ownership function on the contract.

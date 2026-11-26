@@ -387,7 +387,7 @@ func RunStellarCCIPFullDeploy(
 			},
 		})
 	}
-	if execOut.Deployed || execOut.Initialized {
+	if execOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
 			ContractID: executorContractID,
 			ToAdd:      execDestChainAdds,
@@ -424,7 +424,7 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, poolExecOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		if poolExecOut.Deployed || poolExecOut.Initialized {
+		if poolExecOut.NeedsConfiguration {
 			if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
 				ContractID: poolExecOut.ContractID,
 				ToAdd:      execDestChainAdds,
@@ -435,7 +435,7 @@ func RunStellarCCIPFullDeploy(
 		h.Logger().Info().Str("qualifier", qualifier).Str("contractID", poolExecOut.ContractID).Msg("qualified Executor deployed and dest chains enabled")
 	}
 
-	if vvrOut.Deployed || vvrOut.Initialized {
+	if vvrOut.NeedsConfiguration {
 		outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
 		for _, remoteSelector := range allSelectors {
 			outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
@@ -523,14 +523,14 @@ func RunStellarCCIPFullDeploy(
 		committeeCVs = append(committeeCVs, committeeCVEntry{
 			qualifier: qualifier,
 			cvID:      committeeCvContractID,
-			fresh:     committeeCvOut.Deployed || committeeCvOut.Initialized,
+			fresh:     committeeCvOut.NeedsConfiguration,
 		})
 		if err := upsertComponentRefs(ds, committeeCvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
 		h.Logger().Info().Str("qualifier", qualifier).Str("cvContractID", committeeCvContractID).Msg("Committee Verifier pair deployed and initialized")
 
-		if committeeVvrOut.Deployed || committeeVvrOut.Initialized {
+		if committeeVvrOut.NeedsConfiguration {
 			committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
 			for _, remoteSelector := range allSelectors {
 				committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
@@ -567,7 +567,7 @@ func RunStellarCCIPFullDeploy(
 	// (with topology fallback) and applied during the lane-configuration phase by
 	// StellarConfigureChainForLanes via ConfigureChainsForLanesFromTopology.
 
-	if feeQuoterOut.Deployed || feeQuoterOut.Initialized {
+	if feeQuoterOut.NeedsConfiguration {
 		fqDestChainConfigs := []fqbindings.DestChainConfigArgs{}
 		for _, rs := range allSelectors {
 			fqDestChainConfigs = append(fqDestChainConfigs, fqbindings.DestChainConfigArgs{
@@ -610,43 +610,35 @@ func RunStellarCCIPFullDeploy(
 				UsdPerUnitGas:     scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 100_000_000_000_000}),
 			})
 		}
-		if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
-			ContractID: feeQuoterContractID,
-			Updater:    h.DeployerKeypair().Address(),
-			PriceUpdates: fqbindings.PriceUpdates{
-				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
-					{
-						Token: feeTokenContractID,
-						// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
-						// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
-						// 1e18 smallest units", scaled by token decimals:
-						// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
-						// makes a 50¢ fee quote as 5e17 base units (50B tokens) — unpayable.
-						// See contracts/common/helpers/src/fee_math.rs.
-						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-							Hi: 5421010862, Lo: 7886392056514347008,
-						}),
-					},
+		if err := setUnsetPrices(b, deps, feeQuoterContractID, h.DeployerKeypair().Address(), fqbindings.PriceUpdates{
+			TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
+				{
+					Token: feeTokenContractID,
+					// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
+					// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
+					// 1e18 smallest units", scaled by token decimals:
+					// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
+					// makes a 50¢ fee quote as 5e17 base units (50B tokens), unpayable.
+					// See contracts/common/helpers/src/fee_math.rs.
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
 				},
-				GasPriceUpdates: gasPriceUpdates,
 			},
+			GasPriceUpdates: gasPriceUpdates,
 		}); err != nil {
 			return seq_core.OnChainOutput{}, fmt.Errorf("update prices on FeeQuoter: %w", err)
 		}
 
 		if testToken := h.TestTokenContractID(); testToken != "" {
-			if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
-				ContractID: feeQuoterContractID,
-				Updater:    h.DeployerKeypair().Address(),
-				PriceUpdates: fqbindings.PriceUpdates{
-					TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
-						Token: testToken,
-						// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
-						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-							Hi: 5421010862, Lo: 7886392056514347008,
-						}),
-					}},
-				},
+			if err := setUnsetPrices(b, deps, feeQuoterContractID, h.DeployerKeypair().Address(), fqbindings.PriceUpdates{
+				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
+					Token: testToken,
+					// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
+				}},
 			}); err != nil {
 				return seq_core.OnChainOutput{}, fmt.Errorf("set test token price on FeeQuoter: %w", err)
 			}
@@ -750,7 +742,7 @@ func RunStellarCCIPFullDeploy(
 			Router:              &routerRef,
 		})
 	}
-	if cvOut.Deployed || cvOut.Initialized {
+	if cvOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
 			ContractID: cvContractID,
 			Configs:    remoteChainConfigs,
@@ -802,7 +794,7 @@ func RunStellarCCIPFullDeploy(
 			Offramp:             offRampContractID,
 		})
 	}
-	if routerOut.Deployed || routerOut.Initialized {
+	if routerOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
 			ContractID:     routerContractID,
 			OnRampUpdates:  onRampEntries,
@@ -830,7 +822,7 @@ func RunStellarCCIPFullDeploy(
 	if err := upsertComponentRefs(ds, rrOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	if rrOut.Deployed || rrOut.Initialized {
+	if rrOut.NeedsConfiguration {
 		rrOnRamp := make([]rampregistrybindings.OnRampUpdate, len(onRampEntries))
 		for i, e := range onRampEntries {
 			onramp := e.Onramp
@@ -885,7 +877,7 @@ func RunStellarCCIPFullDeploy(
 
 	ownerAddr := h.DeployerKeypair().Address()
 	placeholderExtra := []byte{0x01}
-	if recvOut.Deployed || recvOut.Initialized {
+	if recvOut.NeedsConfiguration {
 		for _, rs := range remoteSelectors {
 			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
 				ContractID:            receiverContractID,
@@ -961,7 +953,7 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, qRecvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		if qRecvOut.Deployed || qRecvOut.Initialized {
+		if qRecvOut.NeedsConfiguration {
 			for _, rs := range remoteSelectors {
 				if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
 					ContractID:            qRecvOut.ContractID,
@@ -1091,4 +1083,40 @@ func nonDefaultExecutorQualifiers(topology *offchain.EnvironmentTopology, select
 	}
 	sort.Strings(qualifiers)
 	return qualifiers
+}
+
+// setUnsetPrices sends only the price updates whose on-chain price was never
+// set, so a rerun after ledger adoption keeps prices written since and does
+// not refresh their timestamps.
+func setUnsetPrices(b cldf_ops.Bundle, deps stellardeps.StellarDeps, feeQuoterID, updater string, desired fqbindings.PriceUpdates) error {
+	ctx := b.GetContext()
+	fq := fqbindings.NewFeeQuoterClient(deps.Invoker, feeQuoterID)
+	var pending fqbindings.PriceUpdates
+	for _, u := range desired.TokenPriceUpdates {
+		cur, err := fq.GetTokenPrice(ctx, u.Token)
+		if err != nil {
+			return fmt.Errorf("read token price %s: %w", u.Token, err)
+		}
+		if cur.Timestamp == 0 {
+			pending.TokenPriceUpdates = append(pending.TokenPriceUpdates, u)
+		}
+	}
+	for _, u := range desired.GasPriceUpdates {
+		cur, err := fq.GetDestChainGasPrice(ctx, u.DestChainSelector)
+		if err != nil {
+			return fmt.Errorf("read gas price for chain %d: %w", u.DestChainSelector, err)
+		}
+		if cur.Timestamp == 0 {
+			pending.GasPriceUpdates = append(pending.GasPriceUpdates, u)
+		}
+	}
+	if len(pending.TokenPriceUpdates) == 0 && len(pending.GasPriceUpdates) == 0 {
+		return nil
+	}
+	_, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
+		ContractID:   feeQuoterID,
+		Updater:      updater,
+		PriceUpdates: pending,
+	})
+	return err
 }

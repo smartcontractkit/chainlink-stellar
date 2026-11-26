@@ -17,27 +17,6 @@ var Deploy = stellarops.NewDeployOperation(
 	"Deploys the OffRamp Soroban contract from a WASM file",
 )
 
-// InitializeInput runs the contract `initialize` entrypoint (owner + static config).
-type InitializeInput struct {
-	ContractID string                       `json:"contract_id"`
-	Owner      string                       `json:"owner"`
-	Config     offrampbindings.StaticConfig `json:"static_config"`
-}
-
-// Initialize sets chain selector, RMN proxy, and token admin registry on a new OffRamp.
-var Initialize = cldfops.NewOperation(
-	"offramp:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes OffRamp with owner and static configuration",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := offrampbindings.NewOffRampClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Config); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplySourceChainCfgUpdatesInput applies one or more source-chain configuration records.
 type ApplySourceChainCfgUpdatesInput struct {
 	ContractID string                                  `json:"contract_id"`

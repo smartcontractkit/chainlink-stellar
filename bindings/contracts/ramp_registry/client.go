@@ -31,6 +31,17 @@ func (c *RampRegistryClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the RampRegistry __constructor arguments in spec order.
+func ConstructorArgs(owner string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *RampRegistryClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -86,21 +97,6 @@ func (c *RampRegistryClient) GetOnramp(ctx context.Context, destChainSelector ui
 		return "", err
 	}
 	return v, nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *RampRegistryClient) Initialize(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // IsOfframp calls the is_offramp function on the contract.

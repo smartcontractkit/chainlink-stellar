@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,22 +49,14 @@ func TestFeeQuoterAuthorizedCallerUpdates(t *testing.T) {
 	updaterADeployer := deployment.NewDeployer(rpcClient, networkPassphrase, updaterAKP)
 	updaterBDeployer := deployment.NewDeployer(rpcClient, networkPassphrase, updaterBKP)
 
-	salt := deployment.GenerateDeterministicSalt(deployerAddr, "fq-authcallers-fee-quoter")
-	wasm := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "fee_quoter.wasm")
-	fqID, err := deployer.DeployContract(ctx, wasm, salt)
-	if err != nil {
-		t.Fatalf("deploy fee quoter: %v", err)
-	}
-
 	// Owner = the stack deployer; updaterA is the sole initial price updater.
-	client := fqbindings.NewFeeQuoterClient(deployer, fqID)
 	linkToken := helpers.GenerateMockContractID(t, deployerAddr, "fq-authcallers-link-token")
-	if err := client.Initialize(ctx, deployerAddr, fqbindings.StaticConfig{
-		LinkToken:         linkToken,
-		MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
-	}, []string{updaterAKP.Address()}); err != nil {
-		t.Fatalf("FeeQuoter Initialize: %v", err)
-	}
+	fqID := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "fee_quoter.wasm", "fq-authcallers-fee-quoter",
+		mustCtor(t)(fqbindings.ConstructorArgs(deployerAddr, fqbindings.StaticConfig{
+			LinkToken:         linkToken,
+			MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
+		}, []string{updaterAKP.Address()})))
+	client := fqbindings.NewFeeQuoterClient(deployer, fqID)
 
 	updaterAClient := fqbindings.NewFeeQuoterClient(updaterADeployer, fqID)
 	updaterBClient := fqbindings.NewFeeQuoterClient(updaterBDeployer, fqID)

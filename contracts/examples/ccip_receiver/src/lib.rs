@@ -87,7 +87,7 @@ impl Initializable for ExampleCcipReceiver {
     const INITIALIZED: Symbol = symbol_short!("INIT");
 }
 
-#[contractimpl(contracttrait)]
+#[contractimpl]
 impl Ownable for ExampleCcipReceiver {
     const OWNER: Symbol = OWNER;
     const PENDING_OWNER: Symbol = PENDING_OWNER;
@@ -102,13 +102,32 @@ impl Upgradeable for ExampleCcipReceiver {}
 
 #[contractimpl]
 impl ExampleCcipReceiver {
-    /// One-time setup: `owner` governs outbound/CCV config; `router` is the only caller for `ccip_receive`.
-    pub fn initialize(env: Env, owner: Address, router: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
+    /// `owner` governs outbound/CCV config; `router` is the only caller for `ccip_receive`.
+    pub fn __constructor(env: Env, owner: Address, router: Address) -> Result<(), CCIPError> {
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
         env.storage().instance().set(&ROUTER, &router);
         Ok(())
+    }
+
+    pub fn owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::owner(&env)
+    }
+
+    pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), CCIPError> {
+        <Self as Ownable>::transfer_ownership(&env, &new_owner)
+    }
+
+    pub fn accept_ownership(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::accept_ownership(&env)
+    }
+
+    pub fn get_pending_owner(env: Env) -> Option<Address> {
+        <Self as Ownable>::get_pending_owner(&env)
+    }
+
+    pub fn cancel_ownership_transfer(env: Env) -> Result<(), CCIPError> {
+        <Self as Ownable>::cancel_ownership_transfer(&env)
     }
 
     pub fn type_and_version(_env: Env) -> soroban_sdk::String {

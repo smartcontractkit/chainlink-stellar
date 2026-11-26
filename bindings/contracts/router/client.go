@@ -32,6 +32,22 @@ func (c *RouterClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the Router __constructor arguments in spec order.
+func ConstructorArgs(owner string, rmnProxy string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	rmnProxyVal, err := scval.CheckedAddressToScVal(rmnProxy)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg rmn_proxy: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		rmnProxyVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *RouterClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -150,22 +166,6 @@ func (c *RouterClient) GetOnramp(ctx context.Context, destChainSelector uint64) 
 		return "", err
 	}
 	return v, nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *RouterClient) Initialize(ctx context.Context, owner string, rmnProxy string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressToScVal(rmnProxy),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
 }
 
 // IsOfframp calls the is_offramp function on the contract.

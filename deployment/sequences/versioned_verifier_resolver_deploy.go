@@ -1,14 +1,17 @@
 package sequences
 
 import (
+	"fmt"
+
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	vvrops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/versioned_verifier_resolver"
 )
 
-// DeployVVRInput deploys and initializes the VersionedVerifierResolver
+// DeployVVRInput creates the VersionedVerifierResolver
 // contract. FeeAggregator defaults to the owner (the monolith's devenv value).
 // An empty Qualifier deploys the default instance; a non-empty one deploys a
 // distinct instance (separate datastore ref, salt and op reports) for extra,
@@ -25,7 +28,7 @@ type DeployVVRInput struct {
 var DeployVVR = cldf_ops.NewSequence(
 	"stellar-deploy-versioned-verifier-resolver",
 	SequenceVersion,
-	"Deploys and initializes the VersionedVerifierResolver Soroban contract with skip-if-exists",
+	"Creates the VersionedVerifierResolver Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployVVRInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		feeAggregator := in.FeeAggregator
@@ -35,15 +38,27 @@ var DeployVVR = cldf_ops.NewSequence(
 		if err := statReleaseWasm(in.WasmPath, "VVR"); err != nil {
 			return ComponentDeployOutput{}, err
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, vvrops.Deploy,
-			stellarccip.VVRDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("versioned-verifier-resolver", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
+		ctorArgs, err := vvrbindings.ConstructorArgs(owner, feeAggregator)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode VVR constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, vvrops.Deploy,
+			stellarccip.VVRDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("versioned-verifier-resolver", in.Qualifier), in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, vvrops.Initialize, vvrops.InitializeInput{
-					ContractID:    contractID,
-					Owner:         owner,
-					FeeAggregator: feeAggregator,
-				}, withComponentInstanceIdempotencyKey[vvrops.InitializeInput](in.ChainSelector, in.Qualifier))
-				return err
+				c := vvrbindings.NewVersionedVerifierResolverClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				gotFeeAggregator, err := c.GetFeeAggregator(ctx)
+				if err != nil {
+					return err
+				}
+				return requireField("fee aggregator", gotFeeAggregator, feeAggregator)
 			})
 	},
 )

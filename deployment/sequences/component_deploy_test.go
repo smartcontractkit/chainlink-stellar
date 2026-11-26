@@ -19,17 +19,16 @@ import (
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
 
 	cciputils "github.com/smartcontractkit/chainlink-ccip/deployment/utils"
+	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	fqbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/fee_quoter"
+	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/mcmsutil"
 	stellarops "github.com/smartcontractkit/chainlink-stellar/deployment/operations"
-	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
-	fqops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/fee_quoter"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
-	rmnremoteops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/rmn_remote"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
 // fakeLedger answers ContractInstanceState from a map, standing in for the
@@ -61,13 +60,10 @@ func componentTestSetup(t *testing.T, ledger InstanceStateReader) (
 	reporter = cldf_ops.NewMemoryReporter()
 	b = cldf_ops.NewBundle(func() context.Context { return t.Context() }, cldflogger.Nop(), reporter)
 	deps = ComponentDeps{
-		StellarDeps: stellardeps.StellarDeps{
-			// characterizationDeployer returns valid per-wasm C… strkeys; the
-			// refs the sequences record are hex-converted, which the checksum-less
-			// operationstest placeholder fails.
-			Deploy:  newCharacterizationDeployer(),
-			Invoker: inv,
-		},
+		// characterizationDeployer, under the echo, returns valid per-wasm C…
+		// strkeys; the refs the sequences record are hex-converted, which the
+		// checksum-less operationstest placeholder fails.
+		StellarDeps:       newConstructorEcho(inv).deps(),
 		NetworkPassphrase: characterizationPassphrase,
 		DeployerAddress:   characterizationKeypair().Address(),
 		Ledger:            ledger,
@@ -229,22 +225,16 @@ func TestDeployRMNRemote_FastCurseTimelockPrependsCurseAdmin(t *testing.T) {
 	otherAdmin := foreignOwnerAddress()
 	timelockRef := mcmsutil.StellarTimelockDatastoreRef(1, cciputils.UltraFastCurseMCMSQualifier, timelockID)
 	out, err := execComponentSequence(b, deps, DeployRMNRemote, DeployRMNRemoteInput{
-		ChainSelector: 1, WasmPath: wasmPath, EnableFastCurse: true,
+		ChainSelector: 1, WasmPath: releaseWasm(t, wasmPath, "rmn_remote.wasm"), EnableFastCurse: true,
 		CurseAdmins:       []string{otherAdmin},
 		ExistingAddresses: []datastore.AddressRef{timelockRef},
 	})
 	require.NoError(t, err)
 	require.True(t, out.Deployed)
-	reports, err := reporter.GetReports()
-	require.NoError(t, err)
-	var gotCurseAdmins []string
-	for _, r := range reports {
-		if r.Def.ID == "rmn-remote:initialize" {
-			gotCurseAdmins = r.Input.(rmnremoteops.InitializeInput).CurseAdmins
-		}
-	}
 	// The fast-curse timelock goes first; configured admins follow (EVM precedent).
-	require.Equal(t, []string{timelockID, otherAdmin}, gotCurseAdmins)
+	want, err := rmnremotebindings.ConstructorArgs(deps.DeployerAddress, []string{timelockID, otherAdmin})
+	require.NoError(t, err)
+	require.Equal(t, stellarops.ConstructorArgs(want), opInput[stellarops.DeployInput](t, reporter, "rmn-remote:deploy").ConstructorArgs)
 }
 
 func TestDeployRMNRemote_FastCurseWithoutTimelockErrors(t *testing.T) {
@@ -381,20 +371,18 @@ func TestDeployTokenAdminRegistry_DeployedIDMismatchErrors(t *testing.T) {
 func TestDeployExecutor_WritesProxyRefWhenMissing(t *testing.T) {
 	t.Parallel()
 	// An executor ref recorded by hand but no proxy row: nothing deploys or
-	// initializes, yet the missing proxy row is written.
+	// reads back, yet the missing proxy row is written.
 	id := predictedID(t, "executor")
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	execHex, err := stellarutil.StrkeyToHex(id)
 	require.NoError(t, err)
-	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
-	inv.WithSimulateResultForFn("owner", &configuredOwner)
 	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, execHex)
 	out, err := execComponentSequence(b, deps, DeployExecutor, DeployExecutorInput{
 		ChainSelector: 1, WasmPath: wasmPath, ExistingAddresses: []datastore.AddressRef{execRef},
 	})
 	require.NoError(t, err)
 	require.False(t, out.Deployed)
-	require.False(t, out.Initialized)
+	require.False(t, out.NeedsConfiguration)
 	require.Equal(t, id, out.ContractID)
 	require.Len(t, out.Refs, 1)
 	require.Equal(t, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).Type, out.Refs[0].Type)
@@ -406,12 +394,10 @@ func TestDeployExecutor_RewritesStaleProxyRef(t *testing.T) {
 	// A proxy row pointing at an old executor is realigned with the executor the
 	// sequence resolved, so the OnRamp's default-executor lookup stays correct.
 	id := predictedID(t, "executor")
-	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
+	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{instances: map[string]xdr.Hash{id: {0x01}}})
 	oldExecutor := predictedID(t, "old-executor")
 	execHex, err := stellarutil.StrkeyToHex(id)
 	require.NoError(t, err)
-	configuredOwner := scval.AddressToScVal(deps.DeployerAddress)
-	inv.WithSimulateResultForFn("owner", &configuredOwner)
 	execRef := stellarccip.DefaultExecutorDatastoreRef().FullAddressRef(1, execHex)
 	oldHex, err := stellarutil.StrkeyToHex(oldExecutor)
 	require.NoError(t, err)
@@ -444,10 +430,10 @@ func opInput[IN any](t *testing.T, reporter *cldf_ops.MemoryReporter, opID strin
 	return zero
 }
 
-func TestComponentParams_FlowIntoInitializeInputs(t *testing.T) {
+func TestComponentParams_FlowIntoConstructorArgs(t *testing.T) {
 	t.Parallel()
 	// L3 changesets will call the sequences with explicit params; the values
-	// must reach the initialize op inputs verbatim.
+	// must reach the constructor args verbatim.
 	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
 	owner := foreignOwnerAddress()
 	feeAgg := predictedID(t, "fee-agg")
@@ -460,25 +446,26 @@ func TestComponentParams_FlowIntoInitializeInputs(t *testing.T) {
 	require.Equal(t, stellarops.ConstructorArgs{scval.AddressToScVal(owner)},
 		opInput[stellarops.DeployInput](t, reporter, "token-admin-registry:deploy").ConstructorArgs)
 
+	rmnProxy := predictedID(t, "rmn-proxy")
 	_, err = execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
-		ChainSelector: 1, WasmPath: wasmPath, Owner: owner, AllowlistAdmin: feeAgg, FeeAggregator: owner,
-		StorageLocations: [][]byte{{0xAA}}, RmnProxy: predictedID(t, "rmn-proxy"),
+		ChainSelector: 1, WasmPath: releaseWasm(t, wasmPath, "ccvs_committee_verifier.wasm"), Owner: owner, AllowlistAdmin: feeAgg, FeeAggregator: owner,
+		StorageLocations: [][]byte{{0xAA}}, RmnProxy: rmnProxy,
 	})
 	require.NoError(t, err)
-	cvIn := opInput[cvops.InitializeInput](t, reporter, "committee-verifier:initialize")
-	require.Equal(t, owner, cvIn.Owner)
-	require.Equal(t, feeAgg, *cvIn.DynamicConfig.AllowlistAdmin)
-	require.Equal(t, owner, *cvIn.DynamicConfig.FeeAggregator)
+	wantCV, err := cvbindings.ConstructorArgs(owner, cvbindings.DynamicConfig{AllowlistAdmin: &feeAgg, FeeAggregator: &owner},
+		[][]byte{{0xAA}}, rmnProxy, stellarutil.DefaultCommitteeVerifierVersionTag())
+	require.NoError(t, err)
+	require.Equal(t, stellarops.ConstructorArgs(wantCV), opInput[stellarops.DeployInput](t, reporter, "committee-verifier:deploy").ConstructorArgs)
 
+	feeToken := predictedID(t, "fee-token")
 	_, err = execComponentSequence(b, deps, DeployFeeQuoter, DeployFeeQuoterInput{
-		ChainSelector: 1, WasmPath: wasmPath, Owner: owner, FeeToken: predictedID(t, "fee-token"),
+		ChainSelector: 1, WasmPath: releaseWasm(t, wasmPath, "fee_quoter.wasm"), Owner: owner, FeeToken: feeToken,
 		MaxFeeJuelsPerMsg: big.NewInt(42), AuthorizedCallers: []string{feeAgg},
 	})
 	require.NoError(t, err)
-	fqIn := opInput[fqops.InitializeInput](t, reporter, "fee-quoter:initialize")
-	require.Equal(t, owner, fqIn.Owner)
-	require.Equal(t, int64(42), fqIn.StaticConfig.MaxFeeJuelsPerMsg.Int64())
-	require.Equal(t, []string{feeAgg}, fqIn.AuthorizedCallers)
+	wantFQ, err := fqbindings.ConstructorArgs(owner, fqbindings.StaticConfig{LinkToken: feeToken, MaxFeeJuelsPerMsg: big.NewInt(42)}, []string{feeAgg})
+	require.NoError(t, err)
+	require.Equal(t, stellarops.ConstructorArgs(wantFQ), opInput[stellarops.DeployInput](t, reporter, "fee-quoter:deploy").ConstructorArgs)
 }
 
 func TestDeployOnRamp_RequiresDependencies(t *testing.T) {
@@ -494,20 +481,6 @@ func TestDeployOnRamp_RequiresDependencies(t *testing.T) {
 		require.ErrorContains(t, err, name+" is required", name)
 	}
 	requireOnlyFailedSequenceReports(t, reporter, "stellar-deploy-onramp")
-}
-
-func TestDeployOnRamp_FreshDeploysAndInitializes(t *testing.T) {
-	t.Parallel()
-	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
-	tar, rmnProxy, fq := predictedID(t, "token-admin-registry"), predictedID(t, "rmn-proxy"), predictedID(t, "fee-quoter")
-	out, err := execComponentSequence(b, deps, DeployOnRamp, DeployOnRampInput{
-		ChainSelector: 1, WasmPath: wasmPath,
-		TokenAdminRegistry: tar, RmnProxy: rmnProxy, FeeQuoter: fq,
-	})
-	require.NoError(t, err)
-	require.True(t, out.Deployed)
-	require.True(t, out.Initialized)
-	require.Equal(t, []string{"onramp:deploy", "onramp:initialize", "stellar-deploy-onramp"}, reportIDs(t, reporter))
 }
 
 func TestDeployOffRamp_RequiresDependencies(t *testing.T) {
@@ -584,7 +557,7 @@ func TestDeployExecutor_WritesExecutorAndProxyRefs(t *testing.T) {
 	t.Parallel()
 	wasmPath, b, _, reporter, deps := componentTestSetup(t, fakeLedger{})
 	out, err := execComponentSequence(b, deps, DeployExecutor, DeployExecutorInput{
-		ChainSelector: 1, WasmPath: wasmPath,
+		ChainSelector: 1, WasmPath: releaseWasm(t, wasmPath, "executor.wasm"),
 	})
 	require.NoError(t, err)
 	require.True(t, out.Deployed)
@@ -592,7 +565,7 @@ func TestDeployExecutor_WritesExecutorAndProxyRefs(t *testing.T) {
 	require.Equal(t, stellarccip.DefaultExecutorDatastoreRef().Type, out.Refs[0].Type)
 	require.Equal(t, stellarccip.ExecutorProxyDatastoreRef(stellarccip.DefaultExecutorQualifier).Type, out.Refs[1].Type)
 	require.Equal(t, out.Refs[0].Address, out.Refs[1].Address)
-	require.Equal(t, []string{"executor:deploy", "executor:initialize", "stellar-deploy-executor"}, reportIDs(t, reporter))
+	require.Equal(t, []string{"executor:deploy", "stellar-deploy-executor"}, reportIDs(t, reporter))
 }
 
 func TestDeployCommitteeVerifier_QualifierInstances(t *testing.T) {
@@ -600,6 +573,7 @@ func TestDeployCommitteeVerifier_QualifierInstances(t *testing.T) {
 	// An empty qualifier must keep the default instance's salt and ref exactly;
 	// a qualifier deploys a second, distinct instance.
 	wasmPath, b, _, _, deps := componentTestSetup(t, fakeLedger{})
+	wasmPath = releaseWasm(t, wasmPath, "ccvs_committee_verifier.wasm")
 	owner := foreignOwnerAddress()
 
 	defaultOut, err := execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
@@ -619,4 +593,142 @@ func TestDeployCommitteeVerifier_QualifierInstances(t *testing.T) {
 	require.Equal(t, predictedID(t, "committee-verifier-mcms-governance-test"), qualifiedOut.ContractID)
 	require.Len(t, qualifiedOut.Refs, 1)
 	require.Equal(t, "mcms-governance-test", qualifiedOut.Refs[0].Qualifier)
+}
+
+func TestConstructedComponents_FreshCreateReadsBackOnlyBySimulation(t *testing.T) {
+	t.Parallel()
+	dep := predictedID(t, "some-dependency")
+	cases := []struct {
+		wasm, deployOp string
+		run            func(cldf_ops.Bundle, ComponentDeps, string) (ComponentDeployOutput, error)
+	}{
+		{"rmn_remote.wasm", "rmn-remote:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployRMNRemote, DeployRMNRemoteInput{ChainSelector: 1, WasmPath: w, CurseAdmins: []string{dep}})
+		}},
+		{"rmn_proxy.wasm", "rmn-proxy:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployRMNProxy, DeployRMNProxyInput{ChainSelector: 1, WasmPath: w, RmnRemote: dep})
+		}},
+		{"fee_quoter.wasm", "fee-quoter:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployFeeQuoter, DeployFeeQuoterInput{ChainSelector: 1, WasmPath: w, FeeToken: dep})
+		}},
+		{"onramp.wasm", "onramp:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployOnRamp, DeployOnRampInput{ChainSelector: 1, WasmPath: w, TokenAdminRegistry: dep, RmnProxy: dep, FeeQuoter: dep})
+		}},
+		{"offramp.wasm", "offramp:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployOffRamp, DeployOffRampInput{ChainSelector: 1, WasmPath: w, TokenAdminRegistry: dep, RmnProxy: dep})
+		}},
+		{"router.wasm", "router:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployRouter, DeployRouterInput{ChainSelector: 1, WasmPath: w, RmnProxy: dep})
+		}},
+		{"executor.wasm", "executor:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployExecutor, DeployExecutorInput{ChainSelector: 1, WasmPath: w})
+		}},
+		{"ccvs_committee_verifier.wasm", "committee-verifier:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployCommitteeVerifier, DeployCommitteeVerifierInput{ChainSelector: 1, WasmPath: w, StorageLocations: [][]byte{{0x01}}, RmnProxy: dep})
+		}},
+		{"ccvs_versioned_verifier_resolver.wasm", "versioned-verifier-resolver:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployVVR, DeployVVRInput{ChainSelector: 1, WasmPath: w})
+		}},
+		{"ccip_ramp_registry.wasm", "ramp-registry:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployRampRegistry, DeployRampRegistryInput{ChainSelector: 1, WasmPath: w})
+		}},
+		{"ccip_receiver_example.wasm", "ccip-receiver:deploy", func(b cldf_ops.Bundle, d ComponentDeps, w string) (ComponentDeployOutput, error) {
+			return execComponentSequence(b, d, DeployCCIPReceiver, DeployCCIPReceiverInput{ChainSelector: 1, WasmPath: w, Router: dep})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.wasm, func(t *testing.T) {
+			t.Parallel()
+			// #given a ledger with no instance at the predicted address
+			wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+			// #when the component sequence runs
+			out, err := tc.run(b, deps, releaseWasm(t, wasmPath, tc.wasm))
+			// #then one deploy op creates and initializes it, and readback never submits
+			require.NoError(t, err)
+			require.True(t, out.Deployed)
+			require.True(t, out.NeedsConfiguration)
+			ids := reportIDs(t, reporter)
+			require.Len(t, ids, 2)
+			require.Equal(t, tc.deployOp, ids[0])
+			require.NotEmpty(t, opInput[stellarops.DeployInput](t, reporter, tc.deployOp).ConstructorArgs)
+			require.NotEmpty(t, inv.Records())
+			for _, r := range inv.Records() {
+				require.True(t, r.Simulated, "readback must only simulate, got invoke of %s", r.Fn)
+			}
+		})
+	}
+}
+
+// adoptedSetup returns a fixture whose ledger already runs the local wasm at
+// saltLabel's predicted ID, as after a crash before refs persist.
+func adoptedSetup(t *testing.T, saltLabel, wasmName string) (string, cldf_ops.Bundle, *operationstest.RecordingInvoker, *cldf_ops.MemoryReporter, ComponentDeps) {
+	t.Helper()
+	wasmPath, b, inv, reporter, deps := componentTestSetup(t, fakeLedger{})
+	wasmPath = releaseWasm(t, wasmPath, wasmName)
+	deps.Ledger = fakeLedger{instances: map[string]xdr.Hash{predictedID(t, saltLabel): localWasmHash(t, wasmPath)}}
+	return wasmPath, b, inv, reporter, deps
+}
+
+func TestDeployFeeQuoter_AdoptedExtraAuthorizedCallerErrors(t *testing.T) {
+	t.Parallel()
+	// #given an adopted FeeQuoter whose caller list holds one caller more than requested
+	wasmPath, b, inv, _, deps := adoptedSetup(t, "fee-quoter", "fee_quoter.wasm")
+	id := predictedID(t, "fee-quoter")
+	feeToken := predictedID(t, "fee-token")
+	owner := scval.AddressToScVal(deps.DeployerAddress)
+	inv.WithSimulateResultForContract(id, "owner", &owner)
+	static, err := fqbindings.StaticConfig{LinkToken: feeToken, MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000)}.ToScVal()
+	require.NoError(t, err)
+	inv.WithSimulateResultForContract(id, "get_static_config", &static)
+	callers, err := scval.CheckedAddressSliceToScVal([]string{deps.DeployerAddress, foreignOwnerAddress()})
+	require.NoError(t, err)
+	inv.WithSimulateResultForContract(id, "get_authorized_callers", &callers)
+	// #when the sequence adopts it
+	_, err = execComponentSequence(b, deps, DeployFeeQuoter, DeployFeeQuoterInput{ChainSelector: 1, WasmPath: wasmPath, FeeToken: feeToken})
+	// #then the full-list comparison rejects it
+	require.ErrorContains(t, err, "authorized callers are")
+}
+
+func TestDeployCommitteeVerifier_AdoptedOtherRmnProxyErrors(t *testing.T) {
+	t.Parallel()
+	// #given an adopted CommitteeVerifier constructed with another RMN proxy
+	wasmPath, b, inv, _, deps := adoptedSetup(t, "committee-verifier", "ccvs_committee_verifier.wasm")
+	id := predictedID(t, "committee-verifier")
+	owner := deps.DeployerAddress
+	ownerVal := scval.AddressToScVal(owner)
+	inv.WithSimulateResultForContract(id, "owner", &ownerVal)
+	dynamic, err := cvbindings.DynamicConfig{AllowlistAdmin: &owner, FeeAggregator: &owner}.ToScVal()
+	require.NoError(t, err)
+	inv.WithSimulateResultForContract(id, "get_dynamic_config", &dynamic)
+	locations := scval.VecToScVal([]xdr.ScVal{scval.BytesToScVal([]byte{0x01})})
+	inv.WithSimulateResultForContract(id, "get_storage_locations", &locations)
+	other := scval.AddressToScVal(predictedID(t, "other-rmn-proxy"))
+	inv.WithSimulateResultForContract(id, "get_rmn_proxy", &other)
+	// #when the sequence adopts it
+	_, err = execComponentSequence(b, deps, DeployCommitteeVerifier, DeployCommitteeVerifierInput{
+		ChainSelector: 1, WasmPath: wasmPath, StorageLocations: [][]byte{{0x01}}, RmnProxy: predictedID(t, "rmn-proxy"),
+	})
+	// #then readback names the mismatched field
+	require.ErrorContains(t, err, "rmn proxy is")
+}
+
+func TestDeployRMNRemote_AdoptedDeduplicatedCurseAdminsMatch(t *testing.T) {
+	t.Parallel()
+	// #given an adopted RMN Remote that stored a duplicated admin list once, as its constructor does
+	wasmPath, b, inv, _, deps := adoptedSetup(t, "rmn-remote", "rmn_remote.wasm")
+	id := predictedID(t, "rmn-remote")
+	admin := foreignOwnerAddress()
+	owner := scval.AddressToScVal(deps.DeployerAddress)
+	inv.WithSimulateResultForContract(id, "owner", &owner)
+	stored, err := scval.CheckedAddressSliceToScVal([]string{admin})
+	require.NoError(t, err)
+	inv.WithSimulateResultForContract(id, "get_curse_admins", &stored)
+	// #when the sequence adopts it with the duplicated input
+	out, err := execComponentSequence(b, deps, DeployRMNRemote, DeployRMNRemoteInput{
+		ChainSelector: 1, WasmPath: wasmPath, CurseAdmins: []string{admin, admin},
+	})
+	// #then the normalized comparison accepts it and later configuration still runs
+	require.NoError(t, err)
+	require.False(t, out.Deployed)
+	require.True(t, out.NeedsConfiguration)
 }

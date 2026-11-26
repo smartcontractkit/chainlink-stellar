@@ -32,12 +32,10 @@ fn setup() -> (Env, ExecutorContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let dynamic_config = default_dynamic_config(&env, Some(Address::generate(&env)));
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     (env, client, owner)
 }
@@ -58,10 +56,21 @@ fn add_dest_chain(client: &ExecutorContractClient, selector: u64, config: Remote
 // ============================================================
 
 #[test]
-fn test_initialize() {
-    let (env, client, owner) = setup();
+fn test_constructor_sets_owner_max_ccvs_and_dynamic_config() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let dynamic_config = DynamicConfig {
+        fee_aggregator: Some(Address::generate(&env)),
+        allowed_finality_config: WAIT_FOR_SAFE,
+        ccv_allowlist_enabled: true,
+    };
+    let contract_id = env.register(ExecutorContract, (&owner, &7u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
+
     assert_eq!(client.owner(), Some(owner));
-    assert_eq!(client.get_max_ccvs_per_message(), 2);
+    assert_eq!(client.get_max_ccvs_per_message(), 7);
+    assert_eq!(client.get_dynamic_config(), dynamic_config);
+    assert_eq!(client.get_allowed_finality_config(), WAIT_FOR_SAFE);
     assert_eq!(
         client.type_and_version(),
         soroban_sdk::String::from_str(&env, "Executor 2.0.0-dev")
@@ -69,23 +78,25 @@ fn test_initialize() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
-    let (env, client, _owner) = setup();
-    let dynamic_config = default_dynamic_config(&env, Some(Address::generate(&env)));
-    client.initialize(&Address::generate(&env), &2, &dynamic_config);
+fn test_initialize_is_not_exported() {
+    let (env, client, owner) = setup();
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #52)")] // InvalidConfig (max_ccvs_per_msg == 0)
-fn test_initialize_rejects_zero_max_ccvs() {
+fn test_constructor_rejects_zero_max_ccvs() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let dynamic_config = default_dynamic_config(&env, Some(Address::generate(&env)));
-    client.initialize(&Address::generate(&env), &0, &dynamic_config);
+    let owner = Address::generate(&env);
+    env.register(ExecutorContract, (&owner, &0u32, &dynamic_config));
 }
 
 // ============================================================
@@ -157,15 +168,14 @@ fn test_get_fee_reverts_on_disallowed_finality() {
 fn test_get_fee_allows_fast_finality_when_configured() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let dynamic_config = DynamicConfig {
         fee_aggregator: Some(Address::generate(&env)),
         allowed_finality_config: WAIT_FOR_SAFE,
         ccv_allowlist_enabled: false,
     };
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
     add_dest_chain(&client, 408, remote_chain(7, true));
 
     let ccvs: Vec<Address> = vec![&env];
@@ -204,8 +214,6 @@ fn test_get_fee_reverts_when_ccvs_exceed_max() {
 fn test_get_fee_reverts_on_non_allowlisted_ccv() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let allowed_ccv = Address::generate(&env);
     let dynamic_config = DynamicConfig {
@@ -213,7 +221,8 @@ fn test_get_fee_reverts_on_non_allowlisted_ccv() {
         allowed_finality_config: WAIT_FOR_FINALITY,
         ccv_allowlist_enabled: true,
     };
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
     // Add one CCV to the allowlist.
     client.apply_allowed_ccv_updates(&Vec::new(&env), &vec![&env, allowed_ccv.clone()], &true);
     add_dest_chain(&client, 410, remote_chain(1, true));
@@ -233,8 +242,6 @@ fn test_get_fee_reverts_on_non_allowlisted_ccv() {
 fn test_get_fee_passes_allowlisted_ccv() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let allowed_ccv = Address::generate(&env);
     let dynamic_config = DynamicConfig {
@@ -242,7 +249,8 @@ fn test_get_fee_passes_allowlisted_ccv() {
         allowed_finality_config: WAIT_FOR_FINALITY,
         ccv_allowlist_enabled: true,
     };
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
     client.apply_allowed_ccv_updates(&Vec::new(&env), &vec![&env, allowed_ccv.clone()], &true);
     add_dest_chain(&client, 411, remote_chain(42, true));
 
@@ -265,8 +273,6 @@ fn test_get_fee_allows_non_allowlisted_ccv_when_disabled() {
     // (ON-negative), closing the "no OFF-state positive test" coverage gap.
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     // allowlist OFF at init.
     let dynamic_config = DynamicConfig {
@@ -274,7 +280,8 @@ fn test_get_fee_allows_non_allowlisted_ccv_when_disabled() {
         allowed_finality_config: WAIT_FOR_FINALITY,
         ccv_allowlist_enabled: false,
     };
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
     add_dest_chain(&client, 412, remote_chain(42, true));
 
     // A CCV not on the (empty) allowlist — accepted because enforcement is off.
@@ -328,8 +335,6 @@ fn test_apply_allowed_ccv_updates_toggles_on_then_off() {
     // this test focuses on the toggle direction + the OFF-acceptance that follows.
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let allowed_ccv = Address::generate(&env);
     // allowlist ON at init.
@@ -338,7 +343,8 @@ fn test_apply_allowed_ccv_updates_toggles_on_then_off() {
         allowed_finality_config: WAIT_FOR_FINALITY,
         ccv_allowlist_enabled: true,
     };
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
     client.apply_allowed_ccv_updates(&Vec::new(&env), &vec![&env, allowed_ccv], &true);
     add_dest_chain(&client, 413, remote_chain(42, true));
 
@@ -420,11 +426,10 @@ fn test_withdraw_fee_tokens_sweeps_to_aggregator() {
     env.mock_all_auths();
 
     let fee_aggregator = Address::generate(&env);
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let dynamic_config = default_dynamic_config(&env, Some(fee_aggregator.clone()));
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     // Mint fee tokens directly to the executor contract.
     let token_admin = Address::generate(&env);
@@ -448,12 +453,11 @@ fn test_withdraw_fee_tokens_reverts_on_zero_aggregator() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     // No fee aggregator configured.
     let dynamic_config = default_dynamic_config(&env, None);
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin);
@@ -555,11 +559,10 @@ fn test_withdraw_fee_tokens_emits_fee_token_withdrawn_event() {
     env.mock_all_auths();
 
     let fee_aggregator = Address::generate(&env);
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let dynamic_config = default_dynamic_config(&env, Some(fee_aggregator.clone()));
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin);
@@ -602,11 +605,10 @@ fn test_withdraw_fee_tokens_multi_token_skips_zero_balance() {
     env.mock_all_auths();
 
     let fee_aggregator = Address::generate(&env);
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let dynamic_config = default_dynamic_config(&env, Some(fee_aggregator.clone()));
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     // Token A: positive balance (swept + emits). Token B: zero balance (skipped, no emit).
     let admin_a = Address::generate(&env);
@@ -783,14 +785,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
-    let contract_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(&env, &contract_id);
-
+    // `owner.require_auth()` fails. The constructor needs no auth.
     let owner = Address::generate(&env);
     let dynamic_config = default_dynamic_config(&env, Some(Address::generate(&env)));
-    client.initialize(&owner, &2, &dynamic_config);
+    let contract_id = env.register(ExecutorContract, (&owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

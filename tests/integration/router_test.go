@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,10 +18,11 @@ import (
 	ccvsbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
+	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
+	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -36,22 +36,12 @@ func TestRouter(t *testing.T) {
 
 	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
-	t.Run("deploy and initialize router", func(t *testing.T) {
-		t.Log("Deploying Router contract...")
-		salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "router")
-		wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "router.wasm")
-		contractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-		if err != nil {
-			t.Fatalf("Failed to deploy Router: %v", err)
-		}
-		t.Logf("Router deployed at: %s", contractID)
-
+	t.Run("deploy router with constructor config", func(t *testing.T) {
 		mockRmnProxy := helpers.GenerateMockContractID(t, deployerKP.Address(), "rmn-proxy-router")
+		contractID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(), "router.wasm", "router",
+			mustCtor(t)(routerbindings.ConstructorArgs(deployerKP.Address(), mockRmnProxy)))
+		t.Logf("Router deployed at: %s", contractID)
 		client := routerbindings.NewRouterClient(deployer, contractID)
-
-		if err := client.Initialize(ctx, deployerKP.Address(), mockRmnProxy); err != nil {
-			t.Fatalf("Failed to initialize Router: %v", err)
-		}
 
 		cfg, err := client.GetConfig(ctx)
 		if err != nil {
@@ -63,7 +53,7 @@ func TestRouter(t *testing.T) {
 		if cfg.RmnProxy != mockRmnProxy {
 			t.Fatalf("RmnProxy mismatch: want %q, got %q", mockRmnProxy, cfg.RmnProxy)
 		}
-		t.Log("Router initialized; config matches")
+		t.Log("Router constructed; config matches")
 	})
 
 	// End-to-end: OffRamp execute → internal route_message → Router → example ccip_receiver.
@@ -74,30 +64,44 @@ func TestRouter(t *testing.T) {
 			remoteSourceChain = uint64(99999)
 		)
 
-		deploy := func(name, wasmFile string) string {
+		ownerAddr := deployerKP.Address()
+		deploy := func(name, wasmFile string, ctorArgs []xdr.ScVal) string {
 			t.Helper()
-			salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), name)
-			p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", wasmFile)
-			id, err := deployer.DeployContract(ctx, p, salt)
-			if err != nil {
-				t.Fatalf("deploy %s: %v", name, err)
-			}
-			return id
+			return deployConstructed(ctx, t, projectRoot, deployer, ownerAddr, wasmFile, name, ctorArgs)
 		}
 
-		rmnRemoteID := deploy("router-int-rmn-remote", "rmn_remote.wasm")
-		rmnProxyID := deploy("router-int-rmn-proxy", "rmn_proxy.wasm")
-		ccvID := deploy("router-int-ccv", "ccvs_committee_verifier.wasm")
-		vvrID := deploy("router-int-vvr", "ccvs_versioned_verifier_resolver.wasm")
-		routerID := deploy("router-int-router", "router.wasm")
-		offrampID := deploy("router-int-offramp", "offramp.wasm")
-		receiverID := deploy("router-int-ccip-recv", "ccip_receiver_example.wasm")
+		mockFeeAgg := helpers.GenerateMockContractID(t, ownerAddr, "fee-agg-router-int")
+		mockTokenAdminReg := helpers.GenerateMockContractID(t, ownerAddr, "token-admin-router-int")
+
+		rmnRemoteID := deploy("router-int-rmn-remote", "rmn_remote.wasm",
+			mustCtor(t)(rmnremotebindings.ConstructorArgs(ownerAddr, nil)))
+		rmnProxyID := deploy("router-int-rmn-proxy", "rmn_proxy.wasm",
+			mustCtor(t)(rmnproxybindings.ConstructorArgs(ownerAddr, rmnRemoteID)))
+		ccvID := deploy("router-int-ccv", "ccvs_committee_verifier.wasm", mustCtor(t)(ccvsbindings.ConstructorArgs(
+			ownerAddr,
+			ccvsbindings.DynamicConfig{FeeAggregator: &mockFeeAgg},
+			[][]byte{},
+			rmnProxyID,
+			stellarutil.DefaultCommitteeVerifierVersionTag(),
+		)))
+		vvrID := deploy("router-int-vvr", "ccvs_versioned_verifier_resolver.wasm",
+			mustCtor(t)(vvrbindings.ConstructorArgs(ownerAddr, mockFeeAgg)))
+		routerID := deploy("router-int-router", "router.wasm",
+			mustCtor(t)(routerbindings.ConstructorArgs(ownerAddr, rmnProxyID)))
+		offrampID := deploy("router-int-offramp", "offramp.wasm", mustCtor(t)(offrampbindings.ConstructorArgs(ownerAddr,
+			offrampbindings.StaticConfig{
+				ChainSelector:      localDestChain,
+				RmnProxy:           rmnProxyID,
+				TokenAdminRegistry: mockTokenAdminReg,
+			})))
+		receiverID := deploy("router-int-ccip-recv", "ccip_receiver_example.wasm",
+			mustCtor(t)(cciprecv.ConstructorArgs(ownerAddr, routerID)))
 
 		ccvClient := ccvsbindings.NewCommitteeVerifierClient(deployer, ccvID)
-		mockFeeAgg := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-agg-router-int")
-		if err := initialize(ctx, t, deployer, deployerKP, rmnRemoteID, rmnProxyID, ccvClient, mockFeeAgg); err != nil {
-			t.Fatal(err)
-		}
+		vvrClient := vvrbindings.NewVersionedVerifierResolverClient(deployer, vvrID)
+		routerClient := routerbindings.NewRouterClient(deployer, routerID)
+		offrampClient := offrampbindings.NewOffRampClient(deployer, offrampID)
+		recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, receiverID)
 
 		signerKey, err := crypto.GenerateKey()
 		if err != nil {
@@ -112,10 +116,6 @@ func TestRouter(t *testing.T) {
 			t.Fatalf("ApplySignatureConfigs: %v", err)
 		}
 
-		vvrClient := vvrbindings.NewVersionedVerifierResolverClient(deployer, vvrID)
-		if err := vvrClient.Initialize(ctx, deployerKP.Address(), mockFeeAgg); err != nil {
-			t.Fatalf("VVR Initialize: %v", err)
-		}
 		verAddr := ccvID
 		if err := vvrClient.ApplyInboundImplUpdates(ctx, []vvrbindings.InboundImplementationUpdate{
 			{
@@ -126,25 +126,6 @@ func TestRouter(t *testing.T) {
 			t.Fatalf("ApplyInboundImplUpdates: %v", err)
 		}
 
-		routerClient := routerbindings.NewRouterClient(deployer, routerID)
-		if err := routerClient.Initialize(ctx, deployerKP.Address(), rmnProxyID); err != nil {
-			t.Fatalf("Router Initialize: %v", err)
-		}
-
-		mockTokenAdminReg := helpers.GenerateMockContractID(t, deployerKP.Address(), "token-admin-router-int")
-		offrampClient := offrampbindings.NewOffRampClient(deployer, offrampID)
-		if err := offrampClient.Initialize(ctx, deployerKP.Address(), offrampbindings.StaticConfig{
-			ChainSelector:      localDestChain,
-			RmnProxy:           rmnProxyID,
-			TokenAdminRegistry: mockTokenAdminReg,
-		}); err != nil {
-			t.Fatalf("OffRamp Initialize: %v", err)
-		}
-
-		recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, receiverID)
-		if err := recvClient.Initialize(ctx, deployerKP.Address(), routerID); err != nil {
-			t.Fatalf("CcipReceiver Initialize: %v", err)
-		}
 		// EVM CCIPClientExample.validChain: receiver only accepts `ccip_receive` for allowlisted source selectors.
 		if err := recvClient.EnableRemoteChain(ctx, deployerKP.Address(), remoteSourceChain, []byte{0x01}, 0); err != nil {
 			t.Fatalf("CcipReceiver EnableRemoteChain (inbound source allowlist): %v", err)

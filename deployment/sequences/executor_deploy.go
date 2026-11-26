@@ -2,6 +2,7 @@ package sequences
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/smartcontractkit/chainlink-ccip/deployment/finality"
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
@@ -27,7 +28,7 @@ var FamilyDefaultAllowedFinality = func() uint32 {
 	return binary.BigEndian.Uint32(raw[:])
 }()
 
-// DeployExecutorInput deploys and initializes the source-side Executor
+// DeployExecutorInput creates the source-side Executor
 // contract. MaxCCVsPerMsg defaults to 10 (EVM parity: the ccv devenv deploys
 // its executor with MaxCCVsPerMsg 10), AllowedFinalityConfig to 0,
 // CcvAllowlistEnabled to false and FeeAggregator to the owner (the monolith's
@@ -51,7 +52,7 @@ type DeployExecutorInput struct {
 var DeployExecutor = cldf_ops.NewSequence(
 	"stellar-deploy-executor",
 	SequenceVersion,
-	"Deploys and initializes the Executor Soroban contract with skip-if-exists",
+	"Creates the Executor Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployExecutorInput) (ComponentDeployOutput, error) {
 		qualifier := in.Qualifier
 		if qualifier == "" {
@@ -74,20 +75,45 @@ var DeployExecutor = cldf_ops.NewSequence(
 		if err := statReleaseWasm(in.WasmPath, "Executor"); err != nil {
 			return ComponentDeployOutput{}, err
 		}
-		out, err := deployAndInitialize(b.GetContext(), b, deps, execops.Deploy,
-			stellarccip.ExecutorDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("executor", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
+		dynamicConfig := executorbindings.DynamicConfig{
+			AllowedFinalityConfig: in.AllowedFinalityConfig,
+			CcvAllowlistEnabled:   in.CcvAllowlistEnabled,
+			FeeAggregator:         &feeAggregator,
+		}
+		ctorArgs, err := executorbindings.ConstructorArgs(owner, maxCCVs, dynamicConfig)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode Executor constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		out, err := deployConstructedComponent(ctx, b, deps, execops.Deploy,
+			stellarccip.ExecutorDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("executor", in.Qualifier), in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, execops.Initialize, execops.InitializeInput{
-					ContractID:    contractID,
-					Owner:         owner,
-					MaxCCVsPerMsg: maxCCVs,
-					DynamicConfig: executorbindings.DynamicConfig{
-						AllowedFinalityConfig: in.AllowedFinalityConfig,
-						CcvAllowlistEnabled:   in.CcvAllowlistEnabled,
-						FeeAggregator:         &feeAggregator,
-					},
-				}, withComponentInstanceIdempotencyKey[execops.InitializeInput](in.ChainSelector, in.Qualifier))
-				return err
+				c := executorbindings.NewExecutorClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				gotMax, err := c.GetMaxCcvsPerMessage(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireField("max CCVs per message", gotMax, maxCCVs); err != nil {
+					return err
+				}
+				dynamic, err := c.GetDynamicConfig(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireField("allowed finality config", dynamic.AllowedFinalityConfig, dynamicConfig.AllowedFinalityConfig); err != nil {
+					return err
+				}
+				if err := requireField("CCV allowlist enabled", dynamic.CcvAllowlistEnabled, dynamicConfig.CcvAllowlistEnabled); err != nil {
+					return err
+				}
+				return requireField("fee aggregator", ptrString(dynamic.FeeAggregator), feeAggregator)
 			})
 		if err != nil {
 			return ComponentDeployOutput{}, err

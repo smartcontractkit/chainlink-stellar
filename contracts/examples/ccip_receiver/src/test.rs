@@ -19,10 +19,9 @@ fn ccip_receive_accepts_router_auth() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
 
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     // EVM `validChain`: inbound `source_chain_selector` must match an `enable_remote_chain` entry.
     let src: u64 = 1;
@@ -51,9 +50,8 @@ fn ccip_receive_rejects_unknown_source_chain() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let msg = AnyToStellarMessage {
         message_id: BytesN::from_array(&env, &[9u8; 32]),
@@ -74,9 +72,8 @@ fn get_remote_chain_selectors_tracks_enable_disable() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let extra = Bytes::from_slice(&env, &[0x01]);
     client.enable_remote_chain(&owner, &100u64, &extra, &0u32);
@@ -100,9 +97,8 @@ fn enable_remote_chain_stores_extra_args() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let dest: u64 = 9_876;
     let extra = Bytes::from_slice(&env, &[0xde, 0xad, 0xbe, 0xef]);
@@ -123,9 +119,8 @@ fn get_ccvs_and_finality_config_combines_ccv_and_remote_chain() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let sel: u64 = 7_777;
     let extra = Bytes::from_slice(&env, &[1, 2, 3]);
@@ -162,9 +157,8 @@ fn apply_ccv_config_updates_stores_per_source_chain() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let a1 = Address::generate(&env);
     let a2 = Address::generate(&env);
@@ -192,9 +186,8 @@ fn apply_ccv_config_rejects_invalid_optional_threshold() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let o1 = Address::generate(&env);
     let o2 = Address::generate(&env);
@@ -217,9 +210,8 @@ fn apply_ccv_config_accepts_threshold_equal_to_optional_len() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let o1 = Address::generate(&env);
     let o2 = Address::generate(&env);
@@ -243,9 +235,8 @@ fn apply_ccv_config_rejects_duplicate_ccv() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let dup = Address::generate(&env);
     let upd = CcvConfigUpdate {
@@ -265,9 +256,8 @@ fn get_ccv_config_returns_empty_when_unset() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     let cfg = client.get_ccv_config(&12345u64);
     let empty = CcvChainConfig {
@@ -318,9 +308,8 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     // Upload the fixture Wasm and upgrade the receiver to it. `mock_all_auths`
     // satisfies `require_owner` -> `owner.require_auth()`.
@@ -348,13 +337,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: `require_owner` -> `owner.require_auth()` fails before
-    // the executable is touched. `initialize` needs no auth (only
-    // `require_not_initialized` + `init_owner`), so setup succeeds.
+    // the executable is touched. The constructor needs no auth, so setup succeeds.
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     // A hash need not correspond to a real uploaded Wasm here — the auth check
     // runs first and panics, so `update_current_contract_wasm` is never reached.
@@ -369,9 +356,8 @@ fn test_extend_config_ttl_bumps_persistent_and_instance_entries() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     // Create persistent config entries: REM_CFG(sel) via enable_remote_chain and
     // CCV_KEY(sel) via apply_ccv_config_updates.
@@ -448,9 +434,8 @@ fn test_extend_config_ttl_skips_absent_selectors_without_panic() {
 
     let owner = Address::generate(&env);
     let router = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router));
     let client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    client.initialize(&owner, &router);
 
     // No REM_CFG/CCV_KEY entries exist for selector 999. The keeper's has() guard
     // must skip absent entries rather than panic; instance TTL is still bumped.
@@ -465,4 +450,74 @@ fn test_extend_config_ttl_skips_absent_selectors_without_panic() {
     // Unconfigured selector returns the documented default (empty extra_args).
     let cfg = client.get_remote_chain_config(&999u64);
     assert!(cfg.extra_args.is_empty());
+}
+
+fn setup() -> (Env, ExampleCcipReceiverClient<'static>, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let router = Address::generate(&env);
+    let id = env.register(ExampleCcipReceiver, (&owner, &router));
+    let client = ExampleCcipReceiverClient::new(&env, &id);
+    (env, client, owner, router)
+}
+
+#[test]
+fn test_constructor_sets_owner_and_router() {
+    let (_env, client, owner, router) = setup();
+
+    assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_router(), router);
+    assert_eq!(client.get_pending_owner(), None);
+}
+
+#[test]
+fn test_initialize_is_not_exported() {
+    let (env, client, owner, _router) = setup();
+
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
+}
+
+#[test]
+fn test_init_owner_is_not_exported() {
+    let (env, client, owner, _router) = setup();
+
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "init_owner"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "init_owner must not be callable");
+}
+
+#[test]
+fn test_two_step_ownership_transfer() {
+    let (env, client, owner, _router) = setup();
+    let new_owner = Address::generate(&env);
+
+    client.transfer_ownership(&new_owner);
+    assert_eq!(client.get_pending_owner(), Some(new_owner.clone()));
+    assert_eq!(client.owner(), Some(owner));
+
+    client.accept_ownership();
+    assert_eq!(client.owner(), Some(new_owner));
+    assert_eq!(client.get_pending_owner(), None);
+}
+
+#[test]
+fn test_cancel_ownership_transfer() {
+    let (env, client, owner, _router) = setup();
+    let new_owner = Address::generate(&env);
+
+    client.transfer_ownership(&new_owner);
+    client.cancel_ownership_transfer();
+
+    assert_eq!(client.get_pending_owner(), None);
+    assert_eq!(client.owner(), Some(owner));
+    assert!(client.try_accept_ownership().is_err());
 }

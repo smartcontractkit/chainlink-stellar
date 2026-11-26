@@ -1,18 +1,21 @@
 package sequences
 
 import (
+	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
 	cvbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/committee_verifier"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	cvops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/committee_verifier"
 )
 
-// DeployCommitteeVerifierInput deploys and initializes the CommitteeVerifier
+// DeployCommitteeVerifierInput creates the CommitteeVerifier
 // contract. StorageLocations is a required input (G4): the deploy never invents
 // one. AllowlistAdmin and FeeAggregator default to the owner, VersionTag to the
 // default committee-verifier tag, and RmnProxy is a required dependency.
@@ -35,7 +38,7 @@ type DeployCommitteeVerifierInput struct {
 var DeployCommitteeVerifier = cldf_ops.NewSequence(
 	"stellar-deploy-committee-verifier",
 	SequenceVersion,
-	"Deploys and initializes the CommitteeVerifier Soroban contract with skip-if-exists",
+	"Creates the CommitteeVerifier Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployCommitteeVerifierInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		allowlistAdmin := in.AllowlistAdmin
@@ -59,21 +62,63 @@ var DeployCommitteeVerifier = cldf_ops.NewSequence(
 		if in.RmnProxy == "" {
 			return ComponentDeployOutput{}, fmt.Errorf("rmnProxy is required: deploy RMN Proxy first")
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, cvops.Deploy,
-			stellarccip.CommitteeVerifierDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("committee-verifier", in.Qualifier), in.WasmPath, owner, in.ExistingAddresses,
+		dynamicConfig := cvbindings.DynamicConfig{
+			AllowlistAdmin: &allowlistAdmin,
+			FeeAggregator:  &feeAggregator,
+		}
+		ctorArgs, err := cvbindings.ConstructorArgs(owner, dynamicConfig, in.StorageLocations, in.RmnProxy, versionTag)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode CommitteeVerifier constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, cvops.Deploy,
+			stellarccip.CommitteeVerifierDatastoreRefWithQualifier(in.Qualifier), in.ChainSelector, componentSaltLabel("committee-verifier", in.Qualifier), in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, cvops.Initialize, cvops.InitializeInput{
-					ContractID: contractID,
-					Owner:      owner,
-					DynamicConfig: cvbindings.DynamicConfig{
-						AllowlistAdmin: &allowlistAdmin,
-						FeeAggregator:  &feeAggregator,
-					},
-					StorageLocations: in.StorageLocations,
-					RmnProxy:         in.RmnProxy,
-					VersionTag:       versionTag,
-				}, withComponentInstanceIdempotencyKey[cvops.InitializeInput](in.ChainSelector, in.Qualifier))
-				return err
+				c := cvbindings.NewCommitteeVerifierClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				dynamic, err := c.GetDynamicConfig(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireField("allowlist admin", ptrString(dynamic.AllowlistAdmin), allowlistAdmin); err != nil {
+					return err
+				}
+				if err := requireField("fee aggregator", ptrString(dynamic.FeeAggregator), feeAggregator); err != nil {
+					return err
+				}
+				locations, err := c.GetStorageLocations(ctx)
+				if err != nil {
+					return err
+				}
+				if !slices.EqualFunc(locations, in.StorageLocations, bytes.Equal) {
+					return fmt.Errorf("storage locations are %x, expected %x", locations, in.StorageLocations)
+				}
+				gotRmnProxy, err := c.GetRmnProxy(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireField("rmn proxy", ptrString(gotRmnProxy), in.RmnProxy); err != nil {
+					return err
+				}
+				// The generated VersionTag submits a transaction; readback only simulates.
+				tagVal, err := deps.Invoker.SimulateContract(ctx, contractID, "version_tag", nil)
+				if err != nil {
+					return fmt.Errorf("read version tag: %w", err)
+				}
+				if tagVal == nil {
+					return fmt.Errorf("no return value from version_tag")
+				}
+				gotTag, err := scval.Bytes4FromScVal(*tagVal)
+				if err != nil {
+					return err
+				}
+				return requireField("version tag", gotTag, versionTag)
 			})
 	},
 )

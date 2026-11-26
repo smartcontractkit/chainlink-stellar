@@ -16,9 +16,9 @@ import (
 	"github.com/smartcontractkit/chainlink-stellar/deployment/sequences"
 )
 
-// preConstructorVersion is the version every Stellar deploy report carried
-// before contracts moved to __constructor.
-var preConstructorVersion = semver.MustParse("2.0.0")
+// staleReportVersions are versions written before the current constructor
+// migration step: 2.0.0 predates constructors, 3.0.0 covers only TokenAdminRegistry.
+var staleReportVersions = []*semver.Version{semver.MustParse("2.0.0"), semver.MustParse("3.0.0")}
 
 // runWithSeededReport seeds a successful report for in at version (nil: current)
 // and runs seq on an empty chain set, so only a cache hit can succeed.
@@ -41,7 +41,7 @@ func runWithSeededReport[IN, OUT any](
 	return err
 }
 
-func TestDeployReports_PreConstructorVersionDoesNotReplay(t *testing.T) {
+func TestDeployReports_StaleVersionDoesNotReplay(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(*testing.T, *semver.Version) error{
 		"protocol contracts": func(t *testing.T, v *semver.Version) error {
@@ -60,8 +60,10 @@ func TestDeployReports_PreConstructorVersionDoesNotReplay(t *testing.T) {
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.ErrorContains(t, run(t, preConstructorVersion), "stellar chain not found",
-				"a pre-constructor report must not replay")
+			for _, v := range staleReportVersions {
+				require.ErrorContains(t, run(t, v), "stellar chain not found",
+					"a %s report must not replay", v)
+			}
 			// Control: a report at the current version does replay, so the check above
 			// would catch a missed version bump.
 			require.NoError(t, run(t, nil))

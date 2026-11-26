@@ -31,6 +31,22 @@ func (c *VersionedVerifierResolverClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the VersionedVerifierResolver __constructor arguments in spec order.
+func ConstructorArgs(owner string, feeAggregator string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	feeAggregatorVal, err := scval.CheckedAddressToScVal(feeAggregator)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg fee_aggregator: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		feeAggregatorVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *VersionedVerifierResolverClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -60,22 +76,6 @@ func (c *VersionedVerifierResolverClient) Upgrade(ctx context.Context, newWasmHa
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
 	if err != nil {
 		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *VersionedVerifierResolverClient) Initialize(ctx context.Context, owner string, feeAggregator string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressToScVal(feeAggregator),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
 	}
 
 	_ = result // void return

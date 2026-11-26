@@ -16,8 +16,8 @@ use crate::types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
 use crate::{
     CommitteeVerifierContract, CommitteeVerifierContractClient, DEFAULT_VERIFIER_VERSION_TAG,
 };
-use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
-use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
+use rmn_proxy::RmnProxyContract;
+use rmn_remote::RmnRemoteContract;
 
 fn make_signing_key(seed: u8) -> SigningKey {
     let mut bytes = [0u8; 32];
@@ -133,6 +133,14 @@ fn default_remote_chain_config(env: &Env, remote_chain_selector: u64) -> RemoteC
     }
 }
 
+fn register_rmn_proxy(env: &Env, owner: &Address) -> Address {
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (owner, soroban_sdk::Vec::<Address>::new(env)),
+    );
+    env.register(RmnProxyContract, (owner, &rmn_remote_id))
+}
+
 fn setup_with_version_tag(
     version_tag: &[u8; 4],
 ) -> (
@@ -145,30 +153,25 @@ fn setup_with_version_tag(
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(CommitteeVerifierContract, ());
-    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
-    let storage_locations = vec![&env];
+    let storage_locations: SorobanVec<Bytes> = vec![&env];
 
     // Initialize RMN Remote and Proxy (required for require_not_cursed / is_cursed)
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let rmn_proxy = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy = register_rmn_proxy(&env, &owner);
 
     let dynamic_config = default_dynamic_config(&env);
     let tag = BytesN::from_array(&env, version_tag);
-    client.initialize(
-        &owner,
-        &dynamic_config,
-        &storage_locations,
-        &rmn_proxy,
-        &tag,
+    let contract_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &dynamic_config,
+            &storage_locations,
+            &rmn_proxy,
+            &tag,
+        ),
     );
+    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
 
     (env, client, owner, rmn_proxy, storage_locations)
 }
@@ -188,56 +191,68 @@ fn setup() -> (
 // ============================================================
 
 #[test]
-fn test_initialize() {
-    let (_env, client, owner, _rmn_proxy, _storage_locations) = setup();
+fn test_constructor_sets_state() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let storage_locations = vec![&env, Bytes::from_slice(&env, b"https://storage.example")];
+    let rmn_proxy = register_rmn_proxy(&env, &owner);
+    let dynamic_config = default_dynamic_config(&env);
+    let tag = BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG);
+    let contract_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &dynamic_config,
+            &storage_locations,
+            &rmn_proxy,
+            &tag,
+        ),
+    );
+    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
+
     assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_dynamic_config(), dynamic_config);
+    assert_eq!(client.get_storage_locations(), storage_locations);
+    assert_eq!(client.get_rmn_proxy(), Some(rmn_proxy));
+    assert_eq!(client.version_tag(), tag);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
-    let (env, client, _owner, rmn_proxy, storage_locations) = setup();
-    let owner2 = Address::generate(&env);
-    let dynamic_config = default_dynamic_config(&env);
-    let tag = BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG);
+fn test_initialize_is_not_exported() {
+    let (env, client, owner, ..) = setup();
 
-    client.initialize(
-        &owner2,
-        &dynamic_config,
-        &storage_locations,
-        &rmn_proxy,
-        &tag,
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
     );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #13)")] // InvalidVersionTag
-fn test_initialize_rejects_zero_version_tag() {
+fn test_constructor_rejects_zero_version_tag() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(CommitteeVerifierContract, ());
-    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let storage_locations = vec![&env];
+    let storage_locations: SorobanVec<Bytes> = vec![&env];
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let rmn_proxy = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy = register_rmn_proxy(&env, &owner);
 
     let dynamic_config = default_dynamic_config(&env);
     let zero = BytesN::from_array(&env, &[0u8; 4]);
-    client.initialize(
-        &owner,
-        &dynamic_config,
-        &storage_locations,
-        &rmn_proxy,
-        &zero,
+    let contract_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &dynamic_config,
+            &storage_locations,
+            &rmn_proxy,
+            &zero,
+        ),
     );
+    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
 }
 
 // ============================================================
@@ -1700,31 +1715,27 @@ fn test_withdraw_fee_tokens_reverts_without_fee_aggregator() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(CommitteeVerifierContract, ());
-    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
-    let storage_locations = vec![&env];
+    let storage_locations: SorobanVec<Bytes> = vec![&env];
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let rmn_proxy = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy = register_rmn_proxy(&env, &owner);
 
     let dynamic_config = DynamicConfig {
         fee_aggregator: None,
         allowlist_admin: None,
     };
     let tag = BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG);
-    client.initialize(
-        &owner,
-        &dynamic_config,
-        &storage_locations,
-        &rmn_proxy,
-        &tag,
+    let contract_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &dynamic_config,
+            &storage_locations,
+            &rmn_proxy,
+            &tag,
+        ),
     );
+    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
@@ -1802,32 +1813,27 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` (rmn_remote, rmn_proxy, CV)
-    // needs no auth (only double-init guards), so the contract is set up with
-    // the owner stored.
-    let contract_id = env.register(CommitteeVerifierContract, ());
-    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. Registering with constructors needs no auth,
+    // so the contract is set up with the owner stored.
 
     let owner = Address::generate(&env);
-    let storage_locations = vec![&env];
+    let storage_locations: SorobanVec<Bytes> = vec![&env];
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let rmn_proxy = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy = register_rmn_proxy(&env, &owner);
 
     let dynamic_config = default_dynamic_config(&env);
     let tag = BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG);
-    client.initialize(
-        &owner,
-        &dynamic_config,
-        &storage_locations,
-        &rmn_proxy,
-        &tag,
+    let contract_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &dynamic_config,
+            &storage_locations,
+            &rmn_proxy,
+            &tag,
+        ),
     );
+    let client = CommitteeVerifierContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

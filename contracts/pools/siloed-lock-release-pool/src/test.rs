@@ -26,9 +26,9 @@ use pools_advanced_pool_hooks::{
     AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
 };
 use pools_token_lock_box::{TokenLockBox, TokenLockBoxClient};
-use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
-use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
-use router::{RouterContract, RouterContractClient};
+use rmn_proxy::RmnProxyContract;
+use rmn_remote::RmnRemoteContract;
+use router::RouterContract;
 
 /// Invokes `release_or_mint` with `caller = self` so `caller.require_auth()` succeeds.
 mod inbound_release_stub {
@@ -259,17 +259,11 @@ struct TestEnv<'a> {
 /// release_or_mint time, so tests must stand up a real Router + RMN behind the
 /// address passed to `initialize`.)
 fn setup_router_with_rmn(env: &Env, owner: &Address) -> (Address, Address) {
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(env, &rmn_remote_id);
-    rmn_remote_client.initialize(owner, &Vec::new(env));
+    let rmn_remote_id = env.register(RmnRemoteContract, (owner, &Vec::<Address>::new(env)));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
-    let router_client = RouterContractClient::new(env, &router_id);
-    router_client.initialize(owner, &rmn_proxy_id);
+    let router_id = env.register(RouterContract, (owner, &rmn_proxy_id));
 
     (router_id, rmn_proxy_id)
 }
@@ -289,9 +283,8 @@ fn setup() -> TestEnv<'static> {
     let lockbox_client = TokenLockBoxClient::new(&env, &lockbox_id);
     lockbox_client.initialize(&owner, &token_addr);
 
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, REMOTE_CHAIN, &auth_onramp);
 
@@ -369,9 +362,8 @@ fn setup_multi_lockbox() -> MultiLockboxEnv<'static> {
     let siloed_lockbox = TokenLockBoxClient::new(&env, &siloed_id);
     siloed_lockbox.initialize(&owner, &token_addr);
 
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, REMOTE_CHAIN, &auth_onramp);
     register_onramp_for_chain(&env, &registry_client, SILOED_CHAIN, &auth_onramp);
@@ -581,9 +573,8 @@ fn unconfigured_lockbox_rejects_lock() {
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_addr = token_contract.address();
 
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, REMOTE_CHAIN, &auth_onramp);
 

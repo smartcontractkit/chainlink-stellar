@@ -76,12 +76,7 @@ impl RouterContract {
     /// # Arguments
     /// * `owner` - The owner address (typically MCMS)
     /// * `rmn_proxy` - The RMN proxy contract address for curse checking
-    ///
-    /// # Errors
-    /// * `AlreadyInitialized` - If contract is already initialized
-    pub fn initialize(env: Env, owner: Address, rmn_proxy: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
+    pub fn __constructor(env: Env, owner: Address, rmn_proxy: Address) -> Result<(), CCIPError> {
         // Initialize owner via shared authorization lib (two-step ownership)
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
@@ -97,9 +92,6 @@ impl RouterContract {
         // Initialize empty OffRamps map (source_chain_selector -> Vec<Address>)
         let offramps: Map<u64, Vec<Address>> = Map::new(&env);
         env.storage().persistent().set(&OFFRAMPS, &offramps);
-
-        // Mark as initialized
-        env.storage().instance().set(&INITIALIZED, &true);
 
         Ok(())
     }

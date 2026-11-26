@@ -14,7 +14,7 @@ pub trait ExecutorInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn initialize(
+    fn __constructor(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         max_ccvs_per_msg: u32,

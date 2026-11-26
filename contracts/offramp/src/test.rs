@@ -43,10 +43,10 @@ fn setup_env() -> (Env, Address, OffRampContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OffRampContract, ());
-    let client = OffRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
+    let static_config = default_static_config(&env);
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
+    let client = OffRampContractClient::new(&env, &contract_id);
     (env, owner, client)
 }
 
@@ -59,33 +59,55 @@ fn default_static_config(env: &Env) -> StaticConfig {
 }
 
 #[test]
-fn test_initialize() {
-    let (env, owner, client) = setup_env();
+fn test_constructor_sets_owner_and_static_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
     let static_config = default_static_config(&env);
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
+    let client = OffRampContractClient::new(&env, &contract_id);
 
-    client.initialize(&owner, &static_config);
-
-    let stored_config = client.get_static_config();
-    assert_eq!(stored_config.chain_selector, 1234);
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            <OffRampContract as common_authorization::Ownable>::owner(&env),
+            Some(owner.clone())
+        );
+    });
+    let stored = client.get_static_config();
+    assert_eq!(stored.chain_selector, static_config.chain_selector);
+    assert_eq!(stored.rmn_proxy, static_config.rmn_proxy);
+    assert_eq!(
+        stored.token_admin_registry,
+        static_config.token_admin_registry
+    );
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_double_initialize_fails() {
-    let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
+#[should_panic(expected = "Error(Contract, #52)")]
+fn test_constructor_rejects_zero_chain_selector() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let mut static_config = default_static_config(&env);
+    static_config.chain_selector = 0;
+    env.register(OffRampContract, (&owner, &static_config));
+}
 
-    client.initialize(&owner, &static_config);
-    client.initialize(&owner, &static_config);
+#[test]
+fn test_initialize_is_not_exported() {
+    let (env, owner, client) = setup_env();
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 fn test_curse_checkable_init_rejects_reinit() {
-    // Re-pointing the RMN proxy post-initialize must fail even for direct/internal
+    // Re-pointing the RMN proxy after construction must fail even for direct/internal
     // trait calls, or an always-uncursed RMN could disable every curse check.
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let attacker_rmn = Address::generate(&env);
     env.as_contract(&client.address, || {
@@ -97,7 +119,6 @@ fn test_curse_checkable_init_rejects_reinit() {
 #[test]
 fn test_pending_ownership_and_cancel_via_trait() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let new_owner = Address::generate(&env);
     client.transfer_ownership(&new_owner);
@@ -129,8 +150,6 @@ fn test_pending_ownership_and_cancel_via_trait() {
 #[test]
 fn test_get_execution_state_untouched() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let message_id = BytesN::from_array(&env, &[0u8; 32]);
     let state = client.get_execution_state(&message_id);
@@ -141,8 +160,6 @@ fn test_get_execution_state_untouched() {
 #[should_panic(expected = "Error(Contract, #106)")]
 fn test_extend_execution_state_ttl_requires_storage_entry() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let message_id = BytesN::from_array(&env, &[9u8; 32]);
     let _ = client.extend_execution_state_ttl(&message_id);
@@ -152,11 +169,10 @@ fn test_extend_execution_state_ttl_requires_storage_entry() {
 fn test_extend_execution_state_ttl_ok() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(OffRampContract, ());
-    let client = OffRampContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
+    let client = OffRampContractClient::new(&env, &contract_id);
 
     let message_id = BytesN::from_array(&env, &[7u8; 32]);
     let state_key = DataKey::ExecState(message_id.clone());
@@ -176,8 +192,6 @@ fn test_extend_execution_state_ttl_ok() {
 #[test]
 fn test_apply_source_chain_config() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let router = Address::generate(&env);
     let default_ccv = Address::generate(&env);
@@ -215,8 +229,6 @@ fn test_apply_source_chain_config() {
 #[test]
 fn test_apply_source_chain_cfg_updates_is_owner_only() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
     // Turn off mock_all_auths so the owner's require_auth() is not satisfied.
     env.mock_auths(&[]);
     let r = client.try_apply_source_chain_cfg_updates(&Vec::new(&env));
@@ -229,8 +241,6 @@ fn test_apply_source_chain_cfg_updates_is_owner_only() {
 #[test]
 fn test_get_all_source_chain_configs() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let onramp_bytes = Bytes::from_array(&env, &[1u8; 32]);
 
@@ -273,8 +283,6 @@ fn test_get_all_source_chain_configs() {
 #[should_panic(expected = "Error(Contract, #101)")]
 fn test_source_chain_config_zero_selector_fails() {
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let args = SourceChainConfigArgs {
         source_chain_selector: 0,
@@ -297,8 +305,6 @@ fn test_source_chain_config_empty_onramp_entry_fails() {
     // time (EVM `OffRamp.applySourceChainConfigUpdates` — `onRamp.length == 0`
     // reverts `ZeroAddressNotAllowed`).
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let mut on_ramps = Vec::new(&env);
     on_ramps.push_back(Bytes::new(&env));
@@ -323,8 +329,6 @@ fn test_source_chain_config_zero_onramp_entry_fails() {
     // at config time (EVM — `onRampHash == EMPTY_ENCODED_ADDRESS_HASH` reverts
     // `ZeroAddressNotAllowed`).
     let (env, owner, client) = setup_env();
-    let static_config = default_static_config(&env);
-    client.initialize(&owner, &static_config);
 
     let mut on_ramps = Vec::new(&env);
     on_ramps.push_back(Bytes::from_array(&env, &[0u8; 32]));
@@ -357,12 +361,12 @@ fn setup_initialized_offramp_for_execute() -> (Env, OffRampContractClient<'stati
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let static_config = StaticConfig {
         chain_selector: EXEC_TEST_DEST_CHAIN,
@@ -370,9 +374,8 @@ fn setup_initialized_offramp_for_execute() -> (Env, OffRampContractClient<'stati
         token_admin_registry: Address::generate(&env),
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     (env, client)
 }
@@ -1072,12 +1075,12 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     // Mock registry → mock pool.
     let registry_id = env.register(MockTokenAdminRegistry, ());
@@ -1098,9 +1101,8 @@ fn test_execute_empty_token_receiver_falls_back_to_message_receiver() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     // Source lane: the default CCV is the mock VVR (resolves to the always-Ok verifier).
     let router = Address::generate(&env);
@@ -1175,12 +1177,12 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     // Mock registry → mock pool.
     let registry_id = env.register(MockTokenAdminRegistry, ());
@@ -1201,9 +1203,8 @@ fn test_execute_token_only_zero_message_receiver_skips_receiver_call_with_receiv
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     let router = Address::generate(&env);
     let onramp = sample_onramp_bytes(&env);
@@ -1565,12 +1566,12 @@ fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let registry_id = env.register(MockTokenAdminRegistry, ());
     let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
@@ -1588,9 +1589,8 @@ fn test_execute_data_message_with_malformed_zero_receiver_is_rejected() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     let router = Address::generate(&env);
     let onramp = sample_onramp_bytes(&env);
@@ -1674,12 +1674,12 @@ fn setup_l10_lane() -> (
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     // Mock registry → mock pool (counting + trappable `release_or_mint`).
     let registry_id = env.register(MockTokenAdminRegistry, ());
@@ -1699,9 +1699,8 @@ fn setup_l10_lane() -> (
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     // The lane router is the minimal TestRouter (real `route_message` forwarding shape),
     // so a receiver `ccip_receive` failure surfaces exactly as it does in production.
@@ -2472,12 +2471,12 @@ fn test_execute_token_only_skips_default_ccv_floor() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let registry_id = env.register(MockTokenAdminRegistry, ());
     let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
@@ -2506,9 +2505,8 @@ fn test_execute_token_only_skips_default_ccv_floor() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     // Lane carries a default CCV (the lane default) and NO lane-mandated CCVs. The H-10 bug
     // is that this default was force-required for token-only transfers regardless of the pool.
@@ -2585,12 +2583,12 @@ fn test_execute_token_only_still_requires_pool_ccvs() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let registry_id = env.register(MockTokenAdminRegistry, ());
     let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
@@ -2617,9 +2615,8 @@ fn test_execute_token_only_still_requires_pool_ccvs() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     let router = Address::generate(&env);
     let onramp = sample_onramp_bytes(&env);
@@ -2703,12 +2700,12 @@ fn test_execute_token_only_empty_pool_falls_back_to_defaults() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let registry_id = env.register(MockTokenAdminRegistry, ());
     let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
@@ -2734,9 +2731,8 @@ fn test_execute_token_only_empty_pool_falls_back_to_defaults() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     let router = Address::generate(&env);
     let onramp = sample_onramp_bytes(&env);
@@ -2886,12 +2882,12 @@ fn test_execute_drops_reverting_extra_ccv() {
 
     let owner = Address::generate(&env);
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     let registry_id = env.register(MockTokenAdminRegistry, ());
     let registry_client = MockTokenAdminRegistryClient::new(&env, &registry_id);
@@ -2922,9 +2918,8 @@ fn test_execute_drops_reverting_extra_ccv() {
         token_admin_registry: registry_id,
     };
 
-    let contract_id = env.register(OffRampContract, ());
+    let contract_id = env.register(OffRampContract, (&owner, &static_config));
     let client = OffRampContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &static_config);
 
     // Lane carries a distinct default CCV (unused here — the pool mandates its own and
     // does not fold defaults), so the merged required set is exactly [pool_vvr].
@@ -3073,7 +3068,6 @@ fn valid_source_chain_args(env: &Env, selector: u64) -> SourceChainConfigArgs {
 #[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
 fn test_source_chain_config_rejects_duplicate_default_ccvs() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let dup = Address::generate(&env);
     let mut args = valid_source_chain_args(&env, 5678);
@@ -3090,7 +3084,6 @@ fn test_source_chain_config_rejects_duplicate_default_ccvs() {
 #[should_panic(expected = "Error(Contract, #320)")] // DuplicateCCVNotAllowed
 fn test_source_chain_config_rejects_duplicate_mandated_ccvs() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let dup = Address::generate(&env);
     let mut args = valid_source_chain_args(&env, 5678);
@@ -3107,7 +3100,6 @@ fn test_source_chain_config_rejects_duplicate_mandated_ccvs() {
 #[should_panic(expected = "Error(Contract, #101)")] // InvalidSourceChainConfig - cross-list overlap
 fn test_source_chain_config_rejects_cross_list_ccv_overlap() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let shared = Address::generate(&env);
     let mut args = valid_source_chain_args(&env, 5678);
@@ -3126,7 +3118,6 @@ fn test_source_chain_config_rejects_cross_list_ccv_overlap() {
 #[should_panic(expected = "Error(Contract, #101)")] // InvalidSourceChainConfig - empty defaults (INV-CFG-5)
 fn test_source_chain_config_rejects_empty_defaults_with_mandated() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let mut args = valid_source_chain_args(&env, 5678);
     args.default_ccvs = Vec::new(&env);
@@ -3142,7 +3133,6 @@ fn test_source_chain_config_rejects_empty_defaults_with_mandated() {
 #[test]
 fn test_source_chain_config_accepts_unique_ccv_set() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     let mut args = valid_source_chain_args(&env, 5678);
     args.default_ccvs = vec![&env, Address::generate(&env), Address::generate(&env)];
@@ -3413,16 +3403,28 @@ fn setup_real_verifier_execute_harness(
 
     let owner = Address::generate(&env);
 
-    // RMN stack (required by CommitteeVerifier::initialize / require_not_cursed).
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn_remote_id)
-        .initialize(&owner, &soroban_sdk::Vec::new(&env));
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    RmnProxyContractClient::new(&env, &rmn_proxy_id).initialize(&owner, &rmn_remote_id);
+    // RMN stack (required by the CommitteeVerifier constructor / require_not_cursed).
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     // REAL CommitteeVerifier: init with the default 2.0 tag, then configure a 3-signer /
     // threshold-2 quorum for the test source chain.
-    let committee_verifier_id = env.register(CommitteeVerifierContract, ());
+    let committee_verifier_id = env.register(
+        CommitteeVerifierContract,
+        (
+            &owner,
+            &DynamicConfig {
+                fee_aggregator: Some(Address::generate(&env)),
+                allowlist_admin: None,
+            },
+            &Vec::<Bytes>::new(&env), // storage_locations
+            &rmn_proxy_id,
+            &BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG),
+        ),
+    );
     let cv_client = CommitteeVerifierContractClient::new(&env, &committee_verifier_id);
     let pairs = sorted_signers_from_seeds(&[3, 7, 11]);
     let cfg = SignatureQuorumConfig {
@@ -3430,23 +3432,15 @@ fn setup_real_verifier_execute_harness(
         threshold: 2,
         signers: signers_to_soroban_vec(&env, &pairs),
     };
-    cv_client.initialize(
-        &owner,
-        &DynamicConfig {
-            fee_aggregator: Some(Address::generate(&env)),
-            allowlist_admin: None,
-        },
-        &vec![&env], // storage_locations
-        &rmn_proxy_id,
-        &BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG),
-    );
     cv_client.apply_signature_configs(&vec![&env], &vec![&env, cfg]);
 
     // REAL VVR: map the version tag → CommitteeVerifier so OffRamp's verify_ccvs_at
     // dispatches to the real ecrecover quorum.
-    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr_id = env.register(
+        VersionedVerifierResolverContract,
+        (&owner, &Address::generate(&env)),
+    );
     let vvr_client = VersionedVerifierResolverContractClient::new(&env, &vvr_id);
-    vvr_client.initialize(&owner, &Address::generate(&env));
     vvr_client.apply_inbound_impl_updates(&vec![
         &env,
         InboundImplementationUpdate {
@@ -3463,16 +3457,18 @@ fn setup_real_verifier_execute_harness(
     receiver_client.set_allowed_finality(&allowed_finality);
 
     // REAL OffRamp; source lane's default CCV = the real VVR, router = the test router.
-    let offramp_id = env.register(OffRampContract, ());
-    let client = OffRampContractClient::new(&env, &offramp_id);
-    client.initialize(
-        &owner,
-        &StaticConfig {
-            chain_selector: EXEC_TEST_DEST_CHAIN,
-            rmn_proxy: rmn_proxy_id,
-            token_admin_registry: Address::generate(&env),
-        },
+    let offramp_id = env.register(
+        OffRampContract,
+        (
+            &owner,
+            &StaticConfig {
+                chain_selector: EXEC_TEST_DEST_CHAIN,
+                rmn_proxy: rmn_proxy_id,
+                token_admin_registry: Address::generate(&env),
+            },
+        ),
     );
+    let client = OffRampContractClient::new(&env, &offramp_id);
     apply_source_lane(
         &env,
         &client,
@@ -3761,7 +3757,6 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
 #[test]
 fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
     let (env, owner, client) = setup_env();
-    client.initialize(&owner, &default_static_config(&env));
 
     // `mock_all_auths` (set in `setup_env`) authorizes the owner, so
     // `require_owner` -> `owner.require_auth()` passes.
@@ -3792,12 +3787,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
-    let contract_id = env.register(OffRampContract, ());
-    let client = OffRampContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. The constructor needs no auth, so the
+    // contract is set up with the owner stored.
     let owner = Address::generate(&env);
-    client.initialize(&owner, &default_static_config(&env));
+    let contract_id = env.register(OffRampContract, (&owner, &default_static_config(&env)));
+    let client = OffRampContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject.

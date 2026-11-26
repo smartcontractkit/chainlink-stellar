@@ -32,6 +32,29 @@ func (c *CommitteeVerifierClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the CommitteeVerifier __constructor arguments in spec order.
+func ConstructorArgs(owner string, dynamicConfig DynamicConfig, storageLocations [][]byte, rmnProxy string, versionTag [4]byte) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	dynamicConfigVal, err := dynamicConfig.ToScVal()
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg dynamic_config: %w", err)
+	}
+	rmnProxyVal, err := scval.CheckedAddressToScVal(rmnProxy)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg rmn_proxy: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		dynamicConfigVal,
+		scval.BytesSliceToScVal(storageLocations),
+		rmnProxyVal,
+		scval.Bytes4ToScVal(versionTag),
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *CommitteeVerifierClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -89,25 +112,6 @@ func (c *CommitteeVerifierClient) Upgrade(ctx context.Context, newWasmHash [32]b
 	return nil
 }
 
-// Initialize calls the initialize function on the contract.
-func (c *CommitteeVerifierClient) Initialize(ctx context.Context, owner string, dynamicConfig DynamicConfig, storageLocations [][]byte, rmnProxy string, versionTag [4]byte) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.MustToScVal(dynamicConfig.ToScVal()),
-		scval.BytesSliceToScVal(storageLocations),
-		scval.AddressToScVal(rmnProxy),
-		scval.Bytes4ToScVal(versionTag),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // VersionTag calls the version_tag function on the contract.
 func (c *CommitteeVerifierClient) VersionTag(ctx context.Context) ([4]byte, error) {
 	args := []xdr.ScVal{}
@@ -124,6 +128,26 @@ func (c *CommitteeVerifierClient) VersionTag(ctx context.Context) ([4]byte, erro
 	v, err := scval.Bytes4FromScVal(*result)
 	if err != nil {
 		return [4]byte{}, err
+	}
+	return v, nil
+}
+
+// GetRmnProxy calls the get_rmn_proxy function on the contract.
+func (c *CommitteeVerifierClient) GetRmnProxy(ctx context.Context) (*string, error) {
+	args := []xdr.ScVal{}
+
+	result, err := c.invoker.SimulateContract(ctx, c.contractID, "get_rmn_proxy", args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call get_rmn_proxy: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("no return value from get_rmn_proxy")
+	}
+
+	v, err := scval.OptionalAddressFromScVal(*result)
+	if err != nil {
+		return nil, err
 	}
 	return v, nil
 }

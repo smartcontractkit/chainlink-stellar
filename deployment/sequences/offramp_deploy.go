@@ -11,7 +11,7 @@ import (
 	offrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/offramp"
 )
 
-// DeployOffRampInput deploys and initializes the OffRamp contract. RmnProxy and
+// DeployOffRampInput creates the OffRamp contract. RmnProxy and
 // TokenAdminRegistry are the dependency strkeys, required inputs.
 type DeployOffRampInput struct {
 	ChainSelector      uint64                 `json:"chainSelector"`
@@ -25,7 +25,7 @@ type DeployOffRampInput struct {
 var DeployOffRamp = cldf_ops.NewSequence(
 	"stellar-deploy-offramp",
 	SequenceVersion,
-	"Deploys and initializes the OffRamp Soroban contract with skip-if-exists",
+	"Creates the OffRamp Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployOffRampInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		if err := statReleaseWasm(in.WasmPath, "OffRamp"); err != nil {
@@ -37,19 +37,32 @@ var DeployOffRamp = cldf_ops.NewSequence(
 		if in.TokenAdminRegistry == "" {
 			return ComponentDeployOutput{}, fmt.Errorf("tokenAdminRegistry is required: deploy TokenAdminRegistry first")
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, offrampops.Deploy,
-			stellarccip.OffRampDatastoreRef(), in.ChainSelector, "offramp", in.WasmPath, owner, in.ExistingAddresses,
+		staticConfig := offrampbindings.StaticConfig{
+			ChainSelector:      in.ChainSelector,
+			RmnProxy:           in.RmnProxy,
+			TokenAdminRegistry: in.TokenAdminRegistry,
+		}
+		ctorArgs, err := offrampbindings.ConstructorArgs(owner, staticConfig)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode OffRamp constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, offrampops.Deploy,
+			stellarccip.OffRampDatastoreRef(), in.ChainSelector, "offramp", in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, offrampops.Initialize, offrampops.InitializeInput{
-					ContractID: contractID,
-					Owner:      owner,
-					Config: offrampbindings.StaticConfig{
-						ChainSelector:      in.ChainSelector,
-						RmnProxy:           in.RmnProxy,
-						TokenAdminRegistry: in.TokenAdminRegistry,
-					},
-				}, withComponentIdempotencyKey[offrampops.InitializeInput](in.ChainSelector))
-				return err
+				c := offrampbindings.NewOffRampClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				static, err := c.GetStaticConfig(ctx)
+				if err != nil {
+					return err
+				}
+				return requireField("static config", *static, staticConfig)
 			})
 	},
 )

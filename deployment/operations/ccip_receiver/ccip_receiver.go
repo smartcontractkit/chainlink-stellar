@@ -14,27 +14,6 @@ const ContractType = "CcipReceiverExample"
 // Deploy uploads ccip_receiver_example.wasm.
 var Deploy = stellarops.NewDeployOperation("ccip-receiver:deploy", "Deploys the example CCIP receiver Soroban contract from WASM")
 
-// InitializeInput wires owner and router on the receiver.
-type InitializeInput struct {
-	ContractID string `json:"contract_id"`
-	Owner      string `json:"owner"`
-	Router     string `json:"router"`
-}
-
-// Initialize calls example receiver `initialize`.
-var Initialize = cldfops.NewOperation(
-	"ccip-receiver:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes CCIP example receiver with owner and router",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := recvbindings.NewExampleCcipReceiverClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.Router); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // EnableRemoteChainInput enables inbound CCIP receive from a remote chain selector.
 type EnableRemoteChainInput struct {
 	ContractID            string `json:"contract_id"`

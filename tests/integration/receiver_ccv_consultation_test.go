@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -268,18 +267,11 @@ func deploySecondVvr(
 ) string {
 	t.Helper()
 
-	salt := deployment.GenerateDeterministicSalt(deployerAddr, saltPrefix+"-vvr-b")
-	p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "ccvs_versioned_verifier_resolver.wasm")
-	id, err := deployer.DeployContract(ctx, p, salt)
-	if err != nil {
-		t.Fatalf("deploy second vvr: %v", err)
-	}
+	mockFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-vvr-b-feeagg")
+	id := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "ccvs_versioned_verifier_resolver.wasm",
+		saltPrefix+"-vvr-b", mustCtor(t)(vvrbindings.ConstructorArgs(deployerAddr, mockFeeAgg)))
 
 	client := vvrbindings.NewVersionedVerifierResolverClient(deployer, id)
-	mockFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-vvr-b-feeagg")
-	if err := client.Initialize(ctx, deployerAddr, mockFeeAgg); err != nil {
-		t.Fatalf("second vvr Initialize: %v", err)
-	}
 	ver := ccvID
 	if err := client.ApplyInboundImplUpdates(ctx, []vvrbindings.InboundImplementationUpdate{{
 		Verifier: &ver,

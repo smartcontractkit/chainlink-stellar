@@ -91,12 +91,11 @@ impl VersionedVerifierResolverContract {
     /// # Arguments
     /// * `owner` - The owner address
     /// * `fee_aggregator` - The fee aggregator address
-    ///
-    /// # Errors
-    /// * `AlreadyInitialized` - If contract is already initialized
-    pub fn initialize(env: Env, owner: Address, fee_aggregator: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
+    pub fn __constructor(
+        env: Env,
+        owner: Address,
+        fee_aggregator: Address,
+    ) -> Result<(), CCIPError> {
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
 
