@@ -610,43 +610,35 @@ func RunStellarCCIPFullDeploy(
 				UsdPerUnitGas:     scval.U128(xdr.UInt128Parts{Hi: 0, Lo: 100_000_000_000_000}),
 			})
 		}
-		if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
-			ContractID: feeQuoterContractID,
-			Updater:    h.DeployerKeypair().Address(),
-			PriceUpdates: fqbindings.PriceUpdates{
-				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
-					{
-						Token: feeTokenContractID,
-						// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
-						// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
-						// 1e18 smallest units", scaled by token decimals:
-						// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
-						// makes a 50¢ fee quote as 5e17 base units (50B tokens) — unpayable.
-						// See contracts/common/helpers/src/fee_math.rs.
-						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-							Hi: 5421010862, Lo: 7886392056514347008,
-						}),
-					},
+		if err := setUnsetPrices(b, deps, feeQuoterContractID, h.DeployerKeypair().Address(), fqbindings.PriceUpdates{
+			TokenPriceUpdates: []fqbindings.TokenPriceUpdate{
+				{
+					Token: feeTokenContractID,
+					// Devenv fee token is a 7-decimal SAC. USDPriceWith18Decimals
+					// convention (EVM Internal.Price.usdPerToken) = "USD × 1e18 per
+					// 1e18 smallest units", scaled by token decimals:
+					// $1 × 10^(36-7) = 1e29. Using 1e18 (only valid for 18-dec tokens)
+					// makes a 50¢ fee quote as 5e17 base units (50B tokens), unpayable.
+					// See contracts/common/helpers/src/fee_math.rs.
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
 				},
-				GasPriceUpdates: gasPriceUpdates,
 			},
+			GasPriceUpdates: gasPriceUpdates,
 		}); err != nil {
 			return seq_core.OnChainOutput{}, fmt.Errorf("update prices on FeeQuoter: %w", err)
 		}
 
 		if testToken := h.TestTokenContractID(); testToken != "" {
-			if _, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
-				ContractID: feeQuoterContractID,
-				Updater:    h.DeployerKeypair().Address(),
-				PriceUpdates: fqbindings.PriceUpdates{
-					TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
-						Token: testToken,
-						// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
-						UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
-							Hi: 5421010862, Lo: 7886392056514347008,
-						}),
-					}},
-				},
+			if err := setUnsetPrices(b, deps, feeQuoterContractID, h.DeployerKeypair().Address(), fqbindings.PriceUpdates{
+				TokenPriceUpdates: []fqbindings.TokenPriceUpdate{{
+					Token: testToken,
+					// 7-decimal SAC at $1 → 1e29 (see feeToken comment + fee_math.rs).
+					UsdPerToken: scval.U128(xdr.UInt128Parts{ // 1e29 = $1 × 10^(36-7); split into u64 limbs (Lo alone overflows u64).
+						Hi: 5421010862, Lo: 7886392056514347008,
+					}),
+				}},
 			}); err != nil {
 				return seq_core.OnChainOutput{}, fmt.Errorf("set test token price on FeeQuoter: %w", err)
 			}
@@ -1091,4 +1083,40 @@ func nonDefaultExecutorQualifiers(topology *offchain.EnvironmentTopology, select
 	}
 	sort.Strings(qualifiers)
 	return qualifiers
+}
+
+// setUnsetPrices sends only the price updates whose on-chain price was never
+// set, so a rerun after ledger adoption keeps prices written since and does
+// not refresh their timestamps.
+func setUnsetPrices(b cldf_ops.Bundle, deps stellardeps.StellarDeps, feeQuoterID, updater string, desired fqbindings.PriceUpdates) error {
+	ctx := b.GetContext()
+	fq := fqbindings.NewFeeQuoterClient(deps.Invoker, feeQuoterID)
+	var pending fqbindings.PriceUpdates
+	for _, u := range desired.TokenPriceUpdates {
+		cur, err := fq.GetTokenPrice(ctx, u.Token)
+		if err != nil {
+			return fmt.Errorf("read token price %s: %w", u.Token, err)
+		}
+		if cur.Timestamp == 0 {
+			pending.TokenPriceUpdates = append(pending.TokenPriceUpdates, u)
+		}
+	}
+	for _, u := range desired.GasPriceUpdates {
+		cur, err := fq.GetDestChainGasPrice(ctx, u.DestChainSelector)
+		if err != nil {
+			return fmt.Errorf("read gas price for chain %d: %w", u.DestChainSelector, err)
+		}
+		if cur.Timestamp == 0 {
+			pending.GasPriceUpdates = append(pending.GasPriceUpdates, u)
+		}
+	}
+	if len(pending.TokenPriceUpdates) == 0 && len(pending.GasPriceUpdates) == 0 {
+		return nil
+	}
+	_, err := execStellarCCIPOp(b, deps, fqops.UpdatePrices, fqops.UpdatePricesInput{
+		ContractID:   feeQuoterID,
+		Updater:      updater,
+		PriceUpdates: pending,
+	})
+	return err
 }

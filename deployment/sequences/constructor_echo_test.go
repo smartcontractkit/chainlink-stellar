@@ -94,6 +94,12 @@ func echoReadback(c echoedContract, fn string) (xdr.ScVal, bool) {
 		return v, err == nil
 	case c.wasm == "token_admin_registry.wasm" && fn == "get_all_configured_tokens":
 		return scval.VecToScVal(nil), true
+	case c.wasm == "fee_quoter.wasm" && (fn == "get_token_price" || fn == "get_dest_chain_gas_price"):
+		v, err := scval.BuildStructScVal(map[string]xdr.ScVal{
+			"timestamp": scval.Uint64ToScVal(0),
+			"value":     scval.U128ToScVal(xdr.UInt128Parts{}),
+		})
+		return v, err == nil
 	}
 	if i, ok := getters[fn]; ok {
 		return c.args[i], true
