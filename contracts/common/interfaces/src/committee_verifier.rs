@@ -14,7 +14,8 @@ pub trait CommitteeVerifierInterface {
         env: soroban_sdk::Env,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
-    fn initialize(
+    fn version_tag(env: soroban_sdk::Env) -> soroban_sdk::BytesN<4>;
+    fn __constructor(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         dynamic_config: DynamicConfig,
@@ -22,7 +23,7 @@ pub trait CommitteeVerifierInterface {
         rmn_proxy: soroban_sdk::Address,
         version_tag: soroban_sdk::BytesN<4>,
     ) -> Result<(), CCIPError>;
-    fn version_tag(env: soroban_sdk::Env) -> soroban_sdk::BytesN<4>;
+    fn get_rmn_proxy(env: soroban_sdk::Env) -> Option<soroban_sdk::Address>;
     fn verify_message(
         env: soroban_sdk::Env,
         source_chain_selector: u64,

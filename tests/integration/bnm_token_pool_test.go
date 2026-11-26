@@ -127,11 +127,9 @@ func (s *fullStack) deployBnmTokenPool(
 
 	// 3. Ramp registry (mirrors deployTokenPool): the pool's authorized-caller
 	// checks resolve the OnRamp/OffRamp through it.
-	s.RampRegistryID = deploy("ramp-registry", "ccip_ramp_registry.wasm")
+	s.RampRegistryID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "ccip_ramp_registry.wasm",
+		saltPrefix+"-ramp-registry", mustCtor(t)(rampregistrybindings.ConstructorArgs(deployerAddr)))
 	s.RampRegistryClient = rampregistrybindings.NewRampRegistryClient(deployer, s.RampRegistryID)
-	if err := s.RampRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-		t.Fatalf("RampRegistry Initialize: %v", err)
-	}
 	if err := s.RampRegistryClient.ApplyOfframpUpdates(ctx, []rampregistrybindings.OffRampUpdate{
 		{
 			SourceChainSelector: remoteSourceChain,

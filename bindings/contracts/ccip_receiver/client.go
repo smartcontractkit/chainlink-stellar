@@ -31,6 +31,22 @@ func (c *ExampleCcipReceiverClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the ExampleCcipReceiver __constructor arguments in spec order.
+func ConstructorArgs(owner string, router string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	routerVal, err := scval.CheckedAddressToScVal(router)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg router: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		routerVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *ExampleCcipReceiverClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -66,28 +82,6 @@ func (c *ExampleCcipReceiverClient) Upgrade(ctx context.Context, newWasmHash [32
 	return nil
 }
 
-// IsOwner calls the is_owner function on the contract.
-func (c *ExampleCcipReceiverClient) IsOwner(ctx context.Context, addr string) (bool, error) {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(addr),
-	}
-
-	result, err := c.invoker.SimulateContract(ctx, c.contractID, "is_owner", args)
-	if err != nil {
-		return false, fmt.Errorf("failed to call is_owner: %w", err)
-	}
-
-	if result == nil {
-		return false, fmt.Errorf("no return value from is_owner")
-	}
-
-	v, ok := result.GetB()
-	if !ok {
-		return false, fmt.Errorf("expected bool return type")
-	}
-	return v, nil
-}
-
 // GetRouter calls the get_router function on the contract.
 func (c *ExampleCcipReceiverClient) GetRouter(ctx context.Context) (string, error) {
 	args := []xdr.ScVal{}
@@ -108,37 +102,6 @@ func (c *ExampleCcipReceiverClient) GetRouter(ctx context.Context) (string, erro
 	return v, nil
 }
 
-// InitOwner calls the init_owner function on the contract.
-func (c *ExampleCcipReceiverClient) InitOwner(ctx context.Context, owner string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "init_owner", args)
-	if err != nil {
-		return fmt.Errorf("failed to call init_owner: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *ExampleCcipReceiverClient) Initialize(ctx context.Context, owner string, router string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.AddressToScVal(router),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
 // CcipReceive calls the ccip_receive function on the contract.
 func (c *ExampleCcipReceiverClient) CcipReceive(ctx context.Context, message AnyToStellarMessage) error {
 	args := []xdr.ScVal{
@@ -152,26 +115,6 @@ func (c *ExampleCcipReceiverClient) CcipReceive(ctx context.Context, message Any
 
 	_ = result // void return
 	return nil
-}
-
-// RequireOwner calls the require_owner function on the contract.
-func (c *ExampleCcipReceiverClient) RequireOwner(ctx context.Context) (string, error) {
-	args := []xdr.ScVal{}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "require_owner", args)
-	if err != nil {
-		return "", fmt.Errorf("failed to call require_owner: %w", err)
-	}
-
-	if result == nil {
-		return "", fmt.Errorf("no return value from require_owner")
-	}
-
-	v, err := scval.AddressFromScVal(*result)
-	if err != nil {
-		return "", err
-	}
-	return v, nil
 }
 
 // GetCcvConfig calls the get_ccv_config function on the contract.

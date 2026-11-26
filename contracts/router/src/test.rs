@@ -77,9 +77,11 @@ fn deploy_default_ccv_resolver(env: &Env, owner: &Address, dest_chain_selector: 
     };
 
     let verifier_id = env.register(mock_outbound_ccv::MockOutboundCcvVerifier, ());
-    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr_id = env.register(
+        VersionedVerifierResolverContract,
+        (owner, &Address::generate(env)),
+    );
     let vvr = VersionedVerifierResolverContractClient::new(env, &vvr_id);
-    vvr.initialize(owner, &Address::generate(env));
     vvr.apply_outbound_impl_updates(&vec![
         env,
         OutboundImplementationUpdate {
@@ -104,15 +106,14 @@ fn setup_executor(
     dest_chain_selector: u64,
     usd_cents_fee: u32,
 ) -> Address {
-    let executor_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(env, &executor_id);
     let dynamic_config = ExecDynamicConfig {
         fee_aggregator: Some(Address::generate(env)),
         // 0 = WAIT_FOR_FINALITY only (executor layer of the 5-layer FTF matrix).
         allowed_finality_config: 0,
         ccv_allowlist_enabled: false,
     };
-    client.initialize(owner, &2, &dynamic_config);
+    let executor_id = env.register(ExecutorContract, (owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(env, &executor_id);
     let to_add = vec![
         env,
         ExecRemoteChainConfigArgs {
@@ -139,9 +140,6 @@ fn setup_fee_quoter(
         li.timestamp = 1000;
     });
 
-    let fee_quoter_id = env.register(FeeQuoterContract, ());
-    let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
-
     let link_token = Address::generate(env);
     let static_config = StaticConfig {
         max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
@@ -151,7 +149,11 @@ fn setup_fee_quoter(
     let mut authorized_callers: Vec<Address> = Vec::new(env);
     authorized_callers.push_back(owner.clone());
 
-    fee_quoter_client.initialize(owner, &static_config, &authorized_callers);
+    let fee_quoter_id = env.register(
+        FeeQuoterContract,
+        (owner, &static_config, &authorized_callers),
+    );
+    let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
 
     let dest_config = DestChainConfig {
         is_enabled: true,
@@ -203,15 +205,14 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
     let owner = Address::generate(&env);
 
     // Deploy and initialize RMN Remote so proxy can delegate is_cursed() to it
-    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
-    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        rmn_remote::RmnRemoteContract,
+        (&owner, Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_addr = env.register(rmn_proxy::RmnProxyContract, ());
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_addr);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_addr = env.register(rmn_proxy::RmnProxyContract, (&owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_addr));
 
     (env, router_id, owner, rmn_proxy_addr, rmn_remote_id)
 }
@@ -238,40 +239,34 @@ fn sample_any_to_stellar_message(env: &Env) -> AnyToStellarMessage {
 // ============================================================
 
 #[test]
-fn test_initialize() {
+fn test_constructor_sets_owner_config_and_empty_ramps() {
     let (env, contract_id, owner, rmn_proxy, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
 
-    // Initialize
-    client.initialize(&owner, &rmn_proxy);
-
-    // Verify owner
     env.as_contract(&client.address, || {
         assert_eq!(<RouterContract as Ownable>::owner(&env).unwrap(), owner);
     });
-
-    // Verify config
-    let config = client.get_config();
-    assert_eq!(config.rmn_proxy, rmn_proxy);
+    assert_eq!(client.get_config().rmn_proxy, rmn_proxy);
+    assert_eq!(client.get_onramps().len(), 0);
+    assert_eq!(client.get_offramps().len(), 0);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_initialize_already_initialized() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
-    let client = RouterContractClient::new(&env, &contract_id);
+fn test_initialize_is_not_exported() {
+    let (env, contract_id, owner, _, _) = setup_env();
 
-    // Initialize twice should fail
-    client.initialize(&owner, &rmn_proxy);
-    client.initialize(&owner, &rmn_proxy);
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "initialize"),
+        vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 fn test_set_onramp() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let onramp = Address::generate(&env);
     let dest_chain_selector: u64 = 123;
@@ -286,10 +281,8 @@ fn test_set_onramp() {
 
 #[test]
 fn test_remove_onramp_pauses_lane() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let onramp = Address::generate(&env);
     let dest_chain_selector: u64 = 123;
@@ -327,10 +320,8 @@ fn test_remove_onramp_pauses_lane() {
 
 #[test]
 fn test_remove_onramp_re_add_unpauses() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let onramp = Address::generate(&env);
     let dest_chain_selector: u64 = 123;
@@ -348,10 +339,8 @@ fn test_remove_onramp_re_add_unpauses() {
 #[test]
 #[should_panic(expected = "Error(Contract, #63)")]
 fn test_remove_nonexistent_onramp() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     // Removing an OnRamp that was never configured reverts with UnsupportedDestinationChain (#4).
     client.remove_onramp(&999u64);
@@ -359,10 +348,8 @@ fn test_remove_nonexistent_onramp() {
 
 #[test]
 fn test_add_remove_offramp() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     let source_chain_selector: u64 = 456;
@@ -392,10 +379,8 @@ fn test_add_remove_offramp() {
 #[test]
 #[should_panic(expected = "Error(Contract, #60)")]
 fn test_add_duplicate_offramp() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     let source_chain_selector: u64 = 456;
@@ -408,10 +393,8 @@ fn test_add_duplicate_offramp() {
 #[test]
 #[should_panic(expected = "Error(Contract, #61)")]
 fn test_remove_nonexistent_offramp() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     let source_chain_selector: u64 = 456;
@@ -422,10 +405,8 @@ fn test_remove_nonexistent_offramp() {
 
 #[test]
 fn test_apply_ramp_updates() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let onramp1 = Address::generate(&env);
     let onramp2 = Address::generate(&env);
@@ -469,10 +450,8 @@ fn test_apply_ramp_updates() {
 
 #[test]
 fn test_transfer_ownership_two_step() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, owner, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let new_owner = Address::generate(&env);
 
@@ -490,10 +469,8 @@ fn test_transfer_ownership_two_step() {
 
 #[test]
 fn test_get_onramps() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     let onramp1 = Address::generate(&env);
     let onramp2 = Address::generate(&env);
@@ -507,10 +484,8 @@ fn test_get_onramps() {
 
 #[test]
 fn test_is_chain_supported_false() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn_proxy);
 
     // Non-configured chain should not be supported
     assert!(!client.is_chain_supported(&999));
@@ -532,20 +507,16 @@ fn test_ccip_send_full_flow() {
     let sender = Address::generate(&env);
 
     // ---- Deploy RMN Remote and Proxy ----
-    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
-    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        rmn_remote::RmnRemoteContract,
+        (&owner, Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, (&owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
-    let onramp_id = env.register(onramp::OnRampContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
 
-    // ---- Initialize Router ----
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
 
     // ---- Initialize OnRamp ----
     let stellar_chain_selector: u64 = 12345;
@@ -571,8 +542,11 @@ fn test_ccip_send_full_flow() {
         fee_aggregator: Address::generate(&env),
     };
 
+    let onramp_id = env.register(
+        onramp::OnRampContract,
+        (&owner, &static_config, &dynamic_config),
+    );
     let onramp_client = onramp::OnRampContractClient::new(&env, &onramp_id);
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
 
@@ -632,18 +606,16 @@ fn test_ccip_send_unsupported_chain() {
     let owner = Address::generate(&env);
     let sender = Address::generate(&env);
 
-    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
-    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        rmn_remote::RmnRemoteContract,
+        (&owner, Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, (&owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
 
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
 
     // No OnRamp configured for chain 999
     let message = common_message::StellarToAnyMessage {
@@ -669,38 +641,38 @@ fn test_get_fee_via_onramp() {
     let owner = Address::generate(&env);
     let dest_chain: u64 = 67890;
 
-    let rmn_remote_id = env.register(rmn_remote::RmnRemoteContract, ());
-    let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
+    let rmn_remote_id = env.register(
+        rmn_remote::RmnRemoteContract,
+        (&owner, Vec::<Address>::new(&env)),
+    );
 
-    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, ());
-    let rmn_proxy_client = rmn_proxy::RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(rmn_proxy::RmnProxyContract, (&owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
-    let onramp_id = env.register(onramp::OnRampContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
 
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
 
     // Deploy and configure FeeQuoter
     let fee_token = Address::generate(&env);
     let fee_quoter_id = setup_fee_quoter(&env, &owner, dest_chain, &fee_token);
 
-    let onramp_client = onramp::OnRampContractClient::new(&env, &onramp_id);
-    onramp_client.initialize(
-        &owner,
-        &StaticConfig {
-            chain_selector: 12345,
-            token_admin_registry: Address::generate(&env),
-            rmn_proxy: rmn_proxy_id.clone(),
-            max_usd_cents_per_message: 100_000,
-        },
-        &DynamicConfig {
-            fee_quoter: fee_quoter_id,
-            fee_aggregator: Address::generate(&env),
-        },
+    let onramp_id = env.register(
+        onramp::OnRampContract,
+        (
+            &owner,
+            &StaticConfig {
+                chain_selector: 12345,
+                token_admin_registry: Address::generate(&env),
+                rmn_proxy: rmn_proxy_id.clone(),
+                max_usd_cents_per_message: 100_000,
+            },
+            &DynamicConfig {
+                fee_quoter: fee_quoter_id,
+                fee_aggregator: Address::generate(&env),
+            },
+        ),
     );
+    let onramp_client = onramp::OnRampContractClient::new(&env, &onramp_id);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, dest_chain);
 
@@ -746,16 +718,14 @@ fn test_get_fee_via_onramp() {
 
 #[test]
 fn test_route_message_happy_path() {
-    let (env, router_id, owner, rmn_proxy, _) = setup_env();
+    let (env, router_id, owner, _, _) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
 
-    let receiver_id = env.register(ExampleCcipReceiver, ());
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router_id));
     let receiver_client = ExampleCcipReceiverClient::new(&env, &receiver_id);
-    receiver_client.initialize(&owner, &router_id);
     let extra = Bytes::from_slice(&env, &[0x01]);
     receiver_client.enable_remote_chain(&owner, &ROUTE_MSG_SOURCE_CHAIN, &extra, &0u32);
 
@@ -770,16 +740,14 @@ fn test_route_message_happy_path() {
 
 #[test]
 fn test_route_message_unregistered_offramp() {
-    let (env, router_id, owner, rmn_proxy, _) = setup_env();
+    let (env, router_id, owner, _, _) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let registered = Address::generate(&env);
     let stranger = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &registered);
 
-    let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router_id));
 
     let message = sample_any_to_stellar_message(&env);
     let result =
@@ -789,15 +757,13 @@ fn test_route_message_unregistered_offramp() {
 
 #[test]
 fn test_route_message_cursed_network() {
-    let (env, router_id, owner, rmn_proxy, rmn_remote_id) = setup_env();
+    let (env, router_id, owner, _, rmn_remote_id) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
 
-    let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router_id));
 
     let rmn_remote_client = rmn_remote::RmnRemoteContractClient::new(&env, &rmn_remote_id);
     let subject = BytesN::from_array(&env, &ROUTE_MSG_GLOBAL_CURSE_SUBJECT);
@@ -810,31 +776,9 @@ fn test_route_message_cursed_network() {
 }
 
 #[test]
-fn test_route_message_not_initialized() {
-    let (env, router_id, _owner, _rmn_proxy, _) = setup_env();
-    let router_client = RouterContractClient::new(&env, &router_id);
-
-    let offramp = Address::generate(&env);
-    let receiver_id = env.register(ExampleCcipReceiver, ());
-
-    let message = AnyToStellarMessage {
-        message_id: BytesN::from_array(&env, &[9u8; 32]),
-        source_chain_selector: ROUTE_MSG_SOURCE_CHAIN,
-        sender: Bytes::from_array(&env, &[2u8; 32]),
-        data: Bytes::from_slice(&env, b"hello"),
-        dest_token_amounts: Vec::new(&env),
-    };
-
-    let result =
-        router_client.try_route_message(&offramp, &ROUTE_MSG_SOURCE_CHAIN, &receiver_id, &message);
-    assert_eq!(result, Err(Ok(CCIPError::NotInitialized)));
-}
-
-#[test]
 fn test_route_message_receiver_traps() {
-    let (env, router_id, owner, rmn_proxy, _) = setup_env();
+    let (env, router_id, _, _, _) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
@@ -853,9 +797,8 @@ fn test_route_message_receiver_traps() {
 
 #[test]
 fn test_route_message_receiver_returns_contract_error_becomes_receiver_error() {
-    let (env, router_id, owner, rmn_proxy, _) = setup_env();
+    let (env, router_id, _, _, _) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
@@ -870,15 +813,13 @@ fn test_route_message_receiver_returns_contract_error_becomes_receiver_error() {
 
 #[test]
 fn test_route_message_wrong_source_chain_for_offramp() {
-    let (env, router_id, owner, rmn_proxy, _) = setup_env();
+    let (env, router_id, owner, _, _) = setup_env();
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy);
 
     let offramp = Address::generate(&env);
     router_client.add_offramp(&ROUTE_MSG_SOURCE_CHAIN, &offramp);
 
-    let receiver_id = env.register(ExampleCcipReceiver, ());
-    ExampleCcipReceiverClient::new(&env, &receiver_id).initialize(&owner, &router_id);
+    let receiver_id = env.register(ExampleCcipReceiver, (&owner, &router_id));
 
     let other_chain: u64 = 999;
     let message = AnyToStellarMessage {
@@ -931,9 +872,8 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
 
 #[test]
 fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
-    let (env, contract_id, owner, rmn_proxy, _) = setup_env();
+    let (env, contract_id, _, _, _) = setup_env();
     let client = RouterContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &rmn_proxy);
 
     // `mock_all_auths` (set in `setup_env`) authorizes the owner, so
     // `require_owner` -> `owner.require_auth()` passes.
@@ -960,13 +900,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init) and only stores the rmn_proxy address, so a generated
-    // address suffices here.
-    let contract_id = env.register(RouterContract, ());
-    let client = RouterContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. The constructor needs no auth and only stores
+    // the rmn_proxy address, so a generated address suffices here.
     let owner = Address::generate(&env);
-    client.initialize(&owner, &Address::generate(&env));
+    let contract_id = env.register(RouterContract, (&owner, &Address::generate(&env)));
+    let client = RouterContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

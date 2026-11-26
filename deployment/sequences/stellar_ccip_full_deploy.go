@@ -387,7 +387,7 @@ func RunStellarCCIPFullDeploy(
 			},
 		})
 	}
-	if execOut.Deployed || execOut.Initialized {
+	if execOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
 			ContractID: executorContractID,
 			ToAdd:      execDestChainAdds,
@@ -424,7 +424,7 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, poolExecOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		if poolExecOut.Deployed || poolExecOut.Initialized {
+		if poolExecOut.NeedsConfiguration {
 			if _, err := execStellarCCIPOp(b, deps, execops.ApplyDestChainUpdates, execops.ApplyDestChainUpdatesInput{
 				ContractID: poolExecOut.ContractID,
 				ToAdd:      execDestChainAdds,
@@ -435,7 +435,7 @@ func RunStellarCCIPFullDeploy(
 		h.Logger().Info().Str("qualifier", qualifier).Str("contractID", poolExecOut.ContractID).Msg("qualified Executor deployed and dest chains enabled")
 	}
 
-	if vvrOut.Deployed || vvrOut.Initialized {
+	if vvrOut.NeedsConfiguration {
 		outboundImplUpdates := []vvrbindings.OutboundImplementationUpdate{}
 		for _, remoteSelector := range allSelectors {
 			outboundImplUpdates = append(outboundImplUpdates, vvrbindings.OutboundImplementationUpdate{
@@ -523,14 +523,14 @@ func RunStellarCCIPFullDeploy(
 		committeeCVs = append(committeeCVs, committeeCVEntry{
 			qualifier: qualifier,
 			cvID:      committeeCvContractID,
-			fresh:     committeeCvOut.Deployed || committeeCvOut.Initialized,
+			fresh:     committeeCvOut.NeedsConfiguration,
 		})
 		if err := upsertComponentRefs(ds, committeeCvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
 		h.Logger().Info().Str("qualifier", qualifier).Str("cvContractID", committeeCvContractID).Msg("Committee Verifier pair deployed and initialized")
 
-		if committeeVvrOut.Deployed || committeeVvrOut.Initialized {
+		if committeeVvrOut.NeedsConfiguration {
 			committeeOutbound := make([]vvrbindings.OutboundImplementationUpdate, 0, len(allSelectors))
 			for _, remoteSelector := range allSelectors {
 				committeeOutbound = append(committeeOutbound, vvrbindings.OutboundImplementationUpdate{
@@ -567,7 +567,7 @@ func RunStellarCCIPFullDeploy(
 	// (with topology fallback) and applied during the lane-configuration phase by
 	// StellarConfigureChainForLanes via ConfigureChainsForLanesFromTopology.
 
-	if feeQuoterOut.Deployed || feeQuoterOut.Initialized {
+	if feeQuoterOut.NeedsConfiguration {
 		fqDestChainConfigs := []fqbindings.DestChainConfigArgs{}
 		for _, rs := range allSelectors {
 			fqDestChainConfigs = append(fqDestChainConfigs, fqbindings.DestChainConfigArgs{
@@ -750,7 +750,7 @@ func RunStellarCCIPFullDeploy(
 			Router:              &routerRef,
 		})
 	}
-	if cvOut.Deployed || cvOut.Initialized {
+	if cvOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, cvops.ApplyRemoteChainCfgUpdates, cvops.ApplyRemoteChainCfgUpdatesInput{
 			ContractID: cvContractID,
 			Configs:    remoteChainConfigs,
@@ -802,7 +802,7 @@ func RunStellarCCIPFullDeploy(
 			Offramp:             offRampContractID,
 		})
 	}
-	if routerOut.Deployed || routerOut.Initialized {
+	if routerOut.NeedsConfiguration {
 		if _, err := execStellarCCIPOp(b, deps, routerops.ApplyRampUpdates, routerops.ApplyRampUpdatesInput{
 			ContractID:     routerContractID,
 			OnRampUpdates:  onRampEntries,
@@ -830,7 +830,7 @@ func RunStellarCCIPFullDeploy(
 	if err := upsertComponentRefs(ds, rrOut.Refs); err != nil {
 		return seq_core.OnChainOutput{}, err
 	}
-	if rrOut.Deployed || rrOut.Initialized {
+	if rrOut.NeedsConfiguration {
 		rrOnRamp := make([]rampregistrybindings.OnRampUpdate, len(onRampEntries))
 		for i, e := range onRampEntries {
 			onramp := e.Onramp
@@ -885,7 +885,7 @@ func RunStellarCCIPFullDeploy(
 
 	ownerAddr := h.DeployerKeypair().Address()
 	placeholderExtra := []byte{0x01}
-	if recvOut.Deployed || recvOut.Initialized {
+	if recvOut.NeedsConfiguration {
 		for _, rs := range remoteSelectors {
 			if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
 				ContractID:            receiverContractID,
@@ -961,7 +961,7 @@ func RunStellarCCIPFullDeploy(
 		if err := upsertComponentRefs(ds, qRecvOut.Refs); err != nil {
 			return seq_core.OnChainOutput{}, err
 		}
-		if qRecvOut.Deployed || qRecvOut.Initialized {
+		if qRecvOut.NeedsConfiguration {
 			for _, rs := range remoteSelectors {
 				if _, err := execStellarCCIPOp(b, deps, recvops.EnableRemoteChain, recvops.EnableRemoteChainInput{
 					ContractID:            qRecvOut.ContractID,

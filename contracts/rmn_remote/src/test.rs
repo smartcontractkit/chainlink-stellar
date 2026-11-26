@@ -13,20 +13,28 @@ const GLOBAL_CURSE_SUBJECT: [u8; 16] = [
 ];
 
 fn setup_contract(env: &Env) -> (RmnRemoteContractClient, Address) {
-    let contract_id = env.register(RmnRemoteContract, ());
-    let client = RmnRemoteContractClient::new(env, &contract_id);
     let owner = Address::generate(env);
+    let contract_id = env.register(RmnRemoteContract, (&owner, Vec::<Address>::new(env)));
+    let client = RmnRemoteContractClient::new(env, &contract_id);
 
     env.mock_all_auths();
-    client.initialize(&owner, &Vec::new(env));
 
     (client, owner)
 }
 
 #[test]
-fn test_initialize() {
+fn test_constructor_sets_owner_and_curse_admins() {
     let env = Env::default();
-    let (client, _owner) = setup_contract(&env);
+    let owner = Address::generate(&env);
+    let admin_a = Address::generate(&env);
+    let admin_b = Address::generate(&env);
+    // The duplicate must collapse to its first occurrence.
+    let admins = vec![&env, admin_a.clone(), admin_b.clone(), admin_a.clone()];
+    let contract_id = env.register(RmnRemoteContract, (&owner, admins));
+    let client = RmnRemoteContractClient::new(&env, &contract_id);
+
+    assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_curse_admins(), vec![&env, admin_a, admin_b]);
     assert!(!client.is_cursed());
     assert_eq!(
         client.type_and_version(),
@@ -35,12 +43,15 @@ fn test_initialize() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_double_initialize_fails() {
+fn test_initialize_is_not_exported() {
     let env = Env::default();
-    let (client, _owner) = setup_contract(&env);
-    let owner2 = Address::generate(&env);
-    client.initialize(&owner2, &Vec::new(&env));
+    let (client, owner) = setup_contract(&env);
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
@@ -117,11 +128,10 @@ fn test_curse_duplicate_in_batch_silent_skip() {
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_curse_unauthorized_caller() {
     let env = Env::default();
-    let contract_id = env.register(RmnRemoteContract, ());
-    let client = RmnRemoteContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     env.mock_all_auths();
-    client.initialize(&owner, &Vec::new(&env));
+    let contract_id = env.register(RmnRemoteContract, (&owner, Vec::<Address>::new(&env)));
+    let client = RmnRemoteContractClient::new(&env, &contract_id);
     env.mock_auths(&[]);
 
     let intruder = Address::generate(&env);
@@ -132,13 +142,12 @@ fn test_curse_unauthorized_caller() {
 #[test]
 fn test_curse_by_curse_admin() {
     let env = Env::default();
-    let contract_id = env.register(RmnRemoteContract, ());
-    let client = RmnRemoteContractClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let curse_admin = Address::generate(&env);
+    let contract_id = env.register(RmnRemoteContract, (&owner, vec![&env, curse_admin.clone()]));
+    let client = RmnRemoteContractClient::new(&env, &contract_id);
 
     env.mock_all_auths();
-    client.initialize(&owner, &vec![&env, curse_admin.clone()]);
 
     let subject = BytesN::from_array(&env, &[0x08; 16]);
     client.curse(&curse_admin, &vec![&env, subject.clone()]);
@@ -273,12 +282,10 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (only a
-    // double-init guard), so the contract is set up with the owner stored.
-    let contract_id = env.register(RmnRemoteContract, ());
-    let client = RmnRemoteContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. The constructor needs no auth.
     let owner = Address::generate(&env);
-    client.initialize(&owner, &Vec::new(&env));
+    let contract_id = env.register(RmnRemoteContract, (&owner, Vec::<Address>::new(&env)));
+    let client = RmnRemoteContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

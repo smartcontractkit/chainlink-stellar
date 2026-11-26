@@ -32,6 +32,27 @@ func (c *OnRampClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the OnRamp __constructor arguments in spec order.
+func ConstructorArgs(owner string, staticConfig StaticConfig, dynamicConfig DynamicConfig) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	staticConfigVal, err := staticConfig.ToScVal()
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg static_config: %w", err)
+	}
+	dynamicConfigVal, err := dynamicConfig.ToScVal()
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg dynamic_config: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		staticConfigVal,
+		dynamicConfigVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *OnRampClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -84,23 +105,6 @@ func (c *OnRampClient) Upgrade(ctx context.Context, newWasmHash [32]byte) error 
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
 	if err != nil {
 		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *OnRampClient) Initialize(ctx context.Context, owner string, staticConfig StaticConfig, dynamicConfig DynamicConfig) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.MustToScVal(staticConfig.ToScVal()),
-		scval.MustToScVal(dynamicConfig.ToScVal()),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
 	}
 
 	_ = result // void return

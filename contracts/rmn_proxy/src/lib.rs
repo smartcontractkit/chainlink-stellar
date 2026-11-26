@@ -71,12 +71,7 @@ impl RmnProxyContract {
     /// # Arguments
     /// * `owner` - The owner address (typically MCMS)
     /// * `rmn` - The initial RMN implementation address
-    ///
-    /// # Errors
-    /// * `AlreadyInitialized` - If contract is already initialized
-    pub fn initialize(env: Env, owner: Address, rmn: Address) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
+    pub fn __constructor(env: Env, owner: Address, rmn: Address) -> Result<(), CCIPError> {
         // Initialize owner via shared authorization lib
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;

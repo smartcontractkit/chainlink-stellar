@@ -15,27 +15,6 @@ const ContractType = "CommitteeVerifierResolver"
 // Deploy uploads ccvs_versioned_verifier_resolver.wasm.
 var Deploy = stellarops.NewDeployOperation("versioned-verifier-resolver:deploy", "Deploys the Versioned Verifier Resolver Soroban contract from WASM")
 
-// InitializeInput sets VVR owner and fee aggregator.
-type InitializeInput struct {
-	ContractID    string `json:"contract_id"`
-	Owner         string `json:"owner"`
-	FeeAggregator string `json:"fee_aggregator"`
-}
-
-// Initialize calls VVR `initialize`.
-var Initialize = cldfops.NewOperation(
-	"versioned-verifier-resolver:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes Versioned Verifier Resolver with owner and fee aggregator",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := vvrbindings.NewVersionedVerifierResolverClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.FeeAggregator); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplyOutboundImplUpdatesInput binds outbound verifier implementations per destination chain.
 type ApplyOutboundImplUpdatesInput struct {
 	ContractID      string                                     `json:"contract_id"`

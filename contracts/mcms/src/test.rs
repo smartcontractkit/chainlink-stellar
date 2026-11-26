@@ -1404,9 +1404,8 @@ fn test_mcms_ownership_round_trip_via_ramp_registry() {
         &test_label(&env),
     );
 
-    let ramp_id = env.register(RampRegistryContract, ());
+    let ramp_id = env.register(RampRegistryContract, (&alice,));
     let ramp = RampRegistryClient::new(&env, &ramp_id);
-    ramp.initialize(&alice);
 
     let mcms_addr = mcms_client.address.clone();
     ramp.transfer_ownership(&mcms_addr);

@@ -18,9 +18,8 @@ fn test_ramp_lifecycle() {
     let onramp = Address::generate(&env);
     let offramp = Address::generate(&env);
 
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     let dest: u64 = 100;
     let src: u64 = 200;
@@ -65,9 +64,8 @@ fn test_apply_ramp_updates() {
     let o2 = Address::generate(&env);
     let f = Address::generate(&env);
 
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     client.apply_offramp_updates(&Vec::from_array(
         &env,
@@ -114,9 +112,8 @@ fn test_get_onramp_missing_chain() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     let r = client.try_get_onramp(&999u64);
     assert_eq!(r, Err(Ok(CCIPError::UnsupportedDestinationChain)));
@@ -130,9 +127,8 @@ fn test_apply_onramp_rejects_zero_selector() {
     let owner = Address::generate(&env);
     let onramp = Address::generate(&env);
 
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     let r = client.try_apply_onramp_updates(&Vec::from_array(
         &env,
@@ -152,9 +148,8 @@ fn test_apply_offramp_rejects_zero_selector() {
     let owner = Address::generate(&env);
     let offramp = Address::generate(&env);
 
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     let r = client.try_apply_offramp_updates(&Vec::from_array(
         &env,
@@ -211,9 +206,8 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     // Upload the fixture Wasm and upgrade RampRegistry to it. `mock_all_auths`
     // satisfies `require_owner` -> `owner.require_auth()`.
@@ -241,15 +235,40 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: `require_owner` -> `owner.require_auth()` fails before
-    // the executable is touched. `initialize` needs no auth (only
-    // `require_not_initialized` + `init_owner`), so setup succeeds.
+    // the executable is touched. The constructor needs no auth, so setup succeeds.
     let owner = Address::generate(&env);
-    let id = env.register(RampRegistryContract, ());
+    let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
-    client.initialize(&owner);
 
     // A hash need not correspond to a real uploaded Wasm here — the auth check
     // runs first and panics, so `update_current_contract_wasm` is never reached.
     let hash = BytesN::<32>::from_array(&env, &[0u8; 32]);
     client.upgrade(&hash);
+}
+
+#[test]
+fn test_constructor_sets_owner() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let id = env.register(RampRegistryContract, (&owner,));
+    let client = RampRegistryContractClient::new(&env, &id);
+
+    assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_onramps().len(), 0);
+    assert_eq!(client.get_offramps().len(), 0);
+}
+
+#[test]
+fn test_initialize_is_not_exported() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let id = env.register(RampRegistryContract, (&owner,));
+    let client = RampRegistryContractClient::new(&env, &id);
+
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }

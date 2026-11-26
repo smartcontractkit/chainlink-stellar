@@ -24,9 +24,9 @@ use common_pool::{
 use pools_advanced_pool_hooks::{
     AdvancedPoolHooksContract, AdvancedPoolHooksContractClient, CCVConfigArg,
 };
-use rmn_proxy::{RmnProxyContract, RmnProxyContractClient};
+use rmn_proxy::RmnProxyContract;
 use rmn_remote::{RmnRemoteContract, RmnRemoteContractClient};
-use router::{RouterContract, RouterContractClient};
+use router::RouterContract;
 
 /// Minimal hook contracts for pool integration tests (must match `PoolHooksInterface` ABI).
 mod mock_hooks {
@@ -276,17 +276,12 @@ fn setup_router_with_rmn(
     env: &Env,
     owner: &Address,
 ) -> (Address, Address, RmnRemoteContractClient<'static>) {
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(RmnRemoteContract, (owner, &Vec::<Address>::new(env)));
     let rmn_remote_client = RmnRemoteContractClient::new(env, &rmn_remote_id);
-    rmn_remote_client.initialize(owner, &Vec::new(env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
-    let rmn_proxy_client = RmnProxyContractClient::new(env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(owner, &rmn_remote_id);
+    let rmn_proxy_id = env.register(RmnProxyContract, (owner, &rmn_remote_id));
 
-    let router_id = env.register(RouterContract, ());
-    let router_client = RouterContractClient::new(env, &router_id);
-    router_client.initialize(owner, &rmn_proxy_id);
+    let router_id = env.register(RouterContract, (owner, &rmn_proxy_id));
 
     (router_id, rmn_proxy_id, rmn_remote_client)
 }
@@ -331,9 +326,8 @@ fn setup_env() -> (
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
 
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
@@ -633,9 +627,8 @@ fn setup_env_with_rmn() -> (
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
 
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
@@ -1061,9 +1054,8 @@ fn test_release_or_mint_scales_down_remote_more_decimals() {
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
 
@@ -1118,9 +1110,8 @@ fn test_release_or_mint_scales_up_remote_fewer_decimals() {
     env.mock_all_auths_allowing_non_root_auth();
 
     let owner = Address::generate(&env);
-    let registry_id = env.register(RampRegistryContract, ());
+    let registry_id = env.register(RampRegistryContract, (&owner,));
     let registry_client = RampRegistryContractClient::new(&env, &registry_id);
-    registry_client.initialize(&owner);
     let auth_onramp = Address::generate(&env);
     register_onramp_for_chain(&env, &registry_client, DEFAULT_REMOTE_CHAIN, &auth_onramp);
 

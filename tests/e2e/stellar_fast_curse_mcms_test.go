@@ -23,6 +23,7 @@ import (
 
 	"github.com/smartcontractkit/chainlink-stellar/bindings"
 	rmnbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
+	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	timelockbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/timelock"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
@@ -251,12 +252,12 @@ func TestStellarFastCurseViaMCMS(t *testing.T) {
 	// ⑨ Fail closed: an RMN owned by a stranger with no admins refuses to route.
 	strangerKP := keypair.MustRandom()
 	strangerSalt := stellardeployment.GenerateDeterministicSalt(deployerKP.Address(), "e2e-fast-curse-stranger-rmn")
-	strangerOut, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, deps, stellarops.DeployInput{WasmPath: rmnWasm, Salt: strangerSalt})
+	strangerArgs, err := rmnbindings.ConstructorArgs(strangerKP.Address(), nil)
 	require.NoError(t, err)
-	_, err = cldfops.ExecuteOperation(b, rmnremoteops.Initialize, deps, rmnremoteops.InitializeInput{
-		ContractID:  strangerOut.Output.ContractID,
-		Owner:       strangerKP.Address(),
-		CurseAdmins: nil,
+	strangerOut, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, deps, stellarops.DeployInput{
+		WasmPath:        rmnWasm,
+		Salt:            strangerSalt,
+		ConstructorArgs: strangerArgs,
 	})
 	require.NoError(t, err)
 
@@ -279,7 +280,17 @@ func deployTestRouter(t *testing.T, b cldfops.Bundle, deps stellardeps.StellarDe
 	t.Helper()
 	routerWasm := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "router.wasm")
 	routerSalt := stellardeployment.GenerateDeterministicSalt(deployerKP.Address(), "e2e-fast-curse-router")
-	out, err := cldfops.ExecuteOperation(b, routerdeployops.Deploy, deps, stellarops.DeployInput{WasmPath: routerWasm, Salt: routerSalt})
+	// The router only needs to exist as a datastore ref here, so its RMN proxy is a placeholder.
+	mockRmnProxy := helpers.GenerateMockContractID(t, deployerKP.Address(), "e2e-fast-curse-rmn-proxy")
+	ctorArgs, err := routerbindings.ConstructorArgs(deployerKP.Address(), mockRmnProxy)
+	if err != nil {
+		return "", err
+	}
+	out, err := cldfops.ExecuteOperation(b, routerdeployops.Deploy, deps, stellarops.DeployInput{
+		WasmPath:        routerWasm,
+		Salt:            routerSalt,
+		ConstructorArgs: ctorArgs,
+	})
 	if err != nil {
 		return "", err
 	}

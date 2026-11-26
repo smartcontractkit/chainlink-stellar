@@ -25,7 +25,7 @@ const PENDING_OWNER: Symbol = symbol_short!("PNDGOWNR");
 const DYNAMIC_CONFIG: Symbol = symbol_short!("DYNCFG");
 const REMOTE_CHAINS: Symbol = symbol_short!("RCHAINS");
 const ALLOWED_CCVS: Symbol = symbol_short!("ALWCCVS");
-/// Immutable per-message CCV cap, set at `initialize` (EVM `i_maxCCVsPerMsg`).
+/// Immutable per-message CCV cap, set by the constructor (EVM `i_maxCCVsPerMsg`).
 const MAX_CCVS_PER_MSG: Symbol = symbol_short!("MAXCCVS");
 
 // ============================================================
@@ -84,14 +84,12 @@ impl ExecutorContract {
     /// (`max_ccvs_per_msg`, EVM constructor `uint8 maxCCVsPerMsg` — widened to
     /// `u32` because Soroban has no `u8` arg type), and the initial dynamic
     /// config (fee aggregator, allowed finality, CCV allowlist flag).
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         owner: Address,
         max_ccvs_per_msg: u32,
         dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
         // Mirrors EVM `if (maxCCVsPerMsg == 0) revert InvalidMaxPossibleCCVsPerMsg`.
         if max_ccvs_per_msg == 0 {
             return Err(CCIPError::InvalidConfig);

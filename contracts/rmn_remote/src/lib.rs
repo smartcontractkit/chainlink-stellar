@@ -126,13 +126,11 @@ impl RmnRemoteContract {
     /// # Arguments
     /// * `owner` - The owner address (uncurse, curse-admin updates)
     /// * `curse_admins` - Initial curse admins (may be empty); mirrors EVM `RMN` constructor `curseAdmins`
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         owner: Address,
         curse_admins: Vec<Address>,
     ) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
         <Self as Initializable>::init(&env)?;
         <Self as Ownable>::init_owner(&env, &owner)?;
 

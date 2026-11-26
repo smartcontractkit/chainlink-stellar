@@ -13,26 +13,6 @@ const ContractType = "RampRegistry"
 // Deploy uploads ccip_ramp_registry.wasm.
 var Deploy = stellarops.NewDeployOperation("ramp-registry:deploy", "Deploys the RampRegistry Soroban contract from WASM")
 
-// InitializeInput sets RampRegistry owner.
-type InitializeInput struct {
-	ContractID string `json:"contract_id"`
-	Owner      string `json:"owner"`
-}
-
-// Initialize calls RampRegistry `initialize`.
-var Initialize = cldfops.NewOperation(
-	"ramp-registry:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes RampRegistry with owner",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := rrbindings.NewRampRegistryClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplyOnrampUpdatesInput updates the RampRegistry on-ramp map.
 type ApplyOnrampUpdatesInput struct {
 	ContractID string                    `json:"contract_id"`

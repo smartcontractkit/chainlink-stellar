@@ -89,66 +89,71 @@ fn create_test_dest_chain_config_args(env: &Env, dest_selector: u64) -> DestChai
 }
 
 #[test]
-fn test_initialize() {
+fn test_constructor_sets_owner_and_configs() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    // Initialize should succeed
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
-    // Verify configs are stored correctly
+    assert_eq!(client.owner(), Some(owner));
+
     let stored_static = client.get_static_config();
     assert_eq!(stored_static.chain_selector, static_config.chain_selector);
+    assert_eq!(
+        stored_static.token_admin_registry,
+        static_config.token_admin_registry
+    );
+    assert_eq!(stored_static.rmn_proxy, static_config.rmn_proxy);
+    assert_eq!(
+        stored_static.max_usd_cents_per_message,
+        static_config.max_usd_cents_per_message
+    );
 
     let stored_dynamic = client.get_dynamic_config();
     assert_eq!(stored_dynamic.fee_quoter, dynamic_config.fee_quoter);
-
-    // Verify owner
-    let stored_owner = client.owner();
-    assert_eq!(stored_owner, Some(owner));
+    assert_eq!(stored_dynamic.fee_aggregator, dynamic_config.fee_aggregator);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
+fn test_initialize_is_not_exported() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
 
-    // First init succeeds
-    client.initialize(&owner, &static_config, &dynamic_config);
-
-    // Second init should fail
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![
+            &env,
+            owner.to_val(),
+            static_config.into_val(&env),
+            dynamic_config.into_val(&env)
+        ],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 fn test_curse_checkable_init_rejects_reinit() {
-    // Re-pointing the RMN proxy post-initialize must fail even for direct/internal
+    // Re-pointing the RMN proxy after construction must fail even for direct/internal
     // trait calls, or an always-uncursed RMN could disable every curse check.
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let attacker_rmn = Address::generate(&env);
     env.as_contract(&contract_id, || {
@@ -162,14 +167,12 @@ fn test_apply_dest_chain_config() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Add a destination chain config
     let dest_selector: u64 = 67890;
@@ -195,14 +198,12 @@ fn test_get_expected_next_message_number() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let dest_selector: u64 = 67890;
     let dest_config = create_test_dest_chain_config_args(&env, dest_selector);
@@ -218,14 +219,12 @@ fn test_set_dynamic_config() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Update dynamic config
     let new_fee_quoter = Address::generate(&env);
@@ -246,14 +245,12 @@ fn test_transfer_ownership() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Transfer ownership
     let new_owner = Address::generate(&env);
@@ -317,15 +314,16 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Upload the fixture Wasm and upgrade OnRamp to it. `mock_all_auths`
     // authorizes the owner, so `require_owner` -> `owner.require_auth()` passes.
@@ -353,17 +351,19 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
+    // `owner.require_auth()` fails. The constructor needs no auth, so the
+    // contract is set up with the owner stored.
 
     let owner = Address::generate(&env);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject.
@@ -377,14 +377,12 @@ fn test_get_all_dest_chain_configs() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Add multiple destination chain configs
     let dest1 = create_test_dest_chain_config_args(&env, 100);
@@ -403,14 +401,12 @@ fn test_invalid_dest_chain_config_zero_selector() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Try to add config with zero selector
     let mut dest_config = create_test_dest_chain_config_args(&env, 0);
@@ -425,14 +421,12 @@ fn test_invalid_dest_chain_config_same_as_local() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     // Try to add config with same selector as local chain
     let dest_config = create_test_dest_chain_config_args(&env, static_config.chain_selector);
@@ -454,14 +448,12 @@ fn init_onramp_with_dest(
 ) {
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(env, &contract_id);
-
     let owner = Address::generate(env);
     let static_config = create_test_static_config(env);
     let dynamic_config = create_test_dynamic_config(env);
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(env, &contract_id);
 
     let dest_selector: u64 = 67890;
     let dest_config = create_test_dest_chain_config_args(env, dest_selector);
@@ -486,37 +478,15 @@ fn test_dest_chain_not_configured_fails() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")] // NotInitialized
-fn test_not_initialized_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
-    let msg = common_message::StellarToAnyMessage {
-        receiver: Bytes::from_array(&env, &[0u8; 20]),
-        data: Bytes::new(&env),
-        token_amounts: Vec::new(&env),
-        fee_token: Address::generate(&env),
-        extra_args: Bytes::new(&env),
-    };
-
-    client.forward_from_router(&67890, &msg, &0_i128, &Address::generate(&env));
-}
-
-#[test]
 fn test_multiple_dest_chain_configs() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let static_config = create_test_static_config(&env);
     let dynamic_config = create_test_dynamic_config(&env);
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let dest1 = create_test_dest_chain_config_args(&env, 100);
     let dest2 = create_test_dest_chain_config_args(&env, 200);
@@ -785,9 +755,6 @@ fn test_withdraw_fee_tokens_transfers_balance() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let fee_aggregator = Address::generate(&env);
     let static_config = create_test_static_config(&env);
@@ -796,7 +763,8 @@ fn test_withdraw_fee_tokens_transfers_balance() {
         fee_aggregator: fee_aggregator.clone(),
     };
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
@@ -818,9 +786,6 @@ fn test_withdraw_fee_tokens_skips_zero_balance() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let fee_aggregator = Address::generate(&env);
     let static_config = create_test_static_config(&env);
@@ -829,7 +794,8 @@ fn test_withdraw_fee_tokens_skips_zero_balance() {
         fee_aggregator: fee_aggregator.clone(),
     };
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
@@ -848,9 +814,6 @@ fn test_withdraw_fee_tokens_multiple_tokens() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let fee_aggregator = Address::generate(&env);
     let static_config = create_test_static_config(&env);
@@ -859,7 +822,8 @@ fn test_withdraw_fee_tokens_multiple_tokens() {
         fee_aggregator: fee_aggregator.clone(),
     };
 
-    client.initialize(&owner, &static_config, &dynamic_config);
+    let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let admin1 = Address::generate(&env);
     let tc1 = env.register_stellar_asset_contract_v2(admin1);
@@ -881,18 +845,6 @@ fn test_withdraw_fee_tokens_multiple_tokens() {
     assert_eq!(tok1.balance(&fee_aggregator), 500);
     assert_eq!(tok2.balance(&contract_id), 0);
     assert_eq!(tok2.balance(&fee_aggregator), 300);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")] // NotInitialized
-fn test_withdraw_fee_tokens_not_initialized() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-
-    client.withdraw_fee_tokens(&Vec::new(&env));
 }
 
 ///! Router → OnRamp outbound flow with a lock-release token pool, asserting CCIPMessageSent
@@ -933,9 +885,11 @@ impl MockOutboundCcvVerifier {
 
 fn deploy_default_ccv_resolver(env: &Env, owner: &Address, dest_chain_selector: u64) -> Address {
     let verifier_id = env.register(MockOutboundCcvVerifier, ());
-    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr_id = env.register(
+        VersionedVerifierResolverContract,
+        (owner, &Address::generate(env)),
+    );
     let vvr = VersionedVerifierResolverContractClient::new(env, &vvr_id);
-    vvr.initialize(owner, &Address::generate(env));
     vvr.apply_outbound_impl_updates(&vec![
         env,
         OutboundImplementationUpdate {
@@ -955,9 +909,11 @@ fn deploy_ccv_resolver_with_verifier(
     dest_chain_selector: u64,
     verifier_id: &Address,
 ) -> Address {
-    let vvr_id = env.register(VersionedVerifierResolverContract, ());
+    let vvr_id = env.register(
+        VersionedVerifierResolverContract,
+        (owner, &Address::generate(env)),
+    );
     let vvr = VersionedVerifierResolverContractClient::new(env, &vvr_id);
-    vvr.initialize(owner, &Address::generate(env));
     vvr.apply_outbound_impl_updates(&vec![
         env,
         OutboundImplementationUpdate {
@@ -1150,9 +1106,6 @@ fn setup_fee_quoter_with_link_premium(
         li.timestamp = 1000;
     });
 
-    let fee_quoter_id = env.register(FeeQuoterContract, ());
-    let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
-
     let static_config = FqStaticConfig {
         max_fee_juels_per_msg: 1_000_000_000_000_000_000_000, // 1e21 (1000 LINK) — sane cap that exceeds realistic per-message fees
         link_token: link_token.clone(),
@@ -1161,7 +1114,11 @@ fn setup_fee_quoter_with_link_premium(
     let mut authorized_callers: Vec<Address> = Vec::new(env);
     authorized_callers.push_back(owner.clone());
 
-    fee_quoter_client.initialize(owner, &static_config, &authorized_callers);
+    let fee_quoter_id = env.register(
+        FeeQuoterContract,
+        (owner, &static_config, &authorized_callers),
+    );
+    let fee_quoter_client = FeeQuoterContractClient::new(env, &fee_quoter_id);
 
     let dest_config = DestChainConfig {
         is_enabled: true,
@@ -1229,7 +1186,7 @@ fn setup_fee_quoter_with_link_premium(
     fee_quoter_id
 }
 
-/// Deploys a real `ExecutorContract`, initializes it (CCV allowlist off, with
+/// Deploys a real `ExecutorContract`, constructs it (CCV allowlist off, with
 /// the given `allowed_finality_config`), and enables `dest_chain_selector` with
 /// `usd_cents_fee`. Returns the executor contract address, to use as a lane's
 /// `default_executor`. Mirrors EVM `Executor` wiring: the OnRamp cross-contract
@@ -1242,8 +1199,6 @@ fn setup_executor(
     usd_cents_fee: u32,
     allowed_finality_config: u32,
 ) -> Address {
-    let executor_id = env.register(ExecutorContract, ());
-    let client = ExecutorContractClient::new(env, &executor_id);
     let dynamic_config = ExecDynamicConfig {
         fee_aggregator: Some(Address::generate(env)),
         // `allowed_finality_config` is the executor layer of the 5-layer FTF
@@ -1251,7 +1206,8 @@ fn setup_executor(
         allowed_finality_config,
         ccv_allowlist_enabled: false,
     };
-    client.initialize(owner, &2, &dynamic_config);
+    let executor_id = env.register(ExecutorContract, (owner, &2u32, &dynamic_config));
+    let client = ExecutorContractClient::new(env, &executor_id);
     let to_add = vec![
         env,
         ExecRemoteChainConfigArgs {
@@ -1955,20 +1911,17 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
-
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let fee_token_admin = Address::generate(&env);
     let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
@@ -1981,9 +1934,8 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
     let transfer_token = transfer_token_contract.address();
     let transfer_token_sac = token::StellarAssetClient::new(&env, &transfer_token);
 
-    let ramp_registry_id = env.register(RampRegistryContract, ());
+    let ramp_registry_id = env.register(RampRegistryContract, (&owner,));
     let ramp_registry_client = RampRegistryContractClient::new(&env, &ramp_registry_id);
-    ramp_registry_client.initialize(&owner);
 
     // Wire the pool: either the real lock-release pool (+ lockbox) or a
     // caller-supplied mock pool address (no lockbox needed for fee-only tests).
@@ -2028,14 +1980,6 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
         pool_id
     };
 
-    ramp_registry_client.apply_onramp_updates(&vec![
-        &env,
-        OnRampUpdate {
-            dest_chain_selector: evm_chain_selector,
-            onramp: Some(onramp_id.clone()),
-        },
-    ]);
-
     let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
     let token_registry_admin = Address::generate(&env);
@@ -2062,7 +2006,16 @@ fn setup_token_transfer_lane_with_pool(mock_pool: Option<Address>) -> TokenTrans
         fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    ramp_registry_client.apply_onramp_updates(&vec![
+        &env,
+        OnRampUpdate {
+            dest_chain_selector: evm_chain_selector,
+            onramp: Some(onramp_id.clone()),
+        },
+    ]);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     let default_executor = setup_executor(&env, &owner, evm_chain_selector, 25, 0);
@@ -2964,20 +2917,17 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
-
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let fee_token_admin = Address::generate(&env);
     let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
@@ -2990,9 +2940,8 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
     let transfer_token = transfer_token_contract.address();
     let transfer_token_sac = token::StellarAssetClient::new(&env, &transfer_token);
 
-    let ramp_registry_id = env.register(RampRegistryContract, ());
+    let ramp_registry_id = env.register(RampRegistryContract, (&owner,));
     let ramp_registry_client = RampRegistryContractClient::new(&env, &ramp_registry_id);
-    ramp_registry_client.initialize(&owner);
 
     let pool_id = env.register(LockReleaseTokenPoolContract, ());
     let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
@@ -3032,14 +2981,6 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         &Vec::new(&env),
     );
 
-    ramp_registry_client.apply_onramp_updates(&vec![
-        &env,
-        OnRampUpdate {
-            dest_chain_selector: evm_chain_selector,
-            onramp: Some(onramp_id.clone()),
-        },
-    ]);
-
     let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
 
@@ -3069,7 +3010,16 @@ fn test_ccip_send_emits_token_pool_receipt_before_executor_and_network_fee() {
         fee_aggregator: fee_aggregator.clone(),
     };
 
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    ramp_registry_client.apply_onramp_updates(&vec![
+        &env,
+        OnRampUpdate {
+            dest_chain_selector: evm_chain_selector,
+            onramp: Some(onramp_id.clone()),
+        },
+    ]);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     // Real Executor contract (EVM parity): the OnRamp cross-contract `get_fee`
@@ -3310,20 +3260,17 @@ where
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
-
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let fee_token_admin = Address::generate(&env);
     let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
@@ -3346,9 +3293,8 @@ where
     let transfer_token = transfer_token_contract.address();
     let transfer_token_sac = token::StellarAssetClient::new(&env, &transfer_token);
 
-    let ramp_registry_id = env.register(RampRegistryContract, ());
+    let ramp_registry_id = env.register(RampRegistryContract, (&owner,));
     let ramp_registry_client = RampRegistryContractClient::new(&env, &ramp_registry_id);
-    ramp_registry_client.initialize(&owner);
 
     let pool_id = env.register(LockReleaseTokenPoolContract, ());
     let pool_client = LockReleaseTokenPoolContractClient::new(&env, &pool_id);
@@ -3385,14 +3331,6 @@ where
         &Vec::new(&env),
     );
 
-    ramp_registry_client.apply_onramp_updates(&vec![
-        &env,
-        OnRampUpdate {
-            dest_chain_selector: evm_chain_selector,
-            onramp: Some(onramp_id.clone()),
-        },
-    ]);
-
     let tar_id = env.register(TokenAdminRegistryContract, (&owner,));
     let tar_client = TokenAdminRegistryContractClient::new(&env, &tar_id);
     let token_registry_admin = Address::generate(&env);
@@ -3422,7 +3360,16 @@ where
         fee_quoter: fee_quoter_id,
         fee_aggregator: fee_aggregator.clone(),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
+
+    ramp_registry_client.apply_onramp_updates(&vec![
+        &env,
+        OnRampUpdate {
+            dest_chain_selector: evm_chain_selector,
+            onramp: Some(onramp_id.clone()),
+        },
+    ]);
 
     // Two fee-charging CCVs (30 & 70 USD-cent fees) as the lane defaults. The
     // `ccv_factory` lets a test swap in a different verifier impl (e.g. the
@@ -3756,17 +3703,19 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
     // a higher cap and re-apply the OnRamp dest-chain config against it. This is
     // test-only executor provisioning — no contract change — mirroring how a
     // production lane would size `i_maxCCVsPerMsg` for pools that augment.
-    let exec_id = env.register(ExecutorContract, ());
-    let exec_client = ExecutorContractClient::new(env, &exec_id);
-    exec_client.initialize(
-        &lane.owner,
-        &4u32, // max_ccvs_per_msg — accommodate the augment merge (3 CCVs)
-        &ExecDynamicConfig {
-            fee_aggregator: Some(Address::generate(env)),
-            allowed_finality_config: 0,
-            ccv_allowlist_enabled: false,
-        },
+    let exec_id = env.register(
+        ExecutorContract,
+        (
+            &lane.owner,
+            &4u32, // max_ccvs_per_msg, accommodates the augment merge (3 CCVs)
+            &ExecDynamicConfig {
+                fee_aggregator: Some(Address::generate(env)),
+                allowed_finality_config: 0,
+                ccv_allowlist_enabled: false,
+            },
+        ),
     );
+    let exec_client = ExecutorContractClient::new(env, &exec_id);
     exec_client.apply_dest_chain_updates(
         &Vec::new(env),
         &vec![
@@ -3833,10 +3782,9 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
     // The second pool needs a ramp-registry that authorizes the lane's onramp
     // for `evm`, plus an uncursed RMN. (The pool resolves RMN via the router at
     // lock_or_burn; a fresh uncursed RMN is safe either way.)
-    let second_ramp_registry_id = env.register(RampRegistryContract, ());
+    let second_ramp_registry_id = env.register(RampRegistryContract, (&lane.owner,));
     let second_ramp_registry_client =
         RampRegistryContractClient::new(env, &second_ramp_registry_id);
-    second_ramp_registry_client.initialize(&lane.owner);
     second_ramp_registry_client.apply_onramp_updates(&vec![
         env,
         OnRampUpdate {
@@ -3845,12 +3793,13 @@ fn test_special_ccv_augments_defaults_and_coexists_with_default_only_token() {
         },
     ]);
 
-    let second_rmn_remote_id = env.register(RmnRemoteContract, ());
+    let second_rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&lane.owner, &soroban_sdk::Vec::<Address>::new(env)),
+    );
     let second_rmn_remote_client = RmnRemoteContractClient::new(env, &second_rmn_remote_id);
-    second_rmn_remote_client.initialize(&lane.owner, &soroban_sdk::Vec::new(env));
-    let second_rmn_proxy_id = env.register(RmnProxyContract, ());
+    let second_rmn_proxy_id = env.register(RmnProxyContract, (&lane.owner, &second_rmn_remote_id));
     let second_rmn_proxy_client = RmnProxyContractClient::new(env, &second_rmn_proxy_id);
-    second_rmn_proxy_client.initialize(&lane.owner, &second_rmn_remote_id);
 
     let second_pool_id = env.register(LockReleaseTokenPoolContract, ());
     let second_pool_client = LockReleaseTokenPoolContractClient::new(env, &second_pool_id);
@@ -4648,13 +4597,14 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
     let evm_chain_selector: u64 = 67890;
 
     // RMN (required by the OnRamp curse check in `get_fee`).
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
     // `get_fee` only prices the fee token (no transfer), so a bare address that
     // `setup_fee_quoter` registers a price for is sufficient.
@@ -4669,9 +4619,6 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
         &transfer_token,
     );
 
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
-
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
         token_admin_registry: Address::generate(&env),
@@ -4684,7 +4631,8 @@ fn test_get_fee_reverts_when_fee_exceeds_max_usd_cents_per_message() {
         fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     // Real Executor (25-cent flat fee) so the OnRamp `get_fee` cross-contract call
@@ -4736,13 +4684,14 @@ fn test_get_fee_reverts_when_receiver_length_mismatch() {
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
     let fee_token = Address::generate(&env);
     let transfer_token = Address::generate(&env);
@@ -4755,9 +4704,6 @@ fn test_get_fee_reverts_when_receiver_length_mismatch() {
         &transfer_token,
     );
 
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
-
     let static_config = StaticConfig {
         chain_selector: stellar_chain_selector,
         token_admin_registry: Address::generate(&env),
@@ -4769,7 +4715,8 @@ fn test_get_fee_reverts_when_receiver_length_mismatch() {
         fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
 
@@ -4817,13 +4764,14 @@ fn test_get_fee_reverts_when_requested_finality_malformed() {
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
     let fee_token = Address::generate(&env);
     let transfer_token = Address::generate(&env);
@@ -4835,9 +4783,6 @@ fn test_get_fee_reverts_when_requested_finality_malformed() {
         &fee_token,
         &transfer_token,
     );
-
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let default_executor = Address::generate(&env);
     let static_config = StaticConfig {
@@ -4851,7 +4796,8 @@ fn test_get_fee_reverts_when_requested_finality_malformed() {
         fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
 
@@ -5010,20 +4956,17 @@ fn setup_data_only_lane_with_base_gas(
     let stellar_chain_selector: u64 = 12345;
     let evm_chain_selector: u64 = 67890;
 
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
+    let rmn_remote_id = env.register(
+        RmnRemoteContract,
+        (&owner, &soroban_sdk::Vec::<Address>::new(&env)),
+    );
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    let rmn_proxy_id = env.register(RmnProxyContract, ());
+    let rmn_proxy_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let rmn_proxy_client = RmnProxyContractClient::new(&env, &rmn_proxy_id);
-    rmn_proxy_client.initialize(&owner, &rmn_remote_id);
 
-    let router_id = env.register(RouterContract, ());
+    let router_id = env.register(RouterContract, (&owner, &rmn_proxy_id));
     let router_client = RouterContractClient::new(&env, &router_id);
-    router_client.initialize(&owner, &rmn_proxy_id);
-
-    let onramp_id = env.register(OnRampContract, ());
-    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let fee_token_admin = Address::generate(&env);
     let fee_token_contract = env.register_stellar_asset_contract_v2(fee_token_admin.clone());
@@ -5052,7 +4995,8 @@ fn setup_data_only_lane_with_base_gas(
         fee_quoter: fee_quoter_id,
         fee_aggregator: Address::generate(&env),
     };
-    onramp_client.initialize(&owner, &static_config, &dynamic_config);
+    let onramp_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
+    let onramp_client = OnRampContractClient::new(&env, &onramp_id);
 
     let default_ccv = deploy_default_ccv_resolver(&env, &owner, evm_chain_selector);
     let default_executor = setup_executor(
@@ -5475,13 +5419,15 @@ fn test_apply_dest_chain_updates_rejects_no_exec_sentinel_default_executor() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let mut args = create_test_dest_chain_config_args(&env, 67890);
     args.default_executor = GenericExtraArgsV3::no_execution_address(&env);
@@ -5498,13 +5444,15 @@ fn test_apply_dest_chain_updates_rejects_zero_account_default_executor() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let mut args = create_test_dest_chain_config_args(&env, 67890);
     args.default_executor = Address::from_str(
@@ -5534,13 +5482,15 @@ fn test_dest_chain_config_rejects_duplicate_default_ccvs() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let dup = Address::generate(&env);
     let mut args = create_test_dest_chain_config_args(&env, 67890);
@@ -5557,13 +5507,15 @@ fn test_dest_chain_config_rejects_duplicate_mandated_ccvs() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let dup = Address::generate(&env);
     let mut args = create_test_dest_chain_config_args(&env, 67890);
@@ -5580,13 +5532,15 @@ fn test_dest_chain_config_rejects_cross_list_ccv_overlap() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let shared = Address::generate(&env);
     let mut args = create_test_dest_chain_config_args(&env, 67890);
@@ -5603,13 +5557,15 @@ fn test_dest_chain_config_accepts_unique_ccv_set() {
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
-    let contract_id = env.register(OnRampContract, ());
-    let client = OnRampContractClient::new(&env, &contract_id);
-    client.initialize(
-        &owner,
-        &create_test_static_config(&env),
-        &create_test_dynamic_config(&env),
+    let contract_id = env.register(
+        OnRampContract,
+        (
+            &owner,
+            &create_test_static_config(&env),
+            &create_test_dynamic_config(&env),
+        ),
     );
+    let client = OnRampContractClient::new(&env, &contract_id);
 
     let mut args = create_test_dest_chain_config_args(&env, 67890);
     args.default_ccvs = vec![&env, Address::generate(&env), Address::generate(&env)];

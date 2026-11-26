@@ -111,13 +111,11 @@ impl OffRampContract {
     /// # Arguments
     /// * `owner` - The owner address (typically MCMS, can be the deployer initially)
     /// * `static_config` - Immutable configuration (chain selector, RMN proxy, token admin registry)
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         owner: Address,
         static_config: StaticConfig,
     ) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
         <Self as CurseCheckable>::init(&env, &static_config.rmn_proxy)?;

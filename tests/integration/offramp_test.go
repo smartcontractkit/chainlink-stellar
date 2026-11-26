@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +22,7 @@ import (
 
 const localChainSelector = uint64(12345)
 
-// deployOffRampDependencies deploys and initializes the RMN Remote and RMN Proxy
+// deployOffRampDependencies deploys the RMN Remote and RMN Proxy
 // contracts that the OffRamp depends on for curse-checking.
 func deployOffRampDependencies(
 	ctx context.Context,
@@ -34,31 +33,13 @@ func deployOffRampDependencies(
 ) (rmnRemoteID, rmnProxyID, ccvResolverID, ccvVerifierID string) {
 	t.Helper()
 
-	salt := deployment.GenerateDeterministicSalt(deployerAddr, "rmn-remote-offramp")
-	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-	rmnRemoteID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy RMN Remote: %v", err)
-	}
+	rmnRemoteID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "rmn_remote.wasm",
+		"rmn-remote-offramp", mustCtor(t)(rmnremotebindings.ConstructorArgs(deployerAddr, nil)))
 	t.Logf("RMN Remote deployed at: %s", rmnRemoteID)
 
-	rmnRemoteClient := rmnremotebindings.NewRmnRemoteClient(deployer, rmnRemoteID)
-	if err := rmnRemoteClient.Initialize(ctx, deployerAddr, nil); err != nil {
-		t.Fatalf("Failed to initialize RMN Remote: %v", err)
-	}
-
-	salt = deployment.GenerateDeterministicSalt(deployerAddr, "rmn-proxy-offramp")
-	wasmPath = filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_proxy.wasm")
-	rmnProxyID, err = deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy RMN Proxy: %v", err)
-	}
+	rmnProxyID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "rmn_proxy.wasm",
+		"rmn-proxy-offramp", mustCtor(t)(rmnproxybindings.ConstructorArgs(deployerAddr, rmnRemoteID)))
 	t.Logf("RMN Proxy deployed at: %s", rmnProxyID)
-
-	rmnProxyClient := rmnproxybindings.NewRmnProxyClient(deployer, rmnProxyID)
-	if err := rmnProxyClient.Initialize(ctx, deployerAddr, rmnRemoteID); err != nil {
-		t.Fatalf("Failed to initialize RMN Proxy: %v", err)
-	}
 
 	ccvResolverID = helpers.GenerateMockContractID(t, deployerAddr, "ccv-resolver")
 	ccvVerifierID = helpers.GenerateMockContractID(t, deployerAddr, "ccv-verifier")
@@ -85,18 +66,17 @@ func TestOffRamp(t *testing.T) {
 
 	rmnRemoteID, rmnProxyID, _, _ := deployOffRampDependencies(ctx, t, projectRoot, deployer, deployerKP.Address())
 
-	t.Log("Deploying OffRamp contract...")
-	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "offramp")
-	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "offramp.wasm")
-	offrampContractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy OffRamp: %v", err)
+	mockTokenAdminRegistry := helpers.GenerateMockContractID(t, deployerKP.Address(), "token-admin-registry")
+	staticCfg := offrampbindings.StaticConfig{
+		ChainSelector:      localChainSelector,
+		RmnProxy:           rmnProxyID,
+		TokenAdminRegistry: mockTokenAdminRegistry,
 	}
+	offrampContractID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(), "offramp.wasm", "offramp",
+		mustCtor(t)(offrampbindings.ConstructorArgs(deployerKP.Address(), staticCfg)))
 	t.Logf("OffRamp deployed at: %s", offrampContractID)
 
 	offrampClient := offrampbindings.NewOffRampClient(deployer, offrampContractID)
-
-	mockTokenAdminRegistry := helpers.GenerateMockContractID(t, deployerKP.Address(), "token-admin-registry")
 
 	lggr := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
@@ -104,39 +84,12 @@ func TestOffRamp(t *testing.T) {
 	_ = rmnProxyID
 	_ = &lggr
 
-	// ========================================
-	// Initialization
-	// ========================================
-
-	t.Run("initialize offramp", func(t *testing.T) {
-		staticCfg := offrampbindings.StaticConfig{
-			ChainSelector:      localChainSelector,
-			RmnProxy:           rmnProxyID,
-			TokenAdminRegistry: mockTokenAdminRegistry,
-		}
-		err := offrampClient.Initialize(ctx, deployerKP.Address(), staticCfg)
-		if err != nil {
-			t.Fatalf("Failed to initialize OffRamp: %v", err)
-		}
-		t.Log("OffRamp initialized successfully")
-	})
-
-	t.Run("double initialize fails", func(t *testing.T) {
-		staticCfg := offrampbindings.StaticConfig{
-			ChainSelector:      localChainSelector,
-			RmnProxy:           rmnProxyID,
-			TokenAdminRegistry: mockTokenAdminRegistry,
-		}
-		err := offrampClient.Initialize(ctx, deployerKP.Address(), staticCfg)
-		if err == nil {
-			t.Fatal("Expected error on double initialize, got nil")
-		}
-		t.Logf("Double initialize correctly rejected: %v", err)
+	t.Run("initialize is not exported", func(t *testing.T) {
+		requireNoInitializeExport(ctx, t, deployer, offrampContractID)
 	})
 
 	t.Run("watch for StaticConfigSet event after initialization", func(t *testing.T) {
-		// The "initialize offramp" subtest (run above) called Initialize, which
-		// emits a StaticConfigSet event. Poll forward from the ledger captured at
+		// The constructor emits a StaticConfigSet event. Poll forward from the ledger captured at
 		// the top of TestOffRamp (before any subtest) to find it, matching on the
 		// full static config so a stray event from another contract can't satisfy.
 		evt, err := offrampClient.WaitForStaticConfigSetEvent(ctx, initStartLedger, 30*time.Second,

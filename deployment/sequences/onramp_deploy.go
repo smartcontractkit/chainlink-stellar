@@ -11,7 +11,7 @@ import (
 	onrampops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/onramp"
 )
 
-// DeployOnRampInput deploys and initializes the OnRamp contract in one step.
+// DeployOnRampInput creates the OnRamp contract in one step.
 // TokenAdminRegistry, RmnProxy and FeeQuoter are the dependency strkeys,
 // required inputs. MaxUsdCentsPerMessage defaults to 500000 ($5000) and
 // FeeAggregator to the owner (the monolith's devenv values).
@@ -30,7 +30,7 @@ type DeployOnRampInput struct {
 var DeployOnRamp = cldf_ops.NewSequence(
 	"stellar-deploy-onramp",
 	SequenceVersion,
-	"Deploys and initializes the OnRamp Soroban contract with skip-if-exists",
+	"Creates the OnRamp Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployOnRampInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		feeAggregator := in.FeeAggregator
@@ -61,24 +61,44 @@ var DeployOnRamp = cldf_ops.NewSequence(
 		if in.FeeQuoter == "" {
 			return ComponentDeployOutput{}, fmt.Errorf("feeQuoter is required: deploy FeeQuoter first")
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, onrampops.Deploy,
-			stellarccip.OnRampDatastoreRef(), in.ChainSelector, "onramp", in.WasmPath, owner, in.ExistingAddresses,
+		staticConfig := onrampbindings.StaticConfig{
+			ChainSelector:         in.ChainSelector,
+			TokenAdminRegistry:    in.TokenAdminRegistry,
+			RmnProxy:              in.RmnProxy,
+			MaxUsdCentsPerMessage: maxUsdCents,
+		}
+		dynamicConfig := onrampbindings.DynamicConfig{
+			FeeQuoter:     in.FeeQuoter,
+			FeeAggregator: feeAggregator,
+		}
+		ctorArgs, err := onrampbindings.ConstructorArgs(owner, staticConfig, dynamicConfig)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode OnRamp constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, onrampops.Deploy,
+			stellarccip.OnRampDatastoreRef(), in.ChainSelector, "onramp", in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, onrampops.Initialize, onrampops.InitializeInput{
-					ContractID: contractID,
-					Owner:      owner,
-					StaticConfig: onrampbindings.StaticConfig{
-						ChainSelector:         in.ChainSelector,
-						TokenAdminRegistry:    in.TokenAdminRegistry,
-						RmnProxy:              in.RmnProxy,
-						MaxUsdCentsPerMessage: maxUsdCents,
-					},
-					DynamicConfig: onrampbindings.DynamicConfig{
-						FeeQuoter:     in.FeeQuoter,
-						FeeAggregator: feeAggregator,
-					},
-				}, withComponentIdempotencyKey[onrampops.InitializeInput](in.ChainSelector))
-				return err
+				c := onrampbindings.NewOnRampClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				static, err := c.GetStaticConfig(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireField("static config", *static, staticConfig); err != nil {
+					return err
+				}
+				dynamic, err := c.GetDynamicConfig(ctx)
+				if err != nil {
+					return err
+				}
+				return requireField("dynamic config", *dynamic, dynamicConfig)
 			})
 	},
 )

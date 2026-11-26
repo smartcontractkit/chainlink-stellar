@@ -15,7 +15,6 @@ import (
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
 // TestRunStellarCCIPFullDeploy_SecondaryCommittee pins the per-committee
@@ -33,11 +32,7 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 	)
 
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
-	stubConstructedReadbacks(t, inv)
-	deps := stellardeps.StellarDeps{
-		Deploy:  newCharacterizationDeployer(),
-		Invoker: inv,
-	}
+	deps := newConstructorEcho(inv).deps()
 	host := newFakeCCIPDevenvHost(t)
 
 	localKey := strconv.FormatUint(characterizationSelector, 10)
@@ -95,12 +90,12 @@ func TestRunStellarCCIPFullDeploy_SecondaryCommittee(t *testing.T) {
 	recvSecondary := requireRef(recvType, "secondary")
 	require.NotEqual(t, recvDefault, recvSecondary, "secondary receiver must be a distinct contract")
 
-	// 59 = the 45 baseline reports plus 9 for the secondary pair: VVR and CV
-	// sequences (deploy + init + sequence report each), the two impl updates,
-	// and the secondary CV's remote chain config updates; plus 5 for the
-	// secondary-qualified receiver: deploy + init + sequence report, and its
+	// 45 = the 34 baseline reports plus 7 for the secondary pair: VVR and CV
+	// sequences (deploy + sequence report each), the two impl updates, and the
+	// secondary CV's remote chain config updates; plus 4 for the
+	// secondary-qualified receiver: deploy + sequence report, and its
 	// per-remote EnableRemoteChain + ApplyCcvConfigUpdates.
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	require.Len(t, reports, 59)
+	require.Len(t, reports, 45)
 }

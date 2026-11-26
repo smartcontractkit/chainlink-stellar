@@ -9,7 +9,7 @@ pub trait RmnProxyInterface {
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CCIPError>;
     fn is_cursed(env: soroban_sdk::Env) -> Result<bool, CCIPError>;
-    fn initialize(
+    fn __constructor(
         env: soroban_sdk::Env,
         owner: soroban_sdk::Address,
         rmn: soroban_sdk::Address,

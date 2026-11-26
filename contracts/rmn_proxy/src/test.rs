@@ -12,28 +12,27 @@ const GLOBAL_CURSE_SUBJECT: [u8; 16] = [
     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
+fn register_rmn_remote(env: &Env, owner: &Address) -> Address {
+    env.register(RmnRemoteContract, (owner, Vec::<Address>::new(env)))
+}
+
 fn setup_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
     let owner = Address::generate(&env);
 
-    // Deploy and initialize RMN Remote so proxy can delegate is_cursed() to it
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let contract_id = env.register(RmnProxyContract, ());
+    // RMN Remote the proxy delegates is_cursed() to
+    let rmn_remote_id = register_rmn_remote(&env, &owner);
+    let contract_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
 
     (env, contract_id, owner, rmn_remote_id)
 }
 
 #[test]
-fn test_initialize() {
+fn test_constructor_sets_owner_and_rmn() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn);
 
     env.as_contract(&client.address, || {
         assert_eq!(<RmnProxyContract as Ownable>::owner(&env).unwrap(), owner);
@@ -42,13 +41,14 @@ fn test_initialize() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
-    let (env, contract_id, owner, rmn) = setup_env();
-    let client = RmnProxyContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn);
-    client.initialize(&owner, &rmn);
+fn test_initialize_is_not_exported() {
+    let (env, contract_id, owner, _rmn) = setup_env();
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
@@ -56,35 +56,17 @@ fn test_set_rmn() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
 
-    client.initialize(&owner, &rmn);
-
-    // No active curses: rotation to any initialized RMN Remote is allowed.
-    let new_rmn = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &new_rmn).initialize(&owner, &soroban_sdk::Vec::new(&env));
+    // No active curses: rotation to any RMN Remote is allowed.
+    let new_rmn = register_rmn_remote(&env, &owner);
     client.set_rmn(&new_rmn);
 
     assert_eq!(client.get_rmn(), new_rmn);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")] // NotInitialized from the new RMN's get_cursed_subjects
-fn test_set_rmn_rejects_uninitialized_new_rmn() {
-    let (env, contract_id, owner, rmn) = setup_env();
-    let client = RmnProxyContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn);
-
-    // New target is a deployed but uninitialized RMN Remote.
-    let new_rmn = env.register(RmnRemoteContract, ());
-    client.set_rmn(&new_rmn);
-}
-
-#[test]
 fn test_is_cursed_returns_false() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn);
 
     // Proxy delegates to RMN Remote; when not cursed, returns false
     assert!(!client.is_cursed());
@@ -95,8 +77,6 @@ fn test_is_cursed_returns_true_when_global_cursed() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn);
-
-    client.initialize(&owner, &rmn);
 
     assert!(!client.is_cursed());
 
@@ -114,8 +94,6 @@ fn test_is_cursed_returns_false_after_uncurse() {
     let client = RmnProxyContractClient::new(&env, &contract_id);
     let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn);
 
-    client.initialize(&owner, &rmn);
-
     let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
     rmn_remote_client.curse(&owner, &vec![&env, global.clone()]);
     assert!(client.is_cursed());
@@ -130,11 +108,9 @@ fn test_set_rmn_switches_delegation() {
     let client = RmnProxyContractClient::new(&env, &contract_id);
 
     // Deploy a second RMN Remote
-    let rmn2_id = env.register(RmnRemoteContract, ());
+    let rmn2_id = register_rmn_remote(&env, &owner);
     let rmn2_client = RmnRemoteContractClient::new(&env, &rmn2_id);
-    rmn2_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
 
-    client.initialize(&owner, &rmn1);
     assert!(!client.is_cursed());
 
     // Curse the first remote
@@ -159,10 +135,7 @@ fn test_set_rmn_rejects_fresh_rmn_during_active_curse() {
     let (env, contract_id, owner, rmn1) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
 
-    let rmn2_id = env.register(RmnRemoteContract, ());
-    RmnRemoteContractClient::new(&env, &rmn2_id).initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    client.initialize(&owner, &rmn1);
+    let rmn2_id = register_rmn_remote(&env, &owner);
 
     // Global curse active on the current RMN; the new one has none.
     let rmn1_client = RmnRemoteContractClient::new(&env, &rmn1);
@@ -179,11 +152,8 @@ fn test_set_rmn_rejects_global_curse_substituting_lane_curse() {
     let (env, contract_id, owner, rmn1) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
 
-    let rmn2_id = env.register(RmnRemoteContract, ());
+    let rmn2_id = register_rmn_remote(&env, &owner);
     let rmn2_client = RmnRemoteContractClient::new(&env, &rmn2_id);
-    rmn2_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    client.initialize(&owner, &rmn1);
 
     // Old has a lane curse only; new has the global curse. Different curse
     // state, so rotation is rejected even though global would pause more.
@@ -201,11 +171,8 @@ fn test_set_rmn_rejects_extra_curse_on_new_rmn() {
     let (env, contract_id, owner, rmn1) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
 
-    let rmn2_id = env.register(RmnRemoteContract, ());
+    let rmn2_id = register_rmn_remote(&env, &owner);
     let rmn2_client = RmnRemoteContractClient::new(&env, &rmn2_id);
-    rmn2_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    client.initialize(&owner, &rmn1);
 
     // Both have the global curse, but the new RMN carries an extra lane curse.
     let global = BytesN::from_array(&env, &GLOBAL_CURSE_SUBJECT);
@@ -220,8 +187,6 @@ fn test_set_rmn_rejects_extra_curse_on_new_rmn() {
 fn test_transfer_ownership_two_step() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
-
-    client.initialize(&owner, &rmn);
 
     let new_owner = Address::generate(&env);
 
@@ -280,7 +245,6 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
 fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
     let (env, contract_id, owner, rmn) = setup_env();
     let client = RmnProxyContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &rmn);
 
     // `setup_env` mocked all auths, so `require_owner` -> `owner.require_auth()`
     // passes.
@@ -310,18 +274,11 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` (rmn_remote, proxy) needs no
-    // auth (only double-init guards), so the contract is set up with the owner
-    // stored.
+    // `owner.require_auth()` fails. Constructors need no auth.
     let owner = Address::generate(&env);
-
-    let rmn_remote_id = env.register(RmnRemoteContract, ());
-    let rmn_remote_client = RmnRemoteContractClient::new(&env, &rmn_remote_id);
-    rmn_remote_client.initialize(&owner, &soroban_sdk::Vec::new(&env));
-
-    let contract_id = env.register(RmnProxyContract, ());
+    let rmn_remote_id = register_rmn_remote(&env, &owner);
+    let contract_id = env.register(RmnProxyContract, (&owner, &rmn_remote_id));
     let client = RmnProxyContractClient::new(&env, &contract_id);
-    client.initialize(&owner, &rmn_remote_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

@@ -15,7 +15,6 @@ import (
 
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/operationstest"
-	"github.com/smartcontractkit/chainlink-stellar/deployment/operations/stellardeps"
 )
 
 // TestRunStellarCCIPFullDeploy_ExecutorPool pins the per-pool executor deploy:
@@ -33,11 +32,7 @@ func TestRunStellarCCIPFullDeploy_ExecutorPool(t *testing.T) {
 	)
 
 	inv := operationstest.NewRecordingInvoker().WithSimulateResult(&xdr.ScVal{Type: xdr.ScValTypeScvVoid})
-	stubConstructedReadbacks(t, inv)
-	deps := stellardeps.StellarDeps{
-		Deploy:  newCharacterizationDeployer(),
-		Invoker: inv,
-	}
+	deps := newConstructorEcho(inv).deps()
 	host := newFakeCCIPDevenvHost(t)
 
 	localKey := strconv.FormatUint(characterizationSelector, 10)
@@ -86,9 +81,9 @@ func TestRunStellarCCIPFullDeploy_ExecutorPool(t *testing.T) {
 	// Soroban has no delegate proxy: both rows point at the same contract.
 	require.Equal(t, execCustom, proxyCustom)
 
-	// 49 = the 45 baseline reports plus 4 for the custom executor: deploy, init,
-	// the sequence report, and the dest chain updates.
+	// 37 = the 34 baseline reports plus 3 for the custom executor: deploy, the
+	// sequence report, and the dest chain updates.
 	reports, err := reporter.GetReports()
 	require.NoError(t, err)
-	require.Len(t, reports, 49)
+	require.Len(t, reports, 37)
 }

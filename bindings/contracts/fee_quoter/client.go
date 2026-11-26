@@ -32,6 +32,27 @@ func (c *FeeQuoterClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the FeeQuoter __constructor arguments in spec order.
+func ConstructorArgs(owner string, staticConfig StaticConfig, authorizedCallers []string) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	staticConfigVal, err := staticConfig.ToScVal()
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg static_config: %w", err)
+	}
+	authorizedCallersVal, err := scval.CheckedAddressSliceToScVal(authorizedCallers)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg authorized_callers: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		staticConfigVal,
+		authorizedCallersVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *FeeQuoterClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -61,23 +82,6 @@ func (c *FeeQuoterClient) Upgrade(ctx context.Context, newWasmHash [32]byte) err
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
 	if err != nil {
 		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *FeeQuoterClient) Initialize(ctx context.Context, owner string, staticConfig StaticConfig, authorizedCallers []string) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.MustToScVal(staticConfig.ToScVal()),
-		scval.AddressSliceToScVal(authorizedCallers),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
 	}
 
 	_ = result // void return

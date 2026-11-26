@@ -187,16 +187,13 @@ impl OnRampContract {
     /// * `dynamic_config` - Mutable configuration
     ///
     /// # Errors
-    /// * `AlreadyInitialized` - If contract is already initialized
     /// * `InvalidConfig` - If configuration is invalid
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         owner: Address,
         static_config: StaticConfig,
         dynamic_config: DynamicConfig,
     ) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
         // Store owner
         <Self as Ownable>::init_owner(&env, &owner)?;
         <Self as Initializable>::init(&env)?;
@@ -569,7 +566,7 @@ impl OnRampContract {
         // shared fee computation used by both `getFee` and `forwardFromRouter`;
         // enforcing it here covers both Stellar call paths (`get_fee` and
         // `forward_from_router`) identically. `max_usd_cents_per_message` is
-        // validated `!= 0` at init (`initialize`), matching EVM's
+        // validated `!= 0` by the constructor, matching EVM's
         // `maxUSDCentsPerMessage == 0` config rejection.
         let max_fee_token = fee_math::usd_cents_to_fee_token(
             static_config.max_usd_cents_per_message as u128,

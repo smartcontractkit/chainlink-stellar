@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"math/big"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,10 +12,8 @@ import (
 	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
 	rmnremotebindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_remote"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
-	deployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	"github.com/smartcontractkit/chainlink-stellar/deployment/ccip/stellarutil"
 	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
-	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -28,47 +25,38 @@ func TestCommitteeVerifier(t *testing.T) {
 	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 	deployerAddr := deployerKP.Address()
 
-	// Deploy the CommitteeVerifier contract
-	t.Log("Deploying CommitteeVerifier contract...")
-	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "committee-verifier")
-	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "ccvs_committee_verifier.wasm")
+	// Deploy RMN Remote and RMN Proxy first; the verifier constructor stores the proxy.
+	rmnRemoteContractID := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "rmn_remote.wasm",
+		"rmn-remote-"+t.Name(), mustCtor(t)(rmnremotebindings.ConstructorArgs(deployerAddr, nil)))
+	rmnProxyContractID := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "rmn_proxy.wasm",
+		"rmn-proxy", mustCtor(t)(rmnproxybindings.ConstructorArgs(deployerAddr, rmnRemoteContractID)))
 
-	contractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy CommitteeVerifier: %v", err)
-	}
+	mockFeeAggregator := helpers.GenerateMockContractID(t, deployerAddr, "fee-aggregator")
+	contractID := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "ccvs_committee_verifier.wasm",
+		"committee-verifier", mustCtor(t)(ccvsbindings.ConstructorArgs(
+			deployerAddr,
+			ccvsbindings.DynamicConfig{FeeAggregator: &mockFeeAggregator},
+			[][]byte{},
+			rmnProxyContractID,
+			stellarutil.DefaultCommitteeVerifierVersionTag(),
+		)))
 	t.Logf("CommitteeVerifier deployed at: %v", contractID)
 
-	// Deploy the RMN Remote contract (required for RMN Proxy's is_cursed delegation)
-	t.Log("Deploying RMN Remote contract...")
-	salt = deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-remote-"+t.Name())
-	wasmPath = filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-	rmnRemoteContractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy RMN Remote: %v", err)
-	}
-	t.Logf("RMN Remote deployed at: %v", rmnRemoteContractID)
-
-	// Deploy the RMN Proxy contract
-	t.Log("Deploying RMN Proxy contract...")
-	salt = deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-proxy")
-	wasmPath = filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_proxy.wasm")
-	rmnProxyContractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy RMN Proxy: %v", err)
-	}
-	t.Logf("RMN Proxy deployed at: %v", rmnProxyContractID)
-
-	// Create client
 	client := ccvsbindings.NewCommitteeVerifierClient(deployer, contractID)
 
-	// Generate mock addresses
-	mockFeeAggregator := helpers.GenerateMockContractID(t, deployerKP.Address(), "fee-aggregator")
+	t.Run("constructor stores rmn proxy", func(t *testing.T) {
+		got, err := client.GetRmnProxy(ctx)
+		if err != nil {
+			t.Fatalf("GetRmnProxy: %v", err)
+		}
+		if got == nil || *got != rmnProxyContractID {
+			t.Errorf("rmn proxy mismatch: want %s, got %v", rmnProxyContractID, got)
+		}
+	})
 
-	err = initialize(ctx, t, deployer, deployerKP, rmnRemoteContractID, rmnProxyContractID, client, mockFeeAggregator)
-	if err != nil {
-		t.Fatalf("Failed to contract dependencies: %v", err)
-	}
+	t.Run("initialize is not exported", func(t *testing.T) {
+		requireNoInitializeExport(ctx, t, deployer, contractID)
+	})
 
 	t.Run("get version tag", func(t *testing.T) {
 		tag, err := client.VersionTag(ctx)
@@ -325,38 +313,4 @@ func TestCommitteeVerifier(t *testing.T) {
 	})
 
 	t.Log("CommitteeVerifier integration test passed!")
-}
-
-// Helper function to initialize the CommitteeVerifier contract
-func initialize(ctx context.Context, t *testing.T, deployer *deployment.Deployer, deployerKP *keypair.Full, rmnRemoteContractID string, rmnProxyContractID string, client *ccvsbindings.CommitteeVerifierClient, mockFeeAggregator string) error {
-	// Initialize RMN Remote first (RMN Proxy delegates is_cursed to it)
-	rmnRemoteClient := rmnremotebindings.NewRmnRemoteClient(deployer, rmnRemoteContractID)
-	err := rmnRemoteClient.Initialize(ctx, deployerKP.Address(), nil)
-	if err != nil {
-		t.Fatalf("Failed to initialize RMN Remote: %v", err)
-		return err
-	}
-	t.Log("RMN Remote initialized successfully")
-
-	// Initialize RMN Proxy with the deployed RMN Remote (not a mock)
-	rmnProxyClient := rmnproxybindings.NewRmnProxyClient(deployer, rmnProxyContractID)
-	err = rmnProxyClient.Initialize(ctx, deployerKP.Address(), rmnRemoteContractID)
-	if err != nil {
-		t.Fatalf("Failed to initialize RMN Proxy: %v", err)
-		return err
-	}
-	t.Log("RMN Proxy initialized successfully")
-
-	// Initialize CommitteeVerifier
-	err = client.Initialize(ctx, deployerKP.Address(), ccvsbindings.DynamicConfig{
-		FeeAggregator: &mockFeeAggregator,
-	}, [][]byte{}, rmnProxyContractID, stellarutil.DefaultCommitteeVerifierVersionTag())
-	if err != nil {
-		t.Fatalf("Failed to initialize CommitteeVerifier: %v", err)
-		return err
-	}
-
-	t.Log("CommitteeVerifier initialized successfully with RMN Proxy")
-
-	return nil
 }

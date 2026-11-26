@@ -37,14 +37,11 @@
           128,
           191,
           126
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEAAAAAEAAAAA"
         ]
-      }
-    },
-    {
-      "id": "rmn-remote:initialize",
-      "input": {
-        "contract_id": "CCTGSKSANAH4CJQ36OPTRTBMWFY7YOEGVA5NSJX2ZFRE22FCM7AHILUS",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
       }
     },
     {
@@ -91,15 +88,11 @@
           136,
           65,
           56
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEgAAAAGmaSpAaA/BJhvznzjMLLFx/DiGqDrZJvrJYk1oomfAdA=="
         ]
-      }
-    },
-    {
-      "id": "rmn-proxy:initialize",
-      "input": {
-        "contract_id": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "rmn_remote": "CCTGSKSANAH4CJQ36OPTRTBMWFY7YOEGVA5NSJX2ZFRE22FCM7AHILUS"
       }
     },
     {
@@ -157,20 +150,11 @@
           13,
           85,
           131
-        ]
-      }
-    },
-    {
-      "id": "fee-quoter:initialize",
-      "input": {
-        "contract_id": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "static_config": {
-          "LinkToken": "CANLEDZTANR7ETMK4TXHHP7LMF44OLSOTC27B56ZGHSTUBYK6F474NXF",
-          "MaxFeeJuelsPerMsg": 1000000000000000000
-        },
-        "authorized_callers": [
-          "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEQAAAAEAAAACAAAADwAAAApsaW5rX3Rva2VuAAAAAAASAAAAARqyDzMDY/JNiuTuc7/rYXnHLk6YtfD32THlOgcK8Xn+AAAADwAAABVtYXhfZmVlX2p1ZWxzX3Blcl9tc2cAAAAAAAAKAAAAAAAAAAAN4Lazp2QAAA==",
+          "AAAAEAAAAAEAAAABAAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI="
         ]
       }
     },
@@ -313,24 +297,12 @@
           165,
           74,
           103
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEQAAAAEAAAAEAAAADwAAAA5jaGFpbl9zZWxlY3RvcgAAAAAABfAaJGnSFW7sAAAADwAAABltYXhfdXNkX2NlbnRzX3Blcl9tZXNzYWdlAAAAAAAAAwAHoSAAAAAPAAAACXJtbl9wcm94eQAAAAAAABIAAAABp+i702hBlDfVZrvsNi3+Gh6xh8SEgRlkrOu+qkaFDhIAAAAPAAAAFHRva2VuX2FkbWluX3JlZ2lzdHJ5AAAAEgAAAAG8bN0++PmIAZxaM7fzQkUyACtvBNxMFSr5QmQl/vhftg==",
+          "AAAAEQAAAAEAAAACAAAADwAAAA5mZWVfYWdncmVnYXRvcgAAAAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuIAAAAPAAAACmZlZV9xdW90ZXIAAAAAABIAAAABSAlE3On44afNtqqrdPqeba+2GhELi6nPKFN8JIYXrEE="
         ]
-      }
-    },
-    {
-      "id": "onramp:initialize",
-      "input": {
-        "contract_id": "CBBCOCNUCWJUIYEI6VKRIHKGF3QZZYBOB2ZG3FT5R3FG5U72WFGFXBWH",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "static_config": {
-          "ChainSelector": 17301180955411967724,
-          "MaxUsdCentsPerMessage": 500000,
-          "RmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
-          "TokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT"
-        },
-        "dynamic_config": {
-          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-          "FeeQuoter": "CBEASRG45H4ODJ6NW2VKW5H2TZW27NQ2CEFYXKOPFBJXYJEGC6WEC3SI"
-        }
       }
     },
     {
@@ -415,15 +387,11 @@
           254,
           222,
           239
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI="
         ]
-      }
-    },
-    {
-      "id": "versioned-verifier-resolver:initialize",
-      "input": {
-        "contract_id": "CAKKSOUKK7QSQ6VGAQHC35BUPGRIUHMUG2HF5XVNSX6A3YJTPYAMUDK7",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "fee_aggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
       }
     },
     {
@@ -513,27 +481,13 @@
           206,
           98,
           189
-        ]
-      }
-    },
-    {
-      "id": "committee-verifier:initialize",
-      "input": {
-        "contract_id": "CB5Y2FHGWAOP53PRSV454OI4CEYH6CQ5K4T5P6L4IZYKPWMUMCEUA3AF",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "dynamic_config": {
-          "AllowlistAdmin": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
-        },
-        "storage_locations": [
-          "73faikh4e5lJS5872GXmWPQVWNVwPwjKXLXsxrWVRBk="
         ],
-        "rmn_proxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
-        "version_tag": [
-          233,
-          160,
-          90,
-          32
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEQAAAAEAAAACAAAADwAAAA9hbGxvd2xpc3RfYWRtaW4AAAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuIAAAAPAAAADmZlZV9hZ2dyZWdhdG9yAAAAAAASAAAAAAAAAACY+bYYi4pqE/l/pIqreH4IEKMK/spa69Ahn6M5+5EW4g==",
+          "AAAAEAAAAAEAAAABAAAADQAAACDvd9qKSHh7mUlLnzvYZeZY9BVY1XA/CMpctezGtZVEGQ==",
+          "AAAAEgAAAAGn6LvTaEGUN9Vmu+w2Lf4aHrGHxISBGWSs676qRoUOEg==",
+          "AAAADQAAAATpoFog"
         ]
       }
     },
@@ -642,20 +596,12 @@
           140,
           223,
           245
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAAwAAAAo=",
+          "AAAAEQAAAAEAAAADAAAADwAAABdhbGxvd2VkX2ZpbmFsaXR5X2NvbmZpZwAAAAADAAEAAQAAAA8AAAAVY2N2X2FsbG93bGlzdF9lbmFibGVkAAAAAAAAAAAAAAAAAAAPAAAADmZlZV9hZ2dyZWdhdG9yAAAAAAASAAAAAAAAAACY+bYYi4pqE/l/pIqreH4IEKMK/spa69Ahn6M5+5EW4g=="
         ]
-      }
-    },
-    {
-      "id": "executor:initialize",
-      "input": {
-        "contract_id": "CAY4P74XRKJQH5SJTIO6JPYU746FOQISIR2WRS5Z3GLLAHBD4DWYIZ3S",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "max_ccvs_per_msg": 10,
-        "dynamic_config": {
-          "AllowedFinalityConfig": 65537,
-          "CcvAllowlistEnabled": false,
-          "FeeAggregator": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
-        }
       }
     },
     {
@@ -883,19 +829,11 @@
           10,
           187,
           253
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEQAAAAEAAAADAAAADwAAAA5jaGFpbl9zZWxlY3RvcgAAAAAABfAaJGnSFW7sAAAADwAAAAlybW5fcHJveHkAAAAAAAASAAAAAafou9NoQZQ31Wa77DYt/hoesYfEhIEZZKzrvqpGhQ4SAAAADwAAABR0b2tlbl9hZG1pbl9yZWdpc3RyeQAAABIAAAABvGzdPvj5iAGcWjO380JFMgArbwTcTBUq+UJkJf74X7Y="
         ]
-      }
-    },
-    {
-      "id": "offramp:initialize",
-      "input": {
-        "contract_id": "CD5QIFNLQKJJOPDYO2CYPGRCPJDNMYNTXNV6ELJDYLHSYH5I6JZDGPTY",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "static_config": {
-          "ChainSelector": 17301180955411967724,
-          "RmnProxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN",
-          "TokenAdminRegistry": "CC6GZXJ67D4YQAM4LIZ3P42CIUZAAK3PATOEYFJK7FBGIJP67BP3NQXT"
-        }
       }
     },
     {
@@ -1018,15 +956,11 @@
           49,
           17,
           32
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEgAAAAGn6LvTaEGUN9Vmu+w2Lf4aHrGHxISBGWSs676qRoUOEg=="
         ]
-      }
-    },
-    {
-      "id": "router:initialize",
-      "input": {
-        "contract_id": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "rmn_proxy": "CCT6RO6TNBAZIN6VM256YNRN7YNB5MMHYSCICGLEVTV35KSGQUHBE4FN"
       }
     },
     {
@@ -1199,14 +1133,10 @@
           218,
           190,
           43
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI="
         ]
-      }
-    },
-    {
-      "id": "ramp-registry:initialize",
-      "input": {
-        "contract_id": "CCWP3RGY3UMCRVSMMQKKDJFPGMIB7Q35Z6BE53PQCRIBUNNPUMXBXBNP",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG"
       }
     },
     {
@@ -1368,15 +1298,11 @@
           133,
           160,
           220
+        ],
+        "constructor_args": [
+          "AAAAEgAAAAAAAAAAmPm2GIuKahP5f6SKq3h+CBCjCv7KWuvQIZ+jOfuRFuI=",
+          "AAAAEgAAAAEWpzJIbsYtoDcucQN15177RhboxX5hN0S9nIMAXdsZCQ=="
         ]
-      }
-    },
-    {
-      "id": "ccip-receiver:initialize",
-      "input": {
-        "contract_id": "CD6PED7IXL2CIL54457B6SF3ISVYKRJNWXS2ZVWAHD4BSC5S4UQFHD63",
-        "owner": "GCMPTNQYROFGUE7ZP6SIVK3YPYEBBIYK73FFV26QEGP2GOP3SELOEZGG",
-        "router": "CALKOMSIN3DC3IBXFZYQG5PHL35UMFXIYV7GCN2EXWOIGAC53MMQTETW"
       }
     },
     {

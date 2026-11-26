@@ -33,32 +33,14 @@ func TestRmnRemote(t *testing.T) {
 
 	projectRoot, deployerKP, deployer, _, _, _ := GetIsolatedTestEnv(ctx, t)
 
-	t.Log("Deploying RmnRemote contract...")
-	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-remote")
-	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
-
-	contractID, err := deployer.DeployContract(ctx, wasmPath, salt)
-	if err != nil {
-		t.Fatalf("Failed to deploy RmnRemote: %v", err)
-	}
+	contractID := deployConstructed(ctx, t, projectRoot, deployer, deployerKP.Address(), "rmn_remote.wasm", "rmn-remote",
+		mustCtor(t)(rmnbindings.ConstructorArgs(deployerKP.Address(), nil)))
 	t.Logf("RmnRemote deployed at: %s", contractID)
 
 	client := rmnbindings.NewRmnRemoteClient(deployer, contractID)
 
-	t.Run("initialize", func(t *testing.T) {
-		err := client.Initialize(ctx, deployerKP.Address(), nil)
-		if err != nil {
-			t.Fatalf("Failed to initialize RmnRemote: %v", err)
-		}
-		t.Log("RmnRemote initialized successfully")
-	})
-
-	t.Run("double initialize fails", func(t *testing.T) {
-		err := client.Initialize(ctx, deployerKP.Address(), nil)
-		if err == nil {
-			t.Fatal("Expected error on double initialize, got nil")
-		}
-		t.Logf("Double initialize correctly rejected: %v", err)
+	t.Run("initialize is not exported", func(t *testing.T) {
+		requireNoInitializeExport(ctx, t, deployer, contractID)
 	})
 
 	t.Run("verify owner", func(t *testing.T) {
@@ -258,22 +240,17 @@ func TestRmnRemoteCurseAdmins(t *testing.T) {
 	salt := deployment.GenerateDeterministicSalt(deployerKP.Address(), "rmn-remote-curse-admins")
 	wasmPath := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "rmn_remote.wasm")
 
+	ctorArgs := mustCtor(t)(rmnbindings.ConstructorArgs(
+		deployerKP.Address(), []string{initialAdmin1.Address(), initialAdmin2.Address()}))
 	deployReport, err := cldfops.ExecuteOperation(b, rmnremoteops.Deploy, ownerDeps, stellarops.DeployInput{
-		WasmPath: wasmPath,
-		Salt:     salt,
+		WasmPath:        wasmPath,
+		Salt:            salt,
+		ConstructorArgs: ctorArgs,
 	})
 	if err != nil {
-		t.Fatalf("deploy RmnRemote: %v", err)
+		t.Fatalf("deploy RmnRemote with curse admins: %v", err)
 	}
 	contractID := deployReport.Output.ContractID
-
-	if _, err := cldfops.ExecuteOperation(b, rmnremoteops.Initialize, ownerDeps, rmnremoteops.InitializeInput{
-		ContractID:  contractID,
-		Owner:       deployerKP.Address(),
-		CurseAdmins: []string{initialAdmin1.Address(), initialAdmin2.Address()},
-	}); err != nil {
-		t.Fatalf("initialize with curse admins: %v", err)
-	}
 
 	admins := getCurseAdmins(t, b, ownerDeps, contractID)
 	if !curseAdminsEqual(admins, initialAdmin1.Address(), initialAdmin2.Address()) {

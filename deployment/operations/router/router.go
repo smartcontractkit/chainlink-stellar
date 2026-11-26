@@ -13,27 +13,6 @@ const ContractType = "Router"
 // Deploy uploads router.wasm.
 var Deploy = stellarops.NewDeployOperation("router:deploy", "Deploys the Router Soroban contract from WASM")
 
-// InitializeInput wires owner and RMN proxy to Router.
-type InitializeInput struct {
-	ContractID string `json:"contract_id"`
-	Owner      string `json:"owner"`
-	RmnProxy   string `json:"rmn_proxy"`
-}
-
-// Initialize calls Router `initialize`.
-var Initialize = cldfops.NewOperation(
-	"router:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes Router with owner and RMN proxy",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := routerbindings.NewRouterClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.RmnProxy); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplyRampUpdatesInput updates on-ramp and off-ramp routing tables.
 type ApplyRampUpdatesInput struct {
 	ContractID     string                        `json:"contract_id"`

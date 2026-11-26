@@ -6,11 +6,12 @@ import (
 	"github.com/smartcontractkit/chainlink-deployments-framework/datastore"
 	cldf_ops "github.com/smartcontractkit/chainlink-deployments-framework/operations"
 
+	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
 	stellarccip "github.com/smartcontractkit/chainlink-stellar/deployment/ccip"
 	routerops "github.com/smartcontractkit/chainlink-stellar/deployment/operations/router"
 )
 
-// DeployRouterInput deploys and initializes the Router contract. RmnProxy is a
+// DeployRouterInput creates the Router contract. RmnProxy is a
 // required input.
 type DeployRouterInput struct {
 	ChainSelector     uint64                 `json:"chainSelector"`
@@ -23,7 +24,7 @@ type DeployRouterInput struct {
 var DeployRouter = cldf_ops.NewSequence(
 	"stellar-deploy-router",
 	SequenceVersion,
-	"Deploys and initializes the Router Soroban contract with skip-if-exists",
+	"Creates the Router Soroban contract through its constructor with skip-if-exists",
 	func(b cldf_ops.Bundle, deps ComponentDeps, in DeployRouterInput) (ComponentDeployOutput, error) {
 		owner := defaultOwner(in.Owner, deps.DeployerAddress)
 		if err := statReleaseWasm(in.WasmPath, "Router"); err != nil {
@@ -32,15 +33,27 @@ var DeployRouter = cldf_ops.NewSequence(
 		if in.RmnProxy == "" {
 			return ComponentDeployOutput{}, fmt.Errorf("rmnProxy is required: deploy RMN Proxy first")
 		}
-		return deployAndInitialize(b.GetContext(), b, deps, routerops.Deploy,
-			stellarccip.RouterDatastoreRef(), in.ChainSelector, "router", in.WasmPath, owner, in.ExistingAddresses,
+		ctorArgs, err := routerbindings.ConstructorArgs(owner, in.RmnProxy)
+		if err != nil {
+			return ComponentDeployOutput{}, fmt.Errorf("encode Router constructor args: %w", err)
+		}
+		ctx := b.GetContext()
+		return deployConstructedComponent(ctx, b, deps, routerops.Deploy,
+			stellarccip.RouterDatastoreRef(), in.ChainSelector, "router", in.WasmPath, ctorArgs, in.ExistingAddresses,
 			func(contractID string) error {
-				_, err := execStellarCCIPOp(b, deps.StellarDeps, routerops.Initialize, routerops.InitializeInput{
-					ContractID: contractID,
-					Owner:      owner,
-					RmnProxy:   in.RmnProxy,
-				}, withComponentIdempotencyKey[routerops.InitializeInput](in.ChainSelector))
-				return err
+				c := routerbindings.NewRouterClient(deps.Invoker, contractID)
+				gotOwner, err := c.Owner(ctx)
+				if err != nil {
+					return err
+				}
+				if err := requireOwner(gotOwner, owner); err != nil {
+					return err
+				}
+				config, err := c.GetConfig(ctx)
+				if err != nil {
+					return err
+				}
+				return requireField("rmn proxy", config.RmnProxy, in.RmnProxy)
 			})
 	},
 )

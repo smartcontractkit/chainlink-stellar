@@ -117,53 +117,57 @@ func deployFullStack(
 ) *fullStack {
 	t.Helper()
 
-	deploy := func(name, wasmFile string) string {
+	deploy := func(name, wasmFile string, ctorArgs []xdr.ScVal) string {
 		t.Helper()
-		salt := deployment.GenerateDeterministicSalt(deployerAddr, saltPrefix+"-"+name)
-		p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", wasmFile)
-		id, err := deployer.DeployContract(ctx, p, salt)
-		if err != nil {
-			t.Fatalf("deploy %s: %v", name, err)
-		}
-		return id
+		return deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, wasmFile, saltPrefix+"-"+name, ctorArgs)
 	}
 
 	s := &fullStack{}
 
-	s.RmnRemoteID = deploy("rmn-remote", "rmn_remote.wasm")
-	s.RmnProxyID = deploy("rmn-proxy", "rmn_proxy.wasm")
-	s.CcvID = deploy("ccv", "ccvs_committee_verifier.wasm")
-	s.VvrID = deploy("vvr", "ccvs_versioned_verifier_resolver.wasm")
-	s.RouterID = deploy("router", "router.wasm")
-	s.OfframpID = deploy("offramp", "offramp.wasm")
-	s.ReceiverID = deploy("ccip-recv", "ccip_receiver_example.wasm")
+	s.RmnRemoteID = deploy("rmn-remote", "rmn_remote.wasm",
+		mustCtor(t)(rmnremotebindings.ConstructorArgs(deployerAddr, nil)))
+	s.RmnProxyID = deploy("rmn-proxy", "rmn_proxy.wasm",
+		mustCtor(t)(rmnproxybindings.ConstructorArgs(deployerAddr, s.RmnRemoteID)))
+	mockFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-fee-agg")
+	s.CcvID = deploy("ccv", "ccvs_committee_verifier.wasm", mustCtor(t)(ccvsbindings.ConstructorArgs(
+		deployerAddr,
+		ccvsbindings.DynamicConfig{FeeAggregator: &mockFeeAgg},
+		[][]byte{},
+		s.RmnProxyID,
+		stellarutil.DefaultCommitteeVerifierVersionTag(),
+	)))
+	s.VvrID = deploy("vvr", "ccvs_versioned_verifier_resolver.wasm",
+		mustCtor(t)(vvrbindings.ConstructorArgs(deployerAddr, mockFeeAgg)))
+	s.RouterID = deploy("router", "router.wasm",
+		mustCtor(t)(routerbindings.ConstructorArgs(deployerAddr, s.RmnProxyID)))
 
 	s.RmnRemoteClient = rmnremotebindings.NewRmnRemoteClient(deployer, s.RmnRemoteID)
 	s.CcvClient = ccvsbindings.NewCommitteeVerifierClient(deployer, s.CcvID)
 	s.VvrClient = vvrbindings.NewVersionedVerifierResolverClient(deployer, s.VvrID)
 	s.RouterClient = routerbindings.NewRouterClient(deployer, s.RouterID)
+
+	var tokenAdminRegistryForOfframp string
+	if offrampUsesDeployedTokenAdminRegistry {
+		s.TokenAdminRegistryID = deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-token-admin-registry")
+		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
+		tokenAdminRegistryForOfframp = s.TokenAdminRegistryID
+	} else {
+		tokenAdminRegistryForOfframp = helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-token-admin")
+	}
+
+	s.OfframpID = deploy("offramp", "offramp.wasm", mustCtor(t)(offrampbindings.ConstructorArgs(deployerAddr,
+		offrampbindings.StaticConfig{
+			ChainSelector:      destChainSelector,
+			RmnProxy:           s.RmnProxyID,
+			TokenAdminRegistry: tokenAdminRegistryForOfframp,
+		})))
 	s.OfframpClient = offrampbindings.NewOffRampClient(deployer, s.OfframpID)
 
-	// 1. RMN Remote
-	if err := s.RmnRemoteClient.Initialize(ctx, deployerAddr, nil); err != nil {
-		t.Fatalf("RMN Remote Initialize: %v", err)
-	}
+	s.ReceiverID = deploy("ccip-recv", "ccip_receiver_example.wasm",
+		mustCtor(t)(cciprecv.ConstructorArgs(deployerAddr, s.RouterID)))
+	recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, s.ReceiverID)
 
-	// 2. RMN Proxy
-	rmnProxyClient := rmnproxybindings.NewRmnProxyClient(deployer, s.RmnProxyID)
-	if err := rmnProxyClient.Initialize(ctx, deployerAddr, s.RmnRemoteID); err != nil {
-		t.Fatalf("RMN Proxy Initialize: %v", err)
-	}
-
-	// 3. CommitteeVerifier
-	mockFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-fee-agg")
-	if err := s.CcvClient.Initialize(ctx, deployerAddr, ccvsbindings.DynamicConfig{
-		FeeAggregator: &mockFeeAgg,
-	}, [][]byte{}, s.RmnProxyID, stellarutil.DefaultCommitteeVerifierVersionTag()); err != nil {
-		t.Fatalf("CommitteeVerifier Initialize: %v", err)
-	}
-
-	// 4. Signature quorum for remote source chain with secp256k1 ECDSA keypair
+	// Signature quorum for remote source chain with secp256k1 ECDSA keypair
 	ecdsaKey, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("crypto.GenerateKey: %v", err)
@@ -177,12 +181,7 @@ func deployFullStack(
 		t.Fatalf("ApplySignatureConfigs: %v", err)
 	}
 
-	// 5. VVR
-	if err := s.VvrClient.Initialize(ctx, deployerAddr, mockFeeAgg); err != nil {
-		t.Fatalf("VVR Initialize: %v", err)
-	}
-
-	// 6. Register CommitteeVerifier as inbound implementation on VVR
+	// Register CommitteeVerifier as inbound implementation on VVR
 	verAddr := s.CcvID
 	if err := s.VvrClient.ApplyInboundImplUpdates(ctx, []vvrbindings.InboundImplementationUpdate{
 		{
@@ -193,45 +192,17 @@ func deployFullStack(
 		t.Fatalf("ApplyInboundImplUpdates: %v", err)
 	}
 
-	// 7. Router
-	if err := s.RouterClient.Initialize(ctx, deployerAddr, s.RmnProxyID); err != nil {
-		t.Fatalf("Router Initialize: %v", err)
-	}
-
-	var tokenAdminRegistryForOfframp string
-	if offrampUsesDeployedTokenAdminRegistry {
-		s.TokenAdminRegistryID = deployTokenAdminRegistry(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix+"-token-admin-registry")
-		s.TokenAdminRegistryClient = tarbindings.NewTokenAdminRegistryClient(deployer, s.TokenAdminRegistryID)
-		tokenAdminRegistryForOfframp = s.TokenAdminRegistryID
-	} else {
-		tokenAdminRegistryForOfframp = helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-token-admin")
-	}
-
-	// 8. OffRamp
-	if err := s.OfframpClient.Initialize(ctx, deployerAddr, offrampbindings.StaticConfig{
-		ChainSelector:      destChainSelector,
-		RmnProxy:           s.RmnProxyID,
-		TokenAdminRegistry: tokenAdminRegistryForOfframp,
-	}); err != nil {
-		t.Fatalf("OffRamp Initialize: %v", err)
-	}
-
-	// 9. CCIP Receiver
-	recvClient := cciprecv.NewExampleCcipReceiverClient(deployer, s.ReceiverID)
-	if err := recvClient.Initialize(ctx, deployerAddr, s.RouterID); err != nil {
-		t.Fatalf("CcipReceiver Initialize: %v", err)
-	}
 	// EVM CCIPClientExample.validChain: allow inbound messages from the configured remote source chain.
 	if err := recvClient.EnableRemoteChain(ctx, deployerAddr, remoteSourceChain, []byte{0x01}, 0); err != nil {
 		t.Fatalf("CcipReceiver EnableRemoteChain (inbound source allowlist): %v", err)
 	}
 
-	// 10. Register OffRamp on Router for remote source chain
+	// Register OffRamp on Router for remote source chain
 	if err := s.RouterClient.AddOfframp(ctx, remoteSourceChain, s.OfframpID); err != nil {
 		t.Fatalf("AddOfframp: %v", err)
 	}
 
-	// 11. Source chain config on OffRamp
+	// Source chain config on OffRamp
 	s.OnRampWire = bytes.Repeat([]byte{0xab}, 32)
 	if err := s.OfframpClient.ApplySourceChainCfgUpdates(ctx, []offrampbindings.SourceChainConfigArgs{
 		{
@@ -389,11 +360,9 @@ func (s *fullStack) deployTokenPool(
 	s.TokenPoolClient = tokenpoolbindings.NewTokenPoolClient(deployer, s.TokenPoolID)
 	s.LockReleasePoolClient = lockreleasepoolbindings.NewLockReleasePoolClient(deployer, s.TokenPoolID)
 
-	s.RampRegistryID = deploy("ramp-registry", "ccip_ramp_registry.wasm")
+	s.RampRegistryID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "ccip_ramp_registry.wasm",
+		saltPrefix+"-ramp-registry", mustCtor(t)(rampregistrybindings.ConstructorArgs(deployerAddr)))
 	s.RampRegistryClient = rampregistrybindings.NewRampRegistryClient(deployer, s.RampRegistryID)
-	if err := s.RampRegistryClient.Initialize(ctx, deployerAddr); err != nil {
-		t.Fatalf("RampRegistry Initialize: %v", err)
-	}
 	if err := s.RampRegistryClient.ApplyOfframpUpdates(ctx, []rampregistrybindings.OffRampUpdate{
 		{
 			SourceChainSelector: remoteSourceChain,
@@ -505,6 +474,45 @@ func deployIntegrationTestSAC(
 	return sacID
 }
 
+// deployConstructed creates a contract whose owner and config are set by its constructor.
+func deployConstructed(
+	ctx context.Context,
+	t *testing.T,
+	projectRoot string,
+	deployer *deployment.Deployer,
+	deployerAddr, wasmFile, saltLabel string,
+	ctorArgs []xdr.ScVal,
+) string {
+	t.Helper()
+	salt := deployment.GenerateDeterministicSalt(deployerAddr, saltLabel)
+	p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", wasmFile)
+	id, err := deployer.DeployContractWithArgs(ctx, p, salt, ctorArgs)
+	if err != nil {
+		t.Fatalf("deploy %s: %v", wasmFile, err)
+	}
+	return id
+}
+
+// mustCtor unwraps a binding's ConstructorArgs result, as in mustCtor(t)(pkg.ConstructorArgs(owner)).
+func mustCtor(t *testing.T) func([]xdr.ScVal, error) []xdr.ScVal {
+	t.Helper()
+	return func(args []xdr.ScVal, err error) []xdr.ScVal {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("encode constructor args: %v", err)
+		}
+		return args
+	}
+}
+
+// requireNoInitializeExport fails unless the contract rejects a call to initialize.
+func requireNoInitializeExport(ctx context.Context, t *testing.T, deployer *deployment.Deployer, contractID string) {
+	t.Helper()
+	if _, err := deployer.SimulateContract(ctx, contractID, "initialize", nil); err == nil {
+		t.Fatalf("contract %s still exports initialize", contractID)
+	}
+}
+
 // deployTokenAdminRegistry creates token_admin_registry.wasm with owner set by its constructor.
 func deployTokenAdminRegistry(
 	ctx context.Context,
@@ -514,17 +522,8 @@ func deployTokenAdminRegistry(
 	owner, saltLabel string,
 ) string {
 	t.Helper()
-	ctorArgs, err := tarbindings.ConstructorArgs(owner)
-	if err != nil {
-		t.Fatalf("encode token_admin_registry constructor args: %v", err)
-	}
-	salt := deployment.GenerateDeterministicSalt(owner, saltLabel)
-	p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", "token_admin_registry.wasm")
-	id, err := deployer.DeployContractWithArgs(ctx, p, salt, ctorArgs)
-	if err != nil {
-		t.Fatalf("deploy token_admin_registry: %v", err)
-	}
-	return id
+	return deployConstructed(ctx, t, projectRoot, deployer, owner, "token_admin_registry.wasm", saltLabel,
+		mustCtor(t)(tarbindings.ConstructorArgs(owner)))
 }
 
 // ensureTokenAdminRegistryForStack deploys token_admin_registry.wasm when the stack has no
@@ -585,33 +584,16 @@ func deployOutboundSendWire(
 
 	ensureTokenAdminRegistryForStack(ctx, t, projectRoot, deployer, deployerAddr, saltPrefix, stack)
 
-	deploy := func(name, wasmFile string) string {
-		t.Helper()
-		salt := deployment.GenerateDeterministicSalt(deployerAddr, saltPrefix+"-"+name)
-		p := filepath.Join(projectRoot, "target", "wasm32v1-none", "release", wasmFile)
-		id, err := deployer.DeployContract(ctx, p, salt)
-		if err != nil {
-			t.Fatalf("deploy %s: %v", name, err)
-		}
-		return id
-	}
-
 	linkToken := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-link-token")
 	feeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-fee-aggregator-out")
 
 	wire := &outboundSendWire{}
-	wire.FeeQuoterID = deploy("fee-quoter", "fee_quoter.wasm")
-	wire.OnRampID = deploy("onramp", "onramp.wasm")
-
+	wire.FeeQuoterID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "fee_quoter.wasm",
+		saltPrefix+"-fee-quoter", mustCtor(t)(fqbindings.ConstructorArgs(deployerAddr, fqbindings.StaticConfig{
+			LinkToken:         linkToken,
+			MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
+		}, []string{deployerAddr})))
 	wire.FeeQuoterClient = fqbindings.NewFeeQuoterClient(deployer, wire.FeeQuoterID)
-	wire.OnRampClient = onrampbindings.NewOnRampClient(deployer, wire.OnRampID)
-
-	if err := wire.FeeQuoterClient.Initialize(ctx, deployerAddr, fqbindings.StaticConfig{
-		LinkToken:         linkToken,
-		MaxFeeJuelsPerMsg: big.NewInt(1_000_000_000_000_000_000),
-	}, []string{deployerAddr}); err != nil {
-		t.Fatalf("FeeQuoter Initialize: %v", err)
-	}
 
 	destCfg := fqbindings.DestChainConfig{
 		IsEnabled:             true,
@@ -715,16 +697,14 @@ func deployOutboundSendWire(
 	// Error(Storage, MissingValue). Deploy and initialize a real Executor here,
 	// mirroring the Rust setup_executor helper and the devenv deploy sequence, and
 	// expose it on the stack so tests can use it as their concrete executor.
-	executorID := deploy("executor", "executor.wasm")
-	executorClient := executorbindings.NewExecutorClient(deployer, executorID)
 	executorFeeAgg := helpers.GenerateMockContractID(t, deployerAddr, saltPrefix+"-executor-fee-agg")
-	if err := executorClient.Initialize(ctx, deployerAddr, 2, executorbindings.DynamicConfig{
-		AllowedFinalityConfig: 0, // executor layer of the FTF opt-in matrix: WAIT_FOR_FINALITY only
-		CcvAllowlistEnabled:   false,
-		FeeAggregator:         &executorFeeAgg,
-	}); err != nil {
-		t.Fatalf("Executor Initialize: %v", err)
-	}
+	executorID := deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "executor.wasm",
+		saltPrefix+"-executor", mustCtor(t)(executorbindings.ConstructorArgs(deployerAddr, 2, executorbindings.DynamicConfig{
+			AllowedFinalityConfig: 0, // executor layer of the FTF opt-in matrix: WAIT_FOR_FINALITY only
+			CcvAllowlistEnabled:   false,
+			FeeAggregator:         &executorFeeAgg,
+		})))
+	executorClient := executorbindings.NewExecutorClient(deployer, executorID)
 	if err := executorClient.ApplyDestChainUpdates(ctx, nil, []executorbindings.RemoteChainConfigArgs{{
 		DestChainSelector: remoteDestChainSelector,
 		Config: executorbindings.RemoteChainConfig{
@@ -737,17 +717,17 @@ func deployOutboundSendWire(
 	stack.ExecutorID = executorID
 	defaultExecutor := executorID
 
-	if err := wire.OnRampClient.Initialize(ctx, deployerAddr, onrampbindings.StaticConfig{
-		ChainSelector:         localSourceChainSelector,
-		TokenAdminRegistry:    stack.TokenAdminRegistryID,
-		RmnProxy:              stack.RmnProxyID,
-		MaxUsdCentsPerMessage: 500_000, // $5000 — Ethereum-spike-safe per-message fee cap (see stellar_ccip_full_deploy.go).
-	}, onrampbindings.DynamicConfig{
-		FeeQuoter:     wire.FeeQuoterID,
-		FeeAggregator: feeAgg,
-	}); err != nil {
-		t.Fatalf("OnRamp Initialize: %v", err)
-	}
+	wire.OnRampID = deployConstructed(ctx, t, projectRoot, deployer, deployerAddr, "onramp.wasm",
+		saltPrefix+"-onramp", mustCtor(t)(onrampbindings.ConstructorArgs(deployerAddr, onrampbindings.StaticConfig{
+			ChainSelector:         localSourceChainSelector,
+			TokenAdminRegistry:    stack.TokenAdminRegistryID,
+			RmnProxy:              stack.RmnProxyID,
+			MaxUsdCentsPerMessage: 500_000, // $5000, an Ethereum-spike-safe per-message fee cap (see stellar_ccip_full_deploy.go).
+		}, onrampbindings.DynamicConfig{
+			FeeQuoter:     wire.FeeQuoterID,
+			FeeAggregator: feeAgg,
+		})))
+	wire.OnRampClient = onrampbindings.NewOnRampClient(deployer, wire.OnRampID)
 
 	offRampEVM := make([]byte, 20)
 	if err := wire.OnRampClient.ApplyDestChainConfigUpdates(ctx, []onrampbindings.DestChainConfigArgs{{

@@ -118,16 +118,13 @@ impl FeeQuoterContract {
     /// * `authorized_callers` - Initial list of authorized price updaters
     ///
     /// # Errors
-    /// * `AlreadyInitialized` - If contract is already initialized
     /// * `InvalidStaticConfig` - If static config is invalid
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         owner: Address,
         static_config: StaticConfig,
         authorized_callers: Vec<Address>,
     ) -> Result<(), CCIPError> {
-        <Self as Initializable>::require_not_initialized(&env)?;
-
         // Validate static config
         if static_config.max_fee_juels_per_msg <= 0 {
             return Err(CCIPError::InvalidStaticConfig);
@@ -162,9 +159,6 @@ impl FeeQuoterContract {
         // We store as Vec of tuples: (dest_chain_selector, token, config)
         let token_fees: Vec<(u64, Address, TokenTransferFeeConfig)> = Vec::new(&env);
         env.storage().persistent().set(&TKN_FEES, &token_fees);
-
-        // Mark as initialized
-        env.storage().instance().set(&INITIALIZED, &true);
 
         Ok(())
     }

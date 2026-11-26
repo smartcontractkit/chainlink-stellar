@@ -20,12 +20,10 @@ fn setup() -> (
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(VersionedVerifierResolverContract, ());
-    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let fee_aggregator = Address::generate(&env);
-    client.initialize(&owner, &fee_aggregator);
+    let contract_id = env.register(VersionedVerifierResolverContract, (&owner, &fee_aggregator));
+    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
 
     (env, client, owner)
 }
@@ -35,8 +33,12 @@ fn setup() -> (
 // ============================================================
 
 #[test]
-fn test_initialize() {
-    let (env, client, owner) = setup();
+fn test_constructor_sets_owner_and_fee_aggregator() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let fee_aggregator = Address::generate(&env);
+    let contract_id = env.register(VersionedVerifierResolverContract, (&owner, &fee_aggregator));
+    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
 
     env.as_contract(&client.address, || {
         assert_eq!(
@@ -45,17 +47,22 @@ fn test_initialize() {
         );
     });
 
+    assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_fee_aggregator(), fee_aggregator);
     assert_eq!(client.get_all_inbound_implementations().len(), 0);
     assert_eq!(client.get_all_outbound_implementations().len(), 0);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
-fn test_double_initialize_fails() {
-    let (env, client, _owner) = setup();
-    let owner2 = Address::generate(&env);
-    let fee_agg2 = Address::generate(&env);
-    client.initialize(&owner2, &fee_agg2);
+fn test_initialize_is_not_exported() {
+    let (env, client, owner) = setup();
+
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 // ============================================================
@@ -524,15 +531,13 @@ fn test_withdraw_fee_tokens_reverts_for_zero_fee_aggregator() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(VersionedVerifierResolverContract, ());
-    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let zero_fee_agg = Address::from_str(
         &env,
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     );
-    client.initialize(&owner, &zero_fee_agg);
+    let contract_id = env.register(VersionedVerifierResolverContract, (&owner, &zero_fee_agg));
+    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
@@ -611,14 +616,12 @@ fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
 fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
-    let contract_id = env.register(VersionedVerifierResolverContract, ());
-    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
-
+    // `owner.require_auth()` fails. The constructor needs no auth, so the
+    // contract is set up with the owner stored.
     let owner = Address::generate(&env);
     let fee_aggregator = Address::generate(&env);
-    client.initialize(&owner, &fee_aggregator);
+    let contract_id = env.register(VersionedVerifierResolverContract, (&owner, &fee_aggregator));
+    let client = VersionedVerifierResolverContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before

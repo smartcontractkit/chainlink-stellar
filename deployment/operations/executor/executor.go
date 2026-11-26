@@ -13,28 +13,6 @@ const ContractType = "Executor"
 // Deploy uploads executor.wasm.
 var Deploy = stellarops.NewDeployOperation("executor:deploy", "Deploys the Executor Soroban contract from WASM")
 
-// InitializeInput configures the Executor owner, max CCVs per message, and dynamic config.
-type InitializeInput struct {
-	ContractID    string                         `json:"contract_id"`
-	Owner         string                         `json:"owner"`
-	MaxCCVsPerMsg uint32                         `json:"max_ccvs_per_msg"`
-	DynamicConfig executorbindings.DynamicConfig `json:"dynamic_config"`
-}
-
-// Initialize calls Executor `initialize`.
-var Initialize = cldfops.NewOperation(
-	"executor:initialize",
-	stellarops.ContractDeploymentVersion,
-	"Initializes the Executor with owner, max CCVs per message, and dynamic config",
-	func(b cldfops.Bundle, d stellardeps.StellarDeps, in InitializeInput) (stellarops.Void, error) {
-		c := executorbindings.NewExecutorClient(d.Invoker, in.ContractID)
-		if err := c.Initialize(b.GetContext(), in.Owner, in.MaxCCVsPerMsg, in.DynamicConfig); err != nil {
-			return stellarops.Void{}, err
-		}
-		return stellarops.Void{}, nil
-	},
-)
-
 // ApplyDestChainUpdatesInput applies per-destination-chain enable/fee settings on the Executor.
 type ApplyDestChainUpdatesInput struct {
 	ContractID string                                   `json:"contract_id"`

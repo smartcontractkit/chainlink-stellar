@@ -31,6 +31,23 @@ func (c *ExecutorClient) ContractID() string {
 	return c.contractID
 }
 
+// ConstructorArgs encodes the Executor __constructor arguments in spec order.
+func ConstructorArgs(owner string, maxCcvsPerMsg uint32, dynamicConfig DynamicConfig) ([]xdr.ScVal, error) {
+	ownerVal, err := scval.CheckedAddressToScVal(owner)
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg owner: %w", err)
+	}
+	dynamicConfigVal, err := dynamicConfig.ToScVal()
+	if err != nil {
+		return nil, fmt.Errorf("encode constructor arg dynamic_config: %w", err)
+	}
+	return []xdr.ScVal{
+		ownerVal,
+		scval.Uint32ToScVal(maxCcvsPerMsg),
+		dynamicConfigVal,
+	}, nil
+}
+
 // Owner calls the owner function on the contract.
 func (c *ExecutorClient) Owner(ctx context.Context) (*string, error) {
 	args := []xdr.ScVal{}
@@ -86,23 +103,6 @@ func (c *ExecutorClient) Upgrade(ctx context.Context, newWasmHash [32]byte) erro
 	result, err := c.invoker.InvokeContract(ctx, c.contractID, "upgrade", args)
 	if err != nil {
 		return fmt.Errorf("failed to call upgrade: %w", err)
-	}
-
-	_ = result // void return
-	return nil
-}
-
-// Initialize calls the initialize function on the contract.
-func (c *ExecutorClient) Initialize(ctx context.Context, owner string, maxCcvsPerMsg uint32, dynamicConfig DynamicConfig) error {
-	args := []xdr.ScVal{
-		scval.AddressToScVal(owner),
-		scval.Uint32ToScVal(maxCcvsPerMsg),
-		scval.MustToScVal(dynamicConfig.ToScVal()),
-	}
-
-	result, err := c.invoker.InvokeContract(ctx, c.contractID, "initialize", args)
-	if err != nil {
-		return fmt.Errorf("failed to call initialize: %w", err)
 	}
 
 	_ = result // void return

@@ -6,14 +6,14 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger},
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    vec, Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::{
     DestChainConfig, DestChainConfigArgs, GasPriceUpdate, PriceUpdates, StaticConfig,
     TokenFeeConfigArgs, TokenFeeConfigRemoveArgs, TokenPriceUpdate, TokenTransferFeeConfig,
 };
 
-fn setup_env() -> (Env, Address, Address, Address, Address) {
+fn setup_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -25,9 +25,8 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
     let owner = Address::generate(&env);
     let link_token = Address::generate(&env);
     let price_updater = Address::generate(&env);
-    let contract_id = env.register(FeeQuoterContract, ());
 
-    (env, contract_id, owner, link_token, price_updater)
+    (env, owner, link_token, price_updater)
 }
 
 fn create_static_config(link_token: Address) -> StaticConfig {
@@ -54,14 +53,17 @@ fn create_dest_chain_config() -> DestChainConfig {
 
 #[test]
 fn test_update_prices_rejects_unauthorized_updater() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
     let intruder = Address::generate(&env);
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let price_updates = PriceUpdates {
         token_price_updates: Vec::new(&env),
@@ -83,14 +85,17 @@ fn test_update_prices_rejects_unauthorized_updater() {
 /// without a Wasm upgrade.
 #[test]
 fn test_apply_authorized_caller_updates() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
     let new_updater = Address::generate(&env);
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Owner adds a second updater.
     let mut added: Vec<Address> = Vec::new(&env);
@@ -123,15 +128,18 @@ fn test_apply_authorized_caller_updates() {
 
 #[test]
 fn test_apply_authorized_caller_updates_rejects_non_owner() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
     let intruder = Address::generate(&env);
     let new_updater = Address::generate(&env);
 
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // An authorized price updater is NOT the owner — cannot rotate the set.
     let mut added: Vec<Address> = Vec::new(&env);
@@ -155,58 +163,67 @@ fn test_apply_authorized_caller_updates_rejects_non_owner() {
 }
 
 #[test]
-fn test_initialize() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
+fn test_constructor_sets_owner_static_config_and_authorized_callers() {
+    let (env, owner, link_token, price_updater) = setup_env();
+
+    let static_config = create_static_config(link_token);
+    let second_updater = Address::generate(&env);
+    let authorized_callers = vec![&env, price_updater, second_updater];
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
     let client = FeeQuoterContractClient::new(&env, &contract_id);
 
-    let static_config = create_static_config(link_token.clone());
-    let mut authorized_callers: Vec<Address> = Vec::new(&env);
-    authorized_callers.push_back(price_updater.clone());
-
-    // Initialize
-    client.initialize(&owner, &static_config, &authorized_callers);
-
-    // Verify owner
-    // assert_eq!(<FeeQuoterContract as Ownable>::get_owner(&env), owner);
-
-    // Verify static config
-    let stored_config = client.get_static_config();
-    assert_eq!(stored_config.link_token, link_token);
-    assert_eq!(
-        stored_config.max_fee_juels_per_msg,
-        static_config.max_fee_juels_per_msg
-    );
-
-    // Verify authorized callers
-    let callers = client.get_authorized_callers();
-    assert_eq!(callers.len(), 1);
-    assert_eq!(callers.get(0).unwrap(), price_updater);
+    assert_eq!(client.owner(), Some(owner));
+    assert_eq!(client.get_static_config(), static_config);
+    assert_eq!(client.get_authorized_callers(), authorized_callers);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_initialize_already_initialized() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+#[should_panic(expected = "Error(Contract, #33)")] // InvalidStaticConfig
+fn test_constructor_rejects_non_positive_max_fee() {
+    let (env, owner, link_token, price_updater) = setup_env();
+
+    let mut static_config = create_static_config(link_token);
+    static_config.max_fee_juels_per_msg = 0;
+    env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &vec![&env, price_updater]),
+    );
+}
+
+#[test]
+fn test_initialize_is_not_exported() {
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token);
-    let mut authorized_callers: Vec<Address> = Vec::new(&env);
-    authorized_callers.push_back(price_updater.clone());
-
-    client.initialize(&owner, &static_config, &authorized_callers);
-    client.initialize(&owner, &static_config, &authorized_callers); // Should fail
+    let authorized_callers = vec![&env, price_updater];
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, owner.to_val()],
+    );
+    assert!(res.is_err(), "initialize must not be callable");
 }
 
 #[test]
 fn test_update_prices() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Create price updates
     let token1 = Address::generate(&env);
@@ -253,14 +270,17 @@ fn test_update_prices() {
 
 #[test]
 fn test_dest_chain_config() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Add destination chain config
     let config = create_dest_chain_config();
@@ -286,14 +306,17 @@ fn test_dest_chain_config() {
 
 #[test]
 fn test_quote_gas_for_exec() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup destination chain config
     let config = create_dest_chain_config();
@@ -337,14 +360,17 @@ fn test_quote_gas_for_exec() {
 
 #[test]
 fn test_token_transfer_fee_config() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup destination chain config first
     let config = create_dest_chain_config();
@@ -388,14 +414,17 @@ fn test_token_transfer_fee_config() {
 
 #[test]
 fn test_remove_token_transfer_fee_config() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup destination chain config
     let config = create_dest_chain_config();
@@ -438,14 +467,17 @@ fn test_remove_token_transfer_fee_config() {
 
 #[test]
 fn test_convert_token_amount() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup token prices
     let eth_token = Address::generate(&env);
@@ -483,14 +515,17 @@ fn test_convert_token_amount_floors_once_at_final_division() {
     // EVM `FeeQuoter.convertTokenAmount` converts with a single mul-then-div,
     // so the floor applies once at the final division. $8 -> $3 with amount
     // 5e18 yields 40e18 / 3 = 13_333_333_333_333_333_333.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let from_token = Address::generate(&env);
     let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
@@ -517,14 +552,17 @@ fn test_convert_token_amount_floors_once_at_final_division() {
 
 #[test]
 fn test_convert_token_amount_negative_rejected() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let from_token = Address::generate(&env);
     let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
@@ -556,14 +594,17 @@ fn test_convert_token_amount_negative_rejected() {
 fn test_convert_token_amount_overflow_rejected() {
     // A $3000 -> $15 conversion amplifies ~200x, so an i128-max amount
     // converts beyond the i128 return width instead of wrapping negative.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let from_token = Address::generate(&env);
     let mut token_updates: Vec<TokenPriceUpdate> = Vec::new(&env);
@@ -593,14 +634,17 @@ fn test_convert_token_amount_overflow_rejected() {
 
 #[test]
 fn test_remove_fee_tokens() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Add some token prices
     let token1 = Address::generate(&env);
@@ -640,14 +684,17 @@ fn test_remove_fee_tokens() {
 #[test]
 #[should_panic(expected = "Error(Contract, #22)")]
 fn test_get_validated_token_price_not_set() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let unknown_token = Address::generate(&env);
     client.get_validated_token_price(&unknown_token); // Should fail
@@ -655,14 +702,17 @@ fn test_get_validated_token_price_not_set() {
 
 #[test]
 fn test_get_message_fee() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup destination chain config
     let config = create_dest_chain_config();
@@ -736,13 +786,16 @@ fn test_get_message_fee_premium_applied_without_cents_truncation() {
     // fractional half cent. The fee-token amount must be floor(105 * 90 *
     // 1e32 / 15e18) = 63_000_000_000_000_000 — not the conversion of the
     // truncated 94 cents (62_666_666_666_666_666).
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config = create_dest_chain_config();
     config.network_fee_usd_cents = 105;
@@ -808,13 +861,16 @@ fn test_quote_gas_for_exec_rejects_aggregate_above_max_data_bytes() {
     // revert `MessageTooLarge` even when the total gas stays under
     // `max_per_msg_gas_limit` — `maxDataBytes` caps the aggregate byte budget,
     // not the gas budget.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
     config_args.push_back(DestChainConfigArgs {
@@ -858,13 +914,16 @@ fn test_quote_gas_for_exec_rejects_aggregate_above_max_data_bytes() {
 #[test]
 fn test_quote_gas_for_exec_accepts_aggregate_within_max_data_bytes() {
     // Companion: an aggregate within `max_data_bytes` is priced normally.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
     config_args.push_back(DestChainConfigArgs {
@@ -907,13 +966,16 @@ fn test_get_message_fee_succeeds_without_gas_price() {
     // destination gas price. With a token price set but NO gas-price update
     // pushed, it must still return the network fee. Pre-fix this reverted with
     // `NoGasPriceAvailable`.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
     config_args.push_back(DestChainConfigArgs {
@@ -963,13 +1025,16 @@ fn test_quote_gas_for_exec_reverts_without_gas_price() {
     // Finding 2 (companion): the gas-pricing path itself still requires a gas
     // price. `quote_gas_for_exec` must revert `NoGasPriceAvailable` when no gas
     // price is set — proving the gas path still gates correctly after the split.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config_args: Vec<DestChainConfigArgs> = Vec::new(&env);
     config_args.push_back(DestChainConfigArgs {
@@ -1008,13 +1073,16 @@ fn test_get_message_fee_independent_of_gas_and_data() {
     // INV-FEE-14: gas/payload bytes no longer affect `get_message_fee`. Two
     // messages with very different `data` lengths (and a dest config with a
     // different `dest_gas_overhead`) must yield the SAME network-only fee.
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let mut config = create_dest_chain_config();
     config.dest_gas_overhead = 2_000_000; // very different from the default 350_000
@@ -1079,14 +1147,17 @@ fn test_get_message_fee_independent_of_gas_and_data() {
 
 #[test]
 fn test_get_message_fee_excludes_token_transfer() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
 
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
 
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // Setup destination chain config
     let config = create_dest_chain_config();
@@ -1222,12 +1293,15 @@ fn upgraded_event_hash(env: &Env, contract: &Address) -> BytesN<32> {
 
 #[test]
 fn test_upgrade_by_owner_swaps_executable_and_emits_event() {
-    let (env, contract_id, owner, link_token, price_updater) = setup_env();
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
+    let (env, owner, link_token, price_updater) = setup_env();
     let static_config = create_static_config(link_token.clone());
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater.clone());
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     // `mock_all_auths` (set in `setup_env`) authorizes the owner, so
     // `require_owner` -> `owner.require_auth()` passes.
@@ -1255,17 +1329,18 @@ fn test_upgrade_by_non_owner_rejected() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.timestamp = 1000);
     // No `mock_all_auths`: nobody is authorized, so `require_owner` ->
-    // `owner.require_auth()` fails. `initialize` needs no auth (it only guards
-    // against double-init), so the contract is set up with the owner stored.
+    // `owner.require_auth()` fails. The constructor needs no auth.
     let owner = Address::generate(&env);
     let link_token = Address::generate(&env);
     let price_updater = Address::generate(&env);
-    let contract_id = env.register(FeeQuoterContract, ());
-    let client = FeeQuoterContractClient::new(&env, &contract_id);
     let static_config = create_static_config(link_token);
     let mut authorized_callers: Vec<Address> = Vec::new(&env);
     authorized_callers.push_back(price_updater);
-    client.initialize(&owner, &static_config, &authorized_callers);
+    let contract_id = env.register(
+        FeeQuoterContract,
+        (&owner, &static_config, &authorized_callers),
+    );
+    let client = FeeQuoterContractClient::new(&env, &contract_id);
 
     let hash = env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM);
     // Caller is not the owner and the owner does not authorize -> reject before
