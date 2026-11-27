@@ -1,7 +1,9 @@
 package staging_tests
 
 import (
+	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -14,15 +16,20 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/rs/zerolog"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stretchr/testify/require"
 
 	chainsel "github.com/smartcontractkit/chain-selectors"
 	cldflogger "github.com/smartcontractkit/chainlink-deployments-framework/pkg/logger"
+	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
+	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
 // Environment variables consumed by the staging tests. Every test skips (rather
@@ -58,6 +65,7 @@ const (
 	envStellarReceiver     = "STAGING_STELLAR_RECEIVER"       // required: C... (or 0x 32-byte hex) contract implementing ccip_receive
 	envStellarOffRamp      = "STAGING_STELLAR_OFFRAMP"        // optional: C... OffRamp; resolved via Router.get_offramps when unset
 	envStellarGasLimit     = "STAGING_STELLAR_GAS_LIMIT"      // default: 200000 (gasLimit in the EVM extra args)
+	envEVMFinality         = "STAGING_EVM_FINALITY"           // default: 0 (full finality); 65536 = 0x00010000 FinalityWaitForSafe (FTF — see README)
 	envStellarExecTimeout  = "STAGING_STELLAR_EXEC_TIMEOUT"   // default: 30m
 	envEVMSentEventTimeout = "STAGING_EVM_SENT_TIMEOUT"       // default: 5m (ccipSend inclusion on the EVM chain)
 
@@ -67,6 +75,20 @@ const (
 	envEVMToken            = "STAGING_EVM_TOKEN"             // required: 0x... BurnMintERC20WithDrip token on the EVM chain
 	envEVMTokenPool        = "STAGING_EVM_TOKEN_POOL"        // required: 0x... BurnMintTokenPool for it
 	envTokenTransferAmount = "STAGING_TOKEN_TRANSFER_AMOUNT" // default: 1000, in the Stellar token's base units
+
+	// Ephemeral-sender mode (CI): STAGING_EPHEMERAL=true generates a fresh,
+	// zero-privilege sender key per test instead of requiring a long-lived funded
+	// sender secret. XLM comes from the public testnet Friendbot and the BnM
+	// transfer token from its permissionless drip, but the FEE TOKEN has no known
+	// permissionless faucet and Sepolia ETH has no CI-friendly one, so
+	// low-privilege TREASURY keys — plain holders of the fee token / testnet ETH,
+	// nothing more — dispense to the ephemeral sender at run start.
+	envEphemeral         = "STAGING_EPHEMERAL"                // optional: true enables ephemeral senders
+	envStellarTreasury   = "STAGING_STELLAR_TREASURY_SECRET"  // required in ephemeral mode: S... seed of a key holding the fee token
+	envFriendbotURL      = "STAGING_FRIENDBOT_URL"            // default: public testnet Friendbot
+	envFeeTokenFundWhole = "STAGING_FEE_TOKEN_FUND_WHOLE"     // default: 1000, whole fee tokens to the ephemeral sender (one data message quotes ~50; 1000 matches the deploy's own sender-funding convention — 10 underfunded it and ccip_send failed with the SAC error surfaced as Contract #10)
+	envEVMTreasuryKey    = "STAGING_EVM_TREASURY_PRIVATE_KEY" // required in ephemeral mode for EVM tests: hex key holding Sepolia ETH
+	envEVMFundETH        = "STAGING_EVM_FUND_ETH"             // default: 0.1 ETH transferred to the ephemeral EVM sender
 )
 
 // defaultStellarGasLimit is the gasLimit sent in the EVM-side extra args when
@@ -90,6 +112,15 @@ type stagingConfig struct {
 	Executor          string
 	// RouterLegacyFeeArg selects the pre-bbc2d2b4 ccip_send(sender, dest, message, fee_token_amount) ABI.
 	RouterLegacyFeeArg bool
+
+	// Ephemeral mode: Sender was generated in-process (not parsed from
+	// STAGING_STELLAR_SENDER_SECRET) and must be funded before use — XLM via
+	// FriendbotURL, fee token via a transfer from Treasury (a low-privilege key
+	// that merely holds the fee token; LINK has no faucet).
+	Ephemeral    bool
+	Treasury     *keypair.Full // nil outside ephemeral mode
+	FriendbotURL string
+	FeeFundWhole int64 // whole fee-token units Treasury transfers to the ephemeral Sender
 
 	SourceChainSelector uint64
 	DestChainSelector   uint64
@@ -125,7 +156,19 @@ func loadStagingConfig(t *testing.T) *stagingConfig {
 		return v
 	}
 
-	seed := required(envStellarSenderSeed)
+	ephemeral := mustBool(t, envEphemeral, false)
+
+	// In ephemeral mode the sender key is generated below; a treasury is only
+	// needed when the fee token is NOT the devenv FEE SAC (whose deterministic
+	// issuer needs no secret — see fundEphemeralStellarSender).
+	var seed, treasurySeed string
+	if ephemeral {
+		if v := strings.TrimSpace(os.Getenv(envStellarTreasury)); v != "" {
+			treasurySeed = v
+		}
+	} else {
+		seed = required(envStellarSenderSeed)
+	}
 	router := required(envStellarRouter)
 	feeToken := required(envStellarFeeToken)
 	ccvs := required(envStellarCCVs)
@@ -139,6 +182,9 @@ func loadStagingConfig(t *testing.T) *stagingConfig {
 		NetworkPassphrase:   envOr(envStellarPassphrase, network.TestNetworkPassphrase),
 		RouterID:            mustContractID(t, envStellarRouter, router),
 		FeeTokenID:          mustContractID(t, envStellarFeeToken, feeToken),
+		Ephemeral:           ephemeral,
+		FriendbotURL:        envOr(envFriendbotURL, "https://friendbot.stellar.org"),
+		FeeFundWhole:        int64(mustUint(t, envFeeTokenFundWhole, 1000)),
 		SourceChainSelector: mustUint(t, envSourceChainSel, chainsel.STELLAR_TESTNET.Selector),
 		DestChainSelector:   mustUint(t, envDestChainSel, chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector),
 		EVMGasLimit:         uint32(mustUintBits(t, envEVMGasLimit, defaultEVMGasLimit, 32)),
@@ -150,11 +196,26 @@ func loadStagingConfig(t *testing.T) *stagingConfig {
 		EVMLookbackBlocks:   mustUint(t, envEVMLogLookbackBlks, 50),
 	}
 
-	kp, err := keypair.ParseFull(seed)
-	if err != nil {
-		t.Fatalf("%s: invalid Stellar secret seed: %v", envStellarSenderSeed, err)
+	if ephemeral {
+		kp, err := keypair.Random()
+		if err != nil {
+			t.Fatalf("generate ephemeral Stellar sender: %v", err)
+		}
+		cfg.Sender = kp
+		if treasurySeed != "" {
+			treasury, err := keypair.ParseFull(treasurySeed)
+			if err != nil {
+				t.Fatalf("%s: invalid Stellar secret seed: %v", envStellarTreasury, err)
+			}
+			cfg.Treasury = treasury
+		}
+	} else {
+		kp, err := keypair.ParseFull(seed)
+		if err != nil {
+			t.Fatalf("%s: invalid Stellar secret seed: %v", envStellarSenderSeed, err)
+		}
+		cfg.Sender = kp
 	}
-	cfg.Sender = kp
 
 	for _, ccv := range strings.Split(ccvs, ",") {
 		if ccv = strings.TrimSpace(ccv); ccv != "" {
@@ -191,14 +252,32 @@ type evmToStellarConfig struct {
 	EVMRouter   common.Address
 	EVMFeeToken common.Address // zero address pays in native ETH
 
+	// Ephemeral mode: EVMSender was generated in-process and funded with ETH
+	// from EVMTreasury (a low-privilege key that merely holds testnet ETH);
+	// StellarEphemeral means the Stellar account was also generated in-process
+	// (read-only sims + TTL extensions only, so Friendbot XLM is all it needs).
+	EVMephemeral bool
+	EVMTreasury  *ecdsa.PrivateKey // nil outside ephemeral mode
+	EVMFundETH   *big.Int          // wei transferred from the treasury to the ephemeral sender
+
+	// EVMFinality is the requested finality for EVM→Stellar messages
+	// (protocol.Finality encoding): 0 = wait for full finality;
+	// 65536 = FinalityWaitForSafe — verifiers sign at the Ethereum safe head
+	// (~1-2 min) instead of two Sepolia epochs (~13 min). Must be admitted by
+	// the EVM-side CV/executor configs and the Stellar receiver's
+	// allowed_finality_config (README "Fast transfer finality").
+	EVMFinality uint32
+
 	StellarRPCURL     string
 	NetworkPassphrase string
 	// StellarAccount only signs read-only simulations (Router/OffRamp/receiver views);
 	// it never submits a transaction in these tests.
-	StellarAccount  *keypair.Full
-	StellarRouterID string
-	OffRampID       string // resolved via Router.get_offramps when empty
-	ReceiverID      string
+	StellarAccount   *keypair.Full
+	StellarEphemeral bool
+	FriendbotURL     string
+	StellarRouterID  string
+	OffRampID        string // resolved via Router.get_offramps when empty
+	ReceiverID       string
 
 	StellarChainSelector uint64
 	EVMChainSelector     uint64
@@ -222,10 +301,26 @@ func loadEVMToStellarConfig(t *testing.T) *evmToStellarConfig {
 		return v
 	}
 
+	ephemeral := mustBool(t, envEphemeral, false)
+
+	var evmKey string
+	if ephemeral {
+		// The EVM sender key is generated below; what ephemeral mode requires
+		// instead is the ETH treasury that will fund it (helpers_test.go).
+		evmKey = required(envEVMTreasuryKey)
+	} else {
+		evmKey = required(envEVMSenderKey)
+	}
 	evmRPC := required(envEVMRPCURL)
-	evmKey := required(envEVMSenderKey)
 	evmRouter := required(envEVMRouter)
-	seed := required(envStellarSenderSeed)
+	var stellarSeed string
+	if ephemeral {
+		// Read-only simulations + TTL extensions only: a generated account
+		// with Friendbot XLM suffices; no funded sender secret needed.
+		stellarSeed = "" // generated below
+	} else {
+		stellarSeed = required(envStellarSenderSeed)
+	}
 	stellarRouter := required(envStellarRouter)
 	receiver := required(envStellarReceiver)
 	if len(missing) > 0 {
@@ -235,6 +330,9 @@ func loadEVMToStellarConfig(t *testing.T) *evmToStellarConfig {
 	cfg := &evmToStellarConfig{
 		EVMRPCURL:            evmRPC,
 		EVMRouter:            mustEVMAddress(t, envEVMRouter, evmRouter),
+		EVMephemeral:         ephemeral,
+		StellarEphemeral:     ephemeral,
+		FriendbotURL:         envOr(envFriendbotURL, "https://friendbot.stellar.org"),
 		StellarRPCURL:        envOr(envStellarRPCURL, "https://soroban-testnet.stellar.org"),
 		NetworkPassphrase:    envOr(envStellarPassphrase, network.TestNetworkPassphrase),
 		StellarRouterID:      mustContractID(t, envStellarRouter, stellarRouter),
@@ -242,22 +340,54 @@ func loadEVMToStellarConfig(t *testing.T) *evmToStellarConfig {
 		StellarChainSelector: mustUint(t, envSourceChainSel, chainsel.STELLAR_TESTNET.Selector),
 		EVMChainSelector:     mustUint(t, envDestChainSel, chainsel.ETHEREUM_TESTNET_SEPOLIA.Selector),
 		StellarGasLimit:      uint32(mustUintBits(t, envStellarGasLimit, defaultStellarGasLimit, 32)),
+		EVMFinality:          uint32(mustUintBits(t, envEVMFinality, 0, 32)),
 		BatchSize:            int(mustUint(t, envSendBatchSize, 3)),
 		EVMSentTimeout:       mustDuration(t, envEVMSentEventTimeout, 5*time.Minute),
 		ExecTimeout:          mustDuration(t, envStellarExecTimeout, 30*time.Minute),
 	}
 
-	key, err := crypto.HexToECDSA(strings.TrimPrefix(evmKey, "0x"))
-	if err != nil {
-		t.Fatalf("%s: invalid secp256k1 private key: %v", envEVMSenderKey, err)
-	}
-	cfg.EVMSender = key
+	if ephemeral {
+		key, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("generate ephemeral EVM sender: %v", err)
+		}
+		cfg.EVMSender = key
 
-	kp, err := keypair.ParseFull(seed)
-	if err != nil {
-		t.Fatalf("%s: invalid Stellar secret seed: %v", envStellarSenderSeed, err)
+		treasury, err := crypto.HexToECDSA(strings.TrimPrefix(evmKey, "0x"))
+		if err != nil {
+			t.Fatalf("%s: invalid secp256k1 private key: %v", envEVMTreasuryKey, err)
+		}
+		cfg.EVMTreasury = treasury
+
+		fundETH := strings.TrimSpace(os.Getenv(envEVMFundETH))
+		if fundETH == "" {
+			fundETH = "0.1"
+		}
+		amount, ok := new(big.Float).SetString(fundETH)
+		if !ok {
+			t.Fatalf("%s: %q is not a decimal ETH amount", envEVMFundETH, fundETH)
+		}
+		wei, _ := new(big.Float).Mul(amount, big.NewFloat(1e18)).Int(nil)
+		cfg.EVMFundETH = wei
+
+		kp, err := keypair.Random()
+		if err != nil {
+			t.Fatalf("generate ephemeral Stellar account: %v", err)
+		}
+		cfg.StellarAccount = kp
+	} else {
+		key, err := crypto.HexToECDSA(strings.TrimPrefix(evmKey, "0x"))
+		if err != nil {
+			t.Fatalf("%s: invalid secp256k1 private key: %v", envEVMSenderKey, err)
+		}
+		cfg.EVMSender = key
+
+		kp, err := keypair.ParseFull(stellarSeed)
+		if err != nil {
+			t.Fatalf("%s: invalid Stellar secret seed: %v", envStellarSenderSeed, err)
+		}
+		cfg.StellarAccount = kp
 	}
-	cfg.StellarAccount = kp
 
 	if v := strings.TrimSpace(os.Getenv(envEVMFeeToken)); v != "" {
 		cfg.EVMFeeToken = mustEVMAddress(t, envEVMFeeToken, v)
@@ -327,6 +457,126 @@ func loadTokenTransferConfig(t *testing.T) *tokenTransferConfig {
 func newStellarClients(t *testing.T, rpcURL, passphrase string, kp *keypair.Full) (*rpcclient.Client, *stellardeployment.Deployer) {
 	rpc := rpcclient.NewClient(rpcURL, &http.Client{Timeout: 60 * time.Second})
 	return rpc, stellardeployment.NewDeployer(rpc, passphrase, kp, stellardeployment.WithLogger(cldflogger.Test(t)))
+}
+
+// devenvFeeAssetCode mirrors tests/ccv/chain/chain.go's feeTokenAssetCode —
+// the classic asset the staging deploy wraps as the CCIP fee token SAC via
+// DeployDevenvSACToken (deployment/ccip/sac_devenv_token.go).
+const devenvFeeAssetCode = "FEE"
+
+// deriveDevenvFeeToken reproduces the staging deploy's deterministic fee-token
+// recipe (sac_devenv_token.go:39-40 with the label from chain.go:1422): the
+// FEE issuer seed is sha256("fee-token-issuer-"+passphrase). The issuer is
+// therefore derivable by anyone from the PUBLIC network passphrase — a
+// testnet fund-token dispenser, not a secret (verified: the derived SAC id
+// equals the deployed fee token CDFAZQ… on testnet).
+func deriveDevenvFeeToken(passphrase string) (*keypair.Full, string, error) {
+	seed := sha256.Sum256([]byte("fee-token-issuer-" + passphrase))
+	issuer, err := keypair.FromRawSeed(seed)
+	if err != nil {
+		return nil, "", err
+	}
+	asset := xdr.MustNewCreditAsset(devenvFeeAssetCode, issuer.Address())
+	id, err := asset.ContractID(passphrase)
+	if err != nil {
+		return nil, "", err
+	}
+	cid, err := strkey.Encode(strkey.VersionByteContract, id[:])
+	if err != nil {
+		return nil, "", err
+	}
+	return issuer, cid, nil
+}
+
+// fundEphemeralStellarSender funds a config-generated (zero-privilege) Stellar
+// sender: XLM from the public testnet Friendbot, and fee tokens either from
+// the deterministic FEE issuer (the staging env's fee token is the devenv FEE
+// SAC — a classic issued asset with NO drip and NO custom entrypoints, so the
+// derivable issuer is the only permissionless-style dispenser) or, for any
+// other fee token, from an optional low-privilege treasury that holds it.
+func fundEphemeralStellarSender(t *testing.T, ctx context.Context, cfg *stagingConfig, l *zerolog.Logger) {
+	t.Helper()
+
+	if err := helpers.FundViaFriendbot(cfg.FriendbotURL, cfg.Sender.Address()); err != nil {
+		t.Fatalf("fund ephemeral sender %s via Friendbot (%s): %v", cfg.Sender.Address(), cfg.FriendbotURL, err)
+	}
+
+	if issuer, feeSAC, err := deriveDevenvFeeToken(cfg.NetworkPassphrase); err == nil && feeSAC == cfg.FeeTokenID {
+		fundEphemeralSenderFromFeeIssuer(t, ctx, cfg, issuer, l)
+		return
+	}
+
+	// Generic fee token (e.g. a contract token with no faucet): treasury transfer.
+	if cfg.Treasury == nil {
+		t.Fatalf("fee token %s is not the devenv FEE SAC and %s is unset — ephemeral mode needs either the FEE SAC (no config) or a treasury key holding the fee token",
+			cfg.FeeTokenID, envStellarTreasury)
+	}
+	_, treasury := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.Treasury)
+	decRes, err := treasury.SimulateContract(ctx, cfg.FeeTokenID, "decimals", nil)
+	require.NoError(t, err, "fee token decimals — is %s a token contract?", cfg.FeeTokenID)
+	require.NotNil(t, decRes, "fee token decimals returned no value")
+	decimals, err := scval.Uint32FromScVal(*decRes)
+	require.NoError(t, err, "fee token decimals shape")
+	amount := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	amount = amount.Mul(amount, big.NewInt(cfg.FeeFundWhole))
+
+	_, err = treasury.InvokeContract(ctx, cfg.FeeTokenID, "transfer", []xdr.ScVal{
+		scval.AddressToScVal(cfg.Treasury.Address()),
+		scval.AddressToScVal(cfg.Sender.Address()),
+		scval.I128ToScVal(amount),
+	})
+	require.NoError(t, err, "treasury fee-token transfer of %s base units — does the treasury key hold the fee token?", amount.String())
+	l.Info().
+		Str("sender", cfg.Sender.Address()).
+		Str("feeToken", cfg.FeeTokenID).
+		Str("amount", amount.String()).
+		Msg("funded ephemeral Stellar sender (Friendbot XLM + treasury fee token)")
+}
+
+// fundEphemeralSenderFromFeeIssuer funds the ephemeral sender from the
+// deterministic FEE issuer: ChangeTrust (a classic issued asset needs a
+// trustline before it can be received), then an issuer Payment of
+// FeeFundWhole whole tokens. Amounts are decimal whole-unit strings per the
+// stellar amount package convention ("101.001" = 101.001 tokens).
+func fundEphemeralSenderFromFeeIssuer(t *testing.T, ctx context.Context, cfg *stagingConfig, issuer *keypair.Full, l *zerolog.Logger) {
+	t.Helper()
+
+	_, sender := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.Sender)
+	_, issuerDeployer := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, issuer)
+	asset := txnbuild.CreditAsset{Code: devenvFeeAssetCode, Issuer: issuer.Address()}
+
+	// 1. Trustline: the ephemeral account must trust the FEE asset first
+	// (contract tokens skip this; classic issued assets cannot).
+	if err := sender.SubmitClassicOperation(ctx, &txnbuild.ChangeTrust{
+		Line:          asset.MustToChangeTrustAsset(),
+		SourceAccount: cfg.Sender.Address(),
+		Limit:         "1000000", // 1M whole tokens — ample for fee dispensing
+	}); err != nil {
+		t.Fatalf("ephemeral sender ChangeTrust(%s): %v", devenvFeeAssetCode, err)
+	}
+
+	// 2. Keep the deterministic issuer alive: best-effort Friendbot top-up (a
+	// no-op error on an existing funded account), and let the Payment below
+	// fail loudly if the issuer truly lacks XLM.
+	if err := helpers.FundViaFriendbot(cfg.FriendbotURL, issuer.Address()); err != nil {
+		l.Debug().Err(err).Str("issuer", issuer.Address()).Msg("Friendbot top-up of the FEE issuer (non-fatal if already funded)")
+	}
+
+	// 3. Issuer Payment — fresh FEE units straight to the ephemeral sender.
+	if err := issuerDeployer.SubmitClassicOperation(ctx, &txnbuild.Payment{
+		Destination:   cfg.Sender.Address(),
+		Amount:        strconv.FormatInt(cfg.FeeFundWhole, 10),
+		Asset:         asset,
+		SourceAccount: issuer.Address(),
+	}); err != nil {
+		t.Fatalf("FEE issuer payment of %d whole tokens to %s: %v (does the issuer account %s hold XLM?)",
+			cfg.FeeFundWhole, cfg.Sender.Address(), err, issuer.Address())
+	}
+	l.Info().
+		Str("sender", cfg.Sender.Address()).
+		Str("feeToken", cfg.FeeTokenID).
+		Int64("wholeTokens", cfg.FeeFundWhole).
+		Msg("funded ephemeral Stellar sender (Friendbot XLM + deterministic FEE issuer)")
 }
 
 // isNativeFeeToken reports whether the fee token is the native XLM SAC, in which

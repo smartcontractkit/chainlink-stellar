@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/rs/zerolog"
+	"github.com/smartcontractkit/chainlink-ccv/protocol"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -39,12 +42,15 @@ import (
 	offrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/offramp"
 	onrampbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/onramp"
 	rampregistrybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/ramp_registry"
+	rmnproxybindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/rmn_proxy"
 	routerbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/router"
+	vvrbindings "github.com/smartcontractkit/chainlink-stellar/bindings/contracts/versioned_verifier_resolver"
 	"github.com/smartcontractkit/chainlink-stellar/bindings/scval"
 	ccvcommon "github.com/smartcontractkit/chainlink-stellar/ccv/common"
 	destinationreader "github.com/smartcontractkit/chainlink-stellar/ccv/destination_reader"
 	stellardeployment "github.com/smartcontractkit/chainlink-stellar/deployment"
 	ccvchain "github.com/smartcontractkit/chainlink-stellar/tests/ccv/chain"
+	helpers "github.com/smartcontractkit/chainlink-stellar/tests/testutils"
 )
 
 const (
@@ -55,6 +61,17 @@ const (
 	// GetLatestLedger read and inclusion of the send transaction.
 	sentEventLookbackLedgers uint32 = 2
 )
+
+// redactURL strips credentials, query, and path from an RPC URL before
+// logging — provider URLs (STAGING_EVM_RPC_URL etc.) embed API keys there,
+// and `go test -v` output lands in CI logs. Never log a raw URL.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<unparsed-url>"
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 // stagingEnv bundles the clients shared by the staging tests.
 type stagingEnv struct {
@@ -71,6 +88,9 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 	cfg := loadStagingConfig(t)
 
 	l := zerolog.New(zerolog.NewTestWriter(t)).With().Timestamp().Logger()
+	if cfg.Ephemeral {
+		fundEphemeralStellarSender(t, ctx, cfg, &l)
+	}
 	rpc, deployer := newStellarClients(t, cfg.StellarRPCURL, cfg.NetworkPassphrase, cfg.Sender)
 	router := routerbindings.NewRouterClient(deployer, cfg.RouterID)
 
@@ -83,15 +103,43 @@ func newStagingEnv(t *testing.T, ctx context.Context) *stagingEnv {
 		require.NoError(t, err, "Router.get_onramp(%d)", cfg.DestChainSelector)
 	}
 
+	// NOTE: cfg.FeeTokenID is deliberately NOT in this list — the FEE token is
+	// a classic-asset SAC, not a WASM contract instance, so ContractWasmHash
+	// rejects it; its code entry is the protocol-pinned built-in, always live.
 	contractIDs := []string{cfg.RouterID, onRampID}
 	contractIDs = append(contractIDs, cfg.CCVs...)
 	if cfg.Executor != "" {
 		contractIDs = append(contractIDs, cfg.Executor)
 	}
+
+	// The send path cross-calls beyond the front doors: OnRamp → FeeQuoter
+	// (pricing), RMN proxy (curse gate), TokenAdminRegistry (token path), and
+	// each CCV resolves to its verifier implementation (VVR → CommitteeVerifier).
+	// An archived WASM among those makes the RPC re-upload it into every
+	// simulation footprint and ccip_send fails with Error(WasmVm, UnexpectedSize)
+	// even though get_fee (pure simulation) succeeded (see README "Setup").
+	// Read the wiring from the OnRamp itself and extend ALL of it.
+	onRampClient := onrampbindings.NewOnRampClient(deployer, onRampID)
+	staticCfg, err := onRampClient.GetStaticConfig(ctx)
+	require.NoError(t, err, "OnRamp get_static_config")
+	dynCfg, err := onRampClient.GetDynamicConfig(ctx)
+	require.NoError(t, err, "OnRamp get_dynamic_config")
+	contractIDs = append(contractIDs, staticCfg.RmnProxy, staticCfg.TokenAdminRegistry, dynCfg.FeeQuoter)
+	// The RMN proxy delegates to the RMN remote — extend it too (same
+	// archived-WASM failure class).
+	rmnRemote, rmnErr := rmnproxybindings.NewRmnProxyClient(deployer, staticCfg.RmnProxy).GetRmn(ctx)
+	require.NoError(t, rmnErr, "RMN proxy get_rmn")
+	contractIDs = append(contractIDs, rmnRemote)
+	for _, ccv := range cfg.CCVs {
+		impl, implErr := vvrbindings.NewVersionedVerifierResolverClient(deployer, ccv).
+			GetOutboundImplementation(ctx, cfg.DestChainSelector, []byte{})
+		require.NoErrorf(t, implErr, "resolve CCV %s outbound impl for dest %d", ccv, cfg.DestChainSelector)
+		contractIDs = append(contractIDs, impl)
+	}
 	extendContractTTLs(t, ctx, deployer, &l, contractIDs...)
 
 	l.Info().
-		Str("rpc", cfg.StellarRPCURL).
+		Str("rpc", redactURL(cfg.StellarRPCURL)).
 		Str("router", cfg.RouterID).
 		Str("routerVersion", tv).
 		Str("onRamp", onRampID).
@@ -453,6 +501,22 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 	chainID, err := client.ChainID(ctx)
 	require.NoError(t, err)
 
+	// Ephemeral mode: the config generated zero-privilege keys. The Stellar
+	// account only simulates reads and pays TTL-extension transactions, so
+	// Friendbot XLM suffices; the EVM sender needs ETH for ccipSend, dispensed
+	// by the low-privilege Sepolia treasury (Sepolia has no CI-friendly faucet).
+	if cfg.StellarEphemeral {
+		if err := helpers.FundViaFriendbot(cfg.FriendbotURL, cfg.StellarAccount.Address()); err != nil {
+			t.Fatalf("fund ephemeral Stellar account %s via Friendbot (%s): %v", cfg.StellarAccount.Address(), cfg.FriendbotURL, err)
+		}
+	}
+	if cfg.EVMephemeral {
+		fundEphemeralEVMSender(t, ctx, cfg, client, chainID)
+		// Return the sender's leftover ETH to the treasury after the test —
+		// Sepolia ETH is scarce, so ephemeral keys must not abandon it.
+		t.Cleanup(func() { sweepEphemeralETH(t, cfg) })
+	}
+
 	router, err := evmrouter.NewRouter(cfg.EVMRouter, client)
 	require.NoError(t, err)
 	onRampAt, err := router.GetOnRamp(&bind.CallOpts{Context: ctx}, cfg.StellarChainSelector)
@@ -507,7 +571,7 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 		receiver: receiver, receiverBytes: receiverBytes,
 	}
 	l.Info().
-		Str("evmRPC", cfg.EVMRPCURL).
+		Str("evmRPC", redactURL(cfg.EVMRPCURL)).
 		Str("evmRouter", cfg.EVMRouter.Hex()).
 		Str("evmOnRamp", onRampAt.Hex()).
 		Str("evmSender", env.sender.Hex()).
@@ -518,6 +582,202 @@ func newEVMToStellarEnv(t *testing.T, ctx context.Context) *evmToStellarEnv {
 		Uint32("gasLimit", cfg.StellarGasLimit).
 		Msg("EVM → Stellar staging environment")
 	return env
+}
+
+// promptTxPricing returns EIP-1559 tip/feeCap values that guarantee prompt
+// inclusion. Sepolia's base fee is currently ~tens of wei, so a LEGACY tx at
+// SuggestGasPrice (≈18 wei) sits only ~1 wei above it and strands in the
+// mempool whenever the base fee ticks up — observed live: the treasury
+// transfers mined ~30 minutes after submission, long after the tests' 2-minute
+// budgets. A 1-gwei tip dominates Sepolia's tip market and costs a 21k-gas
+// transfer ≈0.000021 ETH; feeCap = 2×baseFee+tip keeps the tx valid even if
+// the base fee doubles while it waits.
+type promptPricing struct{ tip, feeCap *big.Int }
+
+func promptTxPricing(t *testing.T, ctx context.Context, client *ethclient.Client) (promptPricing, error) {
+	t.Helper()
+	head, err := client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return promptPricing{}, fmt.Errorf("latest header: %w", err)
+	}
+	if head.BaseFee == nil {
+		return promptPricing{}, fmt.Errorf("chain has no EIP-1559 base fee (head %s)", head.Number)
+	}
+	tip := big.NewInt(1_000_000_000) // 1 gwei
+	feeCap := new(big.Int).Mul(head.BaseFee, big.NewInt(2))
+	feeCap = feeCap.Add(feeCap, tip)
+	return promptPricing{tip: tip, feeCap: feeCap}, nil
+}
+
+// promptTransferGas estimates the gas limit for a plain ETH transfer. Never
+// hardcode 21k: a transfer to a fresh (non-existent) account costs far more
+// (observed ~207k on 2026 Sepolia), and an intrinsically-invalid tx burns all
+// its gas without moving value (the Nov 23 "not visible after 2m" failures).
+func promptTransferGas(ctx context.Context, client *ethclient.Client,
+	from, to common.Address, value *big.Int) (uint64, error) {
+	gas, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &to, Value: value})
+	if err != nil {
+		return 0, fmt.Errorf("estimate transfer gas: %w", err)
+	}
+	if gas < 21_000 {
+		gas = 21_000 // some nodes estimate below the 21k pool admission floor
+	}
+	return gas * 13 / 10, nil // 30% headroom for state drift before inclusion
+}
+
+// promptTransferTxData assembles a prompt-inclusion transfer with an
+// estimated gas limit.
+func promptTransferTxData(t *testing.T, ctx context.Context, client *ethclient.Client,
+	from, to common.Address, value *big.Int, nonce uint64) types.TxData {
+	t.Helper()
+	pricing, err := promptTxPricing(t, ctx, client)
+	require.NoError(t, err)
+	gas, err := promptTransferGas(ctx, client, from, to, value)
+	require.NoError(t, err)
+	return &types.DynamicFeeTx{
+		Nonce:     nonce,
+		To:        &to,
+		Value:     value,
+		Gas:       gas,
+		GasTipCap: pricing.tip,
+		GasFeeCap: pricing.feeCap,
+	}
+}
+
+// fundEphemeralEVMSender sends cfg.EVMFundETH wei from the low-privilege
+// Sepolia treasury (a plain holder of testnet ETH — Sepolia has no
+// CI-friendly faucet) to the config-generated EVM sender, then waits for the
+// funds to appear so the sender's first ccipSend cannot race the transfer.
+func fundEphemeralEVMSender(t *testing.T, ctx context.Context, cfg *evmToStellarConfig, client *ethclient.Client, chainID *big.Int) {
+	t.Helper()
+	from := crypto.PubkeyToAddress(cfg.EVMTreasury.PublicKey)
+	to := crypto.PubkeyToAddress(cfg.EVMSender.PublicKey)
+
+	bal, err := client.BalanceAt(ctx, from, nil)
+	require.NoError(t, err, "treasury ETH balance")
+	if bal.Cmp(cfg.EVMFundETH) < 0 {
+		t.Fatalf("Sepolia treasury %s holds %s wei < %s wei to fund the ephemeral sender — top it up",
+			from.Hex(), bal.String(), cfg.EVMFundETH.String())
+	}
+
+	nonce, err := client.PendingNonceAt(ctx, from)
+	require.NoError(t, err, "treasury nonce")
+	signed, err := types.SignNewTx(cfg.EVMTreasury, types.LatestSignerForChainID(chainID),
+		promptTransferTxData(t, ctx, client, from, to, cfg.EVMFundETH, nonce))
+	require.NoError(t, err, "sign treasury ETH transfer")
+	err = client.SendTransaction(ctx, signed)
+	require.NoError(t, err, "send treasury ETH transfer")
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		got, err := client.BalanceAt(ctx, to, nil)
+		require.NoError(t, err, "ephemeral sender ETH balance")
+		if got.Cmp(cfg.EVMFundETH) >= 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("treasury transfer %s not visible for %s after 2m", signed.Hash().Hex(), to.Hex())
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// sweepEphemeralETH returns the ephemeral EVM sender's leftover ETH to the
+// treasury once its test finishes (registered via t.Cleanup). Best-effort by
+// design: it runs on a fresh context (the test's own ctx is cancelled by the
+// time cleanups run) and only logs on failure — it must never flip a finished
+// green test red. Skips when the net amount is dust (< 0.001 ETH), where the
+// sweep's own gas would eat most of it.
+func sweepEphemeralETH(t *testing.T, cfg *evmToStellarConfig) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client, err := ethclient.DialContext(ctx, cfg.EVMRPCURL)
+	if err != nil {
+		t.Logf("sweep: dial %s: %v (leftover ETH stays on the ephemeral sender)", redactURL(cfg.EVMRPCURL), err)
+		return
+	}
+	defer client.Close()
+
+	from := crypto.PubkeyToAddress(cfg.EVMSender.PublicKey)
+	to := crypto.PubkeyToAddress(cfg.EVMTreasury.PublicKey)
+
+	balance, err := client.BalanceAt(ctx, from, nil)
+	if err != nil {
+		t.Logf("sweep: ephemeral sender balance: %v", err)
+		return
+	}
+	pricing, err := promptTxPricing(t, ctx, client)
+	if err != nil {
+		t.Logf("sweep: %v", err)
+		return
+	}
+	// Estimate with value 0 — the treasury always exists, so plain-transfer
+	// gas does not depend on the swept amount.
+	gas, err := promptTransferGas(ctx, client, from, to, big.NewInt(0))
+	if err != nil {
+		t.Logf("sweep: %v", err)
+		return
+	}
+	// Reserve the worst-case fee (gas × feeCap) plus margin; the real fee is
+	// gas×(baseFee+tip) at inclusion, the difference stays behind as dust on
+	// the ephemeral key.
+	fee := new(big.Int).Add(pricing.feeCap, pricing.tip)
+	fee.Mul(fee, new(big.Int).SetUint64(gas))
+	net := new(big.Int).Sub(balance, fee)
+	if net.Sign() <= 0 || net.Cmp(big.NewInt(1_000_000_000_000_000)) < 0 { // < 0.001 ETH
+		t.Logf("sweep: ephemeral sender holds %s wei, below the 0.001 ETH threshold — skipping sweep", balance.String())
+		return
+	}
+
+	chainID, err := client.ChainID(ctx)
+	if err != nil {
+		t.Logf("sweep: chain id: %v", err)
+		return
+	}
+	nonce, err := client.PendingNonceAt(ctx, from)
+	if err != nil {
+		t.Logf("sweep: ephemeral sender nonce: %v", err)
+		return
+	}
+	signed, err := types.SignNewTx(cfg.EVMSender, types.LatestSignerForChainID(chainID), &types.DynamicFeeTx{
+		Nonce:     nonce,
+		To:        &to,
+		Value:     net,
+		Gas:       gas,
+		GasTipCap: pricing.tip,
+		GasFeeCap: pricing.feeCap,
+	})
+	if err != nil {
+		t.Logf("sweep: sign: %v", err)
+		return
+	}
+	if err := client.SendTransaction(ctx, signed); err != nil {
+		t.Logf("sweep: send: %v (leftover %s wei stays on the ephemeral sender)", err, net.String())
+		return
+	}
+
+	// Wait for inclusion within the sweep budget; a slow tx still mines later.
+	for {
+		bal, err := client.BalanceAt(ctx, from, nil)
+		if err == nil && bal.Cmp(net) < 0 {
+			t.Logf("sweep: returned %s wei to treasury %s (tx %s)", net.String(), to.Hex(), signed.Hash().Hex())
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Logf("sweep: tx %s not confirmed within 2m — it may still mine; else %s wei remains on the ephemeral sender",
+				signed.Hash().Hex(), net.String())
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 func (e *evmToStellarEnv) nativeFee() bool { return e.cfg.EVMFeeToken == (common.Address{}) }
@@ -535,7 +795,14 @@ func (e *evmToStellarEnv) feeTokenLabel() string {
 // while Stellar CCV/executor addresses are 32 bytes.
 func (e *evmToStellarEnv) buildMessage(t *testing.T, data []byte) evmrouter.ClientEVM2AnyMessage {
 	t.Helper()
-	extraArgs, err := devenvevm.NewV3ExtraArgs(0, e.cfg.StellarGasLimit, "", nil, nil, nil, nil)
+	// STAGING_EVM_FINALITY: 0 = full finality (default); 65536 (0x00010000) =
+	// FinalityWaitForSafe — the verifiers sign at the Ethereum safe head
+	// (~1-2 min) instead of waiting two Sepolia epochs (~13 min). The request
+	// must be admitted along the whole finality opt-in matrix: the EVM-side
+	// CV and executor allowed-finality configs, and (for data messages) the
+	// Stellar receiver's enable_remote_chain allowed_finality_config — see
+	// README "Fast transfer finality".
+	extraArgs, err := devenvevm.NewV3ExtraArgs(protocol.Finality(e.cfg.EVMFinality), e.cfg.StellarGasLimit, "", nil, nil, nil, nil)
 	require.NoError(t, err, "encode GenericExtraArgsV3")
 	return evmrouter.ClientEVM2AnyMessage{
 		Receiver:  e.receiverBytes,
@@ -903,6 +1170,16 @@ func (e *evmToStellarEnv) ensureEVMTokenBalance(t *testing.T, ctx context.Contex
 		// Dry-run first: a token deployed without the faucet (or a plain
 		// BurnMintERC20) reverts here, and the sender must be funded out of band.
 		if err := faucet.Call(&bind.CallOpts{Context: ctx, From: e.sender}, nil, "drip", e.sender); err != nil {
+			// Ephemeral senders cannot be pre-funded out of band (the EVM
+			// treasury only holds ETH, and stgBnM has no faucet) — skip rather
+			// than fail; run TestStagingStellarToEVMTokenTransfer once with a
+			// persistent receiver, or a non-ephemeral EVM sender, to cover it.
+			if e.cfg.EVMephemeral {
+				t.Skipf("ephemeral EVM sender %s holds %s < %s of %s and the token has no drip; "+
+					"ephemeral mode cannot pre-fund EVM tokens — use a non-ephemeral sender "+
+					"(STAGING_EPHEMERAL unset) for the EVM → Stellar token transfer test",
+					e.sender.Hex(), bal.String(), need.String(), tokenAddr.Hex())
+			}
 			require.FailNowf(t, "EVM sender cannot be funded from drip",
 				"sender %s holds %s < %s of %s and drip(address) reverts (%v). The token may not implement drip; "+
 					"fund the sender out of band, e.g. have an account with MINTER_ROLE mint to it, or run "+
