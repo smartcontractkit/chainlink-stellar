@@ -6,7 +6,7 @@ use common_message::{StellarToAnyMessage, TokenAmount};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger},
-    vec, Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    vec, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 use types::{
     DestChainConfig, DestChainConfigArgs, GasPriceUpdate, PriceUpdates, StaticConfig,
@@ -203,12 +203,23 @@ fn test_initialize_is_not_exported() {
         FeeQuoterContract,
         (&owner, &static_config, &authorized_callers),
     );
+    let args = soroban_sdk::vec![
+        &env,
+        owner.to_val(),
+        static_config.into_val(&env),
+        authorized_callers.into_val(&env),
+    ];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &contract_id,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![&env, owner.to_val()],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }
 
 #[test]
