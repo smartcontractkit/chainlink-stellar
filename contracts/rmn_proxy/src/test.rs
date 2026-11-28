@@ -42,13 +42,19 @@ fn test_constructor_sets_owner_and_rmn() {
 
 #[test]
 fn test_initialize_is_not_exported() {
-    let (env, contract_id, owner, _rmn) = setup_env();
+    let (env, contract_id, owner, rmn) = setup_env();
+    let args = soroban_sdk::vec![&env, owner.to_val(), rmn.to_val()];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &contract_id,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![&env, owner.to_val()],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }
 
 #[test]

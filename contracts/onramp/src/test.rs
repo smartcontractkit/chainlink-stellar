@@ -129,17 +129,23 @@ fn test_initialize_is_not_exported() {
     let dynamic_config = create_test_dynamic_config(&env);
     let contract_id = env.register(OnRampContract, (&owner, &static_config, &dynamic_config));
 
+    let args = soroban_sdk::vec![
+        &env,
+        owner.to_val(),
+        static_config.into_val(&env),
+        dynamic_config.into_val(&env),
+    ];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &contract_id,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![
-            &env,
-            owner.to_val(),
-            static_config.into_val(&env),
-            dynamic_config.into_val(&env)
-        ],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &contract_id,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }
 
 #[test]

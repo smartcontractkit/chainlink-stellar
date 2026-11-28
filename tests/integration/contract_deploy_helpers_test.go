@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -508,8 +509,19 @@ func mustCtor(t *testing.T) func([]xdr.ScVal, error) []xdr.ScVal {
 // requireNoInitializeExport fails unless the contract rejects a call to initialize.
 func requireNoInitializeExport(ctx context.Context, t *testing.T, deployer *deployment.Deployer, contractID string) {
 	t.Helper()
-	if _, err := deployer.SimulateContract(ctx, contractID, "initialize", nil); err == nil {
-		t.Fatalf("contract %s still exports initialize", contractID)
+	_, initErr := deployer.SimulateContract(ctx, contractID, "initialize", nil)
+	_, missingErr := deployer.SimulateContract(ctx, contractID, "no_such_function", nil)
+	if initErr == nil || missingErr == nil {
+		t.Fatalf("contract %s: expected both calls to fail, got %v and %v", contractID, initErr, missingErr)
+	}
+	if !strings.Contains(missingErr.Error(), "Error(WasmVm, MissingValue)") {
+		t.Fatalf("contract %s: no_such_function did not fail as a missing function: %v", contractID, missingErr)
+	}
+	// The base64 events XDR also holds the function name, so compare only the host error text.
+	initHostErr, _, _ := strings.Cut(initErr.Error(), " (events:")
+	missingHostErr, _, _ := strings.Cut(missingErr.Error(), " (events:")
+	if strings.ReplaceAll(initHostErr, "initialize", "no_such_function") != missingHostErr {
+		t.Fatalf("contract %s: initialize failed differently from a missing function: %v", contractID, initErr)
 	}
 }
 
