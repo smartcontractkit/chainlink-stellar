@@ -9,7 +9,7 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use sha3::{Digest, Keccak256};
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::Events as _, token, vec, Address, Bytes,
-    BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec as SorobanVec,
+    BytesN, Env, IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec as SorobanVec,
 };
 
 use crate::types::{DynamicConfig, RemoteChainConfig, SignatureQuorumConfig};
@@ -219,14 +219,27 @@ fn test_constructor_sets_state() {
 
 #[test]
 fn test_initialize_is_not_exported() {
-    let (env, client, owner, ..) = setup();
+    let (env, client, owner, rmn_proxy, storage_locations) = setup();
 
+    let args = soroban_sdk::vec![
+        &env,
+        owner.to_val(),
+        default_dynamic_config(&env).into_val(&env),
+        storage_locations.to_val(),
+        rmn_proxy.to_val(),
+        BytesN::from_array(&env, &DEFAULT_VERIFIER_VERSION_TAG).to_val(),
+    ];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &client.address,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![&env, owner.to_val()],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }
 
 #[test]

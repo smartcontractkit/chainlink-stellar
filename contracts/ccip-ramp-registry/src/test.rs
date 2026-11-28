@@ -265,10 +265,16 @@ fn test_initialize_is_not_exported() {
     let id = env.register(RampRegistryContract, (&owner,));
     let client = RampRegistryContractClient::new(&env, &id);
 
+    let args = soroban_sdk::vec![&env, owner.to_val()];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &client.address,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![&env, owner.to_val()],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }

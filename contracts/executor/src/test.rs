@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contracttype, symbol_short, testutils::Address as _, testutils::Events as _, token, vec,
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
 use crate::types::{DynamicConfig, RemoteChainConfig, RemoteChainConfigArgs};
@@ -80,12 +80,23 @@ fn test_constructor_sets_owner_max_ccvs_and_dynamic_config() {
 #[test]
 fn test_initialize_is_not_exported() {
     let (env, client, owner) = setup();
+    let args = soroban_sdk::vec![
+        &env,
+        owner.to_val(),
+        2u32.into_val(&env),
+        default_dynamic_config(&env, None).into_val(&env),
+    ];
     let res = env.try_invoke_contract::<(), soroban_sdk::Error>(
         &client.address,
         &Symbol::new(&env, "initialize"),
-        soroban_sdk::vec![&env, owner.to_val()],
+        args.clone(),
     );
-    assert!(res.is_err(), "initialize must not be callable");
+    let missing = env.try_invoke_contract::<(), soroban_sdk::Error>(
+        &client.address,
+        &Symbol::new(&env, "no_such_function"),
+        args,
+    );
+    assert_eq!(res, missing, "initialize must fail as a missing function");
 }
 
 #[test]
